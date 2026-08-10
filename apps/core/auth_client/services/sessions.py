@@ -48,6 +48,37 @@ def _fresh_enough(session: AppSession) -> bool:
     return session.access_expires_at > timezone.now() + _refresh_skew()
 
 
+def _rotate(session: AppSession) -> AppSession:
+    """Spend the (single-use) refresh token and store the new pair.
+    Raises the upstream errors for the caller to map to an outcome."""
+    tokens = OAuthClientService.Global.refresh(refresh_token=session.refresh_token)
+    session.access_token = tokens.access_token
+    session.refresh_token = tokens.refresh_token
+    session.access_expires_at = timezone.now() + timedelta(seconds=tokens.expires_in)
+    session.save(update_fields=["access_token", "refresh_token", "access_expires_at", "updated_at"])
+    return session
+
+
+def _back_off(session: AppSession) -> AppSession:
+    """The IdP blinked mid-refresh: keep the session on its cached token
+    and push the expiry to now + skew + cooldown, so the NEXT requests
+    take the fast path instead of re-attempting (and re-timing-out) every
+    request and thundering-herding a recovering IdP. Past the skew too,
+    else the fast-path check (which subtracts the skew) fires again
+    immediately. Stays well under the access-token lifetime."""
+    cooldown = timedelta(seconds=settings.AUTH_REFRESH_COOLDOWN_SECONDS)
+    session.access_expires_at = timezone.now() + _refresh_skew() + cooldown
+    session.save(update_fields=["access_expires_at", "updated_at"])
+    return session
+
+
+def _revoke_now(session: AppSession) -> None:
+    """Tombstone the session (a terminal upstream rejection: the refresh
+    token is dead, only a fresh login recovers)."""
+    session.revoked_at = timezone.now()
+    session.save(update_fields=["revoked_at", "updated_at"])
+
+
 class AppSessionGlobal:
     @staticmethod
     def create(*, user: AuthUser, tokens: TokenResponse) -> tuple[AppSession, str]:
@@ -97,52 +128,29 @@ class AppSessionGlobal:
 
     @staticmethod
     def _refresh_locked(token_hash: str) -> AppSession | None:
-        """Refresh the IdP token pair under a row lock so at most one
-        request rotates it. Concurrent requests block on the lock, then
-        re-check and see the already-refreshed token instead of each
-        spending the (single-use, rotating) refresh token.
-
-        Terminal `AuthUpstreamError` (a 4xx rejection, dead refresh
-        token) revokes the session. A transient `AuthUpstreamUnavailable`
-        (IdP down / 5xx / timeout) leaves the session intact and returns
-        it with the still-cached token: a brief IdP outage must not log
-        everyone out. The row lock is held across the refresh HTTP call,
-        bounded by AUTH_HTTP_TIMEOUT_SECONDS; contention is one user's
-        own tabs, so this is acceptable.
-        """
+        """Rotate the token pair under a row lock so at most one request
+        spends the single-use refresh token; peers block, re-check, and
+        see the refreshed row. The lock spans the refresh HTTP call
+        (bounded by AUTH_HTTP_TIMEOUT_SECONDS); contention is one user's
+        own tabs."""
         with transaction.atomic():
             try:
                 session = AppSession.objects.select_for_update().get(token_hash=token_hash, revoked_at__isnull=True)
             except AppSession.DoesNotExist:
                 return None
-            # A concurrent request may have refreshed while we waited.
             if _fresh_enough(session):
+                # A peer refreshed while we waited on the lock.
                 return session
             try:
-                tokens = OAuthClientService.Global.refresh(refresh_token=session.refresh_token)
+                return _rotate(session)
             except AuthUpstreamUnavailable:
-                # Transient IdP failure: keep the session, but push the expiry
-                # out by a short cooldown so the NEXT request takes the fast
-                # path instead of re-attempting (and re-timing-out) the refresh
-                # every request and thundering-herding a recovering IdP. Set it
-                # past the skew buffer too (now + skew + cooldown), else the
-                # fast-path check (which subtracts the skew) would fire again
-                # immediately and defeat the cooldown. Stays well under the
-                # access-token lifetime.
+                # MUST precede the terminal clause (it subclasses it): a
+                # brief IdP outage keeps the session on its cached token.
                 logger.warning("IdP unreachable during refresh; keeping session %s with stale token", session.id)
-                cooldown = timedelta(seconds=settings.AUTH_REFRESH_COOLDOWN_SECONDS)
-                session.access_expires_at = timezone.now() + _refresh_skew() + cooldown
-                session.save(update_fields=["access_expires_at", "updated_at"])
-                return session
+                return _back_off(session)
             except AuthUpstreamError:
-                session.revoked_at = timezone.now()
-                session.save(update_fields=["revoked_at", "updated_at"])
+                _revoke_now(session)
                 return None
-            session.access_token = tokens.access_token
-            session.refresh_token = tokens.refresh_token
-            session.access_expires_at = timezone.now() + timedelta(seconds=tokens.expires_in)
-            session.save(update_fields=["access_token", "refresh_token", "access_expires_at", "updated_at"])
-            return session
 
     @staticmethod
     def force_refresh(session: AppSession, *, stale_token: str) -> AppSession | None:
@@ -167,33 +175,20 @@ class AppSessionGlobal:
             except AppSession.DoesNotExist:
                 return None
             if session.access_token != stale_token:
-                # A concurrent request already rotated; hand back the fresh
-                # token instead of burning another refresh.
+                # A peer already rotated; hand back the fresh token instead
+                # of burning another refresh.
                 return session
             try:
-                tokens = OAuthClientService.Global.refresh(refresh_token=session.refresh_token)
+                return _rotate(session)
             except AuthUpstreamUnavailable:
-                # Transient IdP failure. AuthUpstreamUnavailable subclasses
-                # AuthUpstreamError, so this clause MUST precede the terminal
-                # one, else a momentary IdP blip would wrongly revoke a valid
-                # session. Push the expiry past the skew + cooldown (as
-                # _refresh_locked does) so the next resolve() does not immediately
-                # re-attempt during the outage, then propagate: the caller maps
-                # it to 503 (upstream down), NOT re-login.
-                cooldown = timedelta(seconds=settings.AUTH_REFRESH_COOLDOWN_SECONDS)
-                session.access_expires_at = timezone.now() + _refresh_skew() + cooldown
-                session.save(update_fields=["access_expires_at", "updated_at"])
+                # MUST precede the terminal clause (it subclasses it). Back
+                # off, then PROPAGATE: the caller maps this to 503 (upstream
+                # down), never re-login.
+                _back_off(session)
                 raise
             except AuthUpstreamError:
-                # Terminal rejection (dead refresh token): revoke and re-login.
-                session.revoked_at = timezone.now()
-                session.save(update_fields=["revoked_at", "updated_at"])
+                _revoke_now(session)
                 return None
-            session.access_token = tokens.access_token
-            session.refresh_token = tokens.refresh_token
-            session.access_expires_at = timezone.now() + timedelta(seconds=tokens.expires_in)
-            session.save(update_fields=["access_token", "refresh_token", "access_expires_at", "updated_at"])
-            return session
 
     @staticmethod
     def call_with_refresh(session: AppSession, call):
