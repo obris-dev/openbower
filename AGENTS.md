@@ -31,6 +31,11 @@ auth + data services live in a separate private repo.
 - Web: feature modules (`src/features/<domain>/{components,hooks,api}`),
   route files under ~150 lines, one shared `usePoll`, one `useLocalDraft`.
   UI primitives live in `@bower/ui` (drawers and inline editing, no modals).
+  Navigation is two-tier: in-app transitions use Link / router.push;
+  crossing the auth boundary or any origin (login, logout, the OAuth
+  redirect dance) uses window.location, where the full document load is
+  required or is itself the point (state reset after the session
+  changes).
 - House writing rules: no em dashes and no `--` in drafted copy or comments
   (commas or parentheses instead); `|` as the separator in UI copy, never
   middle dots.
