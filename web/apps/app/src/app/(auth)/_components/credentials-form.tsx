@@ -2,7 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
+import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput, Skeleton } from "@bower/ui";
 import { idpLogin, idpResumeUrl, idpSignup, webRoutes, withNext } from "@bower/api";
 
 const MIN_PASSWORD = 8;
@@ -179,5 +179,29 @@ export function CredentialsForm({ mode }: { mode: "login" | "signup" }) {
         </a>
       </p>
     </>
+  );
+}
+
+/** The Suspense fallback, mirroring the mode's real structure (subtitle,
+ * fields, the remember row, the button) so the card paints at its final
+ * size instead of flashing empty and jumping. */
+export function CredentialsFormFallback({ mode }: { mode: "login" | "signup" }) {
+  const { confirmPassword, rememberEmail } = MODES[mode];
+  const fields = confirmPassword ? 3 : 2;
+  return (
+    <div aria-hidden>
+      <Skeleton className="mb-6 mt-1 h-5 w-40" />
+      <div className="space-y-4">
+        {Array.from({ length: fields }, (_, i) => (
+          <div key={i}>
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="mt-1.5 h-9 w-full" />
+          </div>
+        ))}
+        {rememberEmail && <Skeleton className="h-5 w-36" />}
+        <Skeleton className="h-9 w-full" />
+      </div>
+      <Skeleton className="mx-auto mt-6 h-5 w-48" />
+    </div>
   );
 }

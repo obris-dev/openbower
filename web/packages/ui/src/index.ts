@@ -9,6 +9,7 @@ export { FieldError } from "./field-error";
 export { Input } from "./input";
 export { Label } from "./label";
 export { PasswordInput } from "./password-input";
+export { Skeleton } from "./skeleton";
 export { Spinner } from "./spinner";
 export { BrandMark } from "./brand-mark";
 export { ToastProvider, useToast } from "./toast";
