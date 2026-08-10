@@ -1,0 +1,16 @@
+{
+  "name": "bower-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenBower web workspace",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

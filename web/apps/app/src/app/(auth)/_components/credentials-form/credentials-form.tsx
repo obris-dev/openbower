@@ -1,0 +1,161 @@
+"use client";
+
+import { type FormEvent, useState, useSyncExternalStore } from "react";
+import { useSearchParams } from "next/navigation";
+import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
+import { type CredentialFailure, idpResumeUrl, webRoutes, withNext } from "@bower/api";
+
+import { MODES } from "./modes";
+import type { ModeName } from "./types";
+
+const MIN_PASSWORD = 8;
+const REMEMBER_EMAIL_KEY = "bower.login.email";
+
+// The stored email, SSR-correctly: the server snapshot is null (render
+// empty + unchecked), and the client snapshot triggers a POST-hydration
+// re-render that React does propagate to controlled inputs. A lazy
+// useState read is not enough here: React refuses to overwrite an
+// input's DOM state during hydration itself, so a server-rendered
+// unchecked box would stay visually unchecked forever.
+const subscribeToNothing = () => () => {};
+function useStoredEmail(enabled: boolean): string | null {
+  return useSyncExternalStore(
+    subscribeToNothing,
+    () => (enabled ? window.localStorage.getItem(REMEMBER_EMAIL_KEY) : null),
+    () => null,
+  );
+}
+
+/** The shared credentials machinery behind login and signup: the web owns
+ * the SCREEN, the IdP stays the authority `action` posts to. On success
+ * the IdP session exists; with ?next we resume the in-flight OAuth
+ * authorize, WITHOUT it (a direct visit, or a marketing-site link) there
+ * is no flow to resume and idpResumeUrl's fallback would strand the
+ * browser on the IdP's own pages, so we go to the app instead: its guard
+ * starts a fresh OAuth round against the just-minted IdP session. */
+export function CredentialsForm({ mode }: { mode: ModeName }) {
+  const { subtitle, action, submitLabel, busyLabel, passwordAutoComplete, confirmPassword, rememberEmail, footer } =
+    MODES[mode];
+  // Untouched (null) falls back to the stored email / its presence, so
+  // the remembered state applies without effects; the first keystroke or
+  // click takes over.
+  const storedEmail = useStoredEmail(rememberEmail);
+  const [emailInput, setEmailInput] = useState<string | null>(null);
+  const [rememberInput, setRememberInput] = useState<boolean | null>(null);
+  const email = emailInput ?? storedEmail ?? "";
+  const remember = rememberInput ?? storedEmail !== null;
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<CredentialFailure | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  // `next` is read straight off the URL (no mount effect + state, which
+  // would setState within an effect and cascade a render).
+  const next = useSearchParams().get("next");
+
+  const mismatch = confirmPassword && confirm.length > 0 && password !== confirm;
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (confirmPassword && password !== confirm) {
+      setError({ message: "Passwords do not match." });
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const failure = await action(email, password);
+    if (failure) {
+      setError(failure);
+      setSubmitting(false);
+      return;
+    }
+    if (rememberEmail) {
+      try {
+        if (remember) window.localStorage.setItem(REMEMBER_EMAIL_KEY, email);
+        else window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
+      } catch {
+        // Preference just doesn't persist (private mode etc.).
+      }
+    }
+    window.location.href = next ? idpResumeUrl(next) : webRoutes.home;
+  }
+
+  return (
+    <>
+      <p className="mb-6 mt-1 text-sm text-ink/60 dark:text-paper/60">{subtitle}</p>
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        {error?.message && <ErrorMessage message={error.message} />}
+        <div>
+          <Label htmlFor="email">Email</Label>
+          <div className="mt-1.5">
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              autoFocus
+              required
+              invalid={Boolean(error?.fields?.email)}
+              aria-describedby={error?.fields?.email ? "email-error" : undefined}
+              value={email}
+              onChange={(e) => setEmailInput(e.target.value)}
+            />
+          </div>
+          {error?.fields?.email && <FieldError id="email-error">{error.fields.email.join(" ")}</FieldError>}
+        </div>
+        <div>
+          <Label htmlFor="password">Password</Label>
+          <div className="mt-1.5">
+            <PasswordInput
+              id="password"
+              autoComplete={passwordAutoComplete}
+              required
+              minLength={confirmPassword ? MIN_PASSWORD : undefined}
+              invalid={Boolean(error?.fields?.password)}
+              aria-describedby={error?.fields?.password ? "password-error" : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          {error?.fields?.password && <FieldError id="password-error">{error.fields.password.join(" ")}</FieldError>}
+        </div>
+        {rememberEmail && (
+          <label className="flex items-center gap-2 text-sm text-ink/70 dark:text-paper/70">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRememberInput(e.target.checked)}
+              className="accent-signal"
+            />
+            Remember me
+          </label>
+        )}
+        {confirmPassword && (
+          <div>
+            <Label htmlFor="confirm">Confirm password</Label>
+            <div className="mt-1.5">
+              <PasswordInput
+                id="confirm"
+                autoComplete="new-password"
+                required
+                invalid={mismatch}
+                aria-describedby={mismatch ? "confirm-error" : undefined}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            </div>
+            {mismatch && <FieldError id="confirm-error">Passwords do not match.</FieldError>}
+          </div>
+        )}
+        <Button type="submit" fullWidth loading={submitting} disabled={mismatch}>
+          {submitting ? busyLabel : submitLabel}
+        </Button>
+      </form>
+      <p className="mt-6 text-center text-sm text-ink/60 dark:text-paper/60">
+        {footer.prompt}{" "}
+        <a className="font-medium text-signal hover:underline" href={withNext(footer.href, next)}>
+          {footer.label}
+        </a>
+      </p>
+    </>
+  );
+}
+

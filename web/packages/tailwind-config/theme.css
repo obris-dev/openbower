@@ -1,0 +1,95 @@
+/* OpenBower design tokens (Tailwind v4, CSS-first config).
+ *
+ * This file is the single rebrand surface: components reference only these
+ * tokens (bg-signal, text-ink, ...), so swapping the values below re-themes
+ * the whole UI. The @source globs tell Tailwind v4 where to scan for class
+ * names across the pnpm workspace (it does not auto-walk sibling packages);
+ * the * wildcards auto-pick-up new packages/apps.
+ */
+
+@source "../*/src/**/*.{ts,tsx,js,jsx}";
+@source "../../apps/*/src/**/*.{ts,tsx,js,jsx}";
+
+@theme {
+  /* Motion (toasts slide in from the viewport edge, fade out) */
+  --animate-toast-in: toast-in 150ms ease-out;
+  --animate-toast-out: toast-out 120ms ease-in forwards;
+
+  /* Brand */
+  --color-ink: #111111;
+  --color-paper: #f7f7f5;
+  --color-signal: #00b7c3; /* teal brand mark (matches the favicon/logo) */
+  --color-glow: #7df9ff;
+
+  /* Signal ramp (hover / focus / disabled) */
+  --color-signal-50: #e6fbfc;
+  --color-signal-100: #c0f4f7;
+  --color-signal-200: #8ae9ef;
+  --color-signal-300: #4dd8e2;
+  --color-signal-400: #1ec6d3;
+  --color-signal-500: #00b7c3;
+  --color-signal-600: #009ba6;
+  --color-signal-700: #00777f;
+  --color-signal-800: #005a59;
+  --color-signal-900: #00393f;
+
+  /* Neutrals derived from ink/paper */
+  --color-paper-soft: #f3f1ea;
+  --color-paper-deep: #ecebe4;
+  --color-ink-soft: #1c2024;
+  --color-ink-muted: #4b5158;
+  --color-ink-subtle: #6e747b;
+
+  --font-sans: var(--font-poppins), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+}
+
+/* Tailwind v4's preflight resets buttons to `cursor: default` (a change
+ * from v3). Restore the affordance globally: every enabled interactive
+ * control shows a pointer, disabled ones say why they don't. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  input[type="submit"]:not(:disabled),
+  input[type="button"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  label:has(input[type="checkbox"]:not(:disabled)),
+  label:has(input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
+  button:disabled,
+  input[type="submit"]:disabled,
+  input[type="button"]:disabled,
+  input[type="checkbox"]:disabled,
+  input[type="radio"]:disabled {
+    cursor: not-allowed;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

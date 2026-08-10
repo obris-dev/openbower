@@ -1,0 +1,20 @@
+# The shared kernel: a REAL installable workspace member (unlike the app
+# leaves, which are virtual), because the leaves import it as a dependency.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openbower-kernel"
+version = "0.1.0"
+description = "Shared Django kernel for the OpenBower cloud leaves (ULID base model, env, URL and pagination helpers, healthz)."
+requires-python = ">=3.13"
+dependencies = [
+    "django>=6.0",
+    # pagination helpers speak DRF's request/exception types.
+    "djangorestframework>=3.15",
+    "ulid>=1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openbower_kernel"]
