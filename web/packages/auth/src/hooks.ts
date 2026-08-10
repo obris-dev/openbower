@@ -33,7 +33,15 @@ export function useUser() {
     if (phase !== CHECK.IDLE || startedRef.current || checked) return;
     startedRef.current = true;
     setPhase(CHECK.CHECKING);
-    fetchMeResult().then((result) => {
+
+    // The effect callback can't be async (it must return the cleanup),
+    // so the await lives in an inner function; the cancelled flag stops
+    // a resolution that lands after unmount or re-run from applying
+    // stale state.
+    let cancelled = false;
+    async function check() {
+      const result = await fetchMeResult();
+      if (cancelled) return;
       if (result.status === "ok") {
         setUser(result.user);
         setPhase(CHECK.DONE);
@@ -44,7 +52,11 @@ export function useUser() {
         // Network / CORS / 5xx: don't know, don't clobber `user`.
         setPhase(CHECK.ERROR);
       }
-    });
+    }
+    void check();
+    return () => {
+      cancelled = true;
+    };
   }, [phase, checked, setUser]);
 
   return {
