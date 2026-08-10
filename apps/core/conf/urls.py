@@ -1,0 +1,15 @@
+from django.conf import settings
+from django.urls import path
+
+from common.urls import api_include
+from common.views import healthz
+
+# `api_include` makes the trailing slash on the prefix optional; `api_path`
+# (inside each app's urlconf) makes the trailing slash on each leaf route
+# optional. `/healthz` stays unversioned.
+_V1 = settings.API_VERSION_PREFIX
+
+urlpatterns = [
+    path("healthz", healthz, name="healthz"),
+    api_include(f"{_V1}/auth", "auth_client.urls"),
+]

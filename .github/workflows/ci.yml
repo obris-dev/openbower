@@ -20,3 +20,55 @@ jobs:
       - uses: actions/checkout@v4
       - name: Branch name follows <type>/<kebab-slug>
         run: sh scripts/check-branch-name.sh "$HEAD_REF"
+
+  lint-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: Contract is current
+        run: uv run python -m tools.schema_sync.generate --check
+
+  test-core:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openbower
+          POSTGRES_USER: openbower
+          POSTGRES_PASSWORD: openbower
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U openbower"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages
+      - name: Run the app backend suite
+        run: cd apps/core && uv run python manage.py test
+        env:
+          DJANGO_ENV: test
+          DJANGO_SECRET_KEY: test-only
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: cd web && pnpm install --frozen-lockfile
+      - run: cd web && pnpm -r lint
+      - run: cd web && pnpm -r typecheck

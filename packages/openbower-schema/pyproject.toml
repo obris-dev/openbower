@@ -1,0 +1,10 @@
+[project]
+name = "openbower-schema"
+version = "0.1.0"
+description = "Shared OpenBower schema: the Pydantic-first contract, codegen'd to zod for the web."
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

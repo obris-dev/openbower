@@ -1,0 +1,13 @@
+# Repo root: minimal meta-project declaring the uv workspace so apps/* and
+# packages/* resolve against ONE root uv.lock. The open side of the
+# OpenBower suite: the Django app core, the shared schema and kernel
+# packages, and (in web/) the pnpm workspace. No code of its own; never
+# published.
+[project]
+name = "openbower"
+version = "0.1.0"
+description = "OpenBower (uv workspace root; no code of its own)."
+requires-python = ">=3.13"
+
+[tool.uv.workspace]
+members = ["apps/*", "packages/*"]

@@ -1,0 +1,38 @@
+{
+  "$defs": {
+    "AuthUser": {
+      "description": "The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.",
+      "properties": {
+        "account_id": {
+          "description": "The user's primary account ULID.",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "email": {
+          "description": "The user's email address.",
+          "title": "Email",
+          "type": "string"
+        },
+        "id": {
+          "description": "The user's cloud-issued ULID.",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "account_id"
+      ],
+      "title": "AuthUser",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenBower contract",
+  "x-roots": [
+    {
+      "$ref": "#/$defs/AuthUser"
+    }
+  ]
+}

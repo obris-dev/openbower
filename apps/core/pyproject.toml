@@ -1,0 +1,37 @@
+# No [build-system]/packages block: core is a Django app run via manage.py
+# and `uv run`, never built or installed as a wheel. uv treats it as a virtual
+# workspace member (its deps resolve, its code is never packaged).
+
+[project]
+name = "openbower-core"
+version = "0.1.0"
+description = "OpenBower core, the Django backend for the prospecting domain."
+requires-python = ">=3.13"
+dependencies = [
+    "django>=6.0",
+    "django-cors-headers>=4.6",
+    "djangorestframework>=3.15",
+    "cryptography>=43",
+    "httpx>=0.28",
+    "openbower-schema",
+    "psycopg>=3.3",
+    "python-dotenv>=1.1",
+    "ulid>=1.1",
+]
+
+[dependency-groups]
+dev = [
+    # psycopg's prebuilt binary (bundles libpq) for frictionless local dev;
+    # the cloud image compiles psycopg[c] against system libpq instead.
+    "psycopg[binary]>=3.3",
+    "ruff>=0.11",
+]
+# Cloud-only (matches DJANGO_ENV=cloud / conf.settings.cloud). NOT installed
+# by a default `uv sync`; the cloud image opts in with `uv sync --group cloud`.
+cloud = [
+    "gunicorn>=23.0",
+    "psycopg[c]>=3.3",
+]
+
+[tool.uv.sources]
+openbower-schema = { workspace = true }

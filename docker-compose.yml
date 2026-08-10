@@ -1,0 +1,16 @@
+# Local services for the open app. Phase-scoped: services appear when a
+# phase needs them (the app db arrived with auth). Dev data here is cheap
+# to rebuild, so the volume is ephemeral.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: openbower
+      POSTGRES_USER: openbower
+      POSTGRES_PASSWORD: openbower
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openbower"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
