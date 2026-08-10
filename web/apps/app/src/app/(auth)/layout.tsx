@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
 import { Card, ThemeToggle } from "@bower/ui";
 
+import { RedirectIfAuthed } from "./_components/redirect-if-authed";
+
 /** The signed-out shell: a centered brand card with the theme toggle,
  * shared by every screen in this group. */
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <main className="grid min-h-dvh place-items-center bg-paper-soft p-6 dark:bg-ink">
+      <RedirectIfAuthed />
       <div className="absolute right-4 top-4">
         <ThemeToggle />
       </div>
