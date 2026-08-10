@@ -31,9 +31,12 @@ reports; review against this list before adding a component.
    beat SSR to the first paint.
 8. **Behavioral components ride Headless UI** (menus, dialogs, switches,
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
-9. **Toasts for operation outcomes, inline errors for the active form.**
-   Async results the user is not staring at (a fill failed, a save
-   bounced) are toasts. A form the user is actively submitting shows its
-   error WITH the fields (ErrorMessage), persisting while they correct
-   it, and live field validation (a mismatch hint) is always inline.
-   Every login form worth copying works this way.
+9. **Errors have three tiers; pick by attachment, not preference.**
+   (a) Field-level validation lives at its field (a mismatch hint, an
+   invalid email), often live. (b) A submission failure not attributable
+   to one field (invalid credentials, rate limited) is a FORM-LEVEL
+   banner at the top of the form (ErrorMessage), persisting until the
+   next attempt: the standard error-summary pattern every serious login
+   form uses. (c) Toasts are for outcomes of operations detached from a
+   form the user is staring at (a fill failed, a save bounced). Never
+   toast tier a or b; never banner tier c.
