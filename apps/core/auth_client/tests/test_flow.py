@@ -19,7 +19,7 @@ from django.urls import reverse
 
 from auth_client.constants import SESSION_COOKIE_NAME
 from auth_client.downstream import DownstreamTokenRejected
-from auth_client.services.oauth_client import AuthUpstreamUnavailable, TokenResponse
+from auth_client.services.oauth import AuthUpstreamUnavailable, TokenResponse
 from auth_client.services.sessions import AppSessionService
 from openbower_schema import AuthUser
 
@@ -59,8 +59,8 @@ class LoginLogoutFlowTests(TestCase):
         # Callback: exchange the code + resolve identity, both mocked at the
         # httpx boundary so the real callback / session-create code runs.
         with (
-            patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(200, _TOKENS)),
-            patch("auth_client.services.oauth_client.httpx.get", return_value=_Resp(200, _IDENTITY)),
+            patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _TOKENS)),
+            patch("auth_client.services.oauth.transport.httpx.get", return_value=_Resp(200, _IDENTITY)),
         ):
             cb = self.client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
         self.assertEqual(cb.status_code, 302)
@@ -75,7 +75,7 @@ class LoginLogoutFlowTests(TestCase):
 
         # Logout must be 200 (the regression: a bad delete_cookie kwarg 500'd
         # here), return the IdP logout URL, and clear the cookie.
-        with patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(200, {})):
+        with patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, {})):
             out = self.client.post(reverse("auth_logout"))
         self.assertEqual(out.status_code, 200)
         self.assertIn("idp_logout_url", out.json())
@@ -116,7 +116,7 @@ class SessionRefreshTests(TestCase):
         # resolve() must rotate it NOW rather than hand out a token that would
         # lapse in-flight at a downstream service.
         _, raw = self._session(expires_in=5)
-        with patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(200, _REFRESHED)) as idp:
+        with patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _REFRESHED)) as idp:
             resolved = AppSessionService.Global.resolve(raw)
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.access_token, "access-def")
@@ -125,7 +125,7 @@ class SessionRefreshTests(TestCase):
     def test_comfortably_fresh_token_is_not_refreshed(self):
         # A token well outside the skew is handed out untouched (no IdP call).
         _, raw = self._session(expires_in=3600)
-        with patch("auth_client.services.oauth_client.httpx.post") as idp:
+        with patch("auth_client.services.oauth.transport.httpx.post") as idp:
             resolved = AppSessionService.Global.resolve(raw)
         self.assertEqual(resolved.access_token, "access-abc")
         idp.assert_not_called()
@@ -134,7 +134,7 @@ class SessionRefreshTests(TestCase):
         # If the row's current token differs from the one the caller tried, a
         # peer already rotated: return it without spending another refresh.
         record, _ = self._session(expires_in=3600)
-        with patch("auth_client.services.oauth_client.httpx.post") as idp:
+        with patch("auth_client.services.oauth.transport.httpx.post") as idp:
             result = AppSessionService.Global.force_refresh(record, stale_token="an-older-token")
         self.assertIsNotNone(result)
         self.assertEqual(result.access_token, "access-abc")
@@ -152,7 +152,7 @@ class SessionRefreshTests(TestCase):
                 raise DownstreamTokenRejected()
             return "ok"
 
-        with patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(200, _REFRESHED)):
+        with patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _REFRESHED)):
             result = AppSessionService.Global.call_with_refresh(record, call)
         self.assertEqual(result, "ok")
         self.assertEqual(seen, ["access-abc", "access-def"])
@@ -166,7 +166,9 @@ class SessionRefreshTests(TestCase):
             raise DownstreamTokenRejected()
 
         with (
-            patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(400, {"error": "invalid_grant"})),
+            patch(
+                "auth_client.services.oauth.transport.httpx.post", return_value=_Resp(400, {"error": "invalid_grant"})
+            ),
             self.assertRaises(DownstreamTokenRejected),
         ):
             AppSessionService.Global.call_with_refresh(record, call)
@@ -183,7 +185,7 @@ class SessionRefreshTests(TestCase):
             raise DownstreamTokenRejected()
 
         with (
-            patch("auth_client.services.oauth_client.httpx.post", return_value=_Resp(503, {})),
+            patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(503, {})),
             self.assertRaises(AuthUpstreamUnavailable),
         ):
             AppSessionService.Global.call_with_refresh(record, call)

@@ -26,7 +26,7 @@ from . import idp_urls
 from .constants import SESSION_COOKIE_NAME, AuthErrorCode
 from .cookies import delete_session_cookie, set_session_cookie
 from .services import AppSessionService, OAuthClientService, StateMismatch
-from .services.oauth_client import AuthUpstreamError
+from .services.oauth import AuthUpstreamError
 
 logger = logging.getLogger("auth_client")
 

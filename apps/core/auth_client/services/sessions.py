@@ -25,7 +25,7 @@ from auth_client.models import AppSession
 from common.hashing import hash_token
 from openbower_schema import AuthUser
 
-from .oauth_client import AuthUpstreamError, AuthUpstreamUnavailable, OAuthClientService, TokenResponse
+from .oauth import AuthUpstreamError, AuthUpstreamUnavailable, OAuthClientService, TokenResponse
 
 logger = logging.getLogger("auth_client")
 

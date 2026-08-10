@@ -1,4 +1,4 @@
-from .oauth_client import (
+from .oauth import (
     AuthUpstreamError,
     AuthUpstreamUnavailable,
     OAuthClientService,

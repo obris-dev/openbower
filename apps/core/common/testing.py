@@ -35,7 +35,7 @@ def login(client) -> None:
     resp = client.get(reverse("auth_login"))
     state = parse_qs(urlparse(resp["Location"]).query)["state"][0]
     with (
-        patch("auth_client.services.oauth_client.httpx.post", return_value=FakeResponse(200, TOKENS)),
-        patch("auth_client.services.oauth_client.httpx.get", return_value=FakeResponse(200, IDENTITY)),
+        patch("auth_client.services.oauth.transport.httpx.post", return_value=FakeResponse(200, TOKENS)),
+        patch("auth_client.services.oauth.transport.httpx.get", return_value=FakeResponse(200, IDENTITY)),
     ):
         client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
