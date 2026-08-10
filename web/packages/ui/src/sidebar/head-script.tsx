@@ -1,4 +1,4 @@
-import { SIDEBAR_COLLAPSE_KEY } from "./sidebar-constants";
+import { SIDEBAR_COLLAPSE_KEY } from "./constants";
 
 // Blocking script, ThemeHeadScript's sibling: stamps the remembered
 // sidebar state on <html> BEFORE first paint. The Sidebar renders its

@@ -4,8 +4,8 @@ import { Circle, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useSyncExternalStore } from "react";
 
-import { setThemeCookie } from "./theme-provider";
-import { THEME } from "./theme-constants";
+import { setThemeCookie } from "./provider";
+import { THEME } from "./constants";
 
 // "Have we hydrated yet?" without a mount effect + setState (which would
 // cascade a render). useSyncExternalStore returns the SERVER snapshot (false)

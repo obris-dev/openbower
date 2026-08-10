@@ -3,9 +3,9 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown, CircleUser, Menu, PanelLeft, X } from "lucide-react";
 import { clsx } from "clsx";
-import { BrandMark } from "./brand-mark";
-import { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "./dropdown";
-import { SIDEBAR_COLLAPSE_KEY } from "./sidebar-constants";
+import { BrandMark } from "../brand-mark";
+import { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "../dropdown";
+import { SIDEBAR_COLLAPSE_KEY } from "./constants";
 
 /** The app shell: fixed dark sidebar (nav) + sticky top header (actions +
  * profile menu) + content area. A plain-React port of the reference shell

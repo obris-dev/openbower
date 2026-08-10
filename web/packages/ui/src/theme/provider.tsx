@@ -3,7 +3,7 @@
 import { ThemeProvider, useTheme } from "next-themes";
 import { useEffect, type ReactNode } from "react";
 
-import { THEME, THEME_COOKIE_NAME, THEME_STORAGE_KEY, type Theme } from "./theme-constants";
+import { THEME, THEME_COOKIE_NAME, THEME_STORAGE_KEY, type Theme } from "./constants";
 
 
 // The cookie is the CROSS-SITE source of truth for an explicit choice

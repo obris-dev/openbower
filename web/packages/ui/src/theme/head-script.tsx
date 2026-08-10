@@ -1,4 +1,4 @@
-import { THEME_COOKIE_NAME, THEME_STORAGE_KEY } from "./theme-constants";
+import { THEME_COOKIE_NAME, THEME_STORAGE_KEY } from "./constants";
 
 // A blocking inline script rendered first in <body>: it reads the theme
 // cookie (falling back to localStorage, then the OS preference) and applies
