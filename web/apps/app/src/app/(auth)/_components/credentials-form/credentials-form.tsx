@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
 import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
@@ -10,6 +10,21 @@ import type { ModeName } from "./types";
 
 const MIN_PASSWORD = 8;
 const REMEMBER_EMAIL_KEY = "bower.login.email";
+
+// The stored email, SSR-correctly: the server snapshot is null (render
+// empty + unchecked), and the client snapshot triggers a POST-hydration
+// re-render that React does propagate to controlled inputs. A lazy
+// useState read is not enough here: React refuses to overwrite an
+// input's DOM state during hydration itself, so a server-rendered
+// unchecked box would stay visually unchecked forever.
+const subscribeToNothing = () => () => {};
+function useStoredEmail(enabled: boolean): string | null {
+  return useSyncExternalStore(
+    subscribeToNothing,
+    () => (enabled ? window.localStorage.getItem(REMEMBER_EMAIL_KEY) : null),
+    () => null,
+  );
+}
 
 /** The shared credentials machinery behind login and signup: the web owns
  * the SCREEN, the IdP stays the authority `action` posts to. On success
@@ -21,14 +36,14 @@ const REMEMBER_EMAIL_KEY = "bower.login.email";
 export function CredentialsForm({ mode }: { mode: ModeName }) {
   const { subtitle, action, submitLabel, busyLabel, passwordAutoComplete, confirmPassword, rememberEmail, footer } =
     MODES[mode];
-  // Lazy init is safe: the Suspense boundary (useSearchParams) means this
-  // form never server-renders, so there is no hydration to mismatch.
-  const [email, setEmail] = useState(() =>
-    rememberEmail && typeof window !== "undefined" ? (window.localStorage.getItem(REMEMBER_EMAIL_KEY) ?? "") : "",
-  );
-  const [remember, setRemember] = useState(() =>
-    rememberEmail && typeof window !== "undefined" ? window.localStorage.getItem(REMEMBER_EMAIL_KEY) !== null : false,
-  );
+  // Untouched (null) falls back to the stored email / its presence, so
+  // the remembered state applies without effects; the first keystroke or
+  // click takes over.
+  const storedEmail = useStoredEmail(rememberEmail);
+  const [emailInput, setEmailInput] = useState<string | null>(null);
+  const [rememberInput, setRememberInput] = useState<boolean | null>(null);
+  const email = emailInput ?? storedEmail ?? "";
+  const remember = rememberInput ?? storedEmail !== null;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +94,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
               autoFocus
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => setEmailInput(e.target.value)}
             />
           </div>
         </div>
@@ -101,7 +116,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
             <input
               type="checkbox"
               checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
+              onChange={(e) => setRememberInput(e.target.checked)}
               className="accent-signal"
             />
             Remember me
