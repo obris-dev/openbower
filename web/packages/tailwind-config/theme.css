@@ -56,12 +56,20 @@
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
   input[type="submit"]:not(:disabled),
-  input[type="button"]:not(:disabled) {
+  input[type="button"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  label:has(input[type="checkbox"]:not(:disabled)),
+  label:has(input[type="radio"]:not(:disabled)) {
     cursor: pointer;
   }
   button:disabled,
   input[type="submit"]:disabled,
-  input[type="button"]:disabled {
+  input[type="button"]:disabled,
+  input[type="checkbox"]:disabled,
+  input[type="radio"]:disabled {
     cursor: not-allowed;
   }
 }
