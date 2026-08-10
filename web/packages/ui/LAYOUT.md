@@ -31,3 +31,9 @@ reports; review against this list before adding a component.
    beat SSR to the first paint.
 8. **Behavioral components ride Headless UI** (menus, dialogs, switches,
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
+9. **Toasts for operation outcomes, inline errors for the active form.**
+   Async results the user is not staring at (a fill failed, a save
+   bounced) are toasts. A form the user is actively submitting shows its
+   error WITH the fields (ErrorMessage), persisting while they correct
+   it, and live field validation (a mismatch hint) is always inline.
+   Every login form worth copying works this way.
