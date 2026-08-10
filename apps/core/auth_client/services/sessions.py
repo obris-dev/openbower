@@ -79,6 +79,30 @@ def _revoke_now(session: AppSession) -> None:
     session.save(update_fields=["revoked_at", "updated_at"])
 
 
+def _rotate_or_settle(session: AppSession, *, transient_propagates: bool) -> AppSession | None:
+    """Rotate inside the caller's lock and map the three outcomes: rotated
+    (return the fresh row), terminal rejection (revoke, return None), or a
+    transient IdP failure (back off, then EITHER serve the stale token,
+    for the routine expiry path where a brief outage must not log anyone
+    out, OR propagate, for the downstream-rejected path whose caller maps
+    it to 503 rather than re-login).
+
+    The Unavailable clause MUST precede the terminal one: it subclasses
+    AuthUpstreamError, and matching the superclass first would revoke live
+    sessions over a blip."""
+    try:
+        return _rotate(session)
+    except AuthUpstreamUnavailable:
+        _back_off(session)
+        if transient_propagates:
+            raise
+        logger.warning("IdP unreachable during refresh; keeping session %s with stale token", session.id)
+        return session
+    except AuthUpstreamError:
+        _revoke_now(session)
+        return None
+
+
 class AppSessionGlobal:
     @staticmethod
     def create(*, user: AuthUser, tokens: TokenResponse) -> tuple[AppSession, str]:
@@ -129,10 +153,10 @@ class AppSessionGlobal:
     @staticmethod
     def _refresh_locked(token_hash: str) -> AppSession | None:
         """Rotate the token pair under a row lock so at most one request
-        spends the single-use refresh token; peers block, re-check, and
-        see the refreshed row. The lock spans the refresh HTTP call
-        (bounded by AUTH_HTTP_TIMEOUT_SECONDS); contention is one user's
-        own tabs."""
+        spends the single-use refresh token; peers block, re-check by
+        FRESHNESS, and see the refreshed row. The lock spans the refresh
+        HTTP call (bounded by AUTH_HTTP_TIMEOUT_SECONDS); contention is
+        one user's own tabs."""
         with transaction.atomic():
             try:
                 session = AppSession.objects.select_for_update().get(token_hash=token_hash, revoked_at__isnull=True)
@@ -141,16 +165,7 @@ class AppSessionGlobal:
             if _fresh_enough(session):
                 # A peer refreshed while we waited on the lock.
                 return session
-            try:
-                return _rotate(session)
-            except AuthUpstreamUnavailable:
-                # MUST precede the terminal clause (it subclasses it): a
-                # brief IdP outage keeps the session on its cached token.
-                logger.warning("IdP unreachable during refresh; keeping session %s with stale token", session.id)
-                return _back_off(session)
-            except AuthUpstreamError:
-                _revoke_now(session)
-                return None
+            return _rotate_or_settle(session, transient_propagates=False)
 
     @staticmethod
     def force_refresh(session: AppSession, *, stale_token: str) -> AppSession | None:
@@ -178,17 +193,7 @@ class AppSessionGlobal:
                 # A peer already rotated; hand back the fresh token instead
                 # of burning another refresh.
                 return session
-            try:
-                return _rotate(session)
-            except AuthUpstreamUnavailable:
-                # MUST precede the terminal clause (it subclasses it). Back
-                # off, then PROPAGATE: the caller maps this to 503 (upstream
-                # down), never re-login.
-                _back_off(session)
-                raise
-            except AuthUpstreamError:
-                _revoke_now(session)
-                return None
+            return _rotate_or_settle(session, transient_propagates=True)
 
     @staticmethod
     def call_with_refresh(session: AppSession, call):
