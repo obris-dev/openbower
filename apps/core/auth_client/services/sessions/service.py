@@ -19,7 +19,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from auth_client.models import AppSession
-from common.hashing import hash_token
+from openbower_kernel.hashing import hash_token
 from openbower_schema import AuthUser
 
 from ..oauth import OAuthClientService, TokenResponse

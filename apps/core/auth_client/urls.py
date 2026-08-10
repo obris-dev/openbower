@@ -1,4 +1,4 @@
-from common.urls import api_path
+from openbower_kernel.urls import api_path
 
 from . import views
 

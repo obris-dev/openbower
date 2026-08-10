@@ -5,7 +5,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
-from common.env import env_bool, env_list
+from openbower_kernel.env import env_bool, env_list
 
 # Log timestamps in UTC regardless of the host clock. Python's logging
 # `asctime` uses `time.localtime` by default; the app is TIME_ZONE="UTC",

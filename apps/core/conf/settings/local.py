@@ -25,7 +25,7 @@ os.environ.setdefault("POSTGRES_PORT", "5433")
 # connections in dev; hosted gunicorn keeps the base default (60).
 os.environ.setdefault("DB_CONN_MAX_AGE", "0")
 
-from common.env import env_bool
+from openbower_kernel.env import env_bool
 
 from .base import *  # noqa: F403
 

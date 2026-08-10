@@ -39,7 +39,7 @@ _ORIGINS = "https://app.openbower.com"
 os.environ.setdefault("CORS_ALLOWED_ORIGINS", _ORIGINS)
 os.environ.setdefault("CSRF_TRUSTED_ORIGINS", _ORIGINS)
 
-from common.env import env_bool, split_csv  # noqa: E402
+from openbower_kernel.env import env_bool, split_csv  # noqa: E402
 
 from .base import *  # noqa: E402, F403
 

@@ -2,7 +2,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from auth_client.fields import EncryptedTextField
-from common.models import BaseModel
+from openbower_kernel.models import BaseModel
 
 
 class AppSession(BaseModel):

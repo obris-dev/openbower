@@ -1,8 +1,8 @@
 from django.conf import settings
 from django.urls import path
 
-from common.urls import api_include
-from common.views import healthz
+from openbower_kernel.urls import api_include
+from openbower_kernel.views import healthz
 
 # `api_include` makes the trailing slash on the prefix optional; `api_path`
 # (inside each app's urlconf) makes the trailing slash on each leaf route
