@@ -2,58 +2,15 @@
 
 import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput, Skeleton } from "@bower/ui";
-import { idpLogin, idpResumeUrl, idpSignup, webRoutes, withNext } from "@bower/api";
+import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
+import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
 const MIN_PASSWORD = 8;
 
-/** The cross-link under the form (login <-> signup); `href` is a
- * webRoutes path, and the in-flight ?next rides along automatically. */
-export type CredentialsFooter = {
-  prompt: string;
-  label: string;
-  href: string;
-};
+import { MODES } from "./modes";
+import type { ModeName } from "./types";
 
 const REMEMBER_EMAIL_KEY = "bower.login.email";
-
-type Mode = {
-  subtitle: string;
-  action: (email: string, password: string) => Promise<string | null>;
-  submitLabel: string;
-  busyLabel: string;
-  passwordAutoComplete: "current-password" | "new-password";
-  confirmPassword: boolean;
-  rememberEmail: boolean;
-  footer: CredentialsFooter;
-};
-
-// The per-screen config lives WITH the component (pages are server
-// components and cannot pass the action function across the boundary;
-// they name a mode instead). A future forgot-password screen is another
-// entry here plus its route.
-const MODES: Record<"login" | "signup", Mode> = {
-  login: {
-    subtitle: "Sign in to continue.",
-    action: idpLogin,
-    submitLabel: "Sign in",
-    busyLabel: "Signing in…",
-    passwordAutoComplete: "current-password",
-    confirmPassword: false,
-    rememberEmail: true,
-    footer: { prompt: "Don't have an account?", label: "Create account", href: webRoutes.signup },
-  },
-  signup: {
-    subtitle: "Create your account.",
-    action: idpSignup,
-    submitLabel: "Create account",
-    busyLabel: "Creating account…",
-    passwordAutoComplete: "new-password",
-    confirmPassword: true,
-    rememberEmail: false,
-    footer: { prompt: "Already have an account?", label: "Sign in", href: webRoutes.login },
-  },
-};
 
 /** The shared credentials machinery behind login and signup: the web owns
  * the SCREEN, the IdP stays the authority `action` posts to. On success
@@ -62,7 +19,7 @@ const MODES: Record<"login" | "signup", Mode> = {
  * is no flow to resume and idpResumeUrl's fallback would strand the
  * browser on the IdP's own pages, so we go to the app instead: its guard
  * starts a fresh OAuth round against the just-minted IdP session. */
-export function CredentialsForm({ mode }: { mode: "login" | "signup" }) {
+export function CredentialsForm({ mode }: { mode: ModeName }) {
   const { subtitle, action, submitLabel, busyLabel, passwordAutoComplete, confirmPassword, rememberEmail, footer } =
     MODES[mode];
   // Lazy init is safe: the Suspense boundary (useSearchParams) means this
@@ -182,26 +139,3 @@ export function CredentialsForm({ mode }: { mode: "login" | "signup" }) {
   );
 }
 
-/** The Suspense fallback, mirroring the mode's real structure (subtitle,
- * fields, the remember row, the button) so the card paints at its final
- * size instead of flashing empty and jumping. */
-export function CredentialsFormFallback({ mode }: { mode: "login" | "signup" }) {
-  const { confirmPassword, rememberEmail } = MODES[mode];
-  const fields = confirmPassword ? 3 : 2;
-  return (
-    <div aria-hidden>
-      <Skeleton className="mb-6 mt-1 h-5 w-40" />
-      <div className="space-y-4">
-        {Array.from({ length: fields }, (_, i) => (
-          <div key={i}>
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="mt-1.5 h-9 w-full" />
-          </div>
-        ))}
-        {rememberEmail && <Skeleton className="h-5 w-36" />}
-        <Skeleton className="h-9 w-full" />
-      </div>
-      <Skeleton className="mx-auto mt-6 h-5 w-48" />
-    </div>
-  );
-}
