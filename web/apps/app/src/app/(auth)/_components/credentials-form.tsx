@@ -2,7 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Button, ErrorMessage, Input, Label, PasswordInput } from "@bower/ui";
+import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
 import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
 const MIN_PASSWORD = 8;
@@ -113,11 +113,7 @@ export function CredentialsForm({
                 onChange={(e) => setConfirm(e.target.value)}
               />
             </div>
-            {mismatch && (
-              <p id="confirm-error" className="mt-1 text-xs text-red-600 dark:text-red-400">
-                Passwords do not match.
-              </p>
-            )}
+            {mismatch && <FieldError id="confirm-error">Passwords do not match.</FieldError>}
           </div>
         )}
         <Button type="submit" fullWidth loading={submitting} disabled={mismatch}>

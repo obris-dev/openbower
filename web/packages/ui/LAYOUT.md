@@ -33,10 +33,11 @@ reports; review against this list before adding a component.
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
 9. **Errors have three tiers; pick by attachment, not preference.**
    (a) Field-level validation lives at its field (a mismatch hint, an
-   invalid email), often live. (b) A submission failure not attributable
+   invalid email), often live: `FieldError`, id-linked to the input's
+   `aria-describedby`. (b) A submission failure not attributable
    to one field (invalid credentials, rate limited) is a FORM-LEVEL
-   banner at the top of the form (ErrorMessage), persisting until the
+   banner at the top of the form (`ErrorMessage`), persisting until the
    next attempt: the standard error-summary pattern every serious login
-   form uses. (c) Toasts are for outcomes of operations detached from a
-   form the user is staring at (a fill failed, a save bounced). Never
+   form uses. (c) Toasts (`useToast`) are for outcomes of operations detached
+   from a form the user is staring at (a fill failed, a save bounced). Never
    toast tier a or b; never banner tier c.

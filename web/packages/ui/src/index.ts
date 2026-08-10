@@ -5,6 +5,7 @@
 export { Button } from "./button";
 export { Card } from "./card";
 export { ErrorMessage } from "./error-message";
+export { FieldError } from "./field-error";
 export { Input } from "./input";
 export { Label } from "./label";
 export { PasswordInput } from "./password-input";
