@@ -7,6 +7,14 @@ import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
 const MIN_PASSWORD = 8;
 
+/** The cross-link under the form (login <-> signup); `href` is a
+ * webRoutes path, and the in-flight ?next rides along automatically. */
+export type CredentialsFooter = {
+  prompt: string;
+  label: string;
+  href: string;
+};
+
 /** The shared credentials machinery behind login and signup: the web owns
  * the SCREEN, the IdP stays the authority `action` posts to. On success
  * the IdP session exists; with ?next we resume the in-flight OAuth
@@ -27,7 +35,7 @@ export function CredentialsForm({
   busyLabel: string;
   passwordAutoComplete: "current-password" | "new-password";
   confirmPassword?: boolean;
-  footer: { prompt: string; label: string; href: string };
+  footer: CredentialsFooter;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
