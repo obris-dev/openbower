@@ -5,11 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
 import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
-const MIN_PASSWORD = 8;
-
 import { MODES } from "./modes";
 import type { ModeName } from "./types";
 
+const MIN_PASSWORD = 8;
 const REMEMBER_EMAIL_KEY = "bower.login.email";
 
 /** The shared credentials machinery behind login and signup: the web owns
