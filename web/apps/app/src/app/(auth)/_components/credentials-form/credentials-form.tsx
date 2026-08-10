@@ -3,7 +3,7 @@
 import { type FormEvent, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
-import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
+import { type CredentialFailure, idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
 import { MODES } from "./modes";
 import type { ModeName } from "./types";
@@ -46,7 +46,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
   const remember = rememberInput ?? storedEmail !== null;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<CredentialFailure | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // `next` is read straight off the URL (no mount effect + state, which
   // would setState within an effect and cascade a render).
@@ -57,7 +57,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (confirmPassword && password !== confirm) {
-      setError("Passwords do not match.");
+      setError({ message: "Passwords do not match." });
       return;
     }
     setSubmitting(true);
@@ -83,7 +83,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
     <>
       <p className="mb-6 mt-1 text-sm text-ink/60 dark:text-paper/60">{subtitle}</p>
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        {error && <ErrorMessage message={error} />}
+        {error?.message && <ErrorMessage message={error.message} />}
         <div>
           <Label htmlFor="email">Email</Label>
           <div className="mt-1.5">
@@ -93,10 +93,13 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
               autoComplete="email"
               autoFocus
               required
+              invalid={Boolean(error?.fields?.email)}
+              aria-describedby={error?.fields?.email ? "email-error" : undefined}
               value={email}
               onChange={(e) => setEmailInput(e.target.value)}
             />
           </div>
+          {error?.fields?.email && <FieldError id="email-error">{error.fields.email.join(" ")}</FieldError>}
         </div>
         <div>
           <Label htmlFor="password">Password</Label>
@@ -106,10 +109,13 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
               autoComplete={passwordAutoComplete}
               required
               minLength={confirmPassword ? MIN_PASSWORD : undefined}
+              invalid={Boolean(error?.fields?.password)}
+              aria-describedby={error?.fields?.password ? "password-error" : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+          {error?.fields?.password && <FieldError id="password-error">{error.fields.password.join(" ")}</FieldError>}
         </div>
         {rememberEmail && (
           <label className="flex items-center gap-2 text-sm text-ink/70 dark:text-paper/70">

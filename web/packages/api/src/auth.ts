@@ -51,52 +51,84 @@ export function loginUrl(): string {
   return buildApiUrl(apiRoutes.auth.login);
 }
 
-/**
- * Sign in at the identity provider (mints the IdP session cookie). The
- * web tier owns the login SCREEN; the IdP stays the authority this posts
- * to. Returns null on success, or a message to show the user.
- */
-export async function idpLogin(email: string, password: string): Promise<string | null> {
+// A credential failure, shaped for the error taxonomy: `fields` carries
+// per-input messages (tier a, rendered AT the inputs) when the IdP's
+// validation response provides them; `message` is the form-level banner
+// (tier b) for everything un-attributable (bad credentials, throttled,
+// unreachable). Success is null.
+export type CredentialFieldErrors = { email?: string[]; password?: string[] };
+export type CredentialFailure = { message?: string; fields?: CredentialFieldErrors };
+
+function parseFieldErrors(body: unknown): CredentialFieldErrors | undefined {
+  if (typeof body !== "object" || body === null || !("fields" in body)) return undefined;
+  const raw = (body as { fields: unknown }).fields;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const fields: CredentialFieldErrors = {};
+  for (const key of ["email", "password"] as const) {
+    const messages = (raw as Record<string, unknown>)[key];
+    if (Array.isArray(messages) && messages.every((m) => typeof m === "string") && messages.length > 0) {
+      fields[key] = messages;
+    }
+  }
+  return fields.email || fields.password ? fields : undefined;
+}
+
+async function postCredentials(
+  url: string,
+  email: string,
+  password: string,
+  messages: { unreachable: string; failed: string; on401?: string; on409?: CredentialFailure; badRequest: string },
+): Promise<CredentialFailure | null> {
   let res: Response;
   try {
-    res = await fetch(buildAuthUrl(authRoutes.login), {
+    res = await fetch(url, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
   } catch {
-    return "Sign-in service unreachable. Please try again.";
+    return { message: messages.unreachable };
   }
   if (res.ok) return null;
-  if (res.status === 401) return "Email or password is incorrect.";
-  if (res.status === 400) return "Please enter a valid email and password.";
-  if (res.status === 429) return "Too many attempts. Please wait a moment and try again.";
-  return "Sign-in failed. Please try again.";
+  if (res.status === 401 && messages.on401) return { message: messages.on401 };
+  if (res.status === 409 && messages.on409) return messages.on409;
+  if (res.status === 400) {
+    const fields = parseFieldErrors(await res.json().catch(() => null));
+    // With field association, the inputs speak for themselves (tier a);
+    // without it, fall back to the generic banner.
+    return fields ? { fields } : { message: messages.badRequest };
+  }
+  if (res.status === 429) return { message: "Too many attempts. Please wait a moment and try again." };
+  return { message: messages.failed };
+}
+
+/**
+ * Sign in at the identity provider (mints the IdP session cookie). The
+ * web tier owns the login SCREEN; the IdP stays the authority this posts
+ * to. Returns null on success, or a CredentialFailure to render.
+ */
+export function idpLogin(email: string, password: string): Promise<CredentialFailure | null> {
+  return postCredentials(buildAuthUrl(authRoutes.login), email, password, {
+    unreachable: "Sign-in service unreachable. Please try again.",
+    failed: "Sign-in failed. Please try again.",
+    on401: "Email or password is incorrect.",
+    badRequest: "Please enter a valid email and password.",
+  });
 }
 
 /**
  * Create an account at the identity provider (mints the IdP session on
- * success, like login). Same posture as idpLogin: the web owns the screen,
- * the IdP is the authority. Returns null on success, or a message to show.
+ * success, like login). Same posture as idpLogin. The duplicate-email
+ * 409 is email-attributable, so it renders AT the email field.
  */
-export async function idpSignup(email: string, password: string): Promise<string | null> {
-  let res: Response;
-  try {
-    res = await fetch(buildAuthUrl(authRoutes.signup), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-  } catch {
-    return "Sign-up service unreachable. Please try again.";
-  }
-  if (res.ok) return null;
-  if (res.status === 409) return "An account with this email already exists; try signing in.";
-  if (res.status === 400) return "Please enter a valid email and a stronger password.";
-  if (res.status === 429) return "Too many attempts. Please wait a moment and try again.";
-  return "Sign-up failed. Please try again.";
+export function idpSignup(email: string, password: string): Promise<CredentialFailure | null> {
+  return postCredentials(buildAuthUrl(authRoutes.signup), email, password, {
+    unreachable: "Sign-up service unreachable. Please try again.",
+    failed: "Sign-up failed. Please try again.",
+    on409: { fields: { email: ["An account with this email already exists; try signing in."] } },
+    badRequest: "Please enter a valid email and a stronger password.",
+  });
 }
 
 /**

@@ -1,3 +1,5 @@
+import type { CredentialFailure } from "@bower/api";
+
 /** The two signed-out screens share one form; a mode names which. */
 export type ModeName = "login" | "signup";
 
@@ -11,7 +13,7 @@ export type CredentialsFooter = {
 
 export type Mode = {
   subtitle: string;
-  action: (email: string, password: string) => Promise<string | null>;
+  action: (email: string, password: string) => Promise<CredentialFailure | null>;
   submitLabel: string;
   busyLabel: string;
   passwordAutoComplete: "current-password" | "new-password";
