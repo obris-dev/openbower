@@ -3,7 +3,7 @@
 import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
-import { idpResumeUrl, webRoutes, withNext } from "@bower/api";
+import { idpLogin, idpResumeUrl, idpSignup, webRoutes, withNext } from "@bower/api";
 
 const MIN_PASSWORD = 8;
 
@@ -15,6 +15,41 @@ export type CredentialsFooter = {
   href: string;
 };
 
+type Mode = {
+  subtitle: string;
+  action: (email: string, password: string) => Promise<string | null>;
+  submitLabel: string;
+  busyLabel: string;
+  passwordAutoComplete: "current-password" | "new-password";
+  confirmPassword: boolean;
+  footer: CredentialsFooter;
+};
+
+// The per-screen config lives WITH the component (pages are server
+// components and cannot pass the action function across the boundary;
+// they name a mode instead). A future forgot-password screen is another
+// entry here plus its route.
+const MODES: Record<"login" | "signup", Mode> = {
+  login: {
+    subtitle: "Sign in to continue.",
+    action: idpLogin,
+    submitLabel: "Sign in",
+    busyLabel: "Signing in…",
+    passwordAutoComplete: "current-password",
+    confirmPassword: false,
+    footer: { prompt: "Don't have an account?", label: "Create account", href: webRoutes.signup },
+  },
+  signup: {
+    subtitle: "Create your account.",
+    action: idpSignup,
+    submitLabel: "Create account",
+    busyLabel: "Creating account…",
+    passwordAutoComplete: "new-password",
+    confirmPassword: true,
+    footer: { prompt: "Already have an account?", label: "Sign in", href: webRoutes.login },
+  },
+};
+
 /** The shared credentials machinery behind login and signup: the web owns
  * the SCREEN, the IdP stays the authority `action` posts to. On success
  * the IdP session exists; with ?next we resume the in-flight OAuth
@@ -22,23 +57,8 @@ export type CredentialsFooter = {
  * is no flow to resume and idpResumeUrl's fallback would strand the
  * browser on the IdP's own pages, so we go to the app instead: its guard
  * starts a fresh OAuth round against the just-minted IdP session. */
-export function CredentialsForm({
-  subtitle,
-  action,
-  submitLabel,
-  busyLabel,
-  passwordAutoComplete,
-  confirmPassword = false,
-  footer,
-}: {
-  subtitle: string;
-  action: (email: string, password: string) => Promise<string | null>;
-  submitLabel: string;
-  busyLabel: string;
-  passwordAutoComplete: "current-password" | "new-password";
-  confirmPassword?: boolean;
-  footer: CredentialsFooter;
-}) {
+export function CredentialsForm({ mode }: { mode: "login" | "signup" }) {
+  const { subtitle, action, submitLabel, busyLabel, passwordAutoComplete, confirmPassword, footer } = MODES[mode];
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
