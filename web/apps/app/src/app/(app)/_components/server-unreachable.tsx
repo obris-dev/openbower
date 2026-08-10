@@ -14,8 +14,8 @@ export function ServerUnreachable() {
         <CloudOff aria-hidden className="mx-auto h-10 w-10 text-ink/30 dark:text-paper/30" />
         <h1 className="mt-4 text-lg font-semibold text-ink dark:text-paper">Can&apos;t reach the server</h1>
         <p className="mt-2 text-sm text-ink/60 dark:text-paper/60">
-          Your connection may be offline, or the server may be restarting.
-          Nothing was lost; your session is safe.
+          Your connection may be offline, or we might be experiencing an
+          issue.
         </p>
         <Button onClick={() => window.location.reload()} fullWidth className="mt-6">
           Try again
