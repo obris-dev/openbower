@@ -1,0 +1,22 @@
+# The CI skeleton: every later phase EXTENDS this file with the lint and
+# test jobs for the code it adds; nothing is scaffolded ahead of need.
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-name:
+    # Fork PRs run a fork's editable copy of the check, so it only means
+    # something for branches in this repo.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Branch name follows <type>/<kebab-slug>
+        run: sh scripts/check-branch-name.sh "$HEAD_REF"
