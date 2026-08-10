@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchMeResult, loginUrl } from "@bower/api";
 
 import { useAuthStore } from "./store";
-
-const CHECK = { IDLE: "idle", CHECKING: "checking", DONE: "done", ERROR: "error" } as const;
-type CheckState = (typeof CHECK)[keyof typeof CHECK];
 
 /**
  * Resolve the current user via GET /v1/auth/me (cookie auth) into the store.
@@ -17,8 +14,9 @@ type CheckState = (typeof CHECK)[keyof typeof CHECK];
  *    definitively said unauthenticated.
  *  - error: the check failed for a NON-auth reason (network / CORS / 5xx).
  *    `user` is left untouched; consumers should not treat this as logged out.
- * Fires at most once per hook instance; skips the fetch if the store already
- * has a user (the just-logged-in path).
+ * The store's `checked` flag is the once-per-app gate (a warm store skips
+ * the fetch); within a mount the effect is restartable, which Strict Mode
+ * requires.
  */
 export function useUser() {
   const user = useAuthStore((s) => s.user);
@@ -26,43 +24,43 @@ export function useUser() {
   const setUser = useAuthStore((s) => s.setUser);
   // Seed DONE if a check already resolved (store warm from a prior mount or a
   // just-completed login), so navigating between pages doesn't re-fetch /me.
-  const [phase, setPhase] = useState<CheckState>(checked ? CHECK.DONE : CHECK.IDLE);
-  const startedRef = useRef(false);
+  // Loading is DERIVED (not yet checked, not failed), so the effect never
+  // sets state synchronously; the outcomes land in async callbacks.
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (phase !== CHECK.IDLE || startedRef.current || checked) return;
-    startedRef.current = true;
-    setPhase(CHECK.CHECKING);
+    if (checked) return;
 
-    // The effect callback can't be async (it must return the cleanup),
-    // so the await lives in an inner function; the cancelled flag stops
-    // a resolution that lands after unmount or re-run from applying
-    // stale state.
+    // The effect callback can't be async (it must return the cleanup), so
+    // the await lives in an inner function; the cancelled flag stops a
+    // resolution that lands after unmount or re-run from applying stale
+    // state. The effect is RESTARTABLE (no single-fire ref): Strict
+    // Mode's mount-cleanup-remount cancels the first run and must be able
+    // to start the second, else the check deadlocks. The store's
+    // `checked` flag is the real once-per-app gate.
     let cancelled = false;
     async function check() {
       const result = await fetchMeResult();
       if (cancelled) return;
       if (result.status === "ok") {
         setUser(result.user);
-        setPhase(CHECK.DONE);
       } else if (result.status === "unauthenticated") {
         setUser(null);
-        setPhase(CHECK.DONE);
       } else {
         // Network / CORS / 5xx: don't know, don't clobber `user`.
-        setPhase(CHECK.ERROR);
+        setFailed(true);
       }
     }
     void check();
     return () => {
       cancelled = true;
     };
-  }, [phase, checked, setUser]);
+  }, [checked, setUser]);
 
   return {
     user,
-    loading: phase === CHECK.IDLE || phase === CHECK.CHECKING,
-    error: phase === CHECK.ERROR,
+    loading: !checked && !failed,
+    error: failed,
   };
 }
 
