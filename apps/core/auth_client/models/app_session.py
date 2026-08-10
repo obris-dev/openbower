@@ -6,35 +6,38 @@ from common.models import BaseModel
 
 
 class AppSession(BaseModel):
-    """One browser login: the server-side record behind the `bwr_session`
-    cookie.
+    """One browser login: the server-side record behind the session cookie.
 
-    The cookie carries only a random opaque token; this row maps its hash to
-    the user and holds that user's IdP OAuth tokens (the browser never sees
-    them). `user_id` / `account_id` are the CLOUD-issued ULIDs from the IdP:
-    the cloud mints identities, the app borrows them, and the identity
-    fields here are a cached projection of the IdP's /me, not authority.
+    The cookie carries only a random opaque token; this row maps its hash
+    to the user and holds that user's IdP OAuth tokens, so the browser
+    never sees a token. There is no local user table: the identity fields
+    are a cached projection of the IdP's /me (ULID char pointers, display
+    email), not authority, and may lag it.
 
     A session dies by revocation (logout, or an upstream refresh failing),
-    not by a timer: `revoked_at` set means gone. Lifetime is governed by the
-    IdP's rotating refresh token.
+    never by a local timer: lifetime is delegated to the IdP's rotating
+    refresh token, so there is one authority for how long logins last.
     """
 
-    # SHA-256 hex of the cookie token. Only the hash is stored, so a leaked
-    # db dump can't be replayed as cookies.
+    # SHA-256 hex of the cookie token: lookups only ever need equality, so
+    # the original is never stored (nothing in the db can be replayed as a
+    # cookie). Contrast the OAuth tokens below, which must be recoverable.
     token_hash = models.CharField(_("token hash"), max_length=64, unique=True)
 
     user_id = models.CharField(_("user id"), max_length=26, db_index=True)
     account_id = models.CharField(_("account id"), max_length=26)
     email = models.EmailField(_("email"))
 
-    # Encrypted at rest: these are replayable IdP credentials, so a leaked
-    # dump must not surface live tokens (unlike token_hash, they can't be
-    # hashed because the app has to present them upstream verbatim).
+    # Presented upstream verbatim, so unlike token_hash they cannot be
+    # hashed; encrypted at rest instead.
     access_token = EncryptedTextField(_("access token"))
     refresh_token = EncryptedTextField(_("refresh token"))
+    # Enables proactive refresh (rotate just before expiry) instead of
+    # discovering expiry by an upstream 401.
     access_expires_at = models.DateTimeField(_("access token expires at"))
 
+    # Set means dead. A timestamp, not a boolean: null/not-null already
+    # answers "is it live" and this also records when it ended.
     revoked_at = models.DateTimeField(_("revoked at"), null=True, blank=True)
 
     class Meta:
