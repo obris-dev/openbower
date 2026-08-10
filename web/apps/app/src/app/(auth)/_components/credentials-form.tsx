@@ -148,7 +148,7 @@ export function CredentialsForm({ mode }: { mode: "login" | "signup" }) {
               onChange={(e) => setRemember(e.target.checked)}
               className="accent-signal"
             />
-            Remember my email
+            Remember me
           </label>
         )}
         {confirmPassword && (
