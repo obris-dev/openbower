@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CloudOff } from "lucide-react";
 import { Button, Card } from "@bower/ui";
 import { apiRoutes, buildApiUrl } from "@bower/api";
@@ -14,12 +14,32 @@ import { apiRoutes, buildApiUrl } from "@bower/api";
  * signed-in user to login. */
 
 const RETRY_DELAYS_SECONDS = [2, 4, 8, 15, 30] as const;
+
+// Reactive navigator.onLine: the one cause we can actually DETECT, so it
+// is the only one we name. Server snapshot says online (the state only
+// matters client-side).
+function subscribeOnline(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+function useIsOnline(): boolean {
+  return useSyncExternalStore(
+    subscribeOnline,
+    () => window.navigator.onLine,
+    () => true,
+  );
+}
 const MAX_DELAY_SECONDS = RETRY_DELAYS_SECONDS[RETRY_DELAYS_SECONDS.length - 1] ?? 30;
 
 export function ServerUnreachable() {
   const [secondsLeft, setSecondsLeft] = useState<number>(RETRY_DELAYS_SECONDS[0]);
   const [probing, setProbing] = useState(false);
   const attempt = useRef(0);
+  const online = useIsOnline();
 
   async function probe() {
     setProbing(true);
@@ -35,6 +55,13 @@ export function ServerUnreachable() {
       setProbing(false);
     }
   }
+
+  // Connectivity returning is the strongest signal there is: probe
+  // immediately instead of waiting out the countdown.
+  useEffect(() => {
+    if (online && attempt.current > 0 && !probing) void probe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire on the online edge only
+  }, [online]);
 
   useEffect(() => {
     if (probing) return;
@@ -56,10 +83,11 @@ export function ServerUnreachable() {
       <Card className="w-full max-w-sm p-8 text-center" role="alert">
         <CloudOff aria-hidden className="mx-auto h-10 w-10 text-ink/30 dark:text-paper/30" />
         <h1 className="mt-4 text-lg font-semibold text-ink dark:text-paper">Can&apos;t reach the server</h1>
-        <p className="mt-2 text-sm text-ink/60 dark:text-paper/60">
-          Your connection may be offline, or we might be experiencing an
-          issue.
-        </p>
+        {!online && (
+          <p className="mt-2 text-sm text-ink/60 dark:text-paper/60">
+            You&apos;re offline. We&apos;ll retry when your connection returns.
+          </p>
+        )}
         <p className="mt-3 text-xs text-ink/40 dark:text-paper/40" aria-live="polite">
           {probing ? "Retrying…" : `Retrying in ${secondsLeft}s…`}
         </p>
