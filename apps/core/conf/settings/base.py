@@ -176,7 +176,7 @@ API_VERSION_PREFIX = os.environ.get("API_VERSION_PREFIX", "v1")
 # Product version: version.txt at the repo root. Exposed on /healthz.
 # Best-effort (never crash settings import over a cosmetic string).
 try:
-    PRODUCT_VERSION = (REPO_ROOT / "version.txt").read_text(encoding="utf-8").strip() or "unknown"
+    PRODUCT_VERSION = (BASE_DIR / "version.txt").read_text(encoding="utf-8").strip() or "unknown"
 except (OSError, UnicodeDecodeError):
     PRODUCT_VERSION = "unknown"
 
