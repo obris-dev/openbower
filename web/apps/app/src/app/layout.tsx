@@ -1,7 +1,7 @@
 import "./globals.css";
 import type { ReactNode } from "react";
 import { Geist_Mono, Poppins } from "next/font/google";
-import { ThemeHeadScript } from "@bower/ui";
+import { SidebarHeadScript, ThemeHeadScript } from "@bower/ui";
 
 import { Providers } from "./providers";
 
@@ -18,8 +18,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={`${poppins.variable} ${geistMono.variable}`}>
       <body className="font-sans antialiased">
-        {/* Blocking script applies the theme class before paint (no flash). */}
+        {/* Blocking scripts apply theme + sidebar state before paint (no flash). */}
         <ThemeHeadScript />
+        <SidebarHeadScript />
         <Providers>{children}</Providers>
       </body>
     </html>

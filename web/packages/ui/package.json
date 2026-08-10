@@ -10,7 +10,7 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@headlessui/react": "^2.2.9",
+    "@headlessui/react": "^2.2.0",
     "@radix-ui/react-toast": "^1.2.23",
     "clsx": "^2.1.1",
     "lucide-react": "^1.28.0",
