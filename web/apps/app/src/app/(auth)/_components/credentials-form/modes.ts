@@ -7,7 +7,7 @@ import type { Mode, ModeName } from "./types";
 // they name a mode instead). A future forgot-password screen is another
 // entry here plus its route. The fallback reads the same record, so the
 // skeleton cannot drift from the form it stands in for.
-export const MODES: Record<ModeName, Mode> = {
+export const MODES = {
   login: {
     subtitle: "Sign in to continue.",
     action: idpLogin,
@@ -28,4 +28,4 @@ export const MODES: Record<ModeName, Mode> = {
     rememberEmail: false,
     footer: { prompt: "Already have an account?", label: "Sign in", href: webRoutes.login },
   },
-};
+} as const satisfies Record<ModeName, Mode>;
