@@ -3,7 +3,7 @@ import os
 from django.core.wsgi import get_wsgi_application
 from dotenv import load_dotenv
 
-from conf.environments import current_env
+from openbower_kernel.environments import current_env
 
 load_dotenv()
 

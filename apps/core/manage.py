@@ -6,7 +6,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from conf.environments import current_env
+from openbower_kernel.environments import current_env
 
 
 def main():

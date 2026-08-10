@@ -14,10 +14,11 @@ from __future__ import annotations
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 
-from auth_client.constants import SESSION_COOKIE_NAME
+from auth_client.constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME
 from auth_client.downstream import DownstreamTokenRejected
 from auth_client.services.oauth import AuthUpstreamUnavailable, TokenResponse
 from auth_client.services.sessions import AppSessionService
@@ -27,7 +28,7 @@ from openbower_schema import AuthUser
 # they fit the AppSession char-pointer columns.
 _IDENTITY = {
     "id": "01JQ" + "A" * 22,
-    "email": "josh@example.com",
+    "email": "user@example.com",
     "account_id": "01JQ" + "B" * 22,
 }
 _TOKENS = {"access_token": "access-abc", "refresh_token": "refresh-abc", "expires_in": 3600}
@@ -71,7 +72,7 @@ class LoginLogoutFlowTests(TestCase):
         # access token is fresh, so no refresh).
         who = self.client.get(reverse("auth_me"))
         self.assertEqual(who.status_code, 200)
-        self.assertEqual(who.json()["email"], "josh@example.com")
+        self.assertEqual(who.json()["email"], "user@example.com")
 
         # Logout must be 200 (the regression: a bad delete_cookie kwarg 500'd
         # here), return the IdP logout URL, and clear the cookie.
@@ -84,6 +85,21 @@ class LoginLogoutFlowTests(TestCase):
         # After logout the session is gone: /me is unauthenticated (401).
         after = self.client.get(reverse("auth_me"))
         self.assertEqual(after.status_code, 401)
+
+    def test_callback_without_state_cookie_is_rejected(self):
+        # Login CSRF guard: a state that exists in the server-side bag but
+        # arrives from a browser that never hit /login (no state cookie)
+        # must NOT be exchanged, or a victim could be lured onto an
+        # attacker's callback URL and signed into the attacker's account.
+        state = self._state_from_login()
+        del self.client.cookies[STATE_COOKIE_NAME]
+
+        cb = self.client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
+        self.assertEqual(cb.status_code, 302)
+        self.assertIn("auth_error=state_mismatch", cb["Location"])
+        self.assertFalse(
+            self.client.cookies.get(SESSION_COOKIE_NAME, None) and self.client.cookies[SESSION_COOKIE_NAME].value
+        )
 
     def test_logout_without_session_is_idempotent(self):
         # A logout with no cookie still 200s and returns the IdP logout URL,
@@ -129,6 +145,18 @@ class SessionRefreshTests(TestCase):
             resolved = AppSessionService.Global.resolve(raw)
         self.assertEqual(resolved.access_token, "access-abc")
         idp.assert_not_called()
+
+    def test_refresh_grant_carries_resource_indicators(self):
+        # RFC 8707: audience is minted at TOKEN time. If the indicator only
+        # rode the authorize redirect, the first silent refresh would mint
+        # an audience-less token and every audience-enforcing downstream
+        # call would 401 from then on (a time-delayed failure).
+        record, _ = self._session(expires_in=0)
+        with patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _REFRESHED)) as post:
+            AppSessionService.Global.force_refresh(record, stale_token=record.access_token)
+        sent = post.call_args.kwargs["data"]
+        self.assertEqual(sent["grant_type"], "refresh_token")
+        self.assertEqual(sent["resource"], settings.OAUTH_RESOURCES)
 
     def test_force_refresh_skips_idp_when_a_peer_already_rotated(self):
         # If the row's current token differs from the one the caller tried, a

@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, type InputHTMLAttributes, useState } from "react";
-import { clsx } from "clsx";
+import { cn } from "./cn";
 import { Eye, EyeOff } from "lucide-react";
 
 export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type"> {
@@ -19,7 +19,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         ref={ref}
         type={show ? "text" : "password"}
         aria-invalid={invalid || undefined}
-        className={clsx(
+        className={cn(
           "w-full rounded-md bg-paper px-3 py-2 pr-10 text-sm text-ink shadow-sm",
           "ring-1 ring-inset ring-ink/15 placeholder:text-ink/40",
           "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-signal",

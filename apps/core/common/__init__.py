@@ -1,5 +1,5 @@
-# `common` holds the foundational primitives every app builds on: the ULID
-# primary-key field + BaseModel, the /v1 URL helpers, the env helpers, and
-# the healthz probe. It is intended to graduate into a shared, installable
-# package once there is a second consumer to justify the packaging cost;
-# until then it lives here as plain app code.
+# `common` holds cross-app plumbing that is THIS service's, not the
+# kernel's: shared test harnesses (testing.py) and, as later phases land,
+# service-specific error contracts and seams. Framework-agnostic
+# primitives (ULID field, BaseModel, env helpers, healthz) live in
+# openbower_kernel.

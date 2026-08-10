@@ -11,7 +11,7 @@ from django.urls import reverse
 
 IDENTITY = {
     "id": "01JQ" + "A" * 22,
-    "email": "josh@example.com",
+    "email": "user@example.com",
     "account_id": "01JQ" + "B" * 22,
 }
 TOKENS = {"access_token": "access-abc", "refresh_token": "refresh-abc", "expires_in": 3600}

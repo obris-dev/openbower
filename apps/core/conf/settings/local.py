@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("BASE_URL", "http://localhost:8002")
 # The web app dev server (web/apps/app runs `next dev -p 3003`).
 os.environ.setdefault("APP_BASE_URL", "http://localhost:3003")
-# The local identity service (the hosted repo serves it on :8001).
+# The local identity service (:8001 by suite convention).
 os.environ.setdefault("OPENBOWER_AUTH_URL", "http://localhost:8001")
 # Browser to Django is plain HTTP in dev; secure cookies would never get sent.
 os.environ.setdefault("AUTH_COOKIE_SECURE", "false")
@@ -22,7 +22,7 @@ os.environ.setdefault("POSTGRES_PORT", "5433")
 # Dev servers spawn a thread per request and Django's persistent
 # connections outlive dead threads, so CONN_MAX_AGE>0 under runserver LEAKS
 # one Postgres connection per request until max_connections. Ephemeral
-# connections in dev; hosted gunicorn keeps the base default (60).
+# connections in dev; a deployed gunicorn keeps the base default (60).
 os.environ.setdefault("DB_CONN_MAX_AGE", "0")
 
 from openbower_kernel.env import env_bool

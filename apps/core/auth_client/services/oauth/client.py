@@ -37,13 +37,16 @@ class OAuthClientGlobal:
     account context; the browser session is user-scoped)."""
 
     @staticmethod
-    def begin_login() -> str:
-        """Mint state + PKCE verifier, stash the bag, and return the
-        IdP authorize URL to redirect the browser to."""
+    def begin_login() -> tuple[str, str]:
+        """Mint state + PKCE verifier, stash the bag, and return
+        `(authorize_url, state)`. The state goes back to the caller so
+        the view can ALSO pin it to the browser in a cookie: the cache
+        bag alone is server-global and cannot say which browser started
+        the flow."""
         state = pkce.new_state()
         verifier = pkce.new_verifier()
         OAuthStateStore.put(state=state, verifier=verifier)
-        return idp_urls.authorize_url(
+        url = idp_urls.authorize_url(
             {
                 "response_type": "code",
                 "client_id": settings.OAUTH_CLIENT_ID,
@@ -61,6 +64,7 @@ class OAuthClientGlobal:
                 "code_challenge_method": "S256",
             }
         )
+        return url, state
 
     @staticmethod
     def complete_login(*, state: str, code: str) -> tuple[TokenResponse, AuthUser]:
@@ -81,6 +85,10 @@ class OAuthClientGlobal:
                 "redirect_uri": _redirect_uri(),
                 "client_id": settings.OAUTH_CLIENT_ID,
                 "code_verifier": verifier,
+                # RFC 8707 on the TOKEN request too: audience is minted at
+                # token time, so an authorize-only indicator would be lost
+                # by an audience-enforcing resource server.
+                "resource": settings.OAUTH_RESOURCES,
             }
         )
         return tokens, transport.fetch_identity(tokens.access_token)
@@ -95,6 +103,10 @@ class OAuthClientGlobal:
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
                 "client_id": settings.OAUTH_CLIENT_ID,
+                # Without the indicator here, the FIRST silent refresh
+                # (about an hour in) would mint an audience-less token and
+                # every audience-checking call after it would 401.
+                "resource": settings.OAUTH_RESOURCES,
             }
         )
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { fetchMeResult, loginUrl } from "@bower/api";
 
 import { useAuthStore } from "./store";
@@ -77,13 +77,36 @@ export function useUser() {
  * callback (do not reuse the login page's `next`, which is an IdP authorize
  * path, not an app path).
  */
+const noopSubscribe = () => () => {};
+
+/**
+ * The `?auth_error=` code a failed OAuth callback landed with, or null.
+ * Read once per document load (the API redirect is a full navigation, so
+ * the param can't change under a mounted tree). useSyncExternalStore with
+ * a null server snapshot keeps the SSR/hydration render clean; the real
+ * value appears in the post-hydration render.
+ */
+export function useAuthCallbackError(): string | null {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => new URLSearchParams(window.location.search).get("auth_error"),
+    () => null,
+  );
+}
+
 export function useRequireAuth() {
   const { user, loading, error } = useUser();
+  const authError = useAuthCallbackError();
 
   useEffect(() => {
+    // A failed callback is TERMINAL until the user acts: the IdP session
+    // usually still exists, so bouncing back to login auto-approves,
+    // fails the callback the same way, and loops forever. The caller
+    // renders the failure instead.
+    if (authError !== null) return;
     if (loading || error || user !== null) return;
     window.location.href = loginUrl();
-  }, [user, loading, error]);
+  }, [user, loading, error, authError]);
 
-  return { user, loading, error };
+  return { user, loading, error, authError };
 }

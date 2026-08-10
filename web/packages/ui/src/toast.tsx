@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import * as RadixToast from "@radix-ui/react-toast";
 import { CircleAlert, CircleCheck, X } from "lucide-react";
-import { clsx } from "clsx";
+import { cn } from "./cn";
 
 /** Toasts, mirroring the obris notification shape (Radix Toast under a
  * provider + hook): screens report outcomes with one call and never own
@@ -33,7 +33,7 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: numbe
       onOpenChange={(open) => {
         if (!open) dismiss(toast.id);
       }}
-      className={clsx(
+      className={cn(
         "pointer-events-auto w-full overflow-hidden rounded-lg bg-paper p-4 shadow-lg ring-1 ring-ink/10",
         "data-[state=open]:animate-toast-in data-[state=closed]:animate-toast-out",
         "data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=cancel]:translate-x-0",
@@ -54,7 +54,7 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: numbe
             </RadixToast.Title>
           )}
           <RadixToast.Description
-            className={clsx(
+            className={cn(
               "text-sm [overflow-wrap:anywhere]",
               toast.title ? "mt-0.5 text-ink/60 dark:text-paper/60" : "font-medium text-ink dark:text-paper",
             )}

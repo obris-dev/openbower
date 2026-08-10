@@ -17,7 +17,7 @@ from .errors import AuthUpstreamError, AuthUpstreamUnavailable
 from .schema import TokenResponse
 
 
-def post_token(data: dict[str, str]) -> TokenResponse:
+def post_token(data: dict[str, str | list[str]]) -> TokenResponse:
     """POST the token endpoint; parse the body into a validated
     TokenResponse."""
     try:
@@ -61,7 +61,12 @@ def fetch_identity(access_token: str) -> AuthUser:
             timeout=settings.AUTH_HTTP_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as e:
-        raise AuthUpstreamError(f"identity endpoint unreachable: {type(e).__name__}") from e
+        # Transient, mirroring post_token: a blip fetching identity must
+        # not be reported as a terminal rejection (errors.py's split is
+        # load-bearing for what callers revoke).
+        raise AuthUpstreamUnavailable(f"identity endpoint unreachable: {type(e).__name__}") from e
+    if response.status_code >= 500 or response.status_code in (408, 429):
+        raise AuthUpstreamUnavailable(f"identity endpoint returned {response.status_code}")
     if response.status_code != 200:
         raise AuthUpstreamError(f"identity endpoint returned {response.status_code}")
     try:

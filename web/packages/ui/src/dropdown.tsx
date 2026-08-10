@@ -1,7 +1,7 @@
 "use client";
 
 import { Menu, MenuButton, MenuItem, MenuItems, type MenuItemsProps, type MenuProps } from "@headlessui/react";
-import { clsx } from "clsx";
+import { cn } from "./cn";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 /** The action menu, on Headless UI's Menu (adapted from the paid kit's
@@ -24,7 +24,7 @@ export function DropdownMenu({
       {...props}
       transition
       anchor={anchor}
-      className={clsx(
+      className={cn(
         "z-50 w-48 overflow-hidden rounded-lg border border-ink/10 bg-paper py-1 shadow-lg outline-none",
         "[--anchor-gap:0.5rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
         "dark:border-paper/15 dark:bg-ink",
@@ -49,11 +49,11 @@ export function DropdownItem({
   return (
     <MenuItem>
       {href ? (
-        <a href={href} className={clsx(ITEM_CLASSES, className)}>
+        <a href={href} className={cn(ITEM_CLASSES, className)}>
           {children}
         </a>
       ) : (
-        <button type="button" className={clsx(ITEM_CLASSES, className)} {...props}>
+        <button type="button" className={cn(ITEM_CLASSES, className)} {...props}>
           {children}
         </button>
       )}

@@ -2,6 +2,7 @@
 // phase that needs them; every addition follows the layout rules in
 // ./LAYOUT.md (min-w-0 discipline, wrap-anywhere on user content,
 // mobile-first rows, | separators, drawers over modals).
+export { cn } from "./cn";
 export { Button } from "./button";
 export { Card } from "./card";
 export { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "./dropdown";

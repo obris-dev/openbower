@@ -10,6 +10,7 @@ the opaque `bwr_session` cookie.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from urllib.parse import urlencode
 
@@ -23,8 +24,8 @@ from rest_framework.views import APIView
 from openbower_schema import AuthUser
 
 from . import idp_urls
-from .constants import SESSION_COOKIE_NAME, AuthErrorCode
-from .cookies import delete_session_cookie, set_session_cookie
+from .constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME, AuthErrorCode
+from .cookies import delete_session_cookie, delete_state_cookie, set_session_cookie, set_state_cookie
 from .services import AppSessionService, OAuthClientService, StateMismatch
 from .services.oauth import AuthUpstreamError
 
@@ -43,7 +44,12 @@ class LoginRedirectView(APIView):
     permission_classes: list = []
 
     def get(self, request: HttpRequest) -> HttpResponseRedirect:
-        return HttpResponseRedirect(OAuthClientService.Global.begin_login())
+        url, state = OAuthClientService.Global.begin_login()
+        response = HttpResponseRedirect(url)
+        # Pin the flow to THIS browser: the callback requires this cookie
+        # to echo the state it receives (see CallbackView).
+        set_state_cookie(response, state)
+        return response
 
 
 class CallbackView(APIView):
@@ -70,7 +76,9 @@ class CallbackView(APIView):
             # URL-encode so the bounded code lands cleanly as a single query
             # param (never inject extra params/fragments into the app URL).
             query = urlencode({"auth_error": str(reason)})
-            return HttpResponseRedirect(f"{settings.APP_BASE_URL}/?{query}")
+            response = HttpResponseRedirect(f"{settings.APP_BASE_URL}/?{query}")
+            delete_state_cookie(response)
+            return response
 
         if error:
             # The IdP said no. `error` is attacker-controllable (this is an
@@ -80,6 +88,14 @@ class CallbackView(APIView):
             return fail(AuthErrorCode.LOGIN_FAILED)
         if not state or not code:
             return fail(AuthErrorCode.MISSING_PARAMS)
+        # Browser binding: the state bag store is server-global, so a valid
+        # state only proves SOME browser started a flow. Requiring the
+        # /login-set cookie to echo it proves THIS browser did, which is
+        # what stops a victim being lured onto an attacker's callback URL
+        # and silently signed into the attacker's account. Constant-time
+        # compare: the cookie is a secret-bearing equality check.
+        if not hmac.compare_digest(request.COOKIES.get(STATE_COOKIE_NAME, ""), state):
+            return fail(AuthErrorCode.STATE_MISMATCH)
         try:
             tokens, user = OAuthClientService.Global.complete_login(state=state, code=code)
         except StateMismatch:
@@ -100,6 +116,8 @@ class CallbackView(APIView):
 
         response = HttpResponseRedirect(f"{settings.APP_BASE_URL}/")
         set_session_cookie(response, raw)
+        # The handshake is over; the state cookie has no further business.
+        delete_state_cookie(response)
         return response
 
 

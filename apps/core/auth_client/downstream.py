@@ -1,5 +1,5 @@
-"""The seam between the app and the downstream resource servers it calls on
-a user's behalf (currently the data service via the discover proxy).
+"""The seam between the app and the downstream resource servers it calls
+on a user's behalf.
 
 `DownstreamTokenRejected` is the generic "the resource server said our
 forwarded access token is inactive / expired / revoked" signal (an upstream

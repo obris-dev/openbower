@@ -8,6 +8,18 @@ from enum import StrEnum
 # IdP token); the server-side AppSession record holds the real credentials.
 SESSION_COOKIE_NAME = "bwr_session"
 
+# The login round-trip's browser-binding cookie. The state bag store is
+# server-global, so state alone proves the flow STARTED, not WHO started
+# it: without this cookie a victim lured to an attacker's callback URL
+# would be signed into the attacker-initiated session (login CSRF). Set
+# at /login, required to match at /callback, cleared either way.
+STATE_COOKIE_NAME = "bwr_oauth_state"
+
+# The authorize round-trip should take seconds; 10 minutes absorbs a slow
+# first-time login. Shared by the cache bag and the state cookie so the
+# two halves of the same handshake expire together.
+STATE_TTL_SECONDS = 600
+
 
 # Stable error codes. NOT_AUTHENTICATED / INVALID_REQUEST ride the JSON
 # `{"error", "detail"}` API responses (via the project exception handler);

@@ -203,8 +203,13 @@ REST_FRAMEWORK = {
 # Run `manage.py createcachetable` once on a cold db (the make targets do).
 CACHE_BACKEND = os.environ.get("CACHE_BACKEND", "django.core.cache.backends.db.DatabaseCache")
 CACHE_LOCATION = os.environ.get("CACHE_LOCATION", "openbower_cache")
+# MAX_ENTRIES is raised well above DatabaseCache's default 300 because this
+# cache holds pending login state bags: culling at 300 would evict states
+# mid-handshake under a burst and fail legitimate logins with
+# state_mismatch. Matches the identity service's setting.
+CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", "10000"))
 CACHES = {
-    "default": {"BACKEND": CACHE_BACKEND, "LOCATION": CACHE_LOCATION},
+    "default": {"BACKEND": CACHE_BACKEND, "LOCATION": CACHE_LOCATION, "OPTIONS": {"MAX_ENTRIES": CACHE_MAX_ENTRIES}},
 }
 
 # App loggers are configured explicitly so warnings surface predictably
@@ -249,7 +254,3 @@ LOGGING = {
         for app in LOCAL_APPS
     },
 }
-
-# The column-fill worker (a second process of this image).
-COLUMN_JOB_CLAIM_TIMEOUT_SECONDS = int(os.environ.get("COLUMN_JOB_CLAIM_TIMEOUT_SECONDS", "600"))
-COLUMN_JOB_POLL_SECONDS = float(os.environ.get("COLUMN_JOB_POLL_SECONDS", "0.5"))

@@ -16,6 +16,7 @@ from __future__ import annotations
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 
 from auth_client.models import AppSession
@@ -80,11 +81,24 @@ class AppSessionGlobal:
     @staticmethod
     def prune_revoked(*, older_than_days: int) -> int:
         """Delete sessions revoked more than `older_than_days` ago; return
-        the count. Live (non-revoked) rows are never touched, their lifetime
-        is governed by the IdP's rotating refresh token. For the scheduled
-        prune command, so ORM access stays inside the service layer."""
+        the count. For the scheduled prune command, so ORM access stays
+        inside the service layer."""
         cutoff = timezone.now() - timedelta(days=older_than_days)
         deleted, _ = AppSession.objects.filter(revoked_at__isnull=False, revoked_at__lt=cutoff).delete()
+        return deleted
+
+    @staticmethod
+    def prune_unreachable() -> int:
+        """Delete LIVE sessions no browser can present anymore; return the
+        count. The cookie's max-age is fixed at login (it is never
+        re-issued), so once that long has passed since creation the token
+        cannot arrive on any request and the row only warehouses an
+        encrypted refresh-token pair. Rows are deleted without upstream
+        revocation: the IdP's rotating refresh token governs the pair's
+        upstream lifetime, and an unreachable session cannot be used to
+        rotate it anyway."""
+        cutoff = timezone.now() - timedelta(seconds=settings.AUTH_COOKIE_MAX_AGE_SECONDS)
+        deleted, _ = AppSession.objects.filter(revoked_at__isnull=True, created_at__lt=cutoff).delete()
         return deleted
 
     @staticmethod

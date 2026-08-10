@@ -1,10 +1,10 @@
-"""Delete AppSession rows revoked long enough ago that they are dead weight.
+"""Delete AppSession rows that are dead weight.
 
-A session is revoked on logout or when an upstream refresh is definitively
-rejected; the row (and its encrypted tokens) then serves no purpose. Run on
-a schedule (cron / periodic job) so revoked sessions don't accumulate
-forever. Live (non-revoked) rows are never touched here; their lifetime is
-governed by the IdP's rotating refresh token.
+Two populations: rows revoked long enough ago (logout, or an upstream
+refresh definitively rejected), and LIVE rows older than the cookie's
+fixed max-age, which no browser can present anymore but which would
+otherwise warehouse encrypted refresh tokens forever. Run on a schedule
+(cron / periodic job).
 """
 
 from __future__ import annotations
@@ -30,5 +30,9 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         days = options["days"]
-        deleted = AppSessionService.Global.prune_revoked(older_than_days=days)
-        self.stdout.write(f"Pruned {deleted} session row(s) revoked more than {days} day(s) ago")
+        revoked = AppSessionService.Global.prune_revoked(older_than_days=days)
+        unreachable = AppSessionService.Global.prune_unreachable()
+        self.stdout.write(
+            f"Pruned {revoked} session row(s) revoked more than {days} day(s) ago"
+            f" and {unreachable} live row(s) past the cookie max-age"
+        )

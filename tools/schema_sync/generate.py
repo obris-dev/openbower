@@ -13,7 +13,7 @@ hand-maintaining a parallel copy.
 committed file (the same discipline as `uv lock --locked`).
 
 Scoped on purpose: a flat CONTRACT_MODELS list and build + check, without the
-coverage/guard machinery of the larger sibling project. Add models to the list
+heavier coverage/guard machinery. Add models to the list
 as the contract grows.
 """
 

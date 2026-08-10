@@ -2,7 +2,7 @@
 
 import { useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown, CircleUser, Menu, PanelLeft, X } from "lucide-react";
-import { clsx } from "clsx";
+import { cn } from "../cn";
 import { BrandMark } from "../brand-mark";
 import { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "../dropdown";
 import { SIDEBAR_COLLAPSE_KEY } from "./constants";
@@ -43,7 +43,7 @@ function NavItems({
             href={item.href}
             onClick={onNavigate}
             title={collapsible ? item.name : undefined}
-            className={clsx(
+            className={cn(
               item.current ? "bg-paper/10 text-paper" : "text-paper/60 hover:bg-paper/10 hover:text-paper",
               "flex items-center gap-x-3 rounded-md p-2 text-sm font-semibold",
               collapsible && "[[data-sidebar=collapsed]_&]:justify-center",
@@ -196,7 +196,7 @@ export function Sidebar({
               <DropdownMenu anchor="bottom end" className="w-64 py-0">
                 {account.email && (
                   <div className="flex items-center gap-x-3 border-b border-ink/10 px-4 py-3 dark:border-paper/10">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-signal text-sm font-medium text-paper">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-signal text-sm font-medium text-signal-900">
                       {account.email.charAt(0).toUpperCase()}
                     </span>
                     <span className="truncate text-sm text-ink/80 dark:text-paper/80">{account.email}</span>

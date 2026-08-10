@@ -14,7 +14,8 @@
     "@radix-ui/react-toast": "^1.2.23",
     "clsx": "^2.1.1",
     "lucide-react": "^1.28.0",
-    "next-themes": "^0.4.4"
+    "next-themes": "^0.4.4",
+    "tailwind-merge": "^3.6.0"
   },
   "peerDependencies": {
     "next": "^16",
