@@ -23,6 +23,7 @@ export type CredentialsFooter = {
  * browser on the IdP's own pages, so we go to the app instead: its guard
  * starts a fresh OAuth round against the just-minted IdP session. */
 export function CredentialsForm({
+  subtitle,
   action,
   submitLabel,
   busyLabel,
@@ -30,6 +31,7 @@ export function CredentialsForm({
   confirmPassword = false,
   footer,
 }: {
+  subtitle: string;
   action: (email: string, password: string) => Promise<string | null>;
   submitLabel: string;
   busyLabel: string;
@@ -67,6 +69,7 @@ export function CredentialsForm({
 
   return (
     <>
+      <p className="mb-6 mt-1 text-sm text-ink/60 dark:text-paper/60">{subtitle}</p>
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {error && <ErrorMessage message={error} />}
         <div>
