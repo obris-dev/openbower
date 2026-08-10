@@ -1,19 +1,29 @@
-import type { ButtonHTMLAttributes } from "react";
+"use client";
+
+import type { AnchorHTMLAttributes, ReactNode } from "react";
+import { Button as HeadlessButton, type ButtonProps as HeadlessButtonProps } from "@headlessui/react";
 import { clsx } from "clsx";
 
 type Variant = "primary" | "secondary" | "outline" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+type CommonProps = {
   variant?: Variant;
   size?: Size;
-  loading?: boolean;
   fullWidth?: boolean;
-  // When set, render an <a> styled as the button (for navigation links), so
-  // callers don't nest a <button> inside an <a> (invalid HTML). loading /
-  // disabled don't apply to the link form.
-  href?: string;
-}
+  className?: string;
+  children: ReactNode;
+};
+
+// Discriminated by href: the link form takes ANCHOR props (adapted from
+// the reference kit's shape), so a nav button can carry onClick/aria
+// instead of silently dropping them; loading applies to the button form
+// only (a navigation cannot be in-flight the same way).
+export type ButtonProps = CommonProps &
+  (
+    | ({ href: string; loading?: never } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "className" | "href">)
+    | ({ href?: never; loading?: boolean } & Omit<HeadlessButtonProps, "as" | "className" | "children">)
+  );
 
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-signal text-paper hover:bg-signal-600 disabled:bg-signal-300",
@@ -29,40 +39,42 @@ const SIZES: Record<Size, string> = {
   lg: "px-5 py-2.5 text-base",
 };
 
-export function Button({
-  variant = "primary",
-  size = "md",
-  loading = false,
-  fullWidth = false,
-  href,
-  disabled,
-  className,
-  children,
-  ...rest
-}: ButtonProps) {
+/** Expand the hit area to at least 44x44px on touch devices (pointer
+ * precision is the media feature; mice keep the visual bounds). */
+function TouchTarget({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <span
+        aria-hidden
+        className="absolute left-1/2 top-1/2 size-[max(100%,2.75rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden"
+      />
+      {children}
+    </>
+  );
+}
+
+export function Button({ variant = "primary", size = "md", fullWidth = false, className, children, ...rest }: ButtonProps) {
   const classes = clsx(
-    "inline-flex items-center justify-center rounded-md font-semibold transition-colors",
+    "relative inline-flex items-center justify-center rounded-md font-semibold transition-colors",
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-signal focus-visible:ring-offset-2",
-    "disabled:cursor-not-allowed disabled:opacity-70",
+    "disabled:cursor-not-allowed disabled:opacity-70 data-disabled:cursor-not-allowed data-disabled:opacity-70",
     VARIANTS[variant],
     SIZES[size],
     fullWidth && "w-full",
     className,
   );
-  if (href) {
-    // Link form: a navigation button. rest (ButtonHTMLAttributes) is NOT
-    // spread here, its handlers are typed for a button element and don't fit
-    // an anchor; link-style Buttons take href + children only. Pass an
-    // onClick/aria via a wrapping element if a nav link ever needs them.
+  if (typeof rest.href === "string") {
+    const { href, ...anchor } = rest;
     return (
-      <a href={href} className={classes}>
-        {children}
+      <a href={href} {...anchor} className={classes}>
+        <TouchTarget>{children}</TouchTarget>
       </a>
     );
   }
+  const { loading = false, disabled, ...button } = rest;
   return (
-    <button {...rest} disabled={disabled || loading} aria-busy={loading || undefined} className={classes}>
-      {children}
-    </button>
+    <HeadlessButton {...button} disabled={Boolean(disabled) || loading} aria-busy={loading || undefined} className={classes}>
+      <TouchTarget>{children}</TouchTarget>
+    </HeadlessButton>
   );
 }
