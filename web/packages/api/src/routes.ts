@@ -9,8 +9,7 @@
 //
 // Two origins (the app and the IdP) and two version prefixes, so the two
 // services can bump their API versions independently. A path change is a
-// one-line edit here rather than a string hunt across components. Routes
-// for a domain land with the phase that serves it.
+// one-line edit here rather than a string hunt across components.
 
 const API_VERSION = process.env.NEXT_PUBLIC_API_VERSION ?? "v1";
 // The IdP's own version prefix, mirrored separately so the app and IdP
@@ -29,6 +28,14 @@ export const apiRoutes = {
     // GET: the signed-in user projection.
     me: `/${API_VERSION}/auth/me`,
   },
+  discover: {
+    // POST: the look-alike query (202 + run for cold cohorts, 200 cached).
+    lookalikes: `/${API_VERSION}/discover/lookalikes`,
+    // GET: poll the run to a terminal status.
+    lookalikeRun: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}`,
+    // POST: stop a pending/running run (terminal runs no-op).
+    lookalikeRunCancel: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/cancel`,
+  },
 } as const;
 
 // IdP endpoints (relative to NEXT_PUBLIC_AUTH_URL; see resolveAuthBase).
@@ -42,6 +49,7 @@ export const authRoutes = {
 // Next.js frontend paths the browser navigates to programmatically.
 export const webRoutes = {
   home: "/",
+  discover: "/discover",
   login: "/login",
   signup: "/signup",
 } as const;

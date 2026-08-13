@@ -12,4 +12,5 @@ _V1 = settings.API_VERSION_PREFIX
 urlpatterns = [
     path("healthz", healthz, name="healthz"),
     api_include(f"{_V1}/auth", "auth_client.urls"),
+    api_include(f"{_V1}/discover", "discover.urls"),
 ]

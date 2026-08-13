@@ -26,15 +26,16 @@ export type ButtonProps = CommonProps &
   );
 
 const VARIANTS: Record<Variant, string> = {
-  // Dark-on-brand, not white-on-brand: the teal is too light to carry
-  // white text at WCAG AA (about 2.4:1); deep-teal text reads at 5.2:1
-  // and keeps the brand hue as the surface (the reference kit treats
-  // its light brand colors the same way). Disabled relies on the shared
-  // opacity dim, which keeps the text/surface pair intact.
-  primary: "bg-signal text-signal-900 hover:bg-signal-400",
-  secondary: "bg-ink/5 text-ink hover:bg-ink/10 dark:bg-paper/10 dark:text-paper dark:hover:bg-paper/20",
-  outline: "border border-ink/20 text-ink hover:bg-ink/5 dark:border-paper/20 dark:text-paper dark:hover:bg-paper/10",
-  ghost: "text-ink hover:bg-ink/5 dark:text-paper dark:hover:bg-paper/10",
+  // Paper on signal-600: the vivid end of what can carry light text.
+  // 3.4:1 clears WCAG's 3:1 tier (large text / UI components) but not
+  // the strict 4.5:1 for small text: a DELIBERATE trade of one
+  // compliance notch for the brand pop (the bright mark teal itself is
+  // 2.4:1 and never carries text; the 700 step passes 4.9:1 but reads
+  // somber). Disabled relies on the shared opacity dim.
+  primary: "bg-signal-600 text-paper hover:bg-signal-700",
+  secondary: "bg-wash text-foreground hover:bg-wash-strong",
+  outline: "border border-edge text-foreground hover:bg-wash",
+  ghost: "text-foreground hover:bg-wash",
   danger: "bg-red-600 text-white hover:bg-red-700",
 };
 

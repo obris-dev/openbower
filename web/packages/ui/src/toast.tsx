@@ -34,11 +34,10 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: numbe
         if (!open) dismiss(toast.id);
       }}
       className={cn(
-        "pointer-events-auto w-full overflow-hidden rounded-lg bg-paper p-4 shadow-lg ring-1 ring-ink/10",
+        "pointer-events-auto w-full overflow-hidden rounded-lg bg-surface p-4 shadow-lg ring-1 ring-hairline",
         "data-[state=open]:animate-toast-in data-[state=closed]:animate-toast-out",
         "data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=cancel]:translate-x-0",
         "data-[swipe=cancel]:transition-transform data-[swipe=end]:animate-toast-out",
-        "dark:bg-ink-soft dark:ring-paper/15",
       )}
     >
       <div className="flex items-start gap-3">
@@ -49,20 +48,20 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: numbe
         )}
         <div className="min-w-0 flex-1">
           {toast.title && (
-            <RadixToast.Title className="text-sm font-semibold text-ink dark:text-paper">
+            <RadixToast.Title className="text-sm font-semibold text-foreground">
               {toast.title}
             </RadixToast.Title>
           )}
           <RadixToast.Description
             className={cn(
               "text-sm [overflow-wrap:anywhere]",
-              toast.title ? "mt-0.5 text-ink/60 dark:text-paper/60" : "font-medium text-ink dark:text-paper",
+              toast.title ? "mt-0.5 text-muted" : "font-medium text-foreground",
             )}
           >
             {toast.message}
           </RadixToast.Description>
         </div>
-        <RadixToast.Close className="shrink-0 rounded p-0.5 text-ink/40 hover:text-ink/70 dark:text-paper/40 dark:hover:text-paper/70">
+        <RadixToast.Close className="shrink-0 rounded p-0.5 text-faint hover:text-foreground">
           <span className="sr-only">Dismiss</span>
           <X aria-hidden className="h-4 w-4" />
         </RadixToast.Close>

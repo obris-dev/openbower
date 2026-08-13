@@ -1,18 +1,21 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { House } from "lucide-react";
+import { Compass, House } from "lucide-react";
 import { Sidebar, ThemeToggle } from "@bower/ui";
 import { logout, webRoutes } from "@bower/api";
 import { useUser } from "@bower/auth";
 
 /** The signed-in chrome: sidebar nav + header. Nav items land with the
- * phases that build their screens; Home is the only tab today. */
+ * phases that build their screens. */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user } = useUser();
 
-  const navigation = [{ name: "Home", href: webRoutes.home, icon: House, current: pathname === webRoutes.home }];
+  const navigation = [
+    { name: "Home", href: webRoutes.home, icon: House, current: pathname === webRoutes.home },
+    { name: "Discover", href: webRoutes.discover, icon: Compass, current: pathname.startsWith(webRoutes.discover) },
+  ];
 
   async function handleSignOut() {
     const idpLogoutUrl = await logout();

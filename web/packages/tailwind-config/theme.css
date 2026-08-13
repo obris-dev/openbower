@@ -93,3 +93,50 @@
     opacity: 0;
   }
 }
+
+/* Semantic ROLES: colors are decisions, so a light/dark pair is defined
+ * once here and never repeated at call sites (layout utilities stay ad
+ * hoc; color utilities go through a role). `@theme inline` emits the
+ * var reference into the utility, so the role resolves per theme at
+ * runtime via the .dark override below. Do not use opacity modifiers on
+ * role utilities (text-muted/50): the role already carries its alpha. */
+@theme inline {
+  /* Text */
+  --color-foreground: var(--role-foreground);
+  --color-muted: var(--role-muted);
+  --color-faint: var(--role-faint);
+  /* Grounds: canvas = the page, surface = what sits on it (cards,
+     menus, inputs, sticky heads) */
+  --color-canvas: var(--role-canvas);
+  --color-surface: var(--role-surface);
+  /* Lines: hairline = dividers, edge = control outlines */
+  --color-hairline: var(--role-hairline);
+  --color-edge: var(--role-edge);
+  /* Fills: wash = resting tint, wash-strong = hover/active tint */
+  --color-wash: var(--role-wash);
+  --color-wash-strong: var(--role-wash-strong);
+}
+
+:root {
+  --role-foreground: var(--color-ink);
+  --role-muted: color-mix(in oklab, var(--color-ink) 60%, transparent);
+  --role-faint: color-mix(in oklab, var(--color-ink) 40%, transparent);
+  --role-canvas: var(--color-paper-soft);
+  --role-surface: var(--color-paper);
+  --role-hairline: color-mix(in oklab, var(--color-ink) 10%, transparent);
+  --role-edge: color-mix(in oklab, var(--color-ink) 15%, transparent);
+  --role-wash: color-mix(in oklab, var(--color-ink) 5%, transparent);
+  --role-wash-strong: color-mix(in oklab, var(--color-ink) 10%, transparent);
+}
+
+.dark {
+  --role-foreground: var(--color-paper);
+  --role-muted: color-mix(in oklab, var(--color-paper) 60%, transparent);
+  --role-faint: color-mix(in oklab, var(--color-paper) 40%, transparent);
+  --role-canvas: var(--color-ink);
+  --role-surface: var(--color-ink-soft);
+  --role-hairline: color-mix(in oklab, var(--color-paper) 12%, transparent);
+  --role-edge: color-mix(in oklab, var(--color-paper) 15%, transparent);
+  --role-wash: color-mix(in oklab, var(--color-paper) 10%, transparent);
+  --role-wash-strong: color-mix(in oklab, var(--color-paper) 20%, transparent);
+}

@@ -105,7 +105,7 @@ export function Sidebar({
     // Content and any fixed page chrome (e.g. an action footer) share the
     // sidebar's width through --sidebar-w, so the reflow is one number:
     // push, never overlay.
-    <div className="min-h-dvh bg-paper-soft [--sidebar-w:18rem] dark:bg-ink [[data-sidebar=collapsed]_&]:[--sidebar-w:4rem]">
+    <div className="min-h-dvh bg-canvas [--sidebar-w:18rem] [[data-sidebar=collapsed]_&]:[--sidebar-w:4rem]">
       {/* Mobile drawer */}
       {drawerOpen && (
         <div className="relative z-50 lg:hidden">
@@ -137,7 +137,7 @@ export function Sidebar({
       {/* Desktop sidebar (dark in both themes, like the reference):
           icon rail when collapsed, full when expanded; content reflows. */}
       <div className="hidden transition-[width] duration-200 lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-[var(--sidebar-w)] lg:flex-col">
-        <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-ink px-6 pb-4 dark:border-r dark:border-paper/10 [[data-sidebar=collapsed]_&]:px-2">
+        <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-ink px-6 pb-4 dark:border-r dark:border-hairline [[data-sidebar=collapsed]_&]:px-2">
           {/* Rail top, the reference affordance: the monogram at rest,
               the panel icon on hover; one click expands. Both tops are in
               the DOM; the html attribute picks one. */}
@@ -171,35 +171,35 @@ export function Sidebar({
 
       {/* Header + content */}
       <div className="transition-[padding] duration-200 lg:pl-[var(--sidebar-w)]">
-        <div className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-x-4 border-b border-ink/10 bg-paper px-4 sm:px-6 lg:px-8 dark:border-paper/10 dark:bg-ink">
+        <div className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-x-4 border-b border-hairline bg-surface px-4 sm:px-6 lg:px-8">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
-            className="-m-2.5 p-2.5 text-ink lg:hidden dark:text-paper"
+            className="-m-2.5 p-2.5 text-foreground lg:hidden"
           >
             <span className="sr-only">Open sidebar</span>
             <Menu aria-hidden className="h-5 w-5" />
           </button>
-          <div aria-hidden className="h-6 w-px bg-ink/10 lg:hidden dark:bg-paper/10" />
+          <div aria-hidden className="h-6 w-px bg-hairline lg:hidden" />
 
           <div className="flex flex-1 items-center justify-end gap-x-4 lg:gap-x-6">
             {headerActions}
-            <div aria-hidden className="hidden lg:block lg:h-6 lg:w-px lg:bg-ink/10 dark:lg:bg-paper/10" />
+            <div aria-hidden className="hidden lg:block lg:h-6 lg:w-px lg:bg-hairline" />
 
             {/* Profile dropdown (the behavior layer owns focus + dismiss) */}
             <Dropdown>
-              <DropdownButton className="flex items-center gap-x-1 rounded-lg p-1.5 hover:bg-ink/5 dark:hover:bg-paper/10">
+              <DropdownButton className="flex items-center gap-x-1 rounded-lg p-1.5 hover:bg-wash">
                 <span className="sr-only">Open user menu</span>
-                <CircleUser aria-hidden className="h-6 w-6 text-ink/70 dark:text-paper/70" />
-                <ChevronDown aria-hidden className="h-4 w-4 text-ink/50 dark:text-paper/50" />
+                <CircleUser aria-hidden className="h-6 w-6 text-muted" />
+                <ChevronDown aria-hidden className="h-4 w-4 text-muted" />
               </DropdownButton>
               <DropdownMenu anchor="bottom end" className="w-64 py-0">
                 {account.email && (
-                  <div className="flex items-center gap-x-3 border-b border-ink/10 px-4 py-3 dark:border-paper/10">
+                  <div className="flex items-center gap-x-3 border-b border-hairline px-4 py-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-signal text-sm font-medium text-signal-900">
                       {account.email.charAt(0).toUpperCase()}
                     </span>
-                    <span className="truncate text-sm text-ink/80 dark:text-paper/80">{account.email}</span>
+                    <span className="truncate text-sm text-foreground">{account.email}</span>
                   </div>
                 )}
                 {userNavigation.map((item) =>

@@ -18,7 +18,6 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from auth_client.downstream import DownstreamTokenRejected
 from auth_client.models import AppSession
 
 from ..oauth import AuthUpstreamError, AuthUpstreamUnavailable, OAuthClientService
@@ -133,30 +132,3 @@ def force_refresh(session: AppSession, *, stale_token: str) -> AppSession | None
             # of burning another refresh.
             return session
         return rotate_or_settle(session, transient_propagates=True)
-
-
-def call_with_refresh(session: AppSession, call):
-    """Run `call(access_token)` against a downstream resource server,
-    transparently refreshing the token once if the server rejects it.
-
-    The single place the app's on-behalf-of-a-user downstream calls live,
-    so no view re-implements token-refresh-retry. `call` receives the
-    access token and must raise `DownstreamTokenRejected` on an upstream
-    401 (every resource client raises the same signal). Re-raises it only
-    when the session is dead or a brand-new token is STILL rejected (the
-    caller maps that to re-login); a transient refresh failure surfaces
-    as `AuthUpstreamUnavailable` (upstream down, not a credential
-    problem). Any other exception `call` raises passes straight through.
-    """
-    try:
-        return call(session.access_token)
-    except DownstreamTokenRejected:
-        refreshed = force_refresh(session, stale_token=session.access_token)
-        if refreshed is None:
-            raise  # session is dead -> caller re-logs-in
-        # Retry once with the fresh token; a second rejection propagates.
-        # NOTE: the caller's `session` (e.g. request.user.session) still
-        # holds the pre-refresh token in memory; anything reading it AFTER
-        # this call must use `refreshed`. Harmless for the current single
-        # call-then-serialize view; revisit when a base-view mixin lands.
-        return call(refreshed.access_token)

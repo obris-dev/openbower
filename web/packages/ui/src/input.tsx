@@ -11,15 +11,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ i
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "w-full rounded-md bg-paper px-3 py-2 text-sm text-ink shadow-sm",
-        "ring-1 ring-inset placeholder:text-ink/40",
+        "w-full rounded-md bg-surface px-3 py-2 text-sm text-foreground shadow-sm",
+        "ring-1 ring-inset placeholder:text-faint",
         "focus:outline-none focus:ring-2 focus:ring-inset",
-        "dark:bg-ink-soft dark:text-paper dark:placeholder:text-paper/40",
         // Exclusive, not additive: emitting both rings would leave the
         // winner to stylesheet order (and the dark variant to chance).
         invalid
-          ? "ring-red-500 focus:ring-red-500 dark:ring-red-500"
-          : "ring-ink/15 focus:ring-signal dark:ring-paper/15",
+          ? "ring-red-500 focus:ring-red-500"
+          : "ring-edge focus:ring-signal",
         className,
       )}
       {...rest}

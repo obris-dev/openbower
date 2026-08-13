@@ -25,10 +25,10 @@ from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
-from openbower_schema import AuthUser
+from openbower_schema import AuthUser, Company, LookalikeItem, LookalikeListResponse
 
 # The models projected into the contract. Grow this list as shared shapes land.
-CONTRACT_MODELS: list[type[Any]] = [AuthUser]
+CONTRACT_MODELS: list[type[Any]] = [AuthUser, Company, LookalikeItem, LookalikeListResponse]
 
 # The committed artifact, in the schema package it belongs to. Anchored to this
 # script (tools/schema_sync/generate.py -> repo root), which is stable: a repo

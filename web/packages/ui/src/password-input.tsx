@@ -20,11 +20,10 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         type={show ? "text" : "password"}
         aria-invalid={invalid || undefined}
         className={cn(
-          "w-full rounded-md bg-paper px-3 py-2 pr-10 text-sm text-ink shadow-sm",
-          "ring-1 ring-inset ring-ink/15 placeholder:text-ink/40",
-          "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-signal",
-          "dark:bg-ink-soft dark:text-paper dark:ring-paper/15 dark:placeholder:text-paper/40",
-          invalid && "ring-red-500 focus:ring-red-500",
+          "w-full rounded-md bg-surface px-3 py-2 pr-10 text-sm text-foreground shadow-sm",
+          "ring-1 ring-inset placeholder:text-faint",
+          "focus:outline-none focus:ring-2 focus:ring-inset",
+          invalid ? "ring-red-500 focus:ring-red-500" : "ring-edge focus:ring-signal",
           className,
         )}
         {...rest}
@@ -33,7 +32,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         type="button"
         onClick={() => setShow((s) => !s)}
         aria-label={show ? "Hide password" : "Show password"}
-        className="absolute inset-y-0 right-0 flex items-center px-3 text-ink/50 hover:text-ink/70 dark:text-paper/50 dark:hover:text-paper/70"
+        className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-foreground"
       >
         {show ? <EyeOff aria-hidden className="h-4 w-4" /> : <Eye aria-hidden className="h-4 w-4" />}
       </button>

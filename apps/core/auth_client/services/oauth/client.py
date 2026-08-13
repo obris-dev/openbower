@@ -51,9 +51,10 @@ class OAuthClientGlobal:
                 "response_type": "code",
                 "client_id": settings.OAUTH_CLIENT_ID,
                 "redirect_uri": _redirect_uri(),
-                # Scopes grow with the product's phases; sessions minted
-                # before a scope existed need a re-login to gain it.
-                "scope": "profile",
+                # Scopes are FIXED at mint: refresh rotates tokens but
+                # carries the same set, so a session can only gain a scope
+                # through a fresh login.
+                "scope": "profile data:read data:write",
                 # RFC 8707 resource indicators (repeated param): bind the
                 # token to exactly the resource servers it is used at, so
                 # it cannot be replayed elsewhere. Encoded with doseq in

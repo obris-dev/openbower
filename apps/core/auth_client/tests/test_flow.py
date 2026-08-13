@@ -19,8 +19,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from auth_client.constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME
-from auth_client.downstream import DownstreamTokenRejected
-from auth_client.services.oauth import AuthUpstreamUnavailable, TokenResponse
+from auth_client.services.oauth import TokenResponse
 from auth_client.services.sessions import AppSessionService
 from openbower_schema import AuthUser
 
@@ -167,55 +166,3 @@ class SessionRefreshTests(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.access_token, "access-abc")
         idp.assert_not_called()
-
-    def test_call_with_refresh_retries_once_with_the_fresh_token(self):
-        # The reusable primitive: the first call is rejected, so it refreshes
-        # and calls again with the new token, transparently.
-        record, _ = self._session(expires_in=3600)
-        seen: list[str] = []
-
-        def call(token: str) -> str:
-            seen.append(token)
-            if len(seen) == 1:
-                raise DownstreamTokenRejected()
-            return "ok"
-
-        with patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _REFRESHED)):
-            result = AppSessionService.Global.call_with_refresh(record, call)
-        self.assertEqual(result, "ok")
-        self.assertEqual(seen, ["access-abc", "access-def"])
-
-    def test_call_with_refresh_reraises_when_dead_refresh_token(self):
-        # A terminal refresh (dead refresh token -> 400) revokes the session;
-        # call_with_refresh re-raises so the caller forces re-login.
-        record, _ = self._session(expires_in=3600)
-
-        def call(token: str) -> str:
-            raise DownstreamTokenRejected()
-
-        with (
-            patch(
-                "auth_client.services.oauth.transport.httpx.post", return_value=_Resp(400, {"error": "invalid_grant"})
-            ),
-            self.assertRaises(DownstreamTokenRejected),
-        ):
-            AppSessionService.Global.call_with_refresh(record, call)
-
-    def test_call_with_refresh_propagates_transient_without_revoking(self):
-        # A TRANSIENT IdP failure during the forced refresh (token endpoint 5xx)
-        # must NOT revoke the session (a momentary blip is not a dead session):
-        # it propagates AuthUpstreamUnavailable so the caller maps it to 503.
-        # AuthUpstreamUnavailable subclasses AuthUpstreamError, so this guards
-        # the except-ordering that a bare "refresh failed" test cannot.
-        record, _ = self._session(expires_in=3600)
-
-        def call(token: str) -> str:
-            raise DownstreamTokenRejected()
-
-        with (
-            patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(503, {})),
-            self.assertRaises(AuthUpstreamUnavailable),
-        ):
-            AppSessionService.Global.call_with_refresh(record, call)
-        record.refresh_from_db()
-        self.assertIsNone(record.revoked_at)

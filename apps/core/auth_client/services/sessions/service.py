@@ -74,9 +74,9 @@ class AppSessionGlobal:
             return session
         return rotation.refresh_locked(hash_token(raw))
 
-    # Downstream-facing entry points; mechanics in rotation.py.
+    # Downstream-facing entry point (the resource clients' auth flows
+    # rotate through it); mechanics in rotation.py.
     force_refresh = staticmethod(rotation.force_refresh)
-    call_with_refresh = staticmethod(rotation.call_with_refresh)
 
     @staticmethod
     def prune_revoked(*, older_than_days: int) -> int:

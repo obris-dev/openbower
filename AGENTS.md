@@ -27,10 +27,24 @@ auth + data services live in a separate private repo.
   everything else reads `settings.*`.
 - Every wire shape the web consumes crosses through the schema package
   (Pydantic first, zod codegen); the web never hand-types an API response.
+- Every list endpoint pages by KEYSET cursor, never LIMIT OFFSET: order
+  by `-id` with `?after=<last id>` (ULIDs are time-sortable; helpers in
+  the kernel), or by a dense rank where one exists (run results, where
+  `rank > :after` also gives cheap random access). `next_cursor` comes
+  from the last row of a full page.
+- No streaming or server-built file responses. Exports are built
+  CLIENT-SIDE from the same paged JSON the views already serve (see the
+  discover lead-list download), so the request path stays small, fast,
+  bounded JSON. When a file outgrows the browser, the shape is an async
+  job writing to a blob store plus a short-lived signed link (the worker
+  + poll machinery), never a server-assembled response in between.
 - Views stay thin; domain logic lives in services and pure tested modules.
-- Web: feature modules (`src/features/<domain>/{components,hooks,api}`),
-  route files under ~150 lines, one shared `usePoll`, one `useLocalDraft`.
-  UI primitives live in `@bower/ui` (drawers and inline editing, no modals).
+- Web: route groups own their guard and chrome in `layout.tsx`; a
+  route's pieces live in its `_components/` leaf, and a component FAMILY
+  gets a directory with an index (single files stay flat). Shared hooks
+  graduate to a package when a second consumer exists. Route files stay
+  thin compositions. UI primitives live in `@bower/ui` (drawers and
+  inline editing, no modals).
   Navigation is two-tier: in-app transitions use Link / router.push;
   crossing the auth boundary or any origin (login, logout, the OAuth
   redirect dance) uses window.location, where the full document load is

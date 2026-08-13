@@ -37,7 +37,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label="Toggle theme"
-      className="rounded-md p-2 text-ink/70 hover:bg-ink/5 dark:text-paper/70 dark:hover:bg-paper/10"
+      className="rounded-md p-2 text-muted hover:bg-wash"
     >
       {/* Avoid rendering a theme-specific icon until mounted to dodge SSR
           mismatch; Circle is the neutral pre-hydration placeholder. */}
