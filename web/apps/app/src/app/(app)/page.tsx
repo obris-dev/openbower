@@ -1,21 +1,36 @@
-import { Card } from "@bower/ui";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
-/** The home landing. A placeholder until the lists phase builds the
- * real directory here. */
-export default function Home() {
+import { webRoutes } from "@bower/api";
+
+import { COLLAPSED_COOKIE, Directory } from "./_components/directory";
+
+/** Home IS the directory of sheets: they are the unit of work, so the
+ * workspace opens on them (Discover is a tool that feeds sheets, not
+ * the center). Sheet details live under /lists/[id]. */
+export default async function Home() {
+  const jar = await cookies();
+  const cookieHeader = jar.toString();
+  const collapsed = (jar.get(COLLAPSED_COOKIE)?.value ?? "").split(".").filter(Boolean);
+  const { fetchFoldersWithCookie, fetchListsPageWithCookie } = await import("@bower/api/server");
+  const [listsRes, foldersRes] = await Promise.all([
+    fetchListsPageWithCookie(cookieHeader),
+    fetchFoldersWithCookie(cookieHeader),
+  ]);
+  if (listsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(webRoutes.login);
+  // The two legs fail separately: no lists is a full failure surface,
+  // no folders means lists still render (flattened loose) UNDER a
+  // banner saying so, never silently.
   return (
     <div className="p-6">
-      <div className="w-full max-w-4xl space-y-6 pt-2">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Home</h1>
-          <p className="mt-1 text-sm text-muted">Your workspace.</p>
-        </div>
-        <Card className="p-6">
-          <p className="text-sm text-muted">
-            Nothing here yet. The workspace surfaces arrive with the next
-            phases; you are signed in and the shell is live.
-          </p>
-        </Card>
+      <div className="mx-auto w-full max-w-5xl space-y-6 pb-24 pt-2">
+        <Directory
+          initialLists={listsRes.status === "ok" ? listsRes.data : null}
+          initialFolders={foldersRes.status === "ok" ? foldersRes.data.items : []}
+          initialCollapsed={collapsed}
+          initialListsFailed={listsRes.status !== "ok"}
+          initialFoldersFailed={foldersRes.status !== "ok"}
+        />
       </div>
     </div>
   );

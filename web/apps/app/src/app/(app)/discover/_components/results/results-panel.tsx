@@ -1,12 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { ChevronRight } from "lucide-react";
 import { Button, Card, Spinner } from "@bower/ui";
-import type { LookalikeListResponse } from "@bower/api";
+import { normalizeDomain, type LookalikeListResponse } from "@bower/api";
 
 import { GhostTable } from "./ghost-table";
 import { ResultRows } from "./result-rows";
-import { useCsvDownload } from "./use-csv-download";
+import { SaveAsList } from "./save-as-list";
 
 // A real, runnable cohort (verified in the index, embeddings included):
 // the empty state's invitation is one click that fills the form and
@@ -16,7 +18,7 @@ export const EXAMPLE_SEEDS = "marriott.com, hilton.com, hyatt.com";
 
 /** The results surface: ONE card owning the whole outcome. The header
  * states what was found ("Found N similar matches", the engine's
- * confidence cutoff) and carries the download; the meta line holds the
+ * confidence cutoff) and carries Save as list; the meta line holds the
  * caveats; the table lives in a bounded scroll region below. Rendered
  * inside a persistent aria-live region owned by the page, so the arrival
  * of results is announced. */
@@ -40,7 +42,7 @@ export function ResultsPanel({
   onRunExample: () => void;
 }) {
   // The confidence cutoff: each group cut at its own decay boundary. It
-  // is the headline AND the download size; a typed limit only caps it.
+  // is the headline AND the save-as-list default; a typed limit caps it.
   const groups = result?.groups ?? [];
   const confident = groups.reduce((acc, g) => acc + (g.elbow_rank ?? 0), 0);
   const total = result?.result_count ?? 0;
@@ -48,8 +50,14 @@ export function ResultsPanel({
   const limit = limitRaw ? Math.max(1, Number(limitRaw)) : null;
   const cutoff = limit === null ? found : Math.min(found, limit);
   const runId = result?.run_id ?? null;
-  const { building, download } = useCsvDownload({ runId, cutoff, excluded });
-
+  // Normalized like the server-side save filter (the table and the
+  // saved sheet must exclude the same rows), memoized because
+  // normalizeDomain parses a URL per item and this runs per keystroke.
+  // Above the early returns: hooks run unconditionally.
+  const visibleItems = useMemo(
+    () => (result?.items ?? []).filter((item) => !excluded.has(normalizeDomain(item.company.domain))),
+    [result, excluded],
+  );
   if (searching) {
     // The status line occupies the header slot where "Found N similar
     // matches" will land; the pulsing ghost rows are the table filling.
@@ -77,26 +85,16 @@ export function ResultsPanel({
     );
   }
 
-  const visibleItems = result.items.filter((item) => !excluded.has(item.company.domain));
-
   return (
     <Card className="p-6">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 className="text-lg font-semibold text-foreground">
-          Found {found.toLocaleString()} similar matches
+          Found {found.toLocaleString("en-US")} similar matches
         </h2>
         {runId && cutoff > 0 && (
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={building !== null}
-            onClick={() => void download()}
-            className="sm:shrink-0"
-          >
-            {building !== null
-              ? `Preparing… ${building.toLocaleString()} / ${cutoff.toLocaleString()}`
-              : `Download CSV (${cutoff.toLocaleString()})`}
-          </Button>
+          <div className="sm:shrink-0">
+            <SaveAsList runId={runId} count={cutoff} exclude={[...excluded]} />
+          </div>
         )}
       </div>
       {/* Meta only when there is something to explain: a binding cap, or
@@ -105,7 +103,7 @@ export function ResultsPanel({
         <p className="-mt-3 mb-4 text-xs text-muted">
           {confident === 0
             ? "No natural cutoff in the data for these seeds; showing everything above the similarity floor."
-            : `The data supports ${confident.toLocaleString()}; capped at your ${limit?.toLocaleString()}.`}
+            : `The data supports ${confident.toLocaleString("en-US")}; capped at your ${limit?.toLocaleString("en-US")}.`}
         </p>
       )}
       {result.unresolved_domains.length > 0 && (
@@ -145,7 +143,7 @@ export function ResultsPanel({
                       <span className="text-xs text-muted">
                         {g.seed_domains.join(", ")}
                         {g.elbow_rank
-                          ? ` | ~${g.elbow_rank.toLocaleString()} to the inflection`
+                          ? ` | ~${g.elbow_rank.toLocaleString("en-US")} to the inflection`
                           : " | no inflection found"}
                       </span>
                     </span>

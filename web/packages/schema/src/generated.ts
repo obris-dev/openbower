@@ -9,6 +9,27 @@ export type AuthUser = z.infer<typeof AuthUserSchema>;
 export const CompanySchema = z.object({ "country": z.string().describe("Country; empty when unknown."), "domain": z.string().describe("Canonical lowercased bare domain."), "founded_year": z.union([z.number().int(), z.null()]).describe("Founding year when known.").default(null), "id": z.string().describe("The company's ULID in the universe."), "industry": z.string().describe("Industry label; empty when unknown."), "linkedin_url": z.string().describe("LinkedIn company URL; empty when unknown."), "locality": z.string().describe("City/locality; empty when unknown."), "name": z.string().describe("Company display name."), "region": z.string().describe("Region/state; empty when unknown."), "size_band": z.string().describe("Coarse employee band, e.g. 1-10; empty when unknown."), "snapshot_date": z.union([z.string(), z.null()]).describe("ISO date the row's data was current.").default(null), "source": z.string().describe("Provenance of the row, e.g. pdl_free.") }).describe("One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.");
 export type Company = z.infer<typeof CompanySchema>;
 
+export const FolderSummarySchema = z.object({ "created_at": z.string(), "id": z.string(), "label": z.string(), "list_count": z.number().int().describe("Server-side count; consent copy must not trust loaded pages."), "updated_at": z.string() }).describe("A flat, account-scoped bucket for lists (taxonomy, not behavior).");
+export type FolderSummary = z.infer<typeof FolderSummarySchema>;
+
+export const FoldersListSchema = z.object({ "items": z.array(z.lazy(() => FolderSummarySchema)) });
+export type FoldersList = z.infer<typeof FoldersListSchema>;
+
+export const ListColumnSchema = z.object({ "key": z.string().describe("Stable snake_case key; row data dicts key on it."), "label": z.string().describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
+export type ListColumn = z.infer<typeof ListColumnSchema>;
+
+export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order.") });
+export type ListRowWire = z.infer<typeof ListRowWireSchema>;
+
+export const ListRowsPageSchema = z.object({ "items": z.array(z.lazy(() => ListRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last position when more rows exist.").default(null) });
+export type ListRowsPage = z.infer<typeof ListRowsPageSchema>;
+
+export const ListSummarySchema = z.object({ "columns": z.array(z.lazy(() => ListColumnSchema)).describe("Display order.").default([]), "created_at": z.string(), "folder_id": z.string().describe("The containing folder; empty = loose at the root.").default(""), "id": z.string(), "label": z.string(), "origin": z.enum(["discover","csv","manual"]).describe("How the list came to exist."), "origin_ref": z.string().describe("e.g. the source run id for discover snapshots.").default(""), "row_count": z.number().int().describe("Total rows (the sheet may page far beyond one response)."), "updated_at": z.string() }).describe("One list as the index shows it (and the save-list response).");
+export type ListSummary = z.infer<typeof ListSummarySchema>;
+
+export const ListsPageSchema = z.object({ "items": z.array(z.lazy(() => ListSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more lists exist.").default(null) });
+export type ListsPage = z.infer<typeof ListsPageSchema>;
+
 export const LookalikeGroupSchema = z.object({ "elbow_rank": z.union([z.number().int(), z.null()]).describe("This group's own boundary: the knee of ITS score decay (null when too short/flat).").default(null), "label": z.string().describe("Human label; empty for the single homogeneous group.").default(""), "seed_domains": z.array(z.string()).default([]), "size": z.number().int().describe("Results this group contributed to the run.").default(0) }).describe("One seed group of a run: heterogeneous cohorts split into distinct\ngroups, each searched by its own centroid and labeled.");
 export type LookalikeGroup = z.infer<typeof LookalikeGroupSchema>;
 
@@ -17,3 +38,9 @@ export type LookalikeItem = z.infer<typeof LookalikeItemSchema>;
 
 export const LookalikeListResponseSchema = z.object({ "detail": z.union([z.string(), z.null()]).describe("Failure detail when status is failed.").default(null), "engine": z.string().describe("Which engine ranked these, e.g. embedding_v1."), "groups": z.array(z.lazy(() => LookalikeGroupSchema)).describe("The run's seed-group breakdown; single unlabeled entry for homogeneous cohorts.").default([]), "items": z.array(z.lazy(() => LookalikeItemSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("Opaque cursor for the next page.").default(null), "outlier_domains": z.array(z.string()).describe("Seeds set aside by clustering as misfits (excluded from generation, shown to the user).").default([]), "result_count": z.union([z.number().int(), z.null()]).describe("TOTAL results in the completed run (the full lead-list size, independent of page size).").default(null), "run_id": z.union([z.string(), z.null()]).describe("The run to poll; null only when no run exists (e.g. an empty cohort).").default(null), "status": z.enum(["pending","running","complete","failed","canceled"]).describe("Run lifecycle. Terminal: complete | failed | canceled; keep polling: pending | running.").default("complete"), "unresolved_domains": z.array(z.string()).describe("Inline seed domains that are not in the universe.").default([]) }).describe("The look-alike envelope (data service and app proxy alike), for both\nthe query POST and the run-status poll.\n\n`status` drives the async lifecycle: \"complete\" carries the page in\n`items`; \"pending\"/\"running\" mean poll the run (HTTP 202, empty items);\n\"failed\" carries `detail`; \"canceled\" is terminal by request (a fresh\nquery revives the run). The engine computes in a worker, so a cold\ncohort answers pending first and is polled by `run_id`; a cached cohort\nanswers complete inline.");
 export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
+
+export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
+export type RowsAdded = z.infer<typeof RowsAddedSchema>;
+
+export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
+export type ImportResult = z.infer<typeof ImportResultSchema>;

@@ -4,7 +4,8 @@
 
 import { AuthUserSchema, type AuthUser } from "@bower/schema";
 
-import { apiRoutes, authRoutes, buildApiUrl, buildAuthUrl, resolveAuthBase } from "./routes";
+import { fetchJson } from "./request.ts";
+import { apiRoutes, authRoutes, buildApiUrl, buildAuthUrl, resolveAuthBase } from "./routes.ts";
 
 // The identity shape is the generated contract (Pydantic -> JSON Schema ->
 // zod), so the web can't drift from what the server serializes.
@@ -21,27 +22,19 @@ export const SESSION_COOKIE_NAME = "bwr_session";
 // Me-or-null wrapper over it.
 export type MeResult = { status: "ok"; user: Me } | { status: "unauthenticated" } | { status: "error" };
 
-export async function classifyMe(res: Response): Promise<MeResult> {
+export function classifyMe(res: Response, body: unknown): MeResult {
   if (res.status === 401 || res.status === 403) return { status: "unauthenticated" };
   if (!res.ok) return { status: "error" };
-  try {
-    // Validate against the shared schema: a body that doesn't match the
-    // contract is an error, not a silently mis-shaped "logged-in" user.
-    const parsed = AuthUserSchema.safeParse(await res.json());
-    return parsed.success ? { status: "ok", user: parsed.data } : { status: "error" };
-  } catch {
-    return { status: "error" };
-  }
+  // Validate against the shared schema: a body that doesn't match the
+  // contract is an error, not a silently mis-shaped "logged-in" user.
+  const parsed = AuthUserSchema.safeParse(body);
+  return parsed.success ? { status: "ok", user: parsed.data } : { status: "error" };
 }
 
 export async function fetchMeResult(): Promise<MeResult> {
-  let res: Response;
-  try {
-    res = await fetch(buildApiUrl(apiRoutes.auth.me), { credentials: "include" });
-  } catch {
-    return { status: "error" };
-  }
-  return classifyMe(res);
+  const fetched = await fetchJson(apiRoutes.auth.me, { credentials: "include" });
+  if (!fetched) return { status: "error" };
+  return classifyMe(fetched.res, fetched.body);
 }
 
 
@@ -168,17 +161,10 @@ export function idpResumeUrl(next: string | null): string {
  * leaves the IdP signed in, so the next login skips the password prompt.
  */
 export async function logout(): Promise<string | null> {
-  try {
-    const res = await fetch(buildApiUrl(apiRoutes.auth.logout), {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { idp_logout_url?: string };
-    return body.idp_logout_url ?? null;
-  } catch {
-    // Transport failure: report "no IdP hop" so the caller still clears
-    // local UI state instead of hanging on an unhandled rejection.
-    return null;
-  }
+  const fetched = await fetchJson(apiRoutes.auth.logout, { method: "POST", credentials: "include" });
+  // Transport failure: report "no IdP hop" so the caller still clears
+  // local UI state instead of hanging on an unhandled rejection.
+  if (!fetched || !fetched.res.ok) return null;
+  const body = fetched.body as { idp_logout_url?: string };
+  return body?.idp_logout_url ?? null;
 }

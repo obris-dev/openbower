@@ -13,7 +13,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
 
   const navigation = [
-    { name: "Home", href: webRoutes.home, icon: House, current: pathname === webRoutes.home },
+    {
+      name: "Home",
+      href: webRoutes.home,
+      icon: House,
+      current: pathname === webRoutes.home || pathname.startsWith(webRoutes.listPrefix),
+    },
     { name: "Discover", href: webRoutes.discover, icon: Compass, current: pathname.startsWith(webRoutes.discover) },
   ];
 

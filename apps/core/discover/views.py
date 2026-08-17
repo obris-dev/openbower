@@ -10,7 +10,9 @@ Failure mapping: the data service's own 400 passes through as a 400 (its
 `{error, detail}` body is already on contract); our token being rejected
 maps to 403 `data_access_denied` (remedy: log in again, so the token
 carries data:read); transient upstream trouble maps to 503
-`data_unavailable`; anything else upstream-shaped is a 502 `data_error`.
+`data_unavailable`; anything else upstream-shaped is a 502 `data_error`;
+losing a race with a concurrent action (the save-list target deleted
+mid-drain) is a 409 `conflict`.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import logging
 from typing import Any
 
 from rest_framework import permissions, serializers
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -32,17 +35,26 @@ from discover.services.index_client import (
     IndexUpstreamError,
     IndexUpstreamUnavailable,
 )
+from lists.constants import LABEL_MAX_LENGTH as LIST_LABEL_MAX_LENGTH
+from lists.constants import MAX_LIST_ROWS, ColumnType, ListOrigin
+from lists.serializers import list_wire
+from lists.services.lists import ListNotFound, ListService, ListsFull
+from openbower_kernel.domains import normalize_domain
+from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import LookalikeListResponse
 
 from .constants import (
     MAX_INLINE_DOMAINS,
     MAX_LIMIT,
+    MAX_LIST_SEED_VALUES,
     MIN_INLINE_DOMAINS,
     RUN_STATUS_CANCELED,
     RUN_STATUS_COMPLETE,
     RUN_STATUS_FAILED,
+    SAVE_LIST_PAGE,
     DiscoverErrorCode,
 )
+from .cursors import run_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +74,21 @@ class LookalikeProxyRequest(serializers.Serializer):
         min_length=MIN_INLINE_DOMAINS,
         max_length=MAX_INLINE_DOMAINS,
     )
+    # Seeding FROM A LIST is use-time interpretation of a column: the
+    # caller names the list and which column holds the identifiers; this
+    # view extracts + normalizes the values and forwards plain `domains`
+    # (one seeding path; the data service resolves as it always does).
+    list_id = serializers.CharField(max_length=26, required=False)
+    identifier_key = serializers.CharField(max_length=40, required=False)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=MAX_LIMIT)
     cursor = serializers.CharField(required=False)
+
+    def validate(self, attrs: dict) -> dict:
+        if bool(attrs.get("list_id")) != bool(attrs.get("identifier_key")):
+            raise serializers.ValidationError("list_id and identifier_key go together")
+        if attrs.get("list_id") and attrs.get("domains"):
+            raise serializers.ValidationError("seed with domains OR a list, not both")
+        return attrs
 
 
 _UPSTREAM_ERRORS = (
@@ -77,8 +102,8 @@ _UPSTREAM_ERRORS = (
 
 
 def _error_response(e: Exception) -> Response:
-    """The discover proxy's uniform failure mapping, shared by the JSON
-    views and the CSV export."""
+    """The discover proxy's uniform failure mapping, shared by every
+    view that talks to the data service."""
     if isinstance(e, IndexClientRequestError):
         # The data service's own status (400/404) + {error, detail} body,
         # passed through so a real "bad query" or "unknown seed set/run" is
@@ -154,12 +179,171 @@ class LookalikesView(APIView):
         serializer = LookalikeProxyRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload: dict[str, Any] = dict(serializer.validated_data)
+        list_id = payload.pop("list_id", None)
+        identifier_key = payload.pop("identifier_key", None)
+        if list_id:
+            domains = _list_seed_domains(request, list_id=list_id, identifier_key=identifier_key)
+            if isinstance(domains, Response):
+                return domains
+            payload["domains"] = domains
         # The session-bound client owns the token plumbing: it forwards the
         # session's access token and, if the data service rejects it as
         # expired/revoked, refreshes once and retries, so an in-flight
         # token lapse never surfaces to the user.
         client = IndexClientService.for_session(request.user.session)
         return client.lookalikes(payload=payload)
+
+
+def _list_seed_domains(request, *, list_id: str, identifier_key: str) -> list[str] | Response:
+    """The chosen column's values, normalized and deduped in first-seen
+    order, capped at MAX_INLINE_DOMAINS. A sheet whose column yields
+    fewer than MIN_INLINE_DOMAINS usable values answers a clear message
+    (degrade, never error: content-agnostic sheets are allowed to hold
+    no domains at all)."""
+    from .domains_input import normalize_seed_values
+
+    service = ListService(account_id=request.user.account_id, user_id=request.user.id)
+    try:
+        target = service.get(list_id)
+    except ListNotFound:
+        return _invalid_request("no list with that id")
+    if identifier_key not in {c["key"] for c in target.columns}:
+        return _invalid_request("that column does not exist on the list")
+    values = service.column_values(target, key=identifier_key, limit=MAX_LIST_SEED_VALUES)
+    domains = normalize_seed_values(values, cap=MAX_INLINE_DOMAINS)
+    if len(domains) < MIN_INLINE_DOMAINS:
+        return _invalid_request(f"that column yields fewer than {MIN_INLINE_DOMAINS} usable domains to seed from")
+    return domains
+
+
+def _invalid_request(detail: str) -> Response:
+    return Response({"error": str(DiscoverErrorCode.INVALID_REQUEST), "detail": detail}, status=400)
+
+
+class SaveListRequest(serializers.Serializer):
+    """The save-list body. A serializer, not hand parsing: a non-object
+    body, an oversized label, or an absurd limit must answer 400, never
+    reach int() or the database. The limit cap is the row cap: asking
+    for more than a list can hold means "everything"."""
+
+    label = serializers.CharField(max_length=LIST_LABEL_MAX_LENGTH)
+    limit = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_limit(self, value: int) -> int:
+        # Clamp, never reject: past the row cap "means everything", and
+        # the web sends the run's own cutoff, which may exceed it.
+        return min(value, MAX_LIST_ROWS)
+
+    # The web's Exclude filter: the saved sheet must match the table the
+    # user is looking at, so the filtered-out domains ride along.
+    exclude = serializers.ListField(
+        child=serializers.CharField(max_length=253), required=False, max_length=MAX_INLINE_DOMAINS, default=list
+    )
+
+
+class LookalikeRunSaveListView(APIView):
+    """POST /v1/discover/lookalikes/runs/{id}/save-list {label, limit?}:
+    snapshot a COMPLETE run into a local sheet by paging the data
+    service. The run lives upstream; the rows land here, where lists
+    live. A full list stops the snapshot honestly (what fit is saved); an
+    upstream failure mid-save deletes the partial list rather than
+    leaving a half-sheet that looks finished; a concurrent delete of the
+    target answers 409."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    _COLUMNS = [
+        {"key": "domain", "label": "Domain", "type": ColumnType.URL},
+        {"key": "name", "label": "Name", "type": ColumnType.TEXT},
+        {"key": "industry", "label": "Industry", "type": ColumnType.TEXT},
+        {"key": "size", "label": "Size", "type": ColumnType.TEXT},
+        {"key": "score", "label": "Score", "type": ColumnType.NUMBER},
+        {"key": "group", "label": "Group", "type": ColumnType.TEXT},
+    ]
+
+    def post(self, request, id: str) -> Response:
+        # The run id lands in origin_ref (varchar 64) and the upstream
+        # cursor; a malformed one is a 404, not a database error.
+        if not is_valid_ulid(id):
+            raise NotFound("no run with that id")
+        serializer = SaveListRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        label = serializer.validated_data["label"]
+        wanted = serializer.validated_data.get("limit")
+        excluded = {d for d in (normalize_domain(v) for v in serializer.validated_data["exclude"]) if d}
+        client = IndexClientService.for_session(request.user.session)
+        service = ListService(account_id=request.user.account_id, user_id=request.user.id)
+        target = service.create(label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id)
+        added = 0
+        # `wanted` counts ranks WALKED (pre-exclusion), matching the
+        # results table: the cutoff decides the set, exclusion then
+        # removes from it.
+        taken = 0
+        cursor: str | None = run_cursor(id)
+        # False on ANY exit but the two honest ones (snapshot done, list
+        # full): the finally deletes the partial so no half-sheet can
+        # survive a mid-save crash looking finished.
+        completed = False
+        try:
+            while cursor is not None and (wanted is None or taken < wanted):
+                # Clamp to remaining capacity so the final page part-fills
+                # the sheet ("what fit is saved") instead of tripping
+                # ListsFull and dropping whole.
+                capacity = MAX_LIST_ROWS - added
+                if capacity <= 0:
+                    break
+                limit = (
+                    min(SAVE_LIST_PAGE, capacity) if wanted is None else min(SAVE_LIST_PAGE, capacity, wanted - taken)
+                )
+                result = client.lookalikes(payload={"limit": limit, "cursor": cursor})
+                if result.status != RUN_STATUS_COMPLETE:
+                    return _invalid_request("run is not complete; poll it before saving")
+                # Slice to what was asked: the caps must hold even if
+                # the upstream answers more than the requested limit.
+                items = (result.items or [])[:limit]
+                if not items:
+                    break
+                taken += len(items)
+                rows = [
+                    {
+                        "domain": item.company.domain,
+                        "name": item.company.name,
+                        "industry": item.company.industry or "",
+                        "size": item.company.size_band or "",
+                        "score": str(item.score),
+                        "group": item.group or "",
+                    }
+                    for item in items
+                    # Normalized on BOTH sides: the upstream's form is
+                    # canonical today, but the compare must not depend
+                    # on that staying true.
+                    if normalize_domain(item.company.domain) not in excluded
+                ]
+                added += service.add_rows(target, rows)
+                # The advance guard the client export also carries: a
+                # stuck cursor must not walk forever.
+                if result.next_cursor == cursor:
+                    raise IndexUpstreamError("run cursor did not advance")
+                cursor = result.next_cursor
+            completed = True
+        except ListsFull:
+            # A concurrent writer filled the list first: what fit is
+            # saved, honestly partial.
+            completed = True
+        except ListNotFound:
+            # The target was deleted mid-save: a conflict with a
+            # concurrent action, not a bad request.
+            return Response(
+                {"error": str(DiscoverErrorCode.CONFLICT), "detail": "the list was deleted during the save"},
+                status=409,
+            )
+        except _UPSTREAM_ERRORS as e:
+            return _error_response(e)
+        finally:
+            if not completed:
+                service.delete(target)
+        target.refresh_from_db()
+        return Response(list_wire(target), status=201)
 
 
 class LookalikeRunCancelView(APIView):

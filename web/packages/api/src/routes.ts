@@ -35,6 +35,22 @@ export const apiRoutes = {
     lookalikeRun: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}`,
     // POST: stop a pending/running run (terminal runs no-op).
     lookalikeRunCancel: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/cancel`,
+    // POST: snapshot a COMPLETE run into a local list.
+    lookalikeRunSaveList: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/save-list`,
+  },
+  lists: {
+    // GET: keyset index (?after=). POST: create.
+    index: `/${API_VERSION}/lists`,
+    // GET: the whole folder set. POST: create.
+    folders: `/${API_VERSION}/lists/folders`,
+    // PATCH {label} / DELETE (lists inside go loose).
+    folder: (id: string) => `/${API_VERSION}/lists/folders/${id}`,
+    // POST multipart {file, label?}: a CSV becomes a sheet.
+    import: `/${API_VERSION}/lists/import`,
+    // GET / PATCH {label} / DELETE.
+    detail: (id: string) => `/${API_VERSION}/lists/${id}`,
+    // GET: keyset rows by position (?after=&limit=). POST: append rows.
+    rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
   },
 } as const;
 
@@ -46,9 +62,16 @@ export const authRoutes = {
   signup: `/${AUTH_API_VERSION}/auth/signup`,
 } as const;
 
+const LIST_PREFIX = "/lists";
+
 // Next.js frontend paths the browser navigates to programmatically.
 export const webRoutes = {
+  // Home IS the lists index (sheets are the unit of work).
   home: "/",
+  lists: "/",
+  // The detail prefix: nav highlighting matches on it, list() builds on it.
+  listPrefix: LIST_PREFIX,
+  list: (id: string) => `${LIST_PREFIX}/${id}`,
   discover: "/discover",
   login: "/login",
   signup: "/signup",

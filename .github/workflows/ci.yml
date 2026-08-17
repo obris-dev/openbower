@@ -72,6 +72,7 @@ jobs:
       - run: cd web && pnpm install --frozen-lockfile
       - run: cd web && pnpm -r lint
       - run: cd web && pnpm -r typecheck
+      - run: cd web && pnpm -r test
       # The zod side of the contract is generated; drift between the
       # committed output and the Pydantic-exported schema.json fails here.
       - run: cd web && pnpm --filter @bower/schema check

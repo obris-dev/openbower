@@ -5,7 +5,8 @@
 
 import { LookalikeListResponseSchema, type LookalikeListResponse } from "@bower/schema";
 
-import { apiRoutes, buildApiUrl } from "./routes";
+import { errorDetail, fetchJson } from "./request.ts";
+import { apiRoutes } from "./routes.ts";
 
 // Re-exported for consumers: components type against @bower/api (the
 // schema package has exactly one consumer, this one).
@@ -15,6 +16,11 @@ export type { LookalikeItem, LookalikeListResponse } from "@bower/schema";
  * an existing run's pages. */
 export type LookalikeQuery = {
   domains?: string[];
+  // Seeding from a list: name the list and which column holds the
+  // identifiers; the backend extracts + normalizes the values and the
+  // query proceeds down the one domains path.
+  list_id?: string;
+  identifier_key?: string;
   limit?: number;
   cursor?: string;
 };
@@ -43,13 +49,6 @@ const GENERIC_FAILURE = "The search failed. Please try again.";
  * one answer the same page size. */
 export const LOOKALIKE_PAGE_LIMIT = 50;
 
-/** The run-results cursor format ("<run id>:<last rank>"), owned HERE so
- * clients that need a from-the-top cursor (the CSV build) never forge
- * the shape themselves. */
-export function runCursor(runId: string, afterRank = 0): string {
-  return `${runId}:${afterRank}`;
-}
-
 // The terminal run statuses, pinned to the CONTRACT's closed union: a
 // typo here is a compile error, and an unknown status off the wire fails
 // zod parsing into the error state (never "keep polling"). canceled is
@@ -64,8 +63,7 @@ function classify(res: Response, body: unknown): LookalikesResult {
   if (res.status === 401) return { status: "unauthenticated" };
   if (res.status === 403) return { status: "reauth" };
   if (!res.ok && res.status !== 202) {
-    const detail =
-      typeof body === "object" && body !== null && "detail" in body ? String((body as { detail: unknown }).detail) : "";
+    const detail = errorDetail(body);
     // 400s carry the upstream's human-readable reason (e.g. "at least 2
     // seeds must resolve in the universe"); pass it through.
     return { status: "error", message: res.status === 400 && detail ? detail : GENERIC_FAILURE };
@@ -93,37 +91,23 @@ function classify(res: Response, body: unknown): LookalikesResult {
 /** POST the query. A cold cohort answers `computing`; poll with
  * `fetchLookalikeRunResult` until terminal. */
 export async function fetchLookalikesResult(query: LookalikeQuery): Promise<LookalikesResult> {
-  let res: Response;
-  let body: unknown;
-  try {
-    res = await fetch(buildApiUrl(apiRoutes.discover.lookalikes), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(query),
-    });
-    // A non-JSON body (empty 401s included) must not masquerade as a
-    // network failure; classify() decides from the HTTP status.
-    body = await res.json().catch(() => null);
-  } catch {
-    return { status: "error", message: "Could not reach the server." };
-  }
-  return classify(res, body);
+  const fetched = await fetchJson(apiRoutes.discover.lookalikes, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(query),
+  });
+  if (!fetched) return { status: "error", message: "Could not reach the server." };
+  return classify(fetched.res, fetched.body);
 }
 
 /** GET the run's current state (the poll seam). */
 export async function fetchLookalikeRunResult(runId: string): Promise<LookalikesResult> {
-  let res: Response;
-  let body: unknown;
-  try {
-    res = await fetch(buildApiUrl(`${apiRoutes.discover.lookalikeRun(runId)}?limit=${LOOKALIKE_PAGE_LIMIT}`), {
-      credentials: "include",
-    });
-    body = await res.json().catch(() => null);
-  } catch {
-    return { status: "error", message: "Could not reach the server." };
-  }
-  return classify(res, body);
+  const fetched = await fetchJson(`${apiRoutes.discover.lookalikeRun(runId)}?limit=${LOOKALIKE_PAGE_LIMIT}`, {
+    credentials: "include",
+  });
+  if (!fetched) return { status: "error", message: "Could not reach the server." };
+  return classify(fetched.res, fetched.body);
 }
 
 /** Ask the server to stop a pending/running run (kills the worker's scan;
@@ -133,14 +117,11 @@ export async function fetchLookalikeRunResult(runId: string): Promise<Lookalikes
  * retry can fix it. Other failures are swallowed: the caller has stopped
  * polling either way, and the run just finishes into the cache. */
 export async function cancelLookalikeRun(runId: string): Promise<{ needsLogin: boolean }> {
-  try {
-    const res = await fetch(buildApiUrl(apiRoutes.discover.lookalikeRunCancel(runId)), {
-      method: "POST",
-      credentials: "include",
-    });
-    return { needsLogin: res.status === 401 || res.status === 403 };
-  } catch {
-    // Unreachable server: nothing to do, the run will finish and cache.
-    return { needsLogin: false };
-  }
+  const fetched = await fetchJson(apiRoutes.discover.lookalikeRunCancel(runId), {
+    method: "POST",
+    credentials: "include",
+  });
+  // Unreachable server: nothing to do, the run will finish and cache.
+  if (!fetched) return { needsLogin: false };
+  return { needsLogin: fetched.res.status === 401 || fetched.res.status === 403 };
 }

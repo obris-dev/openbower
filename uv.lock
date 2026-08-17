@@ -332,6 +332,7 @@ source = { editable = "packages/kernel" }
 dependencies = [
     { name = "django" },
     { name = "djangorestframework" },
+    { name = "idna" },
     { name = "ulid" },
 ]
 
@@ -339,6 +340,7 @@ dependencies = [
 requires-dist = [
     { name = "django", specifier = ">=6.0" },
     { name = "djangorestframework", specifier = ">=3.15" },
+    { name = "idna", specifier = ">=3" },
     { name = "ulid", specifier = ">=1.1" },
 ]
 
