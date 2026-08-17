@@ -3,10 +3,10 @@ on a user's behalf.
 
 `DownstreamTokenRejected` is the generic "the resource server said our
 forwarded access token is inactive / expired / revoked" signal (an upstream
-401). It lives here, not in a specific resource client, so the session-layer
-refresh-and-retry helper (`AppSessionService.Global.call_with_refresh`) can
-catch it without depending on any one client, and every resource client
-raises the SAME exception for the same condition.
+401, surfaced after the transport's refresh-and-retry could not clear it).
+It lives here, not in a specific resource client, so the session layer and
+the proxy views can catch it without depending on any one client, and
+every resource client raises the SAME exception for the same condition.
 
 It is distinct from a scope/authorization denial (an upstream 403): that means
 the token is valid but not permitted, which a token refresh cannot fix (the

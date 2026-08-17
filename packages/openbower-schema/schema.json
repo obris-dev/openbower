@@ -26,6 +26,293 @@
       ],
       "title": "AuthUser",
       "type": "object"
+    },
+    "Company": {
+      "description": "One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.",
+      "properties": {
+        "country": {
+          "description": "Country; empty when unknown.",
+          "title": "Country",
+          "type": "string"
+        },
+        "domain": {
+          "description": "Canonical lowercased bare domain.",
+          "title": "Domain",
+          "type": "string"
+        },
+        "founded_year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Founding year when known.",
+          "title": "Founded Year"
+        },
+        "id": {
+          "description": "The company's ULID in the universe.",
+          "title": "Id",
+          "type": "string"
+        },
+        "industry": {
+          "description": "Industry label; empty when unknown.",
+          "title": "Industry",
+          "type": "string"
+        },
+        "linkedin_url": {
+          "description": "LinkedIn company URL; empty when unknown.",
+          "title": "Linkedin Url",
+          "type": "string"
+        },
+        "locality": {
+          "description": "City/locality; empty when unknown.",
+          "title": "Locality",
+          "type": "string"
+        },
+        "name": {
+          "description": "Company display name.",
+          "title": "Name",
+          "type": "string"
+        },
+        "region": {
+          "description": "Region/state; empty when unknown.",
+          "title": "Region",
+          "type": "string"
+        },
+        "size_band": {
+          "description": "Coarse employee band, e.g. 1-10; empty when unknown.",
+          "title": "Size Band",
+          "type": "string"
+        },
+        "snapshot_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO date the row's data was current.",
+          "title": "Snapshot Date"
+        },
+        "source": {
+          "description": "Provenance of the row, e.g. pdl_free.",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "domain",
+        "name",
+        "industry",
+        "locality",
+        "region",
+        "country",
+        "linkedin_url",
+        "size_band",
+        "source"
+      ],
+      "title": "Company",
+      "type": "object"
+    },
+    "LookalikeGroup": {
+      "description": "One seed group of a run: heterogeneous cohorts split into distinct\ngroups, each searched by its own centroid and labeled.",
+      "properties": {
+        "elbow_rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "This group's own boundary: the knee of ITS score decay (null when too short/flat).",
+          "title": "Elbow Rank"
+        },
+        "label": {
+          "default": "",
+          "description": "Human label; empty for the single homogeneous group.",
+          "title": "Label",
+          "type": "string"
+        },
+        "seed_domains": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Seed Domains",
+          "type": "array"
+        },
+        "size": {
+          "default": 0,
+          "description": "Results this group contributed to the run.",
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "title": "LookalikeGroup",
+      "type": "object"
+    },
+    "LookalikeItem": {
+      "description": "One ranked look-alike candidate.",
+      "properties": {
+        "company": {
+          "$ref": "#/$defs/Company"
+        },
+        "description": {
+          "default": "",
+          "description": "Site-derived blurb (homepage meta description or title); empty until the domain has a fetched snippet.",
+          "title": "Description",
+          "type": "string"
+        },
+        "group": {
+          "default": "",
+          "description": "Label of the seed group that surfaced this candidate; empty for single-group runs.",
+          "title": "Group",
+          "type": "string"
+        },
+        "rank": {
+          "description": "1-based rank in this result set.",
+          "title": "Rank",
+          "type": "integer"
+        },
+        "score": {
+          "description": "Similarity score in [0, 1].",
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "company",
+        "score",
+        "rank"
+      ],
+      "title": "LookalikeItem",
+      "type": "object"
+    },
+    "LookalikeListResponse": {
+      "description": "The look-alike envelope (data service and app proxy alike), for both\nthe query POST and the run-status poll.\n\n`status` drives the async lifecycle: \"complete\" carries the page in\n`items`; \"pending\"/\"running\" mean poll the run (HTTP 202, empty items);\n\"failed\" carries `detail`; \"canceled\" is terminal by request (a fresh\nquery revives the run). The engine computes in a worker, so a cold\ncohort answers pending first and is polled by `run_id`; a cached cohort\nanswers complete inline.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Failure detail when status is failed.",
+          "title": "Detail"
+        },
+        "engine": {
+          "description": "Which engine ranked these, e.g. embedding_v1.",
+          "title": "Engine",
+          "type": "string"
+        },
+        "groups": {
+          "default": [],
+          "description": "The run's seed-group breakdown; single unlabeled entry for homogeneous cohorts.",
+          "items": {
+            "$ref": "#/$defs/LookalikeGroup"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/LookalikeItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Opaque cursor for the next page.",
+          "title": "Next Cursor"
+        },
+        "outlier_domains": {
+          "default": [],
+          "description": "Seeds set aside by clustering as misfits (excluded from generation, shown to the user).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Outlier Domains",
+          "type": "array"
+        },
+        "result_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "TOTAL results in the completed run (the full lead-list size, independent of page size).",
+          "title": "Result Count"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The run to poll; null only when no run exists (e.g. an empty cohort).",
+          "title": "Run Id"
+        },
+        "status": {
+          "default": "complete",
+          "description": "Run lifecycle. Terminal: complete | failed | canceled; keep polling: pending | running.",
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "canceled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "unresolved_domains": {
+          "default": [],
+          "description": "Inline seed domains that are not in the universe.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "engine",
+        "items"
+      ],
+      "title": "LookalikeListResponse",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -33,6 +320,15 @@
   "x-roots": [
     {
       "$ref": "#/$defs/AuthUser"
+    },
+    {
+      "$ref": "#/$defs/Company"
+    },
+    {
+      "$ref": "#/$defs/LookalikeItem"
+    },
+    {
+      "$ref": "#/$defs/LookalikeListResponse"
     }
   ]
 }

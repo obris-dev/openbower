@@ -1,29 +1,22 @@
 "use client";
 
-import { type FormEvent, useState, useSyncExternalStore } from "react";
+import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
 import { type CredentialFailure, idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
+import { REMEMBER_EMAIL_COOKIE, REMEMBER_MAX_AGE_SECONDS } from "./constants";
 import { MODES } from "./modes";
 import type { ModeName } from "./types";
 
 const MIN_PASSWORD = 8;
-const REMEMBER_EMAIL_KEY = "bower.login.email";
 
-// The stored email, SSR-correctly: the server snapshot is null (render
-// empty + unchecked), and the client snapshot triggers a POST-hydration
-// re-render that React does propagate to controlled inputs. A lazy
-// useState read is not enough here: React refuses to overwrite an
-// input's DOM state during hydration itself, so a server-rendered
-// unchecked box would stay visually unchecked forever.
-const subscribeToNothing = () => () => {};
-function useStoredEmail(enabled: boolean): string | null {
-  return useSyncExternalStore(
-    subscribeToNothing,
-    () => (enabled ? window.localStorage.getItem(REMEMBER_EMAIL_KEY) : null),
-    () => null,
-  );
+function writeRememberCookie(email: string | null): void {
+  const secure = window.location.protocol === "https:" ? "; secure" : "";
+  document.cookie =
+    email === null
+      ? `${REMEMBER_EMAIL_COOKIE}=; path=/; max-age=0; samesite=lax${secure}`
+      : `${REMEMBER_EMAIL_COOKIE}=${encodeURIComponent(email)}; path=/; max-age=${REMEMBER_MAX_AGE_SECONDS}; samesite=lax${secure}`;
 }
 
 /** The shared credentials machinery behind login and signup: the web owns
@@ -33,17 +26,22 @@ function useStoredEmail(enabled: boolean): string | null {
  * is no flow to resume and idpResumeUrl's fallback would strand the
  * browser on the IdP's own pages, so we go to the app instead: its guard
  * starts a fresh OAuth round against the just-minted IdP session. */
-export function CredentialsForm({ mode }: { mode: ModeName }) {
+export function CredentialsForm({
+  mode,
+  rememberedEmail = null,
+}: {
+  mode: ModeName;
+  rememberedEmail?: string | null;
+}) {
   const { subtitle, action, submitLabel, busyLabel, passwordAutoComplete, confirmPassword, rememberEmail, footer } =
     MODES[mode];
-  // Untouched (null) falls back to the stored email / its presence, so
-  // the remembered state applies without effects; the first keystroke or
-  // click takes over.
-  const storedEmail = useStoredEmail(rememberEmail);
+  // Untouched (null) falls back to the SERVER-read cookie value / its
+  // presence, so the remembered state is correct in the very first
+  // paint; the first keystroke or click takes over.
   const [emailInput, setEmailInput] = useState<string | null>(null);
   const [rememberInput, setRememberInput] = useState<boolean | null>(null);
-  const email = emailInput ?? storedEmail ?? "";
-  const remember = rememberInput ?? storedEmail !== null;
+  const email = emailInput ?? rememberedEmail ?? "";
+  const remember = rememberInput ?? rememberedEmail !== null;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<CredentialFailure | null>(null);
@@ -69,19 +67,14 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
       return;
     }
     if (rememberEmail) {
-      try {
-        if (remember) window.localStorage.setItem(REMEMBER_EMAIL_KEY, email);
-        else window.localStorage.removeItem(REMEMBER_EMAIL_KEY);
-      } catch {
-        // Preference just doesn't persist (private mode etc.).
-      }
+      writeRememberCookie(remember ? email : null);
     }
     window.location.href = next ? idpResumeUrl(next) : webRoutes.home;
   }
 
   return (
     <>
-      <p className="mb-6 mt-1 text-sm text-ink/60 dark:text-paper/60">{subtitle}</p>
+      <p className="mb-6 mt-1 text-sm text-muted">{subtitle}</p>
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {error?.message && <ErrorMessage message={error.message} />}
         <div>
@@ -118,7 +111,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
           {error?.fields?.password && <FieldError id="password-error">{error.fields.password.join(" ")}</FieldError>}
         </div>
         {rememberEmail && (
-          <label className="flex items-center gap-2 text-sm text-ink/70 dark:text-paper/70">
+          <label className="flex items-center gap-2 text-sm text-muted">
             <input
               type="checkbox"
               checked={remember}
@@ -149,7 +142,7 @@ export function CredentialsForm({ mode }: { mode: ModeName }) {
           {submitting ? busyLabel : submitLabel}
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-ink/60 dark:text-paper/60">
+      <p className="mt-6 text-center text-sm text-muted">
         {footer.prompt}{" "}
         <a className="font-medium text-signal hover:underline" href={withNext(footer.href, next)}>
           {footer.label}

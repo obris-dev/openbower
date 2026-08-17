@@ -10,6 +10,10 @@ import { apiRoutes, authRoutes, buildApiUrl, buildAuthUrl, resolveAuthBase } fro
 // zod), so the web can't drift from what the server serializes.
 export type Me = AuthUser;
 
+// Mirror of the backend's SESSION_COOKIE_NAME (auth_client/constants.py):
+// the middleware and the server-side guard read the cookie by name.
+export const SESSION_COOKIE_NAME = "bwr_session";
+
 // A three-way result so callers can tell "definitely logged out" (the
 // server said 401/403) from "we don't know" (network / CORS / 5xx / a body
 // that fails schema validation). The hook layer uses this to avoid bouncing
@@ -17,13 +21,7 @@ export type Me = AuthUser;
 // Me-or-null wrapper over it.
 export type MeResult = { status: "ok"; user: Me } | { status: "unauthenticated" } | { status: "error" };
 
-export async function fetchMeResult(): Promise<MeResult> {
-  let res: Response;
-  try {
-    res = await fetch(buildApiUrl(apiRoutes.auth.me), { credentials: "include" });
-  } catch {
-    return { status: "error" };
-  }
+export async function classifyMe(res: Response): Promise<MeResult> {
   if (res.status === 401 || res.status === 403) return { status: "unauthenticated" };
   if (!res.ok) return { status: "error" };
   try {
@@ -35,6 +33,17 @@ export async function fetchMeResult(): Promise<MeResult> {
     return { status: "error" };
   }
 }
+
+export async function fetchMeResult(): Promise<MeResult> {
+  let res: Response;
+  try {
+    res = await fetch(buildApiUrl(apiRoutes.auth.me), { credentials: "include" });
+  } catch {
+    return { status: "error" };
+  }
+  return classifyMe(res);
+}
+
 
 /**
  * The signed-in user, or null when there is no live session. Never throws

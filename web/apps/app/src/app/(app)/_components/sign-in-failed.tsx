@@ -19,11 +19,11 @@ const DETAILS: Record<string, string> = {
 
 export function SignInFailed({ code }: { code: string }) {
   return (
-    <main className="grid min-h-dvh place-items-center bg-paper-soft p-6 dark:bg-ink">
+    <main className="grid min-h-dvh place-items-center bg-canvas p-6">
       <Card className="w-full max-w-sm p-8 text-center" role="alert">
-        <ShieldAlert aria-hidden className="mx-auto h-10 w-10 text-ink/30 dark:text-paper/30" />
-        <h1 className="mt-4 text-lg font-semibold text-ink dark:text-paper">Sign-in didn&apos;t complete</h1>
-        <p className="mt-2 text-sm text-ink/60 dark:text-paper/60">
+        <ShieldAlert aria-hidden className="mx-auto h-10 w-10 text-faint" />
+        <h1 className="mt-4 text-lg font-semibold text-foreground">Sign-in didn&apos;t complete</h1>
+        <p className="mt-2 text-sm text-muted">
           {DETAILS[code] ?? "Something went wrong finishing sign-in."} Nothing was changed on your account.
         </p>
         <Button

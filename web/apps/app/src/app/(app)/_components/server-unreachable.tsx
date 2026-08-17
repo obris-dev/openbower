@@ -79,16 +79,16 @@ export function ServerUnreachable() {
   }, [probing]);
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-paper-soft p-6 dark:bg-ink">
+    <main className="grid min-h-dvh place-items-center bg-canvas p-6">
       <Card className="w-full max-w-sm p-8 text-center" role="alert">
-        <CloudOff aria-hidden className="mx-auto h-10 w-10 text-ink/30 dark:text-paper/30" />
-        <h1 className="mt-4 text-lg font-semibold text-ink dark:text-paper">Can&apos;t reach the server</h1>
+        <CloudOff aria-hidden className="mx-auto h-10 w-10 text-faint" />
+        <h1 className="mt-4 text-lg font-semibold text-foreground">Can&apos;t reach the server</h1>
         {!online && (
-          <p className="mt-2 text-sm text-ink/60 dark:text-paper/60">
+          <p className="mt-2 text-sm text-muted">
             You&apos;re offline. We&apos;ll retry when your connection returns.
           </p>
         )}
-        <p className="mt-3 text-xs text-ink/40 dark:text-paper/40" aria-live="polite">
+        <p className="mt-3 text-xs text-faint" aria-live="polite">
           {probing ? "Retrying…" : `Retrying in ${secondsLeft}s…`}
         </p>
         <Button onClick={() => void probe()} loading={probing} fullWidth className="mt-5">

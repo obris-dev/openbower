@@ -40,6 +40,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "common",
     "auth_client",
+    "discover",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -113,6 +114,14 @@ OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "openbower-app")
 # from this app's API_VERSION_PREFIX so bumping ours never repoints it.
 OPENBOWER_AUTH_API_VERSION = os.environ.get("OPENBOWER_AUTH_API_VERSION", "v1")
 
+# The data service (company universe + look-alike index). The app calls it
+# server-to-server on the user's behalf, forwarding the session's IdP
+# access token (which carries data:read). Same settings trio as the IdP
+# client above. Required; local.py / cloud.py supply env defaults.
+OPENBOWER_DATA_URL = os.environ["OPENBOWER_DATA_URL"].rstrip("/")
+OPENBOWER_DATA_API_VERSION = os.environ.get("OPENBOWER_DATA_API_VERSION", "v1")
+DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"))
+
 
 # RFC 8707 resource indicators for the session access token. The token is
 # used at TWO resource servers, so it names both as its audience: the IdP
@@ -121,7 +130,7 @@ OPENBOWER_AUTH_API_VERSION = os.environ.get("OPENBOWER_AUTH_API_VERSION", "v1")
 # audience is that service's real base URL, so it matches per env (dev
 # localhost, cloud openbower.com); binding to only one would get the token
 # rejected at the other.
-OAUTH_RESOURCES = [OPENBOWER_AUTH_URL]
+OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 
 # Timeout (seconds) for every server-to-IdP HTTP call (token exchange,
 # /me, refresh, revoke), so a hung IdP can't pin a worker.

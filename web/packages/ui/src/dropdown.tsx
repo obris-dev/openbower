@@ -25,9 +25,8 @@ export function DropdownMenu({
       transition
       anchor={anchor}
       className={cn(
-        "z-50 w-48 overflow-hidden rounded-lg border border-ink/10 bg-paper py-1 shadow-lg outline-none",
+        "z-50 w-48 overflow-hidden rounded-lg border border-hairline bg-surface py-1 shadow-lg outline-none",
         "[--anchor-gap:0.5rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
-        "dark:border-paper/15 dark:bg-ink",
         className,
       )}
     />
@@ -35,7 +34,7 @@ export function DropdownMenu({
 }
 
 const ITEM_CLASSES =
-  "block w-full px-4 py-2.5 text-left text-sm font-medium text-ink/80 data-focus:bg-ink/5 data-disabled:opacity-40 dark:text-paper/80 dark:data-focus:bg-paper/10";
+  "block w-full px-4 py-2.5 text-left text-sm font-medium text-foreground data-focus:bg-wash data-disabled:opacity-40";
 
 export function DropdownItem({
   href,

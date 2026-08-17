@@ -9,6 +9,7 @@ os.environ.setdefault("BASE_URL", "http://localhost:8002")
 os.environ.setdefault("APP_BASE_URL", "http://localhost:3003")
 # The local identity service (:8001 by suite convention).
 os.environ.setdefault("OPENBOWER_AUTH_URL", "http://localhost:8001")
+os.environ.setdefault("OPENBOWER_DATA_URL", "http://localhost:8003")
 # Browser to Django is plain HTTP in dev; secure cookies would never get sent.
 os.environ.setdefault("AUTH_COOKIE_SECURE", "false")
 # Dev Postgres: the docker-compose db service, mapped to host port 5433.
