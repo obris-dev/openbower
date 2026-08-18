@@ -1,4 +1,14 @@
 // @bower/api: the typed client, one module per domain.
-export * from "./routes";
-export * from "./auth";
-export * from "./discover";
+// Relative imports carry explicit .ts extensions ON PURPOSE: the
+// package runs under plain node for its test lane, whose ESM loader
+// resolves nothing extensionless. Bundlers resolve them identically;
+// do not normalize them away.
+// The transport funnel stays internal; consumers get the outcome type
+// and the probe primitive, nothing else.
+export { fetchJson, GENERIC_FAILURE } from "./request.ts";
+export type { ApiResult } from "./request.ts";
+export * from "./domains.ts";
+export * from "./routes.ts";
+export * from "./auth.ts";
+export * from "./discover.ts";
+export * from "./lists.ts";

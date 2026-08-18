@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CloudOff } from "lucide-react";
 import { Button, Card } from "@bower/ui";
-import { apiRoutes, buildApiUrl } from "@bower/api";
+import { apiRoutes, fetchJson } from "@bower/api";
 
 /** The full-page state for /me being unreachable (network down, server
  * down): icon anchor, headline, the two causes, and AUTO-retry on a
@@ -11,7 +11,9 @@ import { apiRoutes, buildApiUrl } from "@bower/api";
  * that gets ANY response means the server is back, and one reload
  * routes through the guard properly (signed in -> shell, session gone
  * -> login). Deliberately not a redirect: a blip must never bounce a
- * signed-in user to login. */
+ * signed-in user to login. Deliberately NOT EmptyState: this is a
+ * page-level alert with a live countdown region, not a card inside a
+ * layout. */
 
 const RETRY_DELAYS_SECONDS = [2, 4, 8, 15, 30] as const;
 
@@ -43,12 +45,12 @@ export function ServerUnreachable() {
 
   async function probe() {
     setProbing(true);
-    try {
-      await fetch(buildApiUrl(apiRoutes.auth.me), { credentials: "include", cache: "no-store" });
-      // Any response at all (200, 401, 500) means the server is
-      // reachable again; reload and let the guard route the outcome.
+    // fetchJson answers null ONLY on transport failure; any response at
+    // all (200, 401, 500) means the server is reachable again.
+    const fetched = await fetchJson(apiRoutes.auth.me, { credentials: "include", cache: "no-store" });
+    if (fetched) {
       window.location.reload();
-    } catch {
+    } else {
       attempt.current += 1;
       const next = RETRY_DELAYS_SECONDS[attempt.current] ?? MAX_DELAY_SECONDS;
       setSecondsLeft(next);

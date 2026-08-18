@@ -12,11 +12,31 @@ from .discover import (
     LookalikeItem,
     LookalikeListResponse,
 )
+from .lists import (
+    FoldersList,
+    FolderSummary,
+    ImportResult,
+    ListColumn,
+    ListRowsPage,
+    ListRowWire,
+    ListsPage,
+    ListSummary,
+    RowsAdded,
+)
 
 __all__ = [
     "AuthUser",
     "Company",
+    "FolderSummary",
+    "FoldersList",
+    "ImportResult",
+    "ListColumn",
+    "ListRowWire",
+    "ListRowsPage",
+    "ListSummary",
+    "ListsPage",
     "LookalikeGroup",
     "LookalikeItem",
     "LookalikeListResponse",
+    "RowsAdded",
 ]

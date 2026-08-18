@@ -122,6 +122,269 @@
       "title": "Company",
       "type": "object"
     },
+    "FolderSummary": {
+      "description": "A flat, account-scoped bucket for lists (taxonomy, not behavior).",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "list_count": {
+          "description": "Server-side count; consent copy must not trust loaded pages.",
+          "title": "List Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "list_count",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "FolderSummary",
+      "type": "object"
+    },
+    "FoldersList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/FolderSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "FoldersList",
+      "type": "object"
+    },
+    "ImportResult": {
+      "description": "What a CSV upload produced.",
+      "properties": {
+        "list": {
+          "$ref": "#/$defs/ListSummary"
+        },
+        "rows": {
+          "description": "Rows imported.",
+          "title": "Rows",
+          "type": "integer"
+        },
+        "skipped": {
+          "description": "Blank lines and rows wider than the header, not imported.",
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "list",
+        "rows",
+        "skipped"
+      ],
+      "title": "ImportResult",
+      "type": "object"
+    },
+    "ListColumn": {
+      "properties": {
+        "key": {
+          "description": "Stable snake_case key; row data dicts key on it.",
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display label, as the user (or the CSV header) wrote it.",
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "description": "Sheet display type; drives rendering only.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type"
+      ],
+      "title": "ListColumn",
+      "type": "object"
+    },
+    "ListRowWire": {
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Cell values keyed by column key.",
+          "title": "Data",
+          "type": "object"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "position": {
+          "description": "1-based dense display/paging order.",
+          "title": "Position",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "position"
+      ],
+      "title": "ListRowWire",
+      "type": "object"
+    },
+    "ListRowsPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ListRowWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last position when more rows exist.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "ListRowsPage",
+      "type": "object"
+    },
+    "ListSummary": {
+      "description": "One list as the index shows it (and the save-list response).",
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "Display order.",
+          "items": {
+            "$ref": "#/$defs/ListColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "folder_id": {
+          "default": "",
+          "description": "The containing folder; empty = loose at the root.",
+          "title": "Folder Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "origin": {
+          "description": "How the list came to exist.",
+          "enum": [
+            "discover",
+            "csv",
+            "manual"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "origin_ref": {
+          "default": "",
+          "description": "e.g. the source run id for discover snapshots.",
+          "title": "Origin Ref",
+          "type": "string"
+        },
+        "row_count": {
+          "description": "Total rows (the sheet may page far beyond one response).",
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "origin",
+        "row_count",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ListSummary",
+      "type": "object"
+    },
+    "ListsPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ListSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last id when more lists exist.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "ListsPage",
+      "type": "object"
+    },
     "LookalikeGroup": {
       "description": "One seed group of a run: heterogeneous cohorts split into distinct\ngroups, each searched by its own centroid and labeled.",
       "properties": {
@@ -313,6 +576,25 @@
       ],
       "title": "LookalikeListResponse",
       "type": "object"
+    },
+    "RowsAdded": {
+      "description": "The manual-append receipt.",
+      "properties": {
+        "added": {
+          "title": "Added",
+          "type": "integer"
+        },
+        "row_count": {
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "added",
+        "row_count"
+      ],
+      "title": "RowsAdded",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -325,10 +607,28 @@
       "$ref": "#/$defs/Company"
     },
     {
+      "$ref": "#/$defs/FoldersList"
+    },
+    {
+      "$ref": "#/$defs/ImportResult"
+    },
+    {
+      "$ref": "#/$defs/ListRowsPage"
+    },
+    {
+      "$ref": "#/$defs/ListsPage"
+    },
+    {
+      "$ref": "#/$defs/ListSummary"
+    },
+    {
       "$ref": "#/$defs/LookalikeItem"
     },
     {
       "$ref": "#/$defs/LookalikeListResponse"
+    },
+    {
+      "$ref": "#/$defs/RowsAdded"
     }
   ]
 }

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help hooks db-up api-local web-local local stop logs test-core test schema schema-check
+.PHONY: help hooks db-up api-local web-local local stop logs test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -44,7 +44,10 @@ logs: ## Tail the detached services' logs
 test-core: ## Run the app backend's suite
 	cd apps/core && DJANGO_ENV=test DJANGO_SECRET_KEY=test-only uv run python manage.py test
 
-test: test-core ## Run every suite
+test-web: ## Run the web workspace's node tests (what CI runs)
+	cd web && pnpm -r test
+
+test: test-core test-web ## Run every suite
 
 schema: ## Regenerate the shared contract (schema.json, then the web zod)
 	uv run python -m tools.schema_sync.generate

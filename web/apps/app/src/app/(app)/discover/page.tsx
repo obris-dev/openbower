@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Button, PageFooter, useToast } from "@bower/ui";
 
 import { parseDomains } from "./_components/domains";
@@ -37,12 +37,35 @@ export default function DiscoverPage() {
   const consumeError = useDiscoverSearchStore((s) => s.consumeError);
 
   const searching = phase !== SearchPhase.Idle;
-  const excludedSet = new Set(parseDomains(excludeRaw).domains);
+  // Memoized: parseDomains normalizes (URL parse per entry), which must
+  // not re-run for renders that didn't touch the Exclude box.
+  const excludedSet = useMemo(() => new Set(parseDomains(excludeRaw).domains), [excludeRaw]);
 
   // A reload killed any in-flight poll loop; re-attach to the run the
   // worker kept computing. No-op on plain in-app navigation.
   useEffect(() => {
     resumeActiveRun();
+  }, []);
+
+  // Arrival from a sheet's "Find lookalikes": ?list=&key= seeds a run
+  // from that column. Params are consumed (stripped) immediately so a
+  // reload re-attaches to the run instead of starting it again.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const listId = params.get("list");
+    const key = params.get("key");
+    if (!listId || !key) return;
+    // Guard BEFORE consuming: stripping first would silently eat the
+    // arrival when another run is active. (A reload mid-run lands here
+    // with the phase already resumed; that re-attach is the point.)
+    if (useDiscoverSearchStore.getState().phase !== SearchPhase.Idle) {
+      window.history.replaceState(null, "", window.location.pathname);
+      toast.error("A search is already running. Wait for it or cancel it, then try again.");
+      return;
+    }
+    window.history.replaceState(null, "", window.location.pathname);
+    runSearch({ list_id: listId, identifier_key: key }, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arrival is a mount-time event
   }, []);
 
   // Failures may land while the user is on ANOTHER page (the loop outlives
@@ -62,7 +85,10 @@ export default function DiscoverPage() {
       return;
     }
     if (dropped > 0) {
-      toast.error(`Too many seeds: searching the first ${domains.length.toLocaleString()}, ${dropped.toLocaleString()} dropped.`);
+      toast.error(
+        `Too many seeds: searching the first ${domains.length.toLocaleString("en-US")}, ` +
+          `${dropped.toLocaleString("en-US")} dropped.`,
+      );
     }
     recordPastSearch(domains.join(", "));
     runSearch({ domains }, raw);

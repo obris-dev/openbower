@@ -1,24 +1,12 @@
 // Seed-input parsing shared by the controls and the exclude filter.
 
+import { normalizeDomain } from "@bower/api";
+
 // Mirrors the backend's inline-domains bound: sized for a whole-CRM
 // paste. Parsing reports the overflow instead of silently dropping it.
 export const MAX_SEEDS = 5000;
 
 export type ParsedDomains = { domains: string[]; dropped: number };
-
-/** The backend's canonical bare-domain form, mirrored: results carry
- * normalized domains, so anything compared against them (the exclude
- * filter) must normalize too or `Acme.com`, `www.acme.com`, and pasted
- * URLs silently match nothing. */
-function normalizeDomain(raw: string): string {
-  let s = raw.trim().toLowerCase();
-  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, ""); // scheme
-  s = s.split(/[/?#]/, 1)[0] ?? ""; // path, query, fragment
-  s = s.split("@").pop() ?? ""; // credentials
-  s = s.split(":", 1)[0] ?? ""; // port
-  s = s.replace(/^www\./, "");
-  return s.replace(/\.$/, "");
-}
 
 /** Split on commas/whitespace, normalize, drop blanks, dedupe, cap;
  * `dropped` says how many deduped entries fell past the cap so the UI

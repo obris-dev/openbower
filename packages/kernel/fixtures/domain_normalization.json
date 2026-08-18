@@ -1,0 +1,121 @@
+{
+  "description": "Domain normalization agreement vectors. Both normalizers (packages/kernel/src/openbower_kernel/domains.py and web/packages/api/src/domains.ts) must map input to expected exactly; empty string means refused.",
+  "vectors": [
+    {
+      "input": "acme.com",
+      "expected": "acme.com"
+    },
+    {
+      "input": "HTTPS://WWW.Acme.com/About?x=1#top",
+      "expected": "acme.com"
+    },
+    {
+      "input": "http://acme.com",
+      "expected": "acme.com"
+    },
+    {
+      "input": "user:pass@acme.com:8443",
+      "expected": "acme.com"
+    },
+    {
+      "input": "acme.com.",
+      "expected": "acme.com"
+    },
+    {
+      "input": "  acme.com  ",
+      "expected": "acme.com"
+    },
+    {
+      "input": "sub.acme.co.uk",
+      "expected": "sub.acme.co.uk"
+    },
+    {
+      "input": "café.com",
+      "expected": "xn--caf-dma.com"
+    },
+    {
+      "input": "bücher.example",
+      "expected": "xn--bcher-kva.example"
+    },
+    {
+      "input": "",
+      "expected": ""
+    },
+    {
+      "input": "com",
+      "expected": ""
+    },
+    {
+      "input": "acme inc.com",
+      "expected": ""
+    },
+    {
+      "input": "a,b.com",
+      "expected": ""
+    },
+    {
+      "input": "acme_inc.com",
+      "expected": ""
+    },
+    {
+      "input": "-acme.com",
+      "expected": ""
+    },
+    {
+      "input": "acme-.com",
+      "expected": ""
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+      "expected": ""
+    },
+    {
+      "input": "ftp://acme.com",
+      "expected": "acme.com"
+    },
+    {
+      "input": "acme.com..",
+      "expected": "acme.com"
+    },
+    {
+      "input": "faß.de",
+      "expected": "xn--fa-hia.de"
+    },
+    {
+      "input": "a..com",
+      "expected": ""
+    },
+    {
+      "input": "acme%2ecom",
+      "expected": ""
+    },
+    {
+      "input": "10.0.0.1",
+      "expected": "10.0.0.1"
+    },
+    {
+      "input": "1.1",
+      "expected": ""
+    },
+    {
+      "input": "0x7f.0.0.1",
+      "expected": ""
+    },
+    {
+      "input": "011.0.0.1",
+      "expected": ""
+    },
+    {
+      "input": "999.1.1.1",
+      "expected": ""
+    },
+    {
+      "input": "１.１",
+      "expected": ""
+    },
+    {
+      "input": "１０.０.０.１",
+      "expected": "10.0.0.1"
+    }
+  ]
+}

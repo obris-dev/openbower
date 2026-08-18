@@ -34,7 +34,7 @@ auth + data services live in a separate private repo.
   from the last row of a full page.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
-  discover lead-list download), so the request path stays small, fast,
+  sheet CSV export), so the request path stays small, fast,
   bounded JSON. When a file outgrows the browser, the shape is an async
   job writing to a blob store plus a short-lived signed link (the worker
   + poll machinery), never a server-assembled response in between.
