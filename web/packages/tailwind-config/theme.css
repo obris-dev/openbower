@@ -109,17 +109,36 @@
      menus, inputs, sticky heads) */
   --color-canvas: var(--role-canvas);
   --color-surface: var(--role-surface);
-  /* Lines: hairline = dividers, edge = control outlines */
+  /* Lines and controls: hairline = dividers, edge = control
+     outlines; control = SOLID fill for control chrome (switch
+     tracks): text roles are translucent and compute against
+     whatever sits behind them. */
+  --color-control: var(--role-control);
   --color-hairline: var(--role-hairline);
   --color-edge: var(--role-edge);
   /* Fills: wash = resting tint, wash-strong = hover/active tint */
   --color-wash: var(--role-wash);
   --color-wash-strong: var(--role-wash-strong);
+  /* Status: danger = refusals and destructive verbs (the server said
+     no, or this deletes something); warning = incomplete or degraded
+     (nothing is wrong yet). Never palette classes at call sites. */
+  --color-danger: var(--role-danger);
+  --color-danger-strong: var(--role-danger-strong);
+  --color-danger-fill: var(--role-danger-fill);
+  --color-danger-fill-strong: var(--role-danger-fill-strong);
+  --color-danger-edge: var(--role-danger-edge);
+  --color-danger-wash: var(--role-danger-wash);
+  --color-success: var(--role-success);
+  --color-warning: var(--role-warning);
+  --color-warning-edge: var(--role-warning-edge);
+  --color-warning-hairline: var(--role-warning-hairline);
+  --color-warning-wash: var(--role-warning-wash);
 }
 
 :root {
   --role-foreground: var(--color-ink);
   --role-muted: color-mix(in oklab, var(--color-ink) 60%, transparent);
+  --role-control: #6b7280;
   --role-faint: color-mix(in oklab, var(--color-ink) 40%, transparent);
   --role-canvas: var(--color-paper-soft);
   --role-surface: var(--color-paper);
@@ -127,11 +146,36 @@
   --role-edge: color-mix(in oklab, var(--color-ink) 15%, transparent);
   --role-wash: color-mix(in oklab, var(--color-ink) 5%, transparent);
   --role-wash-strong: color-mix(in oklab, var(--color-ink) 10%, transparent);
+  --role-danger: #dc2626;
+  --role-danger-strong: #b91c1c;
+  /* Solid fills that carry white text: one job per token (a token
+     serving both text-on-dark and fill-under-white cannot satisfy
+     contrast in both roles at once). */
+  --role-danger-fill: #dc2626;
+  --role-danger-fill-strong: #b91c1c;
+  --role-danger-edge: #ef4444;
+  --role-danger-wash: #fef2f2;
+  --role-success: #16a34a;
+  /* TEXT job only: #d97706 at
+     12px computed ~2.9:1; amber-800 clears 6.6:1. Rings keep the
+     vivid edge, and the derivations peg to the EDGE so washes stay
+     amber rather than going brown with the text. */
+  --role-warning: #92400e;
+  /* The edge ring computes ~2:1 against white: DEFENSIBLE only
+     because every warned control pairs the ring with an adjacent
+     text cause (the checklist, the field lines); a ring-only warning
+     state would need a darker edge. No -fill pair exists because no
+     solid warning surface does; add one WITH its fill token if that
+     changes (one token cannot serve both contrast jobs). */
+  --role-warning-edge: #f59e0b;
+  --role-warning-hairline: color-mix(in oklab, var(--role-warning-edge) 30%, transparent);
+  --role-warning-wash: color-mix(in oklab, var(--role-warning-edge) 5%, transparent);
 }
 
 .dark {
   --role-foreground: var(--color-paper);
   --role-muted: color-mix(in oklab, var(--color-paper) 60%, transparent);
+  --role-control: #8b929b;
   --role-faint: color-mix(in oklab, var(--color-paper) 40%, transparent);
   --role-canvas: var(--color-ink);
   --role-surface: var(--color-ink-soft);
@@ -139,4 +183,15 @@
   --role-edge: color-mix(in oklab, var(--color-paper) 15%, transparent);
   --role-wash: color-mix(in oklab, var(--color-paper) 10%, transparent);
   --role-wash-strong: color-mix(in oklab, var(--color-paper) 20%, transparent);
+  --role-danger: #fca5a5;
+  --role-danger-strong: #f87171;
+  --role-danger-fill: #dc2626;
+  --role-danger-fill-strong: #b91c1c;
+  --role-danger-edge: #ef4444;
+  --role-danger-wash: #450a0a;
+  --role-success: #4ade80;
+  --role-warning: #f59e0b;
+  --role-warning-edge: #f59e0b;
+  --role-warning-hairline: color-mix(in oklab, var(--role-warning-edge) 35%, transparent);
+  --role-warning-wash: color-mix(in oklab, var(--role-warning-edge) 8%, transparent);
 }

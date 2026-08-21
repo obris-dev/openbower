@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Compass, House } from "lucide-react";
+import { Bot, Compass, House } from "lucide-react";
 import { Sidebar, ThemeToggle } from "@bower/ui";
 import { logout, webRoutes } from "@bower/api";
 import { useUser } from "@bower/auth";
@@ -20,6 +20,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       current: pathname === webRoutes.home || pathname.startsWith(webRoutes.listPrefix),
     },
     { name: "Discover", href: webRoutes.discover, icon: Compass, current: pathname.startsWith(webRoutes.discover) },
+    { name: "Agents", href: webRoutes.agents, icon: Bot, current: pathname.startsWith(webRoutes.agents) },
   ];
 
   async function handleSignOut() {

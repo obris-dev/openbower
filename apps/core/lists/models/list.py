@@ -1,20 +1,18 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from openbower_kernel.models import BaseModel
+from openbower_kernel.models import UserScopedModel
 
 from ..constants import LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH
 
 
-class List(BaseModel):
+class List(UserScopedModel):
     """A named SHEET with its own schema: `columns` is a JSON array of
     {key, label, type} in display order; rows carry data keyed by those
     columns. Content-agnostic on purpose: companies are one KIND of
     content, and company-ness is a use-time interpretation of a column
     (nothing here stores company references)."""
 
-    account_id = models.CharField(_("account id"), max_length=26)
-    user_id = models.CharField(_("user id"), max_length=26)
     folder_id = models.CharField(_("folder id"), max_length=26, blank=True, default="")
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
     columns = models.JSONField(_("columns"), default=list, help_text=_("[{key, label, type}] in display order"))

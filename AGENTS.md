@@ -27,7 +27,10 @@ auth + data services live in a separate private repo.
   everything else reads `settings.*`.
 - Every wire shape the web consumes crosses through the schema package
   (Pydantic first, zod codegen); the web never hand-types an API response.
-- Every list endpoint pages by KEYSET cursor, never LIMIT OFFSET: order
+- Every list endpoint pages by KEYSET cursor, never LIMIT OFFSET
+  (unpaged is allowed only where a HARD CAP bounds the whole
+  collection, stated at the cap's constant, as the agents roster's
+  MAX_AGENTS does): order
   by `-id` with `?after=<last id>` (ULIDs are time-sortable; helpers in
   the kernel), or by a dense rank where one exists (run results, where
   `rank > :after` also gives cheap random access). `next_cursor` comes
@@ -39,6 +42,30 @@ auth + data services live in a separate private repo.
   job writing to a blob store plus a short-lived signed link (the worker
   + poll machinery), never a server-assembled response in between.
 - Views stay thin; domain logic lives in services and pure tested modules.
+- First-pass design rules, learned the hard way:
+  - Buy the commodity, own the doctrine: before writing infrastructure,
+    ask whether it is product or plumbing an ecosystem already
+    maintains (inference runs on pydantic-ai; we own custody, scope,
+    grounding, and diagnosis).
+  - Use a framework's intended seams. Wrapping objects after
+    construction, or state whose writer is not visible in a signature,
+    means the idiomatic channel was missed.
+  - Typed at construction, one shape end to end: contract models in,
+    typed result objects out; no bare dicts or mutable out-params
+    across boundaries.
+  - No fallbacks on guesses: failure is signal. A blank result with its
+    diagnosis attached beats a rescue path that hides what the user
+    should see. Delete any branch whose trigger cannot distinguish the
+    cases it claims to handle.
+  - One path, one guard, one constructor: a second code path needs a
+    distinct input, not a distinct fear.
+  - Two-tier errors: config errors raise loudly up front (they fail
+    every row identically); per-row hazards degrade quietly WITH their
+    diagnosis attached.
+  - Every empty result carries its why by construction (diagnostics
+    ride the result type), and UI copy names causes and next steps.
+  - Bounds are named constants, binary for invented numbers, clamping
+    (not rejecting) authored input at metered boundaries.
 - Web: route groups own their guard and chrome in `layout.tsx`; a
   route's pieces live in its `_components/` leaf, and a component FAMILY
   gets a directory with an index (single files stay flat). Shared hooks
@@ -53,6 +80,23 @@ auth + data services live in a separate private repo.
 - House writing rules: no em dashes and no `--` in drafted copy or comments
   (commas or parentheses instead); `|` as the separator in UI copy, never
   middle dots.
+- A design doc that doubles as a PR body IS the spec: it changes in
+  the same commit as the behavior it describes, and a drift pass
+  (phantom fields, superseded defaults, stale numbers, claims with no
+  code behind them) is part of done for any change it covers.
+- Reversed decisions are marked RULED with what they reversed and
+  why, and the superseded passage is REWRITTEN to the new truth,
+  never left standing to contradict it; the decision history lives in
+  the design doc ONLY (its inline RULED markers). Code comments never carry
+  RULED markers, reversal narratives, or proto references: a
+  public-repo reader cannot open the design doc, so a shipped comment
+  keeps only the constraint half of any ruling.
+- Comments state constraints and tradeoffs the code cannot show,
+  only: never where a decision came from, what the next line does, or
+  why a change was correct.
+- No sibling-repo or private-org names in OSS-shipped files (docs,
+  comments, code); CLAUDE.md and other non-shipped tooling files are
+  exempt.
 - Examples are vertical-neutral everywhere (comments, placeholders, docs,
   prompts, test fixtures): `acme.com` / `example.io`, generic industries,
   varied roles. No niche-specific example data in shipped files.

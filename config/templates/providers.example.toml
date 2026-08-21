@@ -1,0 +1,27 @@
+# Inference sources for agents: copy to config/providers.toml and
+# edit. This ONE file carries structure AND keys, inline (it is
+# gitignored, like ~/.aws/credentials); there is no env mirror. A
+# keyless source works when its base is a self-hosted server; the
+# canonical vendors need a key or they stay out of the catalog.
+#
+# Without this file there are no sources beyond the keyless "ollama"
+# one local runs add automatically.
+
+[[openai_compatible]]
+name = "ollama"
+base_url = "http://localhost:11434/v1"
+
+[[openai_compatible]]
+name = "openai"
+base_url = "https://api.openai.com/v1"
+# api_key = "sk-..."
+
+# A self-hosted gateway is just another source:
+# [[openai_compatible]]
+# name = "vllm"
+# base_url = "http://gpu-box:8000/v1"
+
+[[anthropic_compatible]]
+name = "anthropic"
+base_url = "https://api.anthropic.com"
+# api_key = "sk-ant-..."

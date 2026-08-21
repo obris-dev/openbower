@@ -33,6 +33,14 @@ from .base import *  # noqa: F403
 DEBUG = env_bool("DEBUG", "true")
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
+# The zero-config dev loop: a natively-run Ollama through the
+# OpenAI-compatible door, added only when the operator's config file
+# didn't already name an ollama source. Keyless is fine (non-canonical
+# bases are open); absent Ollama degrades to an empty catalog honestly.
+OPENAI_COMPATIBLE_SOURCES.setdefault(  # noqa: F405
+    "ollama", {"base_url": "http://localhost:11434/v1", "api_key": ""}
+)
+
 # CORS: explicit allowlist even in dev. Allow-all + credentials would let
 # any localhost page credentialed-fetch /v1/auth/me and read session-bearing
 # responses.

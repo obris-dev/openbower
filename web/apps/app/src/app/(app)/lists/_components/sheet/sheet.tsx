@@ -24,6 +24,7 @@ import {
   type ListSummary,
 } from "@bower/api";
 
+import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk } from "@/lib/ensure-ok";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
@@ -139,16 +140,13 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         <div className="flex shrink-0 items-center gap-2">
           {confirmingDelete ? (
             // Destruction confirms IN PLACE (the same slot the verb came
-            // from), naming what dies; no modal.
-            <>
-              <span className="text-sm text-muted">Delete this list?</span>
-              <Button size="sm" variant="danger" onClick={() => void remove()}>
-                Delete
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>
-                Cancel
-              </Button>
-            </>
+            // from), naming what dies; the ONE shared ritual, no modal.
+            <ConfirmDelete
+              inline
+              question="Delete this list?"
+              onCancel={() => setConfirmingDelete(false)}
+              onDelete={() => void remove()}
+            />
           ) : (
             <>
               <FindLookalikes detail={detail} />
@@ -163,7 +161,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
                   <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
                     {exporting ? "Exporting…" : "Export CSV"}
                   </DropdownItem>
-                  <DropdownItem className="text-red-600" onClick={() => setConfirmingDelete(true)}>
+                  <DropdownItem className="text-danger" onClick={() => setConfirmingDelete(true)}>
                     Delete list
                   </DropdownItem>
                 </DropdownMenu>

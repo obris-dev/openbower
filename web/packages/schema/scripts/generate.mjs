@@ -92,7 +92,51 @@ const body = order
     return `export const ${name}Schema = ${zod};\nexport type ${name} = z.infer<typeof ${name}Schema>;`;
   })
   .join("\n\n");
-const rendered = `${banner}\nimport { z } from "zod";\n\n${body}\n`;
+// The contract's size bounds, mechanically projected (maxLength on
+// strings, maxItems/minItems on arrays) so client-side enforcement
+// (input maxLength, row caps) reads the SAME numbers the server
+// validates with instead of hand-copying them.
+const bounds = {};
+// A nullable/optional field wraps its constraints in anyOf members;
+// the projection must look inside or those bounds silently vanish.
+function boundIn(node, key) {
+  if (typeof node?.[key] === "number") return node[key];
+  for (const member of node?.anyOf ?? []) {
+    if (typeof member?.[key] === "number") return member[key];
+  }
+  return undefined;
+}
+for (const name of order) {
+  const props = defs[name]?.properties ?? {};
+  for (const [prop, node] of Object.entries(props)) {
+    const entry = {};
+    for (const key of ["maxLength", "maxItems", "minItems"]) {
+      const value = boundIn(node, key);
+      if (value !== undefined) entry[key] = value;
+    }
+    if (Object.keys(entry).length > 0) (bounds[name] ??= {})[prop] = entry;
+  }
+}
+const boundsBody = `export const WIRE_BOUNDS = ${JSON.stringify(bounds, null, 2)} as const;`;
+// Server-refused output keys and scalar wire facts, straight off the
+// contract document (see tools/schema_sync/generate.py). A missing
+// extension REFUSES like a missing contract file: `?? []` would emit
+// an empty reserved set that typechecks, passes --check, and silently
+// disarms the readiness mirror it exists to arm.
+if (!Array.isArray(doc["x-reserved-output-keys"]) || doc["x-reserved-output-keys"].length === 0) {
+  process.stderr.write("Contract is missing x-reserved-output-keys; regenerate it (tools/schema_sync).\n");
+  process.exit(1);
+}
+if (typeof doc["x-constants"]?.TEST_ROW_MAX_KEYS !== "number") {
+  // Symmetric with the reserved-keys guard: shape-checked, not just
+  // present (an empty object would disarm the bench's row-cap copy).
+  process.stderr.write("Contract is missing x-constants.TEST_ROW_MAX_KEYS; regenerate it (tools/schema_sync).\n");
+  process.exit(1);
+}
+const reservedBody = `export const RESERVED_OUTPUT_KEYS = ${JSON.stringify(doc["x-reserved-output-keys"], null, 2)} as const;`;
+const constantsBody = `export const WIRE_CONSTANTS = ${JSON.stringify(doc["x-constants"], null, 2)} as const;`;
+
+const rendered = `${banner}\nimport { z } from "zod";\n\n${body}\n\n${boundsBody}\n\n${reservedBody}\n\n${constantsBody}\n`;
 
 if (process.argv.includes("--check")) {
   const current = existsSync(OUTPUT) ? readFileSync(OUTPUT, "utf8") : "";

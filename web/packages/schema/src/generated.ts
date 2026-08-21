@@ -3,8 +3,17 @@
 
 import { z } from "zod";
 
+export const AgentOutputSchema = z.object({ "description": z.string().max(256).default(""), "key": z.string().max(40).describe("Present always; BLANK allowed on requests (the server derives it from the label) and always populated on responses (required, no default: a response omitting it must fail the parse, never invent an empty string)."), "label": z.string().max(80).describe("Non-blank on the wire (the server refuses blank labels at the request boundary); the builder's local draft may hold blank rows, client-side only."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("One declared output: a named, described field the model must\nfill (the description rides into the instruction), landing as one\ncell per row.");
+export type AgentOutput = z.infer<typeof AgentOutputSchema>;
+
+export const AgentToolsSchema = z.object({ "find_contacts": z.boolean().default(false), "web_search": z.boolean().default(false) }).describe("The tool REGISTRY, one typed field per tool: the wire itself\ncarries the key set, so the web derives its tool list from this\nshape instead of hand-retyping it. Unknown keys are TOLERATED\n(dropped) here because this model validates on every read, and a\nserver that adds a tool must not fail stored rows or a browser\nholding the old bundle; the REQUEST leg's serializer is where\nunknown keys refuse, which is what keeps the set closed on the\nway in.");
+export type AgentTools = z.infer<typeof AgentToolsSchema>;
+
 export const AuthUserSchema = z.object({ "account_id": z.string().describe("The user's primary account ULID."), "email": z.string().describe("The user's email address."), "id": z.string().describe("The user's cloud-issued ULID.") }).describe("The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.");
 export type AuthUser = z.infer<typeof AuthUserSchema>;
+
+export const CatalogModelSchema = z.object({ "model": z.string(), "provider": z.enum(["openai_compatible","anthropic_compatible"]), "source": z.string() }).describe("One runnable model on this deploy.");
+export type CatalogModel = z.infer<typeof CatalogModelSchema>;
 
 export const CompanySchema = z.object({ "country": z.string().describe("Country; empty when unknown."), "domain": z.string().describe("Canonical lowercased bare domain."), "founded_year": z.union([z.number().int(), z.null()]).describe("Founding year when known.").default(null), "id": z.string().describe("The company's ULID in the universe."), "industry": z.string().describe("Industry label; empty when unknown."), "linkedin_url": z.string().describe("LinkedIn company URL; empty when unknown."), "locality": z.string().describe("City/locality; empty when unknown."), "name": z.string().describe("Company display name."), "region": z.string().describe("Region/state; empty when unknown."), "size_band": z.string().describe("Coarse employee band, e.g. 1-10; empty when unknown."), "snapshot_date": z.union([z.string(), z.null()]).describe("ISO date the row's data was current.").default(null), "source": z.string().describe("Provenance of the row, e.g. pdl_free.") }).describe("One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.");
 export type Company = z.infer<typeof CompanySchema>;
@@ -15,7 +24,7 @@ export type FolderSummary = z.infer<typeof FolderSummarySchema>;
 export const FoldersListSchema = z.object({ "items": z.array(z.lazy(() => FolderSummarySchema)) });
 export type FoldersList = z.infer<typeof FoldersListSchema>;
 
-export const ListColumnSchema = z.object({ "key": z.string().describe("Stable snake_case key; row data dicts key on it."), "label": z.string().describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
+export const ListColumnSchema = z.object({ "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
 export type ListColumn = z.infer<typeof ListColumnSchema>;
 
 export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order.") });
@@ -42,5 +51,105 @@ export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
 export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
+export const TestSearchSchema = z.object({ "failed": z.boolean(), "hits": z.number().int(), "query": z.string() }).describe("One search query's diagnosis: failed means the provider errored\n(rate limit, outage), distinct from an honest zero-hit answer.");
+export type TestSearch = z.infer<typeof TestSearchSchema>;
+
+export const AgentCatalogSchema = z.object({ "contacts_available": z.boolean(), "models": z.array(z.lazy(() => CatalogModelSchema)), "search_available": z.boolean(), "support_followup": z.string().describe("The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify."), "truncated": z.boolean().describe("True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.") }).describe("What THIS deploy can run; search_available gates the tools.");
+export type AgentCatalog = z.infer<typeof AgentCatalogSchema>;
+
+export const AgentConfigSchema = z.object({ "model": z.string(), "outputs": z.array(z.lazy(() => AgentOutputSchema)).min(1).max(8), "prompt": z.string().max(262144), "provider": z.enum(["openai_compatible","anthropic_compatible"]), "source": z.string().describe("Which server of that spec (the env-named source)."), "tools": z.lazy(() => AgentToolsSchema) }).describe("The runtime's interchange unit, shared by both custodies (a\nsaved agent, a column's quick prompt) and the test bench.");
+export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+
+export const AgentListItemSchema = z.object({ "created_at": z.string(), "id": z.string(), "label": z.string().max(128), "model": z.string(), "tools": z.lazy(() => AgentToolsSchema), "updated_at": z.string() }).describe("One list row: the index ships what the table renders, never\neach agent's whole config (a full list of maxed prompts would be\nmegabytes to draw four columns; the edit page fetches its agent by\nid).");
+export type AgentListItem = z.infer<typeof AgentListItemSchema>;
+
+export const AgentSummarySchema = z.object({ "config": z.lazy(() => AgentConfigSchema), "created_at": z.string(), "id": z.string(), "label": z.string().max(128), "updated_at": z.string() }).describe("A stored agent (one custody of a config).");
+export type AgentSummary = z.infer<typeof AgentSummarySchema>;
+
+export const AgentTestResultSchema = z.object({ "cells": z.record(z.string(), z.string()), "evidence": z.array(z.string()), "searches": z.array(z.lazy(() => TestSearchSchema)) }).describe("One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the searches that\nproduced it with each query's diagnosis.");
+export type AgentTestResult = z.infer<typeof AgentTestResultSchema>;
+
+export const AgentTestRunSchema = z.object({ "error": z.union([z.string(), z.null()]).default(null), "id": z.string(), "poll_budget_seconds": z.number().int().describe("The runtime's own worst case for one run: a poller waits this long (plus its margin) and no longer. The server presents runs still pending past its LARGER stale window as failed, so the loop normally ends on a terminal status."), "result": z.union([z.lazy(() => AgentTestResultSchema), z.null()]).default(null), "status": z.enum(["pending","complete","failed"]) }).describe("The polled test-run envelope: result rides only when complete,\nand a failed run carries its WHY (every empty result ships its\ndiagnosis; failure is the tier that needs it most).");
+export type AgentTestRun = z.infer<typeof AgentTestRunSchema>;
+
+export const AgentsListSchema = z.object({ "items": z.array(z.lazy(() => AgentListItemSchema)) });
+export type AgentsList = z.infer<typeof AgentsListSchema>;
+
 export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
 export type ImportResult = z.infer<typeof ImportResultSchema>;
+
+export const WIRE_BOUNDS = {
+  "AgentOutput": {
+    "description": {
+      "maxLength": 256
+    },
+    "key": {
+      "maxLength": 40
+    },
+    "label": {
+      "maxLength": 80
+    }
+  },
+  "ListColumn": {
+    "key": {
+      "maxLength": 40
+    },
+    "label": {
+      "maxLength": 80
+    }
+  },
+  "AgentConfig": {
+    "outputs": {
+      "maxItems": 8,
+      "minItems": 1
+    },
+    "prompt": {
+      "maxLength": 262144
+    }
+  },
+  "AgentListItem": {
+    "label": {
+      "maxLength": 128
+    }
+  },
+  "AgentSummary": {
+    "label": {
+      "maxLength": 128
+    }
+  }
+} as const;
+
+export const RESERVED_OUTPUT_KEYS = [
+  "construct",
+  "copy",
+  "dict",
+  "from_orm",
+  "json",
+  "model_computed_fields",
+  "model_config",
+  "model_construct",
+  "model_copy",
+  "model_dump",
+  "model_dump_json",
+  "model_extra",
+  "model_fields",
+  "model_fields_set",
+  "model_json_schema",
+  "model_parametrized_name",
+  "model_post_init",
+  "model_rebuild",
+  "model_validate",
+  "model_validate_json",
+  "model_validate_strings",
+  "parse_file",
+  "parse_obj",
+  "parse_raw",
+  "schema",
+  "schema_json",
+  "update_forward_refs",
+  "validate"
+] as const;
+
+export const WIRE_CONSTANTS = {
+  "TEST_ROW_MAX_KEYS": 16
+} as const;

@@ -17,7 +17,7 @@ TEST_IDENTITY = {
 _TOKENS = {"access_token": "access-abc", "refresh_token": "refresh-abc", "expires_in": 3600}
 
 
-class _Resp:
+class FakeResponse:
     def __init__(self, status_code: int = 200, json_data: dict | None = None) -> None:
         self.status_code = status_code
         self._json = json_data or {}
@@ -30,10 +30,10 @@ def login_session(client, identity: dict | None = None) -> None:
     resp = client.get(reverse("auth_login"))
     state = parse_qs(urlparse(resp["Location"]).query)["state"][0]
     with (
-        patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _TOKENS)),
+        patch("auth_client.services.oauth.transport.httpx.post", return_value=FakeResponse(200, _TOKENS)),
         patch(
             "auth_client.services.oauth.transport.httpx.get",
-            return_value=_Resp(200, identity or TEST_IDENTITY),
+            return_value=FakeResponse(200, identity or TEST_IDENTITY),
         ),
     ):
         client.get(reverse("auth_callback"), {"code": "the-code", "state": state})

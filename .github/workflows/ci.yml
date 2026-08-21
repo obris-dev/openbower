@@ -51,6 +51,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-packages
+      - name: Migrations are complete
+        # A model edit whose migration was never generated ships as a
+        # first-boot crash for whoever migrates next; fail it here.
+        run: cd apps/core && uv run python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_ENV: test
+          DJANGO_SECRET_KEY: test-only
       - name: Run the app backend suite
         run: cd apps/core && uv run python manage.py test
         env:
@@ -76,3 +83,7 @@ jobs:
       # The zod side of the contract is generated; drift between the
       # committed output and the Pydantic-exported schema.json fails here.
       - run: cd web && pnpm --filter @bower/schema check
+      # The real production build: server/client directive violations
+      # (a "use client" export CALLED from a server component) surface
+      # only here; lint, tsc, and unit tests all pass over them.
+      - run: cd web && pnpm --filter @bower/app exec next build

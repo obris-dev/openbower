@@ -21,13 +21,13 @@ import functools
 import logging
 from typing import Any
 
-from rest_framework import permissions, serializers
+from rest_framework import serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
 from auth_client.downstream import DownstreamTokenRejected
 from auth_client.services.oauth import AuthUpstreamUnavailable
+from common.views import ScopedView
 from discover.services.index_client import (
     IndexAccessDenied,
     IndexClientRequestError,
@@ -171,9 +171,7 @@ def proxy_view(view_method):
     return wrapper
 
 
-class LookalikesView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
+class LookalikesView(ScopedView):
     @proxy_view
     def post(self, request) -> LookalikeListResponse:
         serializer = LookalikeProxyRequest(data=request.data)
@@ -241,7 +239,7 @@ class SaveListRequest(serializers.Serializer):
     )
 
 
-class LookalikeRunSaveListView(APIView):
+class LookalikeRunSaveListView(ScopedView):
     """POST /v1/discover/lookalikes/runs/{id}/save-list {label, limit?}:
     snapshot a COMPLETE run into a local sheet by paging the data
     service. The run lives upstream; the rows land here, where lists
@@ -249,8 +247,6 @@ class LookalikeRunSaveListView(APIView):
     upstream failure mid-save deletes the partial list rather than
     leaving a half-sheet that looks finished; a concurrent delete of the
     target answers 409."""
-
-    permission_classes = [permissions.IsAuthenticated]
 
     _COLUMNS = [
         {"key": "domain", "label": "Domain", "type": ColumnType.URL},
@@ -346,13 +342,11 @@ class LookalikeRunSaveListView(APIView):
         return Response(list_wire(target), status=201)
 
 
-class LookalikeRunCancelView(APIView):
+class LookalikeRunCancelView(ScopedView):
     """POST /v1/discover/lookalikes/runs/{id}/cancel: stop the run. Pass
     -through of the data service's cancel (which answers with the same
     envelope as the poll, status now canceled or the terminal state it
     already reached)."""
-
-    permission_classes = [permissions.IsAuthenticated]
 
     @proxy_view
     def post(self, request, id: str) -> LookalikeListResponse:
@@ -360,11 +354,9 @@ class LookalikeRunCancelView(APIView):
         return client.cancel_run(run_id=id)
 
 
-class LookalikeRunView(APIView):
+class LookalikeRunView(ScopedView):
     """GET /v1/discover/lookalikes/runs/{id}: the poll leg of the async
     lifecycle, same session auth + failure mapping as the query."""
-
-    permission_classes = [permissions.IsAuthenticated]
 
     @proxy_view
     def get(self, request, id: str) -> LookalikeListResponse:

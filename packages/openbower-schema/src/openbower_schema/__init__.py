@@ -5,6 +5,18 @@ and codegen'd to zod for the web workspace, so both sides validate against
 one definition.
 """
 
+from .agents import (
+    AgentCatalog,
+    AgentConfig,
+    AgentListItem,
+    AgentOutput,
+    AgentsList,
+    AgentSummary,
+    AgentTestResult,
+    AgentTestRun,
+    AgentTools,
+    CatalogModel,
+)
 from .auth import AuthUser
 from .discover import (
     Company,
@@ -25,7 +37,17 @@ from .lists import (
 )
 
 __all__ = [
+    "AgentCatalog",
+    "AgentConfig",
+    "AgentListItem",
+    "AgentOutput",
+    "AgentSummary",
+    "AgentTestResult",
+    "AgentTestRun",
+    "AgentTools",
+    "AgentsList",
     "AuthUser",
+    "CatalogModel",
     "Company",
     "FolderSummary",
     "FoldersList",

@@ -23,31 +23,43 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
+    AgentCatalog,
+    AgentsList,
+    AgentSummary,
+    AgentTestRun,
     AuthUser,
-    Company,
     FoldersList,
+    FolderSummary,
     ImportResult,
     ListRowsPage,
     ListsPage,
     ListSummary,
-    LookalikeItem,
     LookalikeListResponse,
     RowsAdded,
 )
+from openbower_schema.agents import TEST_ROW_MAX_KEYS
 
-# The models projected into the contract. Grow this list as shared shapes land.
+# The models projected into the contract: exactly the RESPONSE ROOTS
+# (shapes a client validates a whole response body against). Nested
+# models ride in through $refs and still emit as named zod schemas, so
+# they are never listed here; a client-side standalone use (a draft
+# validating a nested shape) needs no listing either.
 CONTRACT_MODELS: list[type[Any]] = [
+    AgentCatalog,
+    AgentsList,
+    AgentSummary,
+    AgentTestRun,
     AuthUser,
-    Company,
     FoldersList,
+    FolderSummary,
     ImportResult,
     ListRowsPage,
     ListsPage,
     ListSummary,
-    LookalikeItem,
     LookalikeListResponse,
     RowsAdded,
 ]
@@ -68,14 +80,20 @@ MODE = "serialization"
 
 def build_schema() -> dict[str, Any]:
     keyed = [(model, MODE) for model in CONTRACT_MODELS]
-    refs, bundle = models_json_schema(keyed, ref_template=REF_TEMPLATE)
+    _refs, bundle = models_json_schema(keyed, ref_template=REF_TEMPLATE)
     return {
         "$schema": DIALECT,
         "title": "OpenBower contract",
         DEFS_KEY: bundle.get(DEFS_KEY, {}),
-        # A `$defs` library, not a schema one instance validates against; roots
-        # are an annotation the consumer reads to find the top-level shapes.
-        "x-roots": [refs[(model, MODE)] for model in CONTRACT_MODELS],
+        # Output keys the server refuses (they collide with the answer
+        # model's own attributes; hasattr(BaseModel, key) server-side).
+        # Derived keys never start with an underscore, so the public
+        # surface is the whole set. The web's readiness mirror reads
+        # this so a refused name never passes the checklist.
+        "x-reserved-output-keys": sorted(name for name in dir(BaseModel) if not name.startswith("_")),
+        # Scalar wire facts with no Field to hang on (the web reads
+        # them as WIRE_CONSTANTS).
+        "x-constants": {"TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS},
     }
 
 

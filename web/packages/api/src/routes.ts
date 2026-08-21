@@ -38,6 +38,18 @@ export const apiRoutes = {
     // POST: snapshot a COMPLETE run into a local list.
     lookalikeRunSaveList: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/save-list`,
   },
+  agents: {
+    // GET the roster / POST create.
+    index: `/${API_VERSION}/agents`,
+    // What THIS deploy can run (models + search availability).
+    catalog: `/${API_VERSION}/agents/catalog`,
+    // POST a drafted config + one hand-fed row; 202 + a run to poll.
+    test: `/${API_VERSION}/agents/test`,
+    // GET: poll the test run to a terminal status.
+    testRun: (id: string) => `/${API_VERSION}/agents/test/${id}`,
+    // GET / PATCH / DELETE one agent.
+    detail: (id: string) => `/${API_VERSION}/agents/${id}`,
+  },
   lists: {
     // GET: keyset index (?after=). POST: create.
     index: `/${API_VERSION}/lists`,
@@ -73,6 +85,9 @@ export const webRoutes = {
   listPrefix: LIST_PREFIX,
   list: (id: string) => `${LIST_PREFIX}/${id}`,
   discover: "/discover",
+  agents: "/agents",
+  agentNew: "/agents/new",
+  agent: (id: string) => `/agents/${id}`,
   login: "/login",
   signup: "/signup",
 } as const;
