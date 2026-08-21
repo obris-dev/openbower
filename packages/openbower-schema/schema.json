@@ -1,5 +1,328 @@
 {
   "$defs": {
+    "AgentCatalog": {
+      "description": "What THIS deploy can run; search_available gates the tools.",
+      "properties": {
+        "contacts_available": {
+          "title": "Contacts Available",
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/CatalogModel"
+          },
+          "title": "Models",
+          "type": "array"
+        },
+        "search_available": {
+          "title": "Search Available",
+          "type": "boolean"
+        },
+        "support_followup": {
+          "description": "The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify.",
+          "title": "Support Followup",
+          "type": "string"
+        },
+        "truncated": {
+          "description": "True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.",
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "models",
+        "support_followup",
+        "truncated",
+        "search_available",
+        "contacts_available"
+      ],
+      "title": "AgentCatalog",
+      "type": "object"
+    },
+    "AgentConfig": {
+      "description": "The runtime's interchange unit, shared by both custodies (a\nsaved agent, a column's quick prompt) and the test bench.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/AgentOutput"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Outputs",
+          "type": "array"
+        },
+        "prompt": {
+          "maxLength": 262144,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "openai_compatible",
+            "anthropic_compatible"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "source": {
+          "description": "Which server of that spec (the env-named source).",
+          "title": "Source",
+          "type": "string"
+        },
+        "tools": {
+          "$ref": "#/$defs/AgentTools"
+        }
+      },
+      "required": [
+        "prompt",
+        "provider",
+        "source",
+        "model",
+        "tools",
+        "outputs"
+      ],
+      "title": "AgentConfig",
+      "type": "object"
+    },
+    "AgentListItem": {
+      "description": "One list row: the index ships what the table renders, never\neach agent's whole config (a full list of maxed prompts would be\nmegabytes to draw four columns; the edit page fetches its agent by\nid).",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 128,
+          "title": "Label",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "tools": {
+          "$ref": "#/$defs/AgentTools"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "model",
+        "tools",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "AgentListItem",
+      "type": "object"
+    },
+    "AgentOutput": {
+      "description": "One declared output: a named, described field the model must\nfill (the description rides into the instruction), landing as one\ncell per row.",
+      "properties": {
+        "description": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Description",
+          "type": "string"
+        },
+        "key": {
+          "description": "Present always; BLANK allowed on requests (the server derives it from the label) and always populated on responses (required, no default: a response omitting it must fail the parse, never invent an empty string).",
+          "maxLength": 40,
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "description": "Non-blank on the wire (the server refuses blank labels at the request boundary); the builder's local draft may hold blank rows, client-side only.",
+          "maxLength": 80,
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "description": "Sheet display type; drives rendering only.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type"
+      ],
+      "title": "AgentOutput",
+      "type": "object"
+    },
+    "AgentSummary": {
+      "description": "A stored agent (one custody of a config).",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/AgentConfig"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 128,
+          "title": "Label",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "config",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "AgentSummary",
+      "type": "object"
+    },
+    "AgentTestResult": {
+      "description": "One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the searches that\nproduced it with each query's diagnosis.",
+      "properties": {
+        "cells": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Cells",
+          "type": "object"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "searches": {
+          "items": {
+            "$ref": "#/$defs/TestSearch"
+          },
+          "title": "Searches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cells",
+        "evidence",
+        "searches"
+      ],
+      "title": "AgentTestResult",
+      "type": "object"
+    },
+    "AgentTestRun": {
+      "description": "The polled test-run envelope: result rides only when complete,\nand a failed run carries its WHY (every empty result ships its\ndiagnosis; failure is the tier that needs it most).",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "poll_budget_seconds": {
+          "description": "The runtime's own worst case for one run: a poller waits this long (plus its margin) and no longer. The server presents runs still pending past its LARGER stale window as failed, so the loop normally ends on a terminal status.",
+          "title": "Poll Budget Seconds",
+          "type": "integer"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTestResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "complete",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "poll_budget_seconds"
+      ],
+      "title": "AgentTestRun",
+      "type": "object"
+    },
+    "AgentTools": {
+      "description": "The tool REGISTRY, one typed field per tool: the wire itself\ncarries the key set, so the web derives its tool list from this\nshape instead of hand-retyping it. Unknown keys are TOLERATED\n(dropped) here because this model validates on every read, and a\nserver that adds a tool must not fail stored rows or a browser\nholding the old bundle; the REQUEST leg's serializer is where\nunknown keys refuse, which is what keeps the set closed on the\nway in.",
+      "properties": {
+        "find_contacts": {
+          "default": false,
+          "title": "Find Contacts",
+          "type": "boolean"
+        },
+        "web_search": {
+          "default": false,
+          "title": "Web Search",
+          "type": "boolean"
+        }
+      },
+      "title": "AgentTools",
+      "type": "object"
+    },
+    "AgentsList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AgentListItem"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "AgentsList",
+      "type": "object"
+    },
     "AuthUser": {
       "description": "The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.",
       "properties": {
@@ -25,6 +348,34 @@
         "account_id"
       ],
       "title": "AuthUser",
+      "type": "object"
+    },
+    "CatalogModel": {
+      "description": "One runnable model on this deploy.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "openai_compatible",
+            "anthropic_compatible"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "source",
+        "model"
+      ],
+      "title": "CatalogModel",
       "type": "object"
     },
     "Company": {
@@ -202,11 +553,13 @@
       "properties": {
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
+          "maxLength": 40,
           "title": "Key",
           "type": "string"
         },
         "label": {
           "description": "Display label, as the user (or the CSV header) wrote it.",
+          "maxLength": 80,
           "title": "Label",
           "type": "string"
         },
@@ -595,40 +948,65 @@
       ],
       "title": "RowsAdded",
       "type": "object"
+    },
+    "TestSearch": {
+      "description": "One search query's diagnosis: failed means the provider errored\n(rate limit, outage), distinct from an honest zero-hit answer.",
+      "properties": {
+        "failed": {
+          "title": "Failed",
+          "type": "boolean"
+        },
+        "hits": {
+          "title": "Hits",
+          "type": "integer"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "hits",
+        "failed"
+      ],
+      "title": "TestSearch",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
-  "x-roots": [
-    {
-      "$ref": "#/$defs/AuthUser"
-    },
-    {
-      "$ref": "#/$defs/Company"
-    },
-    {
-      "$ref": "#/$defs/FoldersList"
-    },
-    {
-      "$ref": "#/$defs/ImportResult"
-    },
-    {
-      "$ref": "#/$defs/ListRowsPage"
-    },
-    {
-      "$ref": "#/$defs/ListsPage"
-    },
-    {
-      "$ref": "#/$defs/ListSummary"
-    },
-    {
-      "$ref": "#/$defs/LookalikeItem"
-    },
-    {
-      "$ref": "#/$defs/LookalikeListResponse"
-    },
-    {
-      "$ref": "#/$defs/RowsAdded"
-    }
+  "x-constants": {
+    "TEST_ROW_MAX_KEYS": 16
+  },
+  "x-reserved-output-keys": [
+    "construct",
+    "copy",
+    "dict",
+    "from_orm",
+    "json",
+    "model_computed_fields",
+    "model_config",
+    "model_construct",
+    "model_copy",
+    "model_dump",
+    "model_dump_json",
+    "model_extra",
+    "model_fields",
+    "model_fields_set",
+    "model_json_schema",
+    "model_parametrized_name",
+    "model_post_init",
+    "model_rebuild",
+    "model_validate",
+    "model_validate_json",
+    "model_validate_strings",
+    "parse_file",
+    "parse_obj",
+    "parse_raw",
+    "schema",
+    "schema_json",
+    "update_forward_refs",
+    "validate"
   ]
 }

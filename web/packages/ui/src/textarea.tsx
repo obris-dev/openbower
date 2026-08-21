@@ -3,10 +3,13 @@ import { cn } from "./cn";
 
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   invalid?: boolean;
+  /** Incomplete, not wrong: amber ring, no aria-invalid (red stays
+   * reserved for genuine rejections). */
+  warned?: boolean;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  { invalid, className, ...rest },
+  { invalid, warned, className, ...rest },
   ref,
 ) {
   return (
@@ -20,8 +23,10 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
         // Exclusive, not additive (see Input): emitting both rings would
         // leave the winner to stylesheet order.
         invalid
-          ? "ring-red-500 focus:ring-red-500"
-          : "ring-edge focus:ring-signal",
+          ? "ring-danger-edge focus:ring-danger-edge"
+          : warned
+            ? "ring-warning-edge focus:ring-warning-edge"
+            : "ring-edge focus:ring-signal",
         className,
       )}
       {...rest}

@@ -9,7 +9,7 @@ import { buildApiUrl } from "./routes.ts";
 export type ApiResult<T> =
   | { status: "ok"; data: T }
   | { status: "unauthenticated" }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string; code?: string };
 
 export const GENERIC_FAILURE = "Something went wrong. Please try again.";
 
@@ -36,6 +36,13 @@ export function errorDetail(body: unknown): string {
     : "";
 }
 
+// The envelope's machine-readable code (the domain error enums).
+export function errorCode(body: unknown): string {
+  return typeof body === "object" && body !== null && "error" in body
+    ? String((body as { error: unknown }).error)
+    : "";
+}
+
 // schema: the zod validator for the response body, or null for
 // no-content endpoints (delete), whose success carries no data.
 export async function request<T>(path: string, schema: ZodType<T>, init?: RequestInit): Promise<ApiResult<T>>;
@@ -57,8 +64,14 @@ export async function request<T>(
     // Only a 400's or 409's detail is user copy (the request was
     // wrong, or lost a race the user should hear about); other
     // statuses' bodies are internals, not messages.
-    const detail = res.status === 400 || res.status === 409 ? errorDetail(body) : "";
-    return { status: "error", message: detail || GENERIC_FAILURE };
+    // detail AND code share the gate: other statuses' bodies are
+    // internals, not user copy or classification.
+    const classified = res.status === 400 || res.status === 409;
+    return {
+      status: "error",
+      message: (classified ? errorDetail(body) : "") || GENERIC_FAILURE,
+      code: (classified ? errorCode(body) : "") || undefined,
+    };
   }
   if (schema === null) return { status: "ok", data: null };
   const parsed = schema.safeParse(body);

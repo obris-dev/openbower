@@ -74,3 +74,14 @@ SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", "true")
 SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false")
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", "false")
+
+# The general needs-attention follow-up: hosted users cannot read
+# logs, so the operator names their support channel (SUPPORT_HINT),
+# defaulting to ours. Bounded LOUDLY here: it rides inside bounded
+# error messages, and a mid-URL truncation there would be worse than
+# this refusal.
+SUPPORT_FOLLOWUP = os.environ.get("SUPPORT_HINT") or "contact OpenBower support"
+if len(SUPPORT_FOLLOWUP) > SUPPORT_FOLLOWUP_MAX_LENGTH:  # noqa: F405
+    raise ImproperlyConfigured(  # noqa: F405
+        f"SUPPORT_HINT must be at most {SUPPORT_FOLLOWUP_MAX_LENGTH} characters, got {len(SUPPORT_FOLLOWUP)}"  # noqa: F405
+    )

@@ -9,12 +9,11 @@ from __future__ import annotations
 from functools import cached_property
 
 from django.db import transaction
-from rest_framework import permissions
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
+from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
 
@@ -42,13 +41,7 @@ from .serializers import (
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
 
 
-class _ScopedView(APIView):
-    """Account-scoped services as per-request properties: DRF builds a
-    fresh view instance per dispatch, so cached_property is exactly
-    request lifetime."""
-
-    permission_classes = [permissions.IsAuthenticated]
-
+class _ScopedView(ScopedView):
     @cached_property
     def lists(self) -> ListService:
         return ListService(account_id=self.request.user.account_id, user_id=self.request.user.id)

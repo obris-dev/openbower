@@ -7,7 +7,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.db.models import Count
 
-from ..constants import MAX_FOLDERS, MAX_LIST_ROWS
+from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Folder, List, ListRow
 
 
@@ -123,12 +123,14 @@ class ListService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: List, rows: list[dict]) -> int:
+    def add_rows(self, target: List, rows: list[dict[str, str]]) -> int:
         """Append rows (each a data dict keyed by column keys). Positions
-        are dense and 1-based; the count is enforced here so every entry
-        path (import, snapshot, manual) hits one ceiling."""
+        are dense and 1-based; the count ceiling AND the cell clamp live
+        here so every entry path (import, snapshot, manual) hits one
+        writer's rules (authored values clamp, never reject)."""
         if not rows:
             return 0
+        rows = [{key: value[:CELL_MAX_LENGTH] for key, value in data.items()} for data in rows]
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
             # appends must serialize on the list row or the second one

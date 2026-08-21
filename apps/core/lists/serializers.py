@@ -56,6 +56,9 @@ class RowsAddRequest(serializers.Serializer):
     non-string cell would fail the wire schema on every later read,
     bricking the sheet with no repair path."""
 
+    # No per-cell max_length: an oversize cell is authored input and
+    # CLAMPS in ListService.add_rows (rejecting would fail a whole
+    # batch over one long value).
     rows = serializers.ListField(
         child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),
         min_length=1,

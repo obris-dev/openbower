@@ -8,7 +8,8 @@
     "start": "next start -p 3003",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .next"
+    "clean": "rm -rf .next",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@bower/api": "workspace:*",

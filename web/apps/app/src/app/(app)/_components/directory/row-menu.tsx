@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
-import { Button, Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
+import { Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 import type { FolderSummary } from "@bower/api";
+
+import { ConfirmDelete } from "../confirm-delete";
 
 type View = "root" | "move" | "delete";
 
@@ -86,7 +88,7 @@ function MenuBody({
             </PopoverItem>
           )}
           <PopoverItem
-            className="text-red-600"
+            className="text-danger"
             onClick={() => {
               // An EMPTY folder has nothing at stake; deleting it
               // outright beats confirming a no-op.
@@ -144,35 +146,23 @@ function MenuBody({
         </>
       )}
       {view === "delete" && (
-        <>
-          <div className="px-4 py-1.5">
-            <p className="text-sm text-foreground">{kind === "folder" ? "Delete this folder?" : "Delete this list?"}</p>
-            {kind === "folder" && (
-              // The consequence gets its own quiet line, so the
-              // question never wraps mid-thought.
-              <p className="mt-0.5 text-xs text-muted">
-                {containedCount === 1
+        <div className="px-4 py-1.5">
+          <ConfirmDelete
+            question={kind === "folder" ? "Delete this folder?" : "Delete this list?"}
+            consequence={
+              kind === "folder"
+                ? containedCount === 1
                   ? "Its list moves back to Home."
-                  : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`}
-              </p>
-            )}
-          </div>
-          <div className="flex gap-1.5 px-4 pb-1.5 pt-1">
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={() => {
-                close();
-                onDelete();
-              }}
-            >
-              Delete
-            </Button>
-            <Button data-autofocus size="sm" variant="ghost" onClick={() => setView("root")}>
-              Cancel
-            </Button>
-          </div>
-        </>
+                  : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`
+                : undefined
+            }
+            onCancel={() => setView("root")}
+            onDelete={() => {
+              close();
+              onDelete();
+            }}
+          />
+        </div>
       )}
     </div>
   );

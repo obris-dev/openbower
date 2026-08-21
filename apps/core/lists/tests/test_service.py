@@ -90,6 +90,22 @@ class ListServiceTests(TestCase):
         self.assertEqual(service.column_values(target, key="missing", limit=10), [])
 
 
+class CellClampTests(TestCase):
+    def test_every_entry_path_clamps_cells_at_the_writer(self):
+        # The clamp lives in add_rows, the single writer, so CSV
+        # import and manual appends cannot bypass it (and a batch is
+        # never rejected over one long authored value).
+        from lists.constants import CELL_MAX_LENGTH
+
+        service = _service()
+        target = service.create(
+            label="Sheet", columns=[{"key": "a", "label": "A", "type": "text"}], origin=ListOrigin.MANUAL
+        )
+        service.add_rows(target, [{"a": "x" * (CELL_MAX_LENGTH + 8)}])
+        row = service.rows_page(target, after_position=0, limit=1)[0]
+        self.assertEqual(len(row.data["a"]), CELL_MAX_LENGTH)
+
+
 class FolderServiceTests(TestCase):
     def test_crud_and_delete_sets_lists_loose(self):
         from lists.services.lists import FolderService

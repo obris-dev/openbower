@@ -1,18 +1,17 @@
 import { isNumericColumn, type ListColumn, type ListRowWire } from "@bower/api";
 
+import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
+
 function Cell({ column, value }: { column: ListColumn; value: string }) {
   if (!value) return null;
-  if (column.type === "url") {
-    const href = /^https?:\/\//.test(value) ? value : `https://${value}`;
+  const href = cellHref(column.type, value);
+  if (href) {
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="text-muted hover:text-signal">
-        {value}
-      </a>
-    );
-  }
-  if (column.type === "email") {
-    return (
-      <a href={`mailto:${value}`} className="text-muted hover:text-signal">
+      <a
+        href={href}
+        {...(cellLinkIsExternal(column.type) ? { target: "_blank", rel: "noreferrer" } : {})}
+        className="text-muted hover:text-signal"
+      >
         {value}
       </a>
     );

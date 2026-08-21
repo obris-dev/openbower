@@ -24,3 +24,26 @@ class BaseModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class AccountScopedModel(BaseModel):
+    """Abstract base for tenant rows: `account_id` is the TENANCY
+    BOUNDARY (every read and write filters on it, enforced by the
+    owning service, never by this base). FIELDS ONLY: inheriting models
+    declare the indexes their own read patterns earn."""
+
+    account_id = models.CharField(_("account id"), max_length=26)
+
+    class Meta:
+        abstract = True
+
+
+class UserScopedModel(AccountScopedModel):
+    """AccountScopedModel plus `user_id`, which is ATTRIBUTION (who
+    created the row), never an access filter: a service "fixed" to
+    filter by user would break account-shared visibility."""
+
+    user_id = models.CharField(_("user id"), max_length=26)
+
+    class Meta:
+        abstract = True

@@ -5,7 +5,7 @@ import * as RadixToast from "@radix-ui/react-toast";
 import { CircleAlert, CircleCheck, X } from "lucide-react";
 import { cn } from "./cn";
 
-/** Toasts, mirroring the obris notification shape (Radix Toast under a
+/** Toasts (Radix Toast under a
  * provider + hook): screens report outcomes with one call and never own
  * layout for them. useToast().error/success take the message (and an
  * optional title); the viewport stacks top-right. */
@@ -42,9 +42,9 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: numbe
     >
       <div className="flex items-start gap-3">
         {toast.kind === "error" ? (
-          <CircleAlert aria-hidden className="h-5 w-5 shrink-0 text-red-500" />
+          <CircleAlert aria-hidden className="h-5 w-5 shrink-0 text-danger" />
         ) : (
-          <CircleCheck aria-hidden className="h-5 w-5 shrink-0 text-green-500" />
+          <CircleCheck aria-hidden className="h-5 w-5 shrink-0 text-success" />
         )}
         <div className="min-w-0 flex-1">
           {toast.title && (

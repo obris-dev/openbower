@@ -44,6 +44,30 @@ export async function fetchListsPage(after?: string): Promise<ApiResult<ListsPag
   return http.get(`${apiRoutes.lists.index}${suffix}`, ListsPageSchema);
 }
 
+// The walk's bound counts PAGES, not items: an item bound never
+// terminates on an empty-page-with-cursor answer, and overshoots its
+// stated cap by up to a page. Binary.
+const MAX_LIST_PAGES = 8;
+
+/** Every list, walking the keyset cursor to MAX_LIST_PAGES: dropdown
+ * consumers must not silently truncate at one page, and when the
+ * bound itself truncates, the CALLER hears it (no silent caps: a
+ * console.warn reaches nobody). */
+export async function fetchAllLists(): Promise<ApiResult<{ items: ListSummary[]; truncated: boolean }>> {
+  const items: ListSummary[] = [];
+  let after: string | undefined;
+  let truncated = false;
+  for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+    const result = await fetchListsPage(after);
+    if (result.status !== "ok") return result;
+    items.push(...result.data.items);
+    if (!result.data.next_cursor) break;
+    after = result.data.next_cursor;
+    truncated = page === MAX_LIST_PAGES - 1;
+  }
+  return { status: "ok", data: { items, truncated } };
+}
+
 export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
   return http.get(apiRoutes.lists.detail(id), ListSummarySchema);
 }

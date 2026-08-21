@@ -21,6 +21,7 @@ import {
   type ListSummary,
 } from "@bower/api";
 
+import { LinkButton } from "../../../_components/link-button";
 import { ensureOk } from "@/lib/ensure-ok";
 import { COLLAPSED_COOKIE } from "./constants";
 import { RowMenu } from "./row-menu";
@@ -315,9 +316,9 @@ export function Directory({
           <Button size="sm" loading={importing} onClick={() => fileInput.current?.click()}>
             Import CSV
           </Button>
-          <Button size="sm" variant="ghost" href={webRoutes.discover}>
+          <LinkButton size="sm" variant="ghost" href={webRoutes.discover}>
             Open Discover
-          </Button>
+          </LinkButton>
         </EmptyState>
       ) : (
         <Card className="p-0">

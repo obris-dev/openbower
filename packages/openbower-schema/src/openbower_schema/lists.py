@@ -18,10 +18,19 @@ ColumnType = Literal["text", "number", "currency", "date", "url", "email"]
 
 ListOrigin = Literal["discover", "csv", "manual"]
 
+# Wire bounds on the contract (binary). The agents domain DERIVES its
+# output bounds from these: an output becomes a column when a fill
+# maps it onto a sheet, and a wider bound there would truncate
+# persisted data at the seam.
+COLUMN_KEY_MAX_LENGTH = 40
+COLUMN_LABEL_MAX_LENGTH = 80
+
 
 class ListColumn(BaseModel):
-    key: str = Field(description="Stable snake_case key; row data dicts key on it.")
-    label: str = Field(description="Display label, as the user (or the CSV header) wrote it.")
+    key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
+    label: str = Field(
+        max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label, as the user (or the CSV header) wrote it."
+    )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
 
 

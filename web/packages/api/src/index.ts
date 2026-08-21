@@ -8,6 +8,7 @@
 export { fetchJson, GENERIC_FAILURE } from "./request.ts";
 export type { ApiResult } from "./request.ts";
 export * from "./domains.ts";
+export * from "./agents.ts";
 export * from "./routes.ts";
 export * from "./auth.ts";
 export * from "./discover.ts";

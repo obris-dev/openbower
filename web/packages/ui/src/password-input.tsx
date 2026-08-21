@@ -23,7 +23,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
           "w-full rounded-md bg-surface px-3 py-2 pr-10 text-sm text-foreground shadow-sm",
           "ring-1 ring-inset placeholder:text-faint",
           "focus:outline-none focus:ring-2 focus:ring-inset",
-          invalid ? "ring-red-500 focus:ring-red-500" : "ring-edge focus:ring-signal",
+          invalid ? "ring-danger-edge focus:ring-danger-edge" : "ring-edge focus:ring-signal",
           className,
         )}
         {...rest}

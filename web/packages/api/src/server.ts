@@ -8,10 +8,14 @@ import type { ZodType } from "zod";
 
 import { classifyMe, type MeResult } from "./auth.ts";
 import {
+  AgentsListSchema,
+  AgentSummarySchema,
   FoldersListSchema,
   ListRowsPageSchema,
   ListsPageSchema,
   ListSummarySchema,
+  type AgentsList,
+  type AgentSummary,
   type FoldersList,
   type ListRowsPage,
   type ListsPage,
@@ -56,6 +60,16 @@ async function fetchParsedWithCookie<T>(
     return { status: "error" };
   }
   return { status: "ok", data: parsed.data };
+}
+
+/** Server-side agents roster (unpaged; bounded by the backend cap). */
+export async function fetchAgentsWithCookie(cookieHeader: string): Promise<ServerFetchResult<AgentsList>> {
+  return fetchParsedWithCookie(apiRoutes.agents.index, cookieHeader, AgentsListSchema);
+}
+
+/** Server-side one agent (the edit page's first paint). */
+export async function fetchAgentWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<AgentSummary>> {
+  return fetchParsedWithCookie(apiRoutes.agents.detail(id), cookieHeader, AgentSummarySchema);
 }
 
 /** Server-side lists index page. */

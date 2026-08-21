@@ -3,9 +3,12 @@ import { cn } from "./cn";
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   invalid?: boolean;
+  /** Incomplete, not wrong: amber ring, no aria-invalid (red stays
+   * reserved for genuine rejections). */
+  warned?: boolean;
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ invalid, className, ...rest }, ref) {
+export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ invalid, warned, className, ...rest }, ref) {
   return (
     <input
       ref={ref}
@@ -17,8 +20,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ i
         // Exclusive, not additive: emitting both rings would leave the
         // winner to stylesheet order (and the dark variant to chance).
         invalid
-          ? "ring-red-500 focus:ring-red-500"
-          : "ring-edge focus:ring-signal",
+          ? "ring-danger-edge focus:ring-danger-edge"
+          : warned
+            ? "ring-warning-edge focus:ring-warning-edge"
+            : "ring-edge focus:ring-signal",
         className,
       )}
       {...rest}

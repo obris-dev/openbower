@@ -14,4 +14,5 @@ urlpatterns = [
     api_include(f"{_V1}/auth", "auth_client.urls"),
     api_include(f"{_V1}/discover", "discover.urls"),
     api_include(f"{_V1}/lists", "lists.urls"),
+    api_include(f"{_V1}/agents", "agents.urls"),
 ]

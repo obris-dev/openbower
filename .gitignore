@@ -69,7 +69,7 @@ node_modules/
 cli/dist/
 cli/.venv/
 
-# config/ holds the user's feed/watch configs. The committed README + templates
+# config/ holds the operator's provider sources (inline keys). The committed README + templates
 # stay tracked; everything else (the seeded quickstart/ instance + anything the
 # user writes) is theirs and ignored.
 /config/*

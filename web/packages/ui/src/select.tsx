@@ -26,7 +26,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           "focus:outline-none focus:ring-2 focus:ring-inset",
           // Exclusive, not additive: emitting both rings would leave the
           // winner to stylesheet order (and the dark variant to chance).
-          invalid ? "ring-red-500 focus:ring-red-500" : "ring-edge focus:ring-signal",
+          invalid ? "ring-danger-edge focus:ring-danger-edge" : "ring-edge focus:ring-signal",
         )}
         {...rest}
       />

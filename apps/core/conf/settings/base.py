@@ -6,6 +6,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 from openbower_kernel.env import env_bool, env_list
+from openbower_kernel.provider_config import ProviderConfigError, ProviderSpec, resolve_provider_sources
 
 # Log timestamps in UTC regardless of the host clock. Python's logging
 # `asctime` uses `time.localtime` by default; the app is TIME_ZONE="UTC",
@@ -42,6 +43,7 @@ LOCAL_APPS = [
     "auth_client",
     "discover",
     "lists",
+    "agents",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -133,6 +135,44 @@ DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"
 # rejected at the other.
 OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 
+# Inference doors for agents: two API SPECS, each holding NAMED SOURCES
+# so one deploy can run several servers of the same spec side by side
+# (a local Ollama AND the canonical vendor). The config file
+# (config/providers.toml, operator-owned, gitignored; template in
+# config/templates/) is the ONE custody: structure AND keys, inline,
+# the aws-credentials norm. No env-key mirror and no no-file defaults
+# (two custodies for one fact was two places for it to drift); with
+# no file, only local.py's keyless ollama seed exists for the dev
+# loop. A source is OPEN when its key is set or its base is
+# non-canonical; a keyless canonical source is closed.
+# `or`, not get(default): PROVIDERS_CONFIG= (set but empty, the
+# uncommented .env.example line) must fall back, not become Path(".").
+_PROVIDERS_CONFIG_PATH = Path(os.environ.get("PROVIDERS_CONFIG") or REPO_ROOT / "config" / "providers.toml")
+try:
+    _SOURCES = resolve_provider_sources(_PROVIDERS_CONFIG_PATH)
+except ProviderConfigError as e:
+    # Django's own boot-failure shape: startup machinery prints it as
+    # configuration, not a stack of kernel internals.
+    raise ImproperlyConfigured(str(e)) from e
+OPENAI_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.OPENAI_COMPATIBLE]
+ANTHROPIC_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.ANTHROPIC_COMPATIBLE]
+
+# The search seam behind agents' evidence tools, two doors:
+# DuckDuckGo by DEFAULT: free and keyless, so web search works out of
+# the box and offloads the paid door. Contact search PINS DataForSEO
+# regardless (LinkedIn x-rays need Google-grade SERPs) and stays gated
+# until its credentials are set.
+SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")
+# The door names, mirrored from agents.constants.SearchProvider
+# (settings cannot import app code; a parity test pins the mirror). A
+# typo'd provider is a CONFIG error and refuses at startup, distinct
+# from missing credentials (which gate honestly at runtime).
+_SEARCH_DOORS = ("duckduckgo", "dataforseo")
+if SEARCH_PROVIDER not in _SEARCH_DOORS:
+    raise ImproperlyConfigured(f"SEARCH_PROVIDER must be one of {_SEARCH_DOORS}, not {SEARCH_PROVIDER!r}")
+DATAFORSEO_LOGIN = os.environ.get("DATAFORSEO_LOGIN", "")
+DATAFORSEO_PASSWORD = os.environ.get("DATAFORSEO_PASSWORD", "")
+
 # Timeout (seconds) for every server-to-IdP HTTP call (token exchange,
 # /me, refresh, revoke), so a hung IdP can't pin a worker.
 AUTH_HTTP_TIMEOUT_SECONDS = int(os.environ.get("AUTH_HTTP_TIMEOUT_SECONDS", "10"))
@@ -189,6 +229,16 @@ try:
     PRODUCT_VERSION = (BASE_DIR / "version.txt").read_text(encoding="utf-8").strip() or "unknown"
 except (OSError, UnicodeDecodeError):
     PRODUCT_VERSION = "unknown"
+
+# The needs-attention follow-up user-facing messages compose (the
+# crash handler among them, INSIDE its except block: a missing name
+# here would defeat the never-stuck-pending promise itself). Profiles
+# override with what they can stand behind; this default is safe
+# anywhere. The BOUND exists because the follow-up rides inside
+# bounded wire fields (a crashed run's 256-char error): overlong
+# operator config refuses at boot instead of truncating mid-URL.
+SUPPORT_FOLLOWUP_MAX_LENGTH = 128
+SUPPORT_FOLLOWUP = "check the API server's logs"
 
 # CORS / CSRF for the web client. Empty by default so prod has to opt in
 # explicitly via env; `local.py` overrides with the dev web origin.
