@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Card, FieldError, Input, Select } from "@bower/ui";
-import { outputKey } from "./output-key";
+import { columnTypeLabel } from "../column-type-meta";
+import { outputKey } from "./lib/output-key";
 import {
   AGENT_OUTPUT_DESCRIPTION_MAX_LENGTH,
   AGENT_OUTPUT_LABEL_MAX_LENGTH,
@@ -101,9 +102,9 @@ export function OutputsEditor({
               className="w-28 shrink-0"
               aria-label={`Output ${index + 1} type`}
             >
-              {AGENT_OUTPUT_TYPES.map((t: string) => (
+              {AGENT_OUTPUT_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {columnTypeLabel(t)}
                 </option>
               ))}
             </Select>

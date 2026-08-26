@@ -15,6 +15,8 @@ from agents.models import Agent
 from agents.providers import ModelUnavailable, model_for
 from agents.services import AgentService, AgentsFull
 
+from .sources import source
+
 
 class ModelForTests(SimpleTestCase):
     def test_unknown_provider_raises(self):
@@ -25,15 +27,13 @@ class ModelForTests(SimpleTestCase):
 
     def test_closed_canonical_source_raises(self):
         with (
-            self.settings(
-                OPENAI_COMPATIBLE_SOURCES={"openai": {"base_url": "https://api.openai.com/v1", "api_key": ""}}
-            ),
+            self.settings(OPENAI_COMPATIBLE_SOURCES=source("openai", "https://api.openai.com/v1")),
             self.assertRaises(ModelUnavailable) as caught,
         ):
             model_for("openai_compatible", "openai", "gpt-6")
         self.assertIn("source unknown or closed", str(caught.exception))
 
-    _LOCAL = {"local": {"base_url": "http://o.test/v1", "api_key": ""}}
+    _LOCAL = source("local", "http://o.test/v1")
 
     def _with_roster(self, names):
         class FakeResponse:
@@ -130,6 +130,22 @@ class ToolPoolTests(SimpleTestCase):
         ):
             web_search(self._Ctx(deps), "acme")
         self.assertEqual(len(deps.evidence), 1)
+
+    def test_the_non_spending_legs_never_buy_a_search(self):
+        # An empty query and a repeated exact query are loop behavior,
+        # not new intent: the metered budget is for QUERIES, so both
+        # must answer from what the pool already holds.
+        from agents.runtime.tools import CellDeps, find_contacts, web_search
+        from agents.search import SearchOutcome
+
+        deps = CellDeps()
+        with patch("agents.runtime.tools.search", return_value=SearchOutcome("acme ceo", [], failed=False)):
+            web_search(self._Ctx(deps), "acme ceo")
+        with patch("agents.runtime.tools.search") as searched:
+            web_search(self._Ctx(deps), "")
+            web_search(self._Ctx(deps), "acme ceo")
+            find_contacts(self._Ctx(deps), "")
+        searched.assert_not_called()
 
     def test_model_authored_queries_clamp(self):
         from agents.constants import QUERY_MAX_LENGTH

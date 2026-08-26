@@ -32,6 +32,9 @@ from openbower_schema import (
     AgentSummary,
     AgentTestRun,
     AuthUser,
+    ColumnPromptWire,
+    FillPage,
+    FillWire,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -41,7 +44,13 @@ from openbower_schema import (
     LookalikeListResponse,
     RowsAdded,
 )
-from openbower_schema.agents import TEST_ROW_MAX_KEYS
+from openbower_schema.agents import MAX_TOOL_CALLS, RESERVED_OUTPUT_MARKER, TEST_ROW_MAX_KEYS
+from openbower_schema.fills import (
+    FILL_ROW_ATTEMPTS,
+    FREE_SEARCH_FILL_BUDGET,
+    ROW_LEASE_STALE_SECONDS,
+    SETTLED_CELL_STATES,
+)
 
 # The models projected into the contract: exactly the RESPONSE ROOTS
 # (shapes a client validates a whole response body against). Nested
@@ -54,6 +63,9 @@ CONTRACT_MODELS: list[type[Any]] = [
     AgentSummary,
     AgentTestRun,
     AuthUser,
+    ColumnPromptWire,
+    FillPage,
+    FillWire,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -91,9 +103,18 @@ def build_schema() -> dict[str, Any]:
         # surface is the whole set. The web's readiness mirror reads
         # this so a refused name never passes the checklist.
         "x-reserved-output-keys": sorted(name for name in dir(BaseModel) if not name.startswith("_")),
-        # Scalar wire facts with no Field to hang on (the web reads
-        # them as WIRE_CONSTANTS).
-        "x-constants": {"TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS},
+        # Wire facts with no Field to hang on (the web reads them as
+        # WIRE_CONSTANTS): scalars, plus the settled partition of
+        # CellState so the client derives it instead of retyping it.
+        "x-constants": {
+            "FILL_ROW_ATTEMPTS": FILL_ROW_ATTEMPTS,
+            "FREE_SEARCH_FILL_BUDGET": FREE_SEARCH_FILL_BUDGET,
+            "MAX_TOOL_CALLS": MAX_TOOL_CALLS,
+            "RESERVED_OUTPUT_MARKER": RESERVED_OUTPUT_MARKER,
+            "ROW_LEASE_STALE_SECONDS": ROW_LEASE_STALE_SECONDS,
+            "SETTLED_CELL_STATES": list(SETTLED_CELL_STATES),
+            "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
+        },
     }
 
 

@@ -5,9 +5,36 @@ import { AGENT_OUTPUT_KEY_MAX_LENGTH } from "@bower/api";
 
 import { outputKey, outputsProblem } from "./output-key.ts";
 
-test("mirrors the serializer's derivation (key wins, label slugs, clamp)", () => {
-  assert.equal(outputKey({ key: "person", label: "x", type: "text", description: "" }), "person");
-  assert.equal(outputKey({ key: "", label: "LinkedIn URL!", type: "url", description: "" }), "linkedin_url");
+// (label, key) pairs. THE SAME VECTORS live on the server side, in
+// apps/core/lists/tests/test_column_keys.py, against the one function
+// this file mirrors. Changing one list without the other is the drift
+// they exist to catch: an AI fill ADOPTS a column BY KEY, so a
+// derivation that disagrees strands the column it meant to land on.
+const VECTORS: [string, string][] = [
+  ["Contact Email", "contact_email"],
+  ["LinkedIn URL!", "linkedin_url"],
+  ["  spaced  out  ", "spaced_out"],
+  ["!!!", ""],
+  ["ÜBER Größe", "ber_gr_e"],
+  ["Revenue ($)", "revenue"],
+  ["2024 ARR", "2024_arr"],
+  ["--leading--", "leading"],
+  ["Ünïcode Ñame", "n_code_ame"],
+  ["MiXeD CaSe", "mixed_case"],
+  // Turkish dotted capital: both runtimes lowercase it to an i plus a
+  // combining dot, and the dot is not [a-z0-9], so both split it.
+  ["İstanbul", "i_stanbul"],
+  ["café", "caf"],
+];
+
+test("mirrors the server derivation vector for vector", () => {
+  for (const [label, expected] of VECTORS) {
+    assert.equal(outputKey({ key: "", label, type: "text", description: "" }), expected, label);
+  }
+});
+
+test("an explicit key wins, and the key clamps to the column cap", () => {
+  assert.equal(outputKey({ key: "person", label: "Ignored Label", type: "text", description: "" }), "person");
   assert.equal(
     outputKey({ key: "", label: "a".repeat(AGENT_OUTPUT_KEY_MAX_LENGTH * 2), type: "text", description: "" }).length,
     AGENT_OUTPUT_KEY_MAX_LENGTH,

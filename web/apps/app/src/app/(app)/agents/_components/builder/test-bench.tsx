@@ -7,9 +7,9 @@ import { fetchListRows, TEST_ROW_MAX_KEYS, type AgentOutput, type AgentTestResul
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
-import { CompactSelect } from "../compact-select";
-import { sheetsTruncatedNote } from "../copy";
-import { outputKey } from "./output-key";
+import { CompactSelect } from "../../../_components/compact-select";
+import { sheetsTruncatedNote } from "../../../_components/agent-config/copy";
+import { outputKey } from "../../../_components/agent-config";
 
 /** The test bench's INPUTS AND RESULTS: hand-fed values for the
  * prompt's {{tokens}}, every one removable (removal strips the token,

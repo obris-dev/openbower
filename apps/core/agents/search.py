@@ -15,6 +15,7 @@ change.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -75,7 +76,7 @@ def contacts_available() -> bool:
 
 def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> SearchOutcome:
     """One query's SERP outcome; hits [] on any failure (a cell without
-    evidence stays empty, an outage never fails a job). `provider`
+    evidence stays empty, an outage never fails a fill). `provider`
     overrides the configured door for callers that require a specific
     one (find_contacts pins dataforseo). RAISES SearchMisconfigured on
     an unusable door: availability gates keep the runtime away from
@@ -106,6 +107,14 @@ def _duckduckgo(query: str, count: int) -> list[SearchHit]:
 # locale knob is a future product decision, not an accident).
 _DATAFORSEO_ORGANIC = "organic"
 _DATAFORSEO_TASK_OK = 20000
+# "No Search Results": the provider's honest-empty status, success-shaped.
+DATAFORSEO_NO_RESULTS = 40102
+# "Internal SE Server Error": the provider's own upstream failed, a
+# documented transient worth exactly ONE retry (measured at ~20% of
+# searches during a degraded window; each miss pushes the model
+# toward re-querying its budget away). Binary pause between tries.
+DATAFORSEO_SE_ERROR = 40101
+_DATAFORSEO_RETRY_PAUSE_SECONDS = 2
 # Their billing floor: depths below 10 cost the same 10.
 _DATAFORSEO_DEPTH_FLOOR = 10
 _DATAFORSEO_LANGUAGE = "en"
@@ -113,6 +122,18 @@ _DATAFORSEO_LOCATION_US = 2840
 
 
 def _dataforseo(query: str, count: int) -> list[SearchHit]:
+    """One retry on the provider's OWN transient (40101), then the
+    failure is real and the failed flag tells it."""
+    try:
+        return _dataforseo_once(query, count)
+    except ValueError as e:
+        if str(DATAFORSEO_SE_ERROR) not in str(e):
+            raise
+        time.sleep(_DATAFORSEO_RETRY_PAUSE_SECONDS)
+        return _dataforseo_once(query, count)
+
+
+def _dataforseo_once(query: str, count: int) -> list[SearchHit]:
     response = httpx.post(
         "https://api.dataforseo.com/v3/serp/google/organic/live/regular",
         json=[
@@ -130,6 +151,11 @@ def _dataforseo(query: str, count: int) -> list[SearchHit]:
         raise ValueError(f"dataforseo returned {response.status_code}")
     tasks = response.json().get("tasks") or []
     task = tasks[0] if tasks else {}
+    if task.get("status_code") == DATAFORSEO_NO_RESULTS:
+        # 40102 IS the answer, not an error: the query matched nothing.
+        # Read as failure it made the model burn its tool budget
+        # re-asking variants of a question with no answer.
+        return []
     if task.get("status_code") != _DATAFORSEO_TASK_OK:
         # A 200 envelope can carry a failed TASK (insufficient balance
         # is the likely paid-door failure); reading it as an honest

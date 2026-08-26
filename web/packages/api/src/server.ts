@@ -11,16 +11,15 @@ import {
   AgentsListSchema,
   AgentSummarySchema,
   FoldersListSchema,
-  ListRowsPageSchema,
   ListsPageSchema,
   ListSummarySchema,
   type AgentsList,
   type AgentSummary,
   type FoldersList,
-  type ListRowsPage,
   type ListsPage,
   type ListSummary,
 } from "@bower/schema";
+import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage } from "./lists.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 
@@ -92,6 +91,15 @@ export async function fetchListRowsWithCookie(
   cookieHeader: string,
   id: string,
   limit: number,
-): Promise<ServerFetchResult<ListRowsPage>> {
-  return fetchParsedWithCookie(`${apiRoutes.lists.rows(id)}?limit=${limit}`, cookieHeader, ListRowsPageSchema);
+): Promise<ServerFetchResult<RenderableListRowsPage>> {
+  // TOLERANT here too, and for a sharper reason than on the client: a
+  // strict enum on the server render fails the whole PAGE, not one
+  // poll, so a cause added server-side would blank the sheet for
+  // every deploy still serving the old bundle.
+  const res = await fetchParsedWithCookie(
+    `${apiRoutes.lists.rows(id)}?limit=${limit}`,
+    cookieHeader,
+    TolerantListRowsPageSchema,
+  );
+  return res.status === "ok" ? { ...res, data: renderablePage(res.data) } : res;
 }

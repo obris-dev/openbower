@@ -15,8 +15,23 @@ export type AuthUser = z.infer<typeof AuthUserSchema>;
 export const CatalogModelSchema = z.object({ "model": z.string(), "provider": z.enum(["openai_compatible","anthropic_compatible"]), "source": z.string() }).describe("One runnable model on this deploy.");
 export type CatalogModel = z.infer<typeof CatalogModelSchema>;
 
+export const ColumnFillSchema = z.object({ "agent_id": z.string(), "current_fill_id": z.string().describe("The fill that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.").default("") }).describe("A column's fill linkage: present exactly on AI columns (the\nagent that fills it; the ephemeral-vs-roster custody rides the\nagent, not the column).");
+export type ColumnFill = z.infer<typeof ColumnFillSchema>;
+
+export const ColumnFillSummarySchema = z.object({ "attempted": z.number().int().describe("Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted cell ends in exactly one of those two places, so their sum is what the column was asked to do. It is the honest denominator for filled; the sheet's row count is a different question."), "column_key": z.string(), "current_fill_id": z.string().describe("The newest fill naming this column; \"\" when none is exposed."), "filled": z.number().int().describe("Cells in this column that hold a value.") }).describe("Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.");
+export type ColumnFillSummary = z.infer<typeof ColumnFillSummarySchema>;
+
+export const ColumnPromptWireSchema = z.object({ "model": z.string(), "prompt": z.string(), "source": z.string() }).describe("The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). Live fills keep their frozen\nsnapshot; an edit reaches the NEXT fill's admission, so surfaces\npeeking at \"what fills this column\" read HERE, never a fill's\nsnapshot.");
+export type ColumnPromptWire = z.infer<typeof ColumnPromptWireSchema>;
+
 export const CompanySchema = z.object({ "country": z.string().describe("Country; empty when unknown."), "domain": z.string().describe("Canonical lowercased bare domain."), "founded_year": z.union([z.number().int(), z.null()]).describe("Founding year when known.").default(null), "id": z.string().describe("The company's ULID in the universe."), "industry": z.string().describe("Industry label; empty when unknown."), "linkedin_url": z.string().describe("LinkedIn company URL; empty when unknown."), "locality": z.string().describe("City/locality; empty when unknown."), "name": z.string().describe("Company display name."), "region": z.string().describe("Region/state; empty when unknown."), "size_band": z.string().describe("Coarse employee band, e.g. 1-10; empty when unknown."), "snapshot_date": z.union([z.string(), z.null()]).describe("ISO date the row's data was current.").default(null), "source": z.string().describe("Provenance of the row, e.g. pdl_free.") }).describe("One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.");
 export type Company = z.infer<typeof CompanySchema>;
+
+export const FillCountersSchema = z.object({ "attempted": z.number().int(), "blank": z.number().int(), "concurrency_point": z.number().int().default(0), "filled": z.number().int(), "row_seconds": z.number().int().default(0), "search_wait_seconds": z.number().int().default(0), "transient": z.number().int() }).describe("Worker-written progress (never COUNT(*) polling): attempted is\nrows with a terminal outcome this fill; blank counts diagnosed\nblanks; transient counts rows currently parked in retry.");
+export type FillCounters = z.infer<typeof FillCountersSchema>;
+
+export const FillErrorSchema = z.object({ "code": z.string(), "message": z.string() }).describe("A failed fill's two-tier why: `code` is the machine leg (client\nbranching), `message` is server-authored copy rendered verbatim.");
+export type FillError = z.infer<typeof FillErrorSchema>;
 
 export const FolderSummarySchema = z.object({ "created_at": z.string(), "id": z.string(), "label": z.string(), "list_count": z.number().int().describe("Server-side count; consent copy must not trust loaded pages."), "updated_at": z.string() }).describe("A flat, account-scoped bucket for lists (taxonomy, not behavior).");
 export type FolderSummary = z.infer<typeof FolderSummarySchema>;
@@ -24,10 +39,10 @@ export type FolderSummary = z.infer<typeof FolderSummarySchema>;
 export const FoldersListSchema = z.object({ "items": z.array(z.lazy(() => FolderSummarySchema)) });
 export type FoldersList = z.infer<typeof FoldersListSchema>;
 
-export const ListColumnSchema = z.object({ "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
+export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
 export type ListColumn = z.infer<typeof ListColumnSchema>;
 
-export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order.") });
+export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order."), "states": z.record(z.string(), z.enum(["pending","no_evidence","no_answer","unverified","no_tools_door","unparseable","type_mismatch","model_error","transient"])).describe("AI cell states keyed by column key, for the cells that have no value: a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled, and never-attempted is likewise an absence.").default({}) });
 export type ListRowWire = z.infer<typeof ListRowWireSchema>;
 
 export const ListRowsPageSchema = z.object({ "items": z.array(z.lazy(() => ListRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last position when more rows exist.").default(null) });
@@ -63,7 +78,7 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export const AgentListItemSchema = z.object({ "created_at": z.string(), "id": z.string(), "label": z.string().max(128), "model": z.string(), "tools": z.lazy(() => AgentToolsSchema), "updated_at": z.string() }).describe("One list row: the index ships what the table renders, never\neach agent's whole config (a full list of maxed prompts would be\nmegabytes to draw four columns; the edit page fetches its agent by\nid).");
 export type AgentListItem = z.infer<typeof AgentListItemSchema>;
 
-export const AgentSummarySchema = z.object({ "config": z.lazy(() => AgentConfigSchema), "created_at": z.string(), "id": z.string(), "label": z.string().max(128), "updated_at": z.string() }).describe("A stored agent (one custody of a config).");
+export const AgentSummarySchema = z.object({ "config": z.lazy(() => AgentConfigSchema), "created_at": z.string(), "ephemeral": z.boolean().describe("True for a column-owned quick-prompt agent: hidden from the roster, excluded from MAX_AGENTS, deleted with its column."), "id": z.string(), "label": z.string().max(128), "updated_at": z.string() }).describe("A stored agent (one custody of a config).");
 export type AgentSummary = z.infer<typeof AgentSummarySchema>;
 
 export const AgentTestResultSchema = z.object({ "cells": z.record(z.string(), z.string()), "evidence": z.array(z.string()), "searches": z.array(z.lazy(() => TestSearchSchema)) }).describe("One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the searches that\nproduced it with each query's diagnosis.");
@@ -75,8 +90,14 @@ export type AgentTestRun = z.infer<typeof AgentTestRunSchema>;
 export const AgentsListSchema = z.object({ "items": z.array(z.lazy(() => AgentListItemSchema)) });
 export type AgentsList = z.infer<typeof AgentsListSchema>;
 
+export const FillWireSchema = z.object({ "agent_id": z.string(), "column_keys": z.array(z.string()).describe("The columns this fill owns, frozen at consent."), "config_snapshot": z.lazy(() => AgentConfigSchema), "confirmed_row_count": z.number().int().describe("Rows this fill TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet."), "counters": z.lazy(() => FillCountersSchema), "created_at": z.string(), "error": z.union([z.lazy(() => FillErrorSchema), z.null()]).default(null), "heartbeat_at": z.union([z.string(), z.null()]).describe("Stamped with each counter write; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).").default(null), "id": z.string(), "list_id": z.string(), "started_by": z.string().describe("User id, ATTRIBUTION only; authorization is account membership."), "status": z.enum(["pending","running","complete","failed","cancelled"]), "updated_at": z.string() }).describe("The fill envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed fill is an API\nobject with its error, not a 4xx).");
+export type FillWire = z.infer<typeof FillWireSchema>;
+
 export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
 export type ImportResult = z.infer<typeof ImportResultSchema>;
+
+export const FillPageSchema = z.object({ "columns": z.array(z.lazy(() => ColumnFillSummarySchema)).describe("One summary per AI column of the list this page belongs to.").default([]), "items": z.array(z.lazy(() => FillWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more fills exist.").default(null) });
+export type FillPage = z.infer<typeof FillPageSchema>;
 
 export const WIRE_BOUNDS = {
   "AgentOutput": {
@@ -151,5 +172,17 @@ export const RESERVED_OUTPUT_KEYS = [
 ] as const;
 
 export const WIRE_CONSTANTS = {
+  "FILL_ROW_ATTEMPTS": 4,
+  "FREE_SEARCH_FILL_BUDGET": 768,
+  "MAX_TOOL_CALLS": 6,
+  "RESERVED_OUTPUT_MARKER": "_bwr_",
+  "ROW_LEASE_STALE_SECONDS": 256,
+  "SETTLED_CELL_STATES": [
+    "no_evidence",
+    "no_answer",
+    "unverified",
+    "unparseable",
+    "type_mismatch"
+  ],
   "TEST_ROW_MAX_KEYS": 16
 } as const;

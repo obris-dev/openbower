@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 
 from openbower_kernel.domains import normalize_domain
+from openbower_schema.lists import derive_column_key
 
 from ..constants import (
     COLUMN_KEY_MAX_LENGTH,
@@ -57,7 +58,10 @@ def column_key(label: str, *, taken: set[str]) -> str:
     """A stable snake_case key from a header label, unique within the
     sheet (data dicts key on it, so collisions would silently merge
     columns)."""
-    base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH] or "column"
+    # The contract's derivation, never a local copy: an AI fill adopts
+    # a column BY KEY, so an imported header and an output label that
+    # read the same must land the same.
+    base = derive_column_key(label) or "column"
     key, n = base, 1
     while key in taken:
         n += 1

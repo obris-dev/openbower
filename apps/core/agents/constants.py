@@ -14,6 +14,9 @@ from openbower_schema.agents import (
     MAX_AGENT_OUTPUTS as MAX_AGENT_OUTPUTS,
 )
 from openbower_schema.agents import (
+    MAX_TOOL_CALLS as MAX_TOOL_CALLS,
+)
+from openbower_schema.agents import (
     OUTPUT_DESCRIPTION_MAX_LENGTH as OUTPUT_DESCRIPTION_MAX_LENGTH,
 )
 from openbower_schema.agents import (
@@ -59,9 +62,10 @@ CATALOG_MAX_MODELS = 512
 # the SLOWEST source's probe, never the sum of every source's timeout.
 CATALOG_PROBE_CONCURRENCY = 8
 
-# The agentic loop's per-cell tool budget (binary): the model decides
-# when and how to search, never without bound.
-MAX_TOOL_CALLS = 4
+# MAX_TOOL_CALLS (imported above): the agentic loop's per-cell tool
+# budget. Lives on the CONTRACT since the fill consent footer computes
+# "up to N searches" from it client-side; the runtime's derivations
+# read the re-export here.
 # Column widths for enum-backed fields (generous over exact).
 PROVIDER_MAX_LENGTH = 32
 STATUS_MAX_LENGTH = 16
@@ -73,11 +77,24 @@ QUERY_MAX_LENGTH = 256
 # Hits pooled per query (binary): the evidence a single search may
 # contribute, at a metered boundary.
 SEARCH_HIT_COUNT = 8
-# The pool's own ceiling (MAX_TOOL_CALLS full searches): every
-# completion re-reads the pool, so its size is a token cost per call.
-EVIDENCE_MAX_LINES = 32
+# The pool's own ceiling, DERIVED so it cannot fall behind the tool
+# budget: every completion re-reads the pool, so its size is a token
+# cost per call, but a ceiling under the budget silently discards the
+# late searches the budget was raised to buy.
+EVIDENCE_MAX_LINES = MAX_TOOL_CALLS * SEARCH_HIT_COUNT
 # Test-row keys mirror prompt tokens; bounded like every authored value.
 TEST_KEY_MAX_LENGTH = 64
+# The confidence floor: an answer whose model-stated confidence sits
+# below this is discarded per-field (the blank reads unverified).
+# Confident-or-blank is the product's contract; 0.9 keeps only answers
+# the model itself would stake the row on.
+#
+# NEVER stated to the model. A named threshold is a target: a model
+# told the bar reports the bar, and the score stops measuring anything.
+# It also freezes the number, since a floor can only be tuned against
+# scores that were not anchored to it (the dropped values and their
+# scores persist on the outcome row for exactly that).
+ANSWER_CONFIDENCE_FLOOR = 0.9
 # Timeouts (binary): local models are slow to first token, a roster
 # probe is quick or dead, the free SERP answers fast or not at all,
 # and DataForSEO's live endpoint computes per request (10-20s
@@ -97,9 +114,11 @@ MODEL_RETRIES = 1
 # fixed cap plus a typed output would be a silent failure mode (the
 # provider CUTS generation at the ceiling and the truncated answer
 # fails validation, blanking every row of a wide agent). A cap is a
-# maximum, not a target; providers bill only generated tokens.
+# maximum, not a target; providers bill only generated tokens. The
+# per-output figure carries the confidence pair as well as the answer,
+# so it is sized for three fields per output, not one.
 COMPLETION_TOKENS_BASE = 256
-COMPLETION_TOKENS_PER_OUTPUT = 128
+COMPLETION_TOKENS_PER_OUTPUT = 256
 
 # Test bench bounds: hand-fed fixture values, not cells
 # (TEST_ROW_MAX_KEYS lives on the contract; the bench reads it too).

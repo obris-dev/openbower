@@ -180,6 +180,11 @@
           "title": "Created At",
           "type": "string"
         },
+        "ephemeral": {
+          "description": "True for a column-owned quick-prompt agent: hidden from the roster, excluded from MAX_AGENTS, deleted with its column.",
+          "title": "Ephemeral",
+          "type": "boolean"
+        },
         "id": {
           "title": "Id",
           "type": "string"
@@ -198,6 +203,7 @@
         "id",
         "label",
         "config",
+        "ephemeral",
         "created_at",
         "updated_at"
       ],
@@ -378,6 +384,82 @@
       "title": "CatalogModel",
       "type": "object"
     },
+    "ColumnFill": {
+      "description": "A column's fill linkage: present exactly on AI columns (the\nagent that fills it; the ephemeral-vs-roster custody rides the\nagent, not the column).",
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "current_fill_id": {
+          "default": "",
+          "description": "The fill that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
+          "title": "Current Fill Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id"
+      ],
+      "title": "ColumnFill",
+      "type": "object"
+    },
+    "ColumnFillSummary": {
+      "description": "Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.",
+      "properties": {
+        "attempted": {
+          "description": "Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted cell ends in exactly one of those two places, so their sum is what the column was asked to do. It is the honest denominator for filled; the sheet's row count is a different question.",
+          "title": "Attempted",
+          "type": "integer"
+        },
+        "column_key": {
+          "title": "Column Key",
+          "type": "string"
+        },
+        "current_fill_id": {
+          "description": "The newest fill naming this column; \"\" when none is exposed.",
+          "title": "Current Fill Id",
+          "type": "string"
+        },
+        "filled": {
+          "description": "Cells in this column that hold a value.",
+          "title": "Filled",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "column_key",
+        "current_fill_id",
+        "filled",
+        "attempted"
+      ],
+      "title": "ColumnFillSummary",
+      "type": "object"
+    },
+    "ColumnPromptWire": {
+      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). Live fills keep their frozen\nsnapshot; an edit reaches the NEXT fill's admission, so surfaces\npeeking at \"what fills this column\" read HERE, never a fill's\nsnapshot.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt",
+        "model",
+        "source"
+      ],
+      "title": "ColumnPromptWire",
+      "type": "object"
+    },
     "Company": {
       "description": "One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.",
       "properties": {
@@ -473,6 +555,207 @@
       "title": "Company",
       "type": "object"
     },
+    "FillCounters": {
+      "description": "Worker-written progress (never COUNT(*) polling): attempted is\nrows with a terminal outcome this fill; blank counts diagnosed\nblanks; transient counts rows currently parked in retry.",
+      "properties": {
+        "attempted": {
+          "title": "Attempted",
+          "type": "integer"
+        },
+        "blank": {
+          "title": "Blank",
+          "type": "integer"
+        },
+        "concurrency_point": {
+          "default": 0,
+          "title": "Concurrency Point",
+          "type": "integer"
+        },
+        "filled": {
+          "title": "Filled",
+          "type": "integer"
+        },
+        "row_seconds": {
+          "default": 0,
+          "title": "Row Seconds",
+          "type": "integer"
+        },
+        "search_wait_seconds": {
+          "default": 0,
+          "title": "Search Wait Seconds",
+          "type": "integer"
+        },
+        "transient": {
+          "title": "Transient",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempted",
+        "filled",
+        "blank",
+        "transient"
+      ],
+      "title": "FillCounters",
+      "type": "object"
+    },
+    "FillError": {
+      "description": "A failed fill's two-tier why: `code` is the machine leg (client\nbranching), `message` is server-authored copy rendered verbatim.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "FillError",
+      "type": "object"
+    },
+    "FillPage": {
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "One summary per AI column of the list this page belongs to.",
+          "items": {
+            "$ref": "#/$defs/ColumnFillSummary"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/FillWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last id when more fills exist.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "FillPage",
+      "type": "object"
+    },
+    "FillWire": {
+      "description": "The fill envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed fill is an API\nobject with its error, not a 4xx).",
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "column_keys": {
+          "description": "The columns this fill owns, frozen at consent.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Keys",
+          "type": "array"
+        },
+        "config_snapshot": {
+          "$ref": "#/$defs/AgentConfig",
+          "description": "The FULL resolved config frozen at admission; results render with the config that produced them."
+        },
+        "confirmed_row_count": {
+          "description": "Rows this fill TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
+          "title": "Confirmed Row Count",
+          "type": "integer"
+        },
+        "counters": {
+          "$ref": "#/$defs/FillCounters"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FillError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "heartbeat_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stamped with each counter write; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+          "title": "Heartbeat At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "list_id": {
+          "title": "List Id",
+          "type": "string"
+        },
+        "started_by": {
+          "description": "User id, ATTRIBUTION only; authorization is account membership.",
+          "title": "Started By",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "list_id",
+        "agent_id",
+        "status",
+        "column_keys",
+        "counters",
+        "confirmed_row_count",
+        "started_by",
+        "config_snapshot",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "FillWire",
+      "type": "object"
+    },
     "FolderSummary": {
       "description": "A flat, account-scoped bucket for lists (taxonomy, not behavior).",
       "properties": {
@@ -551,6 +834,18 @@
     },
     "ListColumn": {
       "properties": {
+        "fill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnFill"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present exactly on AI columns."
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,
@@ -604,6 +899,26 @@
           "description": "1-based dense display/paging order.",
           "title": "Position",
           "type": "integer"
+        },
+        "states": {
+          "additionalProperties": {
+            "enum": [
+              "pending",
+              "no_evidence",
+              "no_answer",
+              "unverified",
+              "no_tools_door",
+              "unparseable",
+              "type_mismatch",
+              "model_error",
+              "transient"
+            ],
+            "type": "string"
+          },
+          "default": {},
+          "description": "AI cell states keyed by column key, for the cells that have no value: a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled, and never-attempted is likewise an absence.",
+          "title": "States",
+          "type": "object"
         }
       },
       "required": [
@@ -977,6 +1292,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
   "x-constants": {
+    "FILL_ROW_ATTEMPTS": 4,
+    "FREE_SEARCH_FILL_BUDGET": 768,
+    "MAX_TOOL_CALLS": 6,
+    "RESERVED_OUTPUT_MARKER": "_bwr_",
+    "ROW_LEASE_STALE_SECONDS": 256,
+    "SETTLED_CELL_STATES": [
+      "no_evidence",
+      "no_answer",
+      "unverified",
+      "unparseable",
+      "type_mismatch"
+    ],
     "TEST_ROW_MAX_KEYS": 16
   },
   "x-reserved-output-keys": [

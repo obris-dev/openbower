@@ -27,6 +27,7 @@ os.environ.setdefault("POSTGRES_PORT", "5433")
 os.environ.setdefault("DB_CONN_MAX_AGE", "0")
 
 from openbower_kernel.env import env_bool
+from openbower_kernel.provider_config import ProviderSpec, make_source
 
 from .base import *  # noqa: F403
 
@@ -38,7 +39,8 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 # didn't already name an ollama source. Keyless is fine (non-canonical
 # bases are open); absent Ollama degrades to an empty catalog honestly.
 OPENAI_COMPATIBLE_SOURCES.setdefault(  # noqa: F405
-    "ollama", {"base_url": "http://localhost:11434/v1", "api_key": ""}
+    "ollama",
+    make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://localhost:11434/v1", concurrency=1),
 )
 
 # CORS: explicit allowlist even in dev. Allow-all + credentials would let

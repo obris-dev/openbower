@@ -4,7 +4,7 @@ import { Globe, Users } from "lucide-react";
 import { Button, Card, Switch } from "@bower/ui";
 import type { AgentCatalog, AgentTools } from "@bower/api";
 
-import { AGENT_TOOLS, type AgentToolKey } from "../tools-meta";
+import { AGENT_TOOLS, type AgentToolKey } from "./tools-meta";
 
 // Per-tool doors: web search runs through ANY usable provider; finding
 // contacts requires DataForSEO specifically (LinkedIn profile searches

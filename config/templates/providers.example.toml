@@ -10,18 +10,22 @@
 [[openai_compatible]]
 name = "ollama"
 base_url = "http://localhost:11434/v1"
+concurrency = 1  # Ollama serves one request at a time by default; raise only if your server batches.
 
 [[openai_compatible]]
 name = "openai"
 base_url = "https://api.openai.com/v1"
+concurrency = 64  # Fills start at 4 and climb adaptively under this ceiling.
 # api_key = "sk-..."
 
 # A self-hosted gateway is just another source:
 # [[openai_compatible]]
 # name = "vllm"
 # base_url = "http://gpu-box:8000/v1"
+# concurrency = 8
 
 [[anthropic_compatible]]
 name = "anthropic"
 base_url = "https://api.anthropic.com"
+concurrency = 64  # Fills start at 4 and climb adaptively under this ceiling.
 # api_key = "sk-ant-..."

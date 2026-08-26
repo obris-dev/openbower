@@ -14,6 +14,16 @@ html.dark {
   color: var(--color-paper);
 }
 
+/* The house transport rule, made structural: wide content scrolls in
+   its OWN container, the page body never scrolls horizontally.
+   Body-level because portaled surfaces (popover panels, menus, the
+   drawer) mount on <body> and can poke past the viewport edge where
+   no in-page wrapper can contain them. X only: vertical scroll is
+   the body's normal job on ordinary pages. */
+body {
+  overflow-x: hidden;
+}
+
 ::selection {
   background: var(--color-signal);
   color: var(--color-paper);

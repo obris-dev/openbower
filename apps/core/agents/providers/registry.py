@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from pydantic_ai.models import Model
 
+from openbower_kernel.provider_config import SourceConfig
+
 from ..constants import CATALOG_MAX_MODELS, CATALOG_PROBE_CONCURRENCY, AgentProvider
 from . import anthropic_compatible, openai_compatible
 from .base import ProviderDoor
@@ -60,6 +62,20 @@ def catalog_entries() -> tuple[list[tuple[str, str, str]], bool]:
 
 class ModelUnavailable(Exception):
     """The address names no runnable model on this deploy."""
+
+
+def source_config(provider: str, source: str) -> SourceConfig:
+    """One address's configured source. Raises ModelUnavailable on an
+    unknown address, same tier as model_for, so a stale saved address
+    fails identically whatever the caller came to read."""
+    try:
+        spec = AgentProvider(provider)
+    except ValueError as e:
+        raise ModelUnavailable(f"unknown provider spec {provider!r}") from e
+    config = _DOORS[spec].source_config(source)
+    if config is None:
+        raise ModelUnavailable(f"no source named {source!r} on this deploy")
+    return config
 
 
 def model_for(provider: str, source: str, model: str) -> Model:

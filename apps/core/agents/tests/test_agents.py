@@ -206,6 +206,65 @@ class PatchAndBoundsTests(TestCase):
             self.assertEqual(resp.status_code, 404, method)
 
 
+class StoredConfigCoercionTests(TestCase):
+    """The read a stored row can never 500. Both custodies share it:
+    the agent row, and the fill's frozen snapshot."""
+
+    def test_a_provider_the_enum_no_longer_knows_is_trailed(self):
+        # The substitution used to happen BEFORE the coercion, so its
+        # warning compared a value to itself and the one case it exists
+        # to trail went silent.
+        from agents.coercion import coerce_config
+
+        stored = {
+            "prompt": "p",
+            "provider": "a_spec_this_version_retired",
+            "source": "s",
+            "model": "m",
+            "tools": {},
+            "outputs": [{"key": "a", "label": "A", "type": "text"}],
+        }
+        with self.assertLogs("agents.coercion", level="WARNING") as caught:
+            config = coerce_config(stored, origin="probe")
+        self.assertEqual(config.provider, "openai_compatible")
+        self.assertTrue(any("clamped/coerced" in line for line in caught.output))
+
+    def test_a_stored_blob_that_is_not_an_object_still_reads(self):
+        # `or {}` rescues only a FALSY blob, so a truthy non-dict
+        # reached .get and raised, which is the permanent 500 on the
+        # fills page this module exists to prevent.
+        from agents.coercion import coerce_config
+
+        for blob in ([1, 2, 3], "a string", 7):
+            with self.subTest(blob=type(blob).__name__), self.assertLogs("agents.coercion", level="WARNING"):
+                self.assertEqual(coerce_config(blob, origin="probe").outputs[0].key, "unreadable_output")
+
+    def test_a_stored_null_clamps_to_blank_never_the_word_None(self):
+        from agents.coercion import coerce_config
+
+        config = coerce_config(
+            {"source": None, "model": None, "outputs": [{"key": "a", "label": "A", "type": "text"}]},
+            origin="probe",
+        )
+        self.assertEqual(config.source, "")
+        self.assertEqual(config.model, "")
+
+    def test_a_null_output_key_or_label_clamps_too(self):
+        # These matter MORE than the scalars: a key becomes a COLUMN
+        # KEY and a label a sheet header, and nothing downstream
+        # refuses the literal "None" (the contract bounds their length,
+        # not their shape).
+        from agents.coercion import coerce_config
+
+        config = coerce_config(
+            {"outputs": [{"key": None, "label": None, "type": "text", "description": None}]},
+            origin="probe",
+        )
+        self.assertEqual(config.outputs[0].key, "")
+        self.assertEqual(config.outputs[0].label, "")
+        self.assertEqual(config.outputs[0].description, "")
+
+
 class ListWireTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)

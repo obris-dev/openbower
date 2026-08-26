@@ -13,8 +13,11 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from agents.services import AgentNotFound
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
+from openbower_schema.agents import AgentConfig
+from openbower_schema.fills import ColumnPromptWire, FillPage
 from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
 
 from .constants import (
@@ -25,20 +28,44 @@ from .constants import (
     MAX_CSV_BYTES,
     MAX_INDEX_PAGE,
     MAX_ROWS_PAGE,
+    FillErrorCode,
     ListOrigin,
 )
 from .models import Folder, List
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .serializers import (
+    AiColumnRequest,
+    ColumnAddRequest,
+    ColumnPromptRequest,
+    ColumnRefillRequest,
     FolderRequest,
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
+    fill_wire,
     folder_wire,
     list_wire,
     row_wire,
 )
+from .services.columns import ColumnRefused, ColumnService
+from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
+from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
+
+# Refusal codes that answer 409 (a conflict with live state: the same
+# request succeeds once the world changes, with nothing for the caller
+# to alter); every other FillRefused code is a 400 (the request itself
+# must change, by narrowing the ask or by configuring the deployment).
+# Both ride the sibling envelope ({error: <code>, detail}): the client
+# classifies by CODE and renders the detail verbatim (tier 1).
+_FILL_CONFLICT_CODES = frozenset(
+    {
+        FillErrorCode.FILL_ACTIVE,
+        FillErrorCode.FILLS_FULL,
+        FillErrorCode.ROW_COUNT_CHANGED,
+        FillErrorCode.CONFIG_CHANGED,
+    }
+)
 
 
 class _ScopedView(ScopedView):
@@ -49,6 +76,18 @@ class _ScopedView(ScopedView):
     @cached_property
     def folders(self) -> FolderService:
         return FolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def columns(self) -> ColumnService:
+        return ColumnService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def fill_admission(self) -> FillAdmissionService:
+        return FillAdmissionService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def fills(self) -> FillService:
+        return FillService(account_id=self.request.user.account_id)
 
     def _list_or_404(self, list_id: str) -> List:
         try:
@@ -113,8 +152,9 @@ class ListRowsView(_ScopedView):
         if not raw_after.isdecimal() or len(raw_after) > 9:
             raise ValidationError("?after= must be a row position")
         rows = self.lists.rows_page(target, after_position=int(raw_after), limit=limit)
+        states = self.fills.cell_states_for_rows(target, rows)
         next_cursor = str(rows[-1].position) if len(rows) == limit else None
-        page = ListRowsPage(items=[row_wire(r) for r in rows], next_cursor=next_cursor)
+        page = ListRowsPage(items=[row_wire(r, states.get(str(r.id), {})) for r in rows], next_cursor=next_cursor)
         return Response(page.model_dump())
 
     def post(self, request: Request, id: str) -> Response:
@@ -129,6 +169,161 @@ class ListRowsView(_ScopedView):
             raise NotFound("no list with that id") from e
         target.refresh_from_db()
         return Response(RowsAdded(added=added, row_count=target.row_count).model_dump(), status=201)
+
+
+class ColumnsView(_ScopedView):
+    """POST /v1/lists/{id}/columns: append one BLANK column (the
+    CSV-template flow; a later fill adopts it by key). Refusals ride
+    the sibling envelope: the client classifies by CODE and renders
+    the detail verbatim (tier 1). The 200 body is the updated list
+    summary, so the sheet re-renders its columns from the response."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = ColumnAddRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            target = self.columns.add_column(id, label=data["label"], column_type=data["type"])
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(list_wire(target))
+
+
+class AiColumnView(_ScopedView):
+    """POST /v1/lists/{id}/columns/ai: add the column and admit its
+    fill in the service's one transaction. The 201 body is the fill
+    envelope the sheet re-attaches to."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = AiColumnRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        config = AgentConfig(**data["config"]) if data.get("config") is not None else None
+        try:
+            fill = self.fill_admission.admit(
+                list_id=id,
+                config=config,
+                agent_id=data["agent_id"],
+                confirmed_row_count=data["confirmed_row_count"],
+                test_run_id=data["test_run_id"],
+                concurrency=data["concurrency"],
+                rows=data["rows"],
+            )
+        except FillRefused as e:
+            status = 409 if e.code in _FILL_CONFLICT_CODES else 400
+            return Response({"error": e.code, "detail": str(e)}, status=status)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(fill_wire(fill), status=201)
+
+
+class ColumnRefillView(_ScopedView):
+    """POST /v1/lists/{id}/columns/{key}/refill: the one recovery
+    primitive, a NEW fill over the column's unanswered rows (the column
+    names everything except the optional `rows` scope, and the service
+    takes a fresh config snapshot). The 201 body is the fill envelope,
+    exactly like the add."""
+
+    def post(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnRefillRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            fill = self.fill_admission.refill(
+                list_id=id,
+                column_key=key,
+                rows=serializer.validated_data["rows"],
+                resume_fill_id=serializer.validated_data["resume_fill"],
+                confirmed_row_count=serializer.validated_data["confirmed_row_count"],
+            )
+        except FillRefused as e:
+            status = 409 if e.code in _FILL_CONFLICT_CODES else 400
+            return Response({"error": e.code, "detail": str(e)}, status=status)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(fill_wire(fill), status=201)
+
+
+class ColumnPromptView(_ScopedView):
+    """GET and PATCH /v1/lists/{id}/columns/{key}/prompt: the column's
+    CURRENT fill config (what a refill would run), and the
+    prompt-only edit against it. Surfaces peeking at "what fills this
+    column" read HERE, never a fill's frozen snapshot (the snapshot is
+    what a PAST fill ran; this is what the NEXT one will). Running fills
+    keep their snapshot, so an edit reaches the NEXT fill, and a refill
+    re-targets rows the old prompt settled without an answer."""
+
+    def get(self, request: Request, id: str, key: str) -> Response:
+        try:
+            config = self.columns.fill_config(id, column_key=key)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(_column_prompt_wire(config))
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnPromptRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            stored = self.columns.update_fill_prompt(id, column_key=key, prompt=serializer.validated_data["prompt"])
+        except FillRefused as e:
+            status = 409 if e.code in _FILL_CONFLICT_CODES else 400
+            return Response({"error": e.code, "detail": str(e)}, status=status)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(_column_prompt_wire(stored))
+
+
+class ListFillsView(_ScopedView):
+    """GET /v1/lists/{id}/fills?after=: the list's fills, keyset by -id,
+    ALL states visible (a failed fill is a first-class API object with
+    its error, not a 4xx), plus the per-column summaries the tracker
+    renders (server truth; a client sum over one page of fills silently
+    undercounts once history outgrows the page)."""
+
+    def get(self, request: Request, id: str) -> Response:
+        target = self._list_or_404(id)
+        limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
+        after = request.query_params.get("after", "")
+        fills = self.fills.page_for_list(str(target.id), after_id=after, limit=limit)
+        page = FillPage(
+            items=[fill_wire(j) for j in fills],
+            columns=self.fills.column_summaries(target),
+            next_cursor=next_cursor_from(fills, limit=limit),
+        )
+        return Response(page.model_dump())
+
+
+class FillCancelView(_ScopedView):
+    def post(self, request: Request, id: str, fill_id: str) -> Response:
+        target = self._list_or_404(id)
+        try:
+            fill = self.fills.get(fill_id)
+        except FillNotFound as e:
+            raise NotFound("no fill with that id") from e
+        # The route nests under a list; a fill of another sheet must not
+        # be addressable through this one's URL.
+        if fill.list_id != str(target.id):
+            raise NotFound("no fill with that id")
+        return Response(fill_wire(self.fills.cancel(fill_id)))
+
+
+def _column_prompt_wire(config: AgentConfig) -> dict:
+    return ColumnPromptWire(prompt=config.prompt, model=config.model, source=config.source).model_dump()
 
 
 class ListImportView(_ScopedView):

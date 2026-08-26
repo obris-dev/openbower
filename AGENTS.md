@@ -42,6 +42,18 @@ auth + data services live in a separate private repo.
   job writing to a blob store plus a short-lived signed link (the worker
   + poll machinery), never a server-assembled response in between.
 - Views stay thin; domain logic lives in services and pure tested modules.
+- A function that YIELDS is named `iter_<what>`: the call site has to
+  know it is lazy and single-pass, since consuming it twice silently
+  yields nothing the second time.
+- NO cascades: cross-model refs are id pointers, so the owning service
+  deletes its own children in one transaction. A child model added
+  without a line in its owner's delete is orphaned forever, invisible
+  to every surface that filters by its parent.
+- An additive NOT NULL column is a STOP-THE-WORLD deploy or a
+  three-step (add nullable, deploy the code that writes it, backfill
+  then set NOT NULL). Django drops the default after adding the
+  column, so any process still running the old code inserts NULL and
+  fails until it restarts.
 - First-pass design rules, learned the hard way:
   - Buy the commodity, own the doctrine: before writing infrastructure,
     ask whether it is product or plumbing an ecosystem already

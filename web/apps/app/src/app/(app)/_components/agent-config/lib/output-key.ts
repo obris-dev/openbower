@@ -1,10 +1,13 @@
-import { AGENT_OUTPUT_KEY_MAX_LENGTH, RESERVED_OUTPUT_KEYS, type AgentOutput } from "@bower/api";
+import { AGENT_OUTPUT_KEY_MAX_LENGTH, RESERVED_OUTPUT_KEYS, RESERVED_OUTPUT_MARKER, type AgentOutput } from "@bower/api";
 
-/** The result-cell key an output will land under, MIRRORING the
- * serializer's derivation (agents/serializers.py _clean_outputs): keys
- * fall back to the slugified label, so the bench can match cells for
- * outputs whose key the user left blank (the common case before
- * save). */
+/** The result-cell key an output will land under, MIRRORING the ONE
+ * server derivation (openbower_schema/lists.py derive_column_key,
+ * which the CSV importer, the blank-column add, and the output
+ * serializer all call). Keys fall back to the slugified label, so the
+ * bench can match cells for outputs whose key the user left blank
+ * (the common case before save). Change one side and you strand the
+ * column a fill was meant to adopt: the pair is pinned by vectors in
+ * output-key.test.ts and test_column_keys.py. */
 export function outputKey(output: AgentOutput): string {
   return (output.key || output.label)
     .toLowerCase()
@@ -36,7 +39,10 @@ export function outputsProblem(outputs: AgentOutput[]): OutputsProblem | null {
     if (!outputKey(output)) return { message: "An output name needs at least one letter or number.", index };
     // The server refuses keys colliding with its answer model's own
     // attributes; the message speaks the LABEL the user typed.
-    if ((RESERVED_OUTPUT_KEYS as readonly string[]).includes(outputKey(output))) {
+    if (
+      (RESERVED_OUTPUT_KEYS as readonly string[]).includes(outputKey(output)) ||
+      outputKey(output).includes(RESERVED_OUTPUT_MARKER)
+    ) {
       return { message: `"${(output.label || output.key).trim()}" can't be used as an output name; pick another.`, index };
     }
   }

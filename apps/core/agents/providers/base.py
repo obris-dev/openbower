@@ -16,17 +16,14 @@ from abc import ABC, abstractmethod
 import httpx
 from pydantic_ai.models import Model
 
+from openbower_kernel.provider_config import SourceConfig
+
 from ..constants import LIST_TIMEOUT_SECONDS, MODEL_MAX_LENGTH, PROBE_FAILURE_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 
 
 class ProviderDoor(ABC):
-    # The vendor origin whose keyless sources stay CLOSED (nothing
-    # calls the canonical vendor unauthed); any other base is a
-    # self-hosted server, open keyless.
-    CANONICAL_BASE: str
-
     def __init__(self) -> None:
         # Rosters change server-side, not per process: probe once per
         # source and keep the answer (a restart refreshes). ONLY
@@ -39,40 +36,38 @@ class ProviderDoor(ABC):
 
     @property
     @abstractmethod
-    def configured_sources(self) -> dict[str, dict[str, str]]:
-        """The door's settings entry: {name: {base_url, api_key}}. A
-        property, never cached at init, so test overrides apply."""
+    def configured_sources(self) -> dict[str, SourceConfig]:
+        """The door's settings entry: {name: SourceConfig}. A property,
+        never cached at init, so test overrides apply."""
 
     @abstractmethod
-    def _headers(self, source: dict[str, str]) -> dict[str, str]:
+    def _headers(self, source: SourceConfig) -> dict[str, str]:
         """The spec's auth/version headers for one source."""
 
     @abstractmethod
-    def _list_models(self, source: dict[str, str]) -> list[str]:
+    def _list_models(self, source: SourceConfig) -> list[str]:
         """The live roster call for one OPEN source; raise on trouble
         (models() turns it into an honest empty)."""
 
     @abstractmethod
-    def _pydantic_model(self, source: dict[str, str], model_name: str) -> Model:
+    def _pydantic_model(self, source: SourceConfig, model_name: str) -> Model:
         """The pydantic-ai Model for one OPEN source + model name."""
 
-    def _source(self, name: str) -> dict[str, str] | None:
+    def source_config(self, name: str) -> SourceConfig | None:
+        """One configured source, None when the name is unknown."""
         return self.configured_sources.get(name)
 
-    def _is_canonical(self, source: dict[str, str]) -> bool:
-        # Case-insensitive: a host-case variant of the vendor origin
-        # must not read as a keyless-open self-hosted server.
-        return source["base_url"].lower() == self.CANONICAL_BASE
-
-    def _is_open(self, source: dict[str, str]) -> bool:
-        return bool(source["api_key"]) or not self._is_canonical(source)
+    def _is_open(self, source: SourceConfig) -> bool:
+        # Keyless is fine on someone's own server; at the vendor origin
+        # it is not, and nothing calls that unauthed.
+        return bool(source["api_key"]) or not source["canonical"]
 
     def sources(self) -> list[str]:
         """The door's OPEN source names, in env order."""
         return [name for name, source in self.configured_sources.items() if self._is_open(source)]
 
     def models(self, source_name: str) -> list[str]:
-        source = self._source(source_name)
+        source = self.source_config(source_name)
         if source is None or not self._is_open(source):
             return []
         cached = self._roster_cache.get(source_name)
@@ -106,7 +101,7 @@ class ProviderDoor(ABC):
         self._roster_cache[source_name] = names
         return names
 
-    def _probe_rows(self, source: dict[str, str], path: str) -> list[dict]:
+    def _probe_rows(self, source: SourceConfig, path: str) -> list[dict]:
         """The shared probe shell: GET the roster path, raise on
         non-200 (distinct from an honestly-empty 200)."""
         response = httpx.get(f"{source['base_url']}{path}", headers=self._headers(source), timeout=LIST_TIMEOUT_SECONDS)
@@ -115,7 +110,7 @@ class ProviderDoor(ABC):
         return response.json().get("data", [])
 
     @staticmethod
-    def _key_or_placeholder(source: dict[str, str]) -> str:
+    def _key_or_placeholder(source: SourceConfig) -> str:
         # The SDK refuses a missing key even where the server ignores
         # it; keyless open sources (local servers) get a placeholder.
         return source["api_key"] or "unused"
@@ -124,7 +119,7 @@ class ProviderDoor(ABC):
         """The runnable Model for an address, or None when the source
         is unknown or CLOSED (the runtime writes blank cells, never
         calls a vendor unauthed)."""
-        source = self._source(source_name)
+        source = self.source_config(source_name)
         if source is None or not self._is_open(source):
             return None
         return self._pydantic_model(source, model_name)

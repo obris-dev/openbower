@@ -4,7 +4,6 @@ the views fails loudly here, never in the client's zod."""
 
 from __future__ import annotations
 
-import re
 from datetime import timedelta
 from typing import Any
 
@@ -49,13 +48,15 @@ class OutputDef(serializers.Serializer):
 def _clean_outputs(outputs: list[dict]) -> list[dict]:
     """Keys derive from labels when absent; distinct keys required
     (cells key on them, collisions would silently merge columns)."""
+    from openbower_schema.lists import derive_column_key
+
     from .runtime.answer import reserved_output_key
 
     cleaned = []
     for output in outputs:
         # DRF's CharField already trimmed and refused blank labels.
         label = output["label"]
-        key = re.sub(r"[^a-z0-9]+", "_", (output.get("key") or label).lower()).strip("_")
+        key = derive_column_key(label, key=output.get("key") or "")
         if not key:
             raise serializers.ValidationError("each output needs a key (or a label to derive one)")
         if reserved_output_key(key):
@@ -134,6 +135,7 @@ def agent_wire(agent: Agent) -> dict[str, Any]:
         id=str(agent.id),
         label=agent.label[:LABEL_MAX_LENGTH],
         config=agent.config(),
+        ephemeral=agent.ephemeral,
         created_at=agent.created_at.isoformat(),
         updated_at=agent.updated_at.isoformat(),
     ).model_dump()
@@ -157,6 +159,11 @@ def test_run_wire(run: AgentTestRun) -> dict[str, Any]:
     return WireTestRun(
         id=str(run.id),
         status=status,
+        # The stored shape is a CellRunResult; AgentTestResult is the
+        # NARROWER bench view of it, so this is a projection and the
+        # extra keys (the causes and assessments the fill's drawer
+        # reads) are dropped here on purpose, by the field's type.
+        #
         # `or None`: a complete row whose result is the model default
         # {} must present as the contract-breach it is, not 500 the
         # poll inside AgentTestResult validation.
@@ -190,6 +197,11 @@ class AgentTestRequest(serializers.Serializer):
 
     config = AgentConfigRequest()
     row = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False), default=dict)
+    # The borrowed row's id, when the bench row came from a sheet: it
+    # makes the run seedable by a later fill admission (the prewrite
+    # economy). Blank for hand-typed rows; never validated against a
+    # sheet here (admission does that, with the sheet in hand).
+    row_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
 
     def validate_row(self, value: dict) -> dict:
         # DictField(child=CharField) already guaranteed strings. The key

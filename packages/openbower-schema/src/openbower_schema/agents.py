@@ -26,10 +26,29 @@ MAX_AGENT_OUTPUTS = 8
 # FIRST this many keys in JSON order, and the bench diagnoses the
 # overflow (silent excess would render blank prompt variables).
 TEST_ROW_MAX_KEYS = 16
+# Tool calls per cell run. A WIRE fact, not a runtime internal: the
+# fill consent footer's "up to N searches" is rows times this number,
+# computed client-side off x-constants, so both sides must read one
+# home. The runtime derives its own bounds from it. Sized for TWO
+# doors: both tools share this one budget when both are on, so a
+# budget sized for one starves a run that uses both.
+MAX_TOOL_CALLS = 6
 # Outputs BECOME sheet columns when a fill maps them: their bounds ARE
 # the column bounds, derived so they cannot drift wider (a wider bound
 # here would truncate persisted data at the mapping seam).
 OUTPUT_KEY_MAX_LENGTH = COLUMN_KEY_MAX_LENGTH
+# Output keys containing this marker are refused: on answer models
+# every output key gains `<key>_bwr_confidence_reason` and
+# `<key>_bwr_confidence` companions, so the namespace is reserved and
+# a user asking for their own "Confidence" output stays legal (those
+# keys never contain the marker).
+RESERVED_OUTPUT_MARKER = "_bwr_"
+# The companions themselves. Three places must agree on these names:
+# the schema that DECLARES them per output, the validator that pulls
+# them back OFF the answer, and the instructions that name them to the
+# model. Spelled once, here.
+CONFIDENCE_REASON_SUFFIX = f"{RESERVED_OUTPUT_MARKER}confidence_reason"
+CONFIDENCE_SUFFIX = f"{RESERVED_OUTPUT_MARKER}confidence"
 OUTPUT_LABEL_MAX_LENGTH = COLUMN_LABEL_MAX_LENGTH
 OUTPUT_DESCRIPTION_MAX_LENGTH = 256
 
@@ -100,6 +119,10 @@ class AgentSummary(BaseModel):
     id: str
     label: str = Field(max_length=LABEL_MAX_LENGTH)
     config: AgentConfig
+    ephemeral: bool = Field(
+        description="True for a column-owned quick-prompt agent: hidden from the roster, "
+        "excluded from MAX_AGENTS, deleted with its column.",
+    )
     created_at: str
     updated_at: str
 

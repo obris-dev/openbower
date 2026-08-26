@@ -8,7 +8,7 @@ import { deleteAgent, fetchAgents, webRoutes, type AgentListItem } from "@bower/
 import { ensureOk } from "@/lib/ensure-ok";
 import { LinkButton } from "../../../_components/link-button";
 import { AgentRowMenu } from "./row-menu";
-import { AGENT_TOOLS } from "./tools-meta";
+import { AGENT_TOOLS } from "../../_components/agent-config";
 
 function day(iso: string): string {
   // Pinned locale + UTC: server-rendered AND hydrated; disagreement is

@@ -16,7 +16,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from common.views import ScopedView
-from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, AgentTestResult, CatalogModel, TestSearch
+from lists.constants import FillErrorCode
+from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, CatalogModel, TestSearch
+from openbower_schema.fills import CellRunResult
 
 from .constants import TEST_RUN_MAX_CONCURRENT
 from .models import Agent
@@ -34,10 +36,12 @@ from .services import (
     AgentNotFound,
     AgentService,
     AgentsFull,
+    PaidLanesFull,
     TestRunActive,
     TestRunNotFound,
     TestRunService,
     complete_run,
+    config_fingerprint,
     fail_run,
     run_is_pending,
 )
@@ -46,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 # The 409's machine-readable code (the discover/auth envelope idiom).
 TEST_RUN_ACTIVE_CODE = "test_run_active"
+
 
 # Named so the parity pin can hold prefix + bounded follow-up inside
 # fail_run's error clamp (a composed message must never truncate).
@@ -145,10 +150,13 @@ def _execute_test(
             # Wire-shaping happens HERE, at the boundary, THROUGH the
             # contract models: drift fails at write, in the code that
             # caused it.
-            result = AgentTestResult(
+            result = CellRunResult(
                 cells=run.cells,
                 evidence=run.evidence,
                 searches=[TestSearch(query=o.query, hits=len(o.hits), failed=o.failed) for o in run.searches],
+                blank_cause=run.blank_cause,
+                declined_cause=run.declined_cause,
+                assessments=run.assessments,
             )
             complete_run(run_id, result.model_dump())
         finally:
@@ -186,8 +194,22 @@ class AgentTestView(_ScopedView):
             model = model_for(config.provider, config.source, config.model)
         except ModelUnavailable as e:
             raise ValidationError(str(e)) from e
+        # Account-level admission BEFORE a run row exists: the bench
+        # is a metered lane like a fill, so the fill lane's cap gates
+        # it too (same envelope shape, classified by code).
         try:
-            run = self.test_runs.start(user_id=self.request.user.id)
+            # The bench is a metered lane like a fill, so the fill
+            # lane's account cap gates it too. The fill lane's own
+            # code, imported not re-spelled: one taxonomy leg for "the
+            # account's paid lanes are full", whichever lane answers.
+            self.test_runs.assert_lane_available()
+            run = self.test_runs.start(
+                user_id=self.request.user.id,
+                config_fingerprint=config_fingerprint(config),
+                row_id=serializer.validated_data["row_id"],
+            )
+        except PaidLanesFull as e:
+            return Response({"error": FillErrorCode.FILLS_FULL, "detail": str(e)}, status=409)
         except TestRunActive as e:
             # The sibling envelope shape ({error: <code>, detail}): a
             # client classifies by CODE, and renders the detail

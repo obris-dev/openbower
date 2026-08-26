@@ -66,6 +66,11 @@ export const TEST_RUN_ACTIVE_CODE = "test_run_active";
 // The server's refused output keys and the bench row cap, off the
 // contract document.
 export { RESERVED_OUTPUT_KEYS };
+// Output keys may not CONTAIN this either: answers carry
+// `<key>_bwr_confidence_reason` and `<key>_bwr_confidence` companions
+// per output, so the namespace is reserved (a user's own "Confidence"
+// output stays legal).
+export const RESERVED_OUTPUT_MARKER = WIRE_CONSTANTS.RESERVED_OUTPUT_MARKER;
 export const TEST_ROW_MAX_KEYS = WIRE_CONSTANTS.TEST_ROW_MAX_KEYS;
 // Validators for client-restored state (drafts are wire data from a
 // past app version; parse, never cast).

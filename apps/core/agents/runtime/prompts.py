@@ -20,17 +20,43 @@ never as prose."""
 from __future__ import annotations
 
 from django.template import Context, Engine
+from django.template.base import VariableNode
 from django.template.defaulttags import DebugNode
 from django.template.exceptions import TemplateSyntaxError
+
+from openbower_schema.agents import CONFIDENCE_REASON_SUFFIX, CONFIDENCE_SUFFIX
+
+from ..constants import MAX_TOOL_CALLS
 
 _ENGINE = Engine(dirs=[], app_dirs=False, autoescape=False, string_if_invalid="")
 
 AGENT_INSTRUCTIONS = (
-    "Use the provided tools to gather evidence before answering; call them as often as needed within reason."
+    "Use the provided tools to gather evidence before answering."
+    f" You have exactly {MAX_TOOL_CALLS} searches; a good answer from records already gathered BEATS"
+    " another search, so once results cover the question, stop searching and answer."
+    " Tool results are the best matches for your QUERY, not facts about your task: one may"
+    " describe a different company, person, or time. Judging which ones concern your task is"
+    " your job."
+    f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"
+    " explain what in the evidence supports your answer, and what you could not confirm, inferred"
+    " rather than read, or found ambiguous or out of date. Then state"
+    f" your confidence in its {CONFIDENCE_SUFFIX} field, where 1 is certain and stated outright by"
+    " the evidence and 0 is nothing supporting it at all."
     " Use ONLY URLs that appear in tool results; never invent one."
-    " Use an empty string for anything unknown."
+    " EVERY field is required: answer every one, and never omit a field. An empty string is for"
+    " an output you found NOTHING for; anything you did find goes in with the score it earned."
 )
-DIRECT_INSTRUCTIONS = "Use an empty string for anything unknown; never invent URLs."
+DIRECT_INSTRUCTIONS = (
+    "Answer from your own knowledge."
+    f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"
+    " explain what you are relying on, and what you could not confirm or may be out of date."
+    " Then state"
+    f" your confidence in its {CONFIDENCE_SUFFIX} field, where 1 is certain and 0 is no basis at"
+    " all."
+    " EVERY field is required: answer every one, and never omit a field. An empty string is for"
+    " an output you know NOTHING about; anything you do know goes in with the score it earned."
+    " Never invent URLs."
+)
 
 
 def validate_prompt(template: str) -> None:
@@ -44,6 +70,22 @@ def validate_prompt(template: str) -> None:
     parsed = _ENGINE.from_string(template)
     if parsed.nodelist.get_nodes_by_type(DebugNode):
         raise TemplateSyntaxError("the debug tag is not available in prompts")
+
+
+def prompt_variables(template: str) -> set[str]:
+    """The ROOT variable names the prompt's {{tokens}} reference, read
+    off the PARSED nodelist (the render grammar itself, so filters and
+    attribute paths resolve to their root and a mirroring regex can
+    never drift). Literals carry no name: a string token parses to a
+    plain str and a number's lookups are None, so both fall out of the
+    guard. Fill admission keys these against row columns to decide
+    which rows the prompt can act on."""
+    parsed = _ENGINE.from_string(template)
+    return {
+        node.filter_expression.var.lookups[0]
+        for node in parsed.nodelist.get_nodes_by_type(VariableNode)
+        if getattr(node.filter_expression.var, "lookups", None)
+    }
 
 
 def render_prompt(template: str, row_data: dict) -> str:
