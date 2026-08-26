@@ -13,6 +13,7 @@ import {
   fetchListRows,
   getFills,
   postFillRefill,
+  reorderColumns,
 } from "../src/lists.ts";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
@@ -214,4 +215,37 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   if (res.status !== "ok") return;
   assert.equal(res.data.items[0]!.states.answer, UNKNOWN_CELL_STATE);
   assert.ok(!(CELL_STATES as readonly string[]).includes(UNKNOWN_CELL_STATE));
+});
+
+test("reorderColumns sends the WHOLE key order, and nothing about the columns", async (t) => {
+  // The endpoint's guard is that the body is a permutation of what it
+  // holds, so the client speaks keys only: a label, a type, or a fill
+  // member cannot ride along and be edited by dragging.
+  const calls: { url: string; init: RequestInit }[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return new Response(
+      JSON.stringify({
+        id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+        label: "Prospects",
+        folder_id: "",
+        columns: [],
+        row_count: 0,
+        origin: "manual",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const res = await reorderColumns("01AAAAAAAAAAAAAAAAAAAAAAAA", ["c", "a", "b"]);
+  assert.equal(res.status, "ok");
+  assert.ok(calls[0]!.url.endsWith("/column-order"));
+  assert.equal(calls[0]!.init.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { keys: ["c", "a", "b"] });
 });

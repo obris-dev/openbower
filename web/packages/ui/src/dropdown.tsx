@@ -46,7 +46,12 @@ export function DropdownItem({
   "className" | "children"
 >) {
   return (
-    <MenuItem>
+    // `disabled` reaches BOTH: the button so it cannot be activated,
+    // and MenuItem so Headless UI knows. Without the second, the item
+    // keeps its place in the arrow-key ring and never gets
+    // data-disabled, so a constraint expressed only by disabling is
+    // invisible and still focusable.
+    <MenuItem disabled={props.disabled}>
       {href ? (
         <a href={href} className={cn(ITEM_CLASSES, className)}>
           {children}

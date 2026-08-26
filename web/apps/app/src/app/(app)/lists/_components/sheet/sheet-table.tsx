@@ -1,9 +1,17 @@
+"use client";
+
+import { DndContext, closestCenter, type DragEndEvent, type Modifier } from "@dnd-kit/core";
+import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
-import { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "@bower/ui";
+import { useCallback, useRef } from "react";
+import { Dropdown, DropdownButton, DropdownMenu } from "@bower/ui";
 import { isNumericColumn, type ColumnFillSummary, type FillWire, type ListColumn, type RenderableListRow } from "@bower/api";
 
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
 import { AddColumnMenuItems, type ColumnKind } from "./add-column";
+import { ColumnHeader, useColumnSensors } from "./column-header";
+import { clampDragX } from "./lib/drag-bounds";
+import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, FillTrackerCell } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
@@ -53,12 +61,41 @@ export function SheetTable({
   rows,
   fills,
   onAddColumn,
+  onReorder,
 }: {
   columns: ListColumn[];
   rows: RenderableListRow[];
+  /** Absent on a sheet that cannot be reordered; its presence is what
+   * arms both the drag and the header menu. */
+  onReorder?: (keys: string[]) => void;
   fills?: SheetFills;
   onAddColumn?: (kind: ColumnKind) => void;
 }) {
+  // Hooks before any early return: the empty-sheet branch below is a
+  // render path like any other.
+  const sensors = useColumnSensors();
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  // The table is the bound, so a column cannot be carried off the
+  // sheet and left somewhere it has no meaning. The table's rect
+  // spans the "#" gutter and the trailing "+" as well, so a header
+  // still travels over both; what this stops is the unbounded case,
+  // not travel within the sheet. Auto scroll keeps working, since
+  // that rect covers the whole sheet and not just its visible part.
+  // y is pinned because a column reorder is horizontal by definition:
+  // lifting one out of its row says nothing about where it lands.
+  const boundToTable = useCallback<Modifier>(({ transform, draggingNodeRect }) => {
+    const bounds = tableRef.current?.getBoundingClientRect();
+    // No rect yet means no bound to apply, never a bound of zero.
+    if (!draggingNodeRect || !bounds) return { ...transform, y: 0 };
+    return { ...transform, x: clampDragX(transform.x, draggingNodeRect, bounds), y: 0 };
+  }, []);
+
+  function onDragEnd(event: DragEndEvent) {
+    const keys = orderAfterDrag(columns, event);
+    if (keys) onReorder?.(keys);
+  }
+
   if (rows.length === 0) {
     return <p className="p-6 text-sm text-muted">This sheet has no rows.</p>;
   }
@@ -66,26 +103,25 @@ export function SheetTable({
   // plain columns has no fill state to track, and an all-empty row
   // would be dead height between header and rows.
   const tracker = fills !== undefined && columns.some((column) => column.fill !== null) ? fills : undefined;
+
   return (
-    <table className="w-full text-left text-sm">
+    // closestCenter over a horizontal strip: the pointer sits inside
+    // one header cell at a time, so the nearest centre IS the column
+    // being displaced.
+    <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[boundToTable]} onDragEnd={onDragEnd}>
+      <table ref={tableRef} className="w-full text-left text-sm">
       <thead>
         {/* The pinned h-11 is the contract that makes the tracker
             row's top-11 exact: both head rows stick as one unit, and
             an auto header height would drift under the "+" cell's
             padding or a font swap. */}
-        <tr className="h-11 text-xs uppercase tracking-wide text-faint">
+        <tr className="group/header h-11 text-xs uppercase tracking-wide text-faint">
           <th className="sticky top-0 bg-surface px-4 py-3 text-right font-medium">#</th>
-          {columns.map((column) => (
-            <th
-              key={column.key}
-              title={column.label}
-              className={`sticky top-0 bg-surface px-4 py-3 font-medium ${isNumericColumn(column) ? "text-right" : ""}`}
-            >
-              {/* Truncation needs a BLOCK: max-w on a table cell is
-                  inert under auto table layout. */}
-              <span className="block max-w-64 truncate">{column.label}</span>
-            </th>
-          ))}
+          <SortableContext items={columns.map((column) => column.key)} strategy={horizontalListSortingStrategy}>
+            {columns.map((column) => (
+              <ColumnHeader key={column.key} column={column} columns={columns} onReorder={onReorder} />
+            ))}
+          </SortableContext>
           {onAddColumn && (
             <th className="sticky top-0 w-10 bg-surface px-2 py-2">
               {/* The same kind menu as the toolbar primary: one
@@ -164,6 +200,7 @@ export function SheetTable({
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+    </DndContext>
   );
 }

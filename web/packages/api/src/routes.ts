@@ -65,6 +65,10 @@ export const apiRoutes = {
     rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
     // POST: append one blank column (no fill attached).
     columns: (id: string) => `/${API_VERSION}/lists/${id}/columns`,
+    // PATCH {keys}: reorder the sheet's columns (the whole order; the
+    // server refuses anything that is not a permutation of what it
+    // holds).
+    columnOrder: (id: string) => `/${API_VERSION}/lists/${id}/column-order`,
     // POST: add an AI column and admit its fill in one transaction.
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
     // POST: refill a column's unanswered rows (a NEW job, fresh snapshot).

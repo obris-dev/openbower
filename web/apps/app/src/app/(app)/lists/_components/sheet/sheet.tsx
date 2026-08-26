@@ -22,12 +22,14 @@ import {
   postAiColumn,
   postColumn,
   postFillRefill,
+  reorderColumns,
   updateList,
   webRoutes,
   type FillWire,
   type RenderableListRowsPage,
   type RenderableListRow,
   type ListSummary,
+  COLUMN_ORDER_STALE_CODE,
   ROW_COUNT_CHANGED_CODE,
 } from "@bower/api";
 
@@ -77,6 +79,65 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
+
+  // Reorder is OPTIMISTIC, because a drag that waits for a round trip
+  // reads as a failed drag. The server's echo replaces the guess
+  // either way: on success it is the same order, and on refusal (a
+  // teammate added or removed a column since this sheet was read) it
+  // is the truth this client did not have.
+  const reorderBusyRef = useRef(false);
+  const reorderColumnsTo = useCallback(
+    async (keys: string[]) => {
+      if (reorderBusyRef.current) return;
+      const previous = detail.columns;
+      const byKey = new Map(previous.map((column) => [column.key, column]));
+      const moved = keys.map((key) => byKey.get(key)).filter((column) => column !== undefined);
+      if (moved.length !== previous.length) return;
+      reorderBusyRef.current = true;
+      // The guard spans the WHOLE exchange, recovery included: a
+      // second gesture starting mid-refetch would carry its own
+      // `previous` and clobber the truth this one just fetched. And
+      // finally, not a trailing line, so a throw cannot pin it true
+      // and kill reordering for the rest of the session.
+      try {
+        setDetail((current) => ({ ...current, columns: moved }));
+        const res = await reorderColumns(detail.id, keys);
+        if (res.status === "unauthenticated") {
+          window.location.href = loginUrl();
+          return;
+        }
+        if (res.status !== "ok") {
+        // The move is put back and the server's reason is spoken: a
+        // reorder is detached from any form the user is looking at, so
+        // it is the toast tier, not a banner.
+          setDetail((current) => ({ ...current, columns: previous }));
+          // Putting the old set back leaves the sheet exactly as stale
+          // as the server just called it, so every later move would
+          // refuse the same way until a manual reload. Re-read
+          // instead, so the server's "try the move again" can succeed
+          // in place.
+          if (res.code === COLUMN_ORDER_STALE_CODE) {
+            const summary = await fetchList(detail.id);
+            if (summary.status === "unauthenticated") {
+              window.location.href = loginUrl();
+              return;
+            }
+            if (summary.status === "ok") {
+              setDetail(summary.data);
+              setLabel(summary.data.label);
+            }
+          }
+          toast.error(res.message, "Columns not reordered");
+          return;
+        }
+        setDetail(res.data);
+        setLabel(res.data.label);
+      } finally {
+        reorderBusyRef.current = false;
+      }
+    },
+    [detail, toast],
+  );
 
   const refreshBusyRef = useRef(false);
   // Re-reads the pages already on screen. It is the ONLY walk of the
@@ -427,6 +488,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           rows={rows}
           fills={{ listId: detail.id, jobs: fill.jobs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
           onAddColumn={openAddColumn}
+          onReorder={reorderColumnsTo}
         />
         {nextCursor && (
           <>

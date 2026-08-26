@@ -36,6 +36,7 @@ from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .serializers import (
     AiColumnRequest,
     ColumnAddRequest,
+    ColumnOrderRequest,
     ColumnPromptRequest,
     ColumnRefillRequest,
     FolderRequest,
@@ -66,6 +67,17 @@ _FILL_CONFLICT_CODES = frozenset(
         FillErrorCode.CONFIG_CHANGED,
     }
 )
+
+# The same partition for the COLUMN vocabulary, kept separate because
+# the two sets are disjoint and neither endpoint should classify by
+# the other's codes.
+_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE})
+
+
+def _column_refusal_status(e: ColumnRefused) -> int:
+    """One classifier for every column write, so a status added to the
+    set reaches both endpoints and neither can drift from the other."""
+    return 409 if e.code in _COLUMN_CONFLICT_CODES else 400
 
 
 class _ScopedView(ScopedView):
@@ -173,7 +185,8 @@ class ListRowsView(_ScopedView):
 
 class ColumnsView(_ScopedView):
     """POST /v1/lists/{id}/columns: append one BLANK column (the
-    CSV-template flow; a later fill adopts it by key). Refusals ride
+    CSV-template flow, for values typed or pasted in; an AI fill
+    REFUSES a key a column already holds). Refusals ride
     the sibling envelope: the client classifies by CODE and renders
     the detail verbatim (tier 1). The 200 body is the updated list
     summary, so the sheet re-renders its columns from the response."""
@@ -185,7 +198,30 @@ class ColumnsView(_ScopedView):
         try:
             target = self.columns.add_column(id, label=data["label"], column_type=data["type"])
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=400)
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(list_wire(target))
+
+
+class ColumnOrderView(_ScopedView):
+    """PATCH /v1/lists/{id}/column-order {keys}: reorder the sheet's
+    columns. The 200 body is the updated list summary, the same shape
+    the sibling column writes return, so the sheet re-renders its
+    columns from the response rather than trusting its own optimistic
+    move."""
+
+    def patch(self, request: Request, id: str) -> Response:
+        serializer = ColumnOrderRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            target = self.columns.reorder(id, keys=serializer.validated_data["keys"])
+        except ColumnRefused as e:
+            # Caught at the BASE and classified by code, the same way
+            # the sibling column write above does it: a refusal added
+            # to reorder() later gets a status here instead of escaping
+            # as a 500.
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         return Response(list_wire(target))

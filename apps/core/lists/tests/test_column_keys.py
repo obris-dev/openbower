@@ -2,12 +2,14 @@
 
 Every path that puts a column on a sheet goes through this one
 function: a CSV header, a blank column add, an agent output a fill
-maps down. It matters because an AI fill ADOPTS an existing column BY
-KEY, so a second rule anywhere does not produce a second key, it
-strands the column the fill was meant to land on.
+maps down. It matters because a fill decides what an output key MEANS
+by matching it against the sheet's keys, so a second rule anywhere
+does not produce a second key, it changes which column an output is
+judged against. What that match then does is
+FillAdmissionService._resolve_columns's rule, not this module's.
 
 THE SAME VECTORS live in the web's mirror,
-web/apps/app/src/app/(app)/agents/_components/builder/output-key.test.ts.
+web/apps/app/src/app/(app)/_components/agent-config/lib/output-key.test.ts.
 Changing one list without the other is the drift these exist to catch.
 
 Run: DJANGO_ENV=test uv run python manage.py test lists
@@ -53,9 +55,10 @@ class ColumnKeyTests(SimpleTestCase):
         self.assertEqual(len(derive_column_key("a" * (COLUMN_KEY_MAX_LENGTH * 2))), COLUMN_KEY_MAX_LENGTH)
 
     def test_a_csv_header_and_an_output_label_derive_the_same_key(self):
-        # The adoption path: import a sheet with a "Contact Email"
-        # header, then add an AI output labelled the same, and the fill
-        # must land ON that column rather than beside it.
+        # Import a sheet with a "Contact Email" header, then add an
+        # AI output labelled the same: both must derive one key, so the
+        # fill judges its output against THAT column (and, under the
+        # existence rule, refuses) rather than minting a sibling.
         from lists.operations.import_csv import column_key
 
         self.assertEqual(column_key("Contact Email", taken=set()), derive_column_key("Contact Email"))

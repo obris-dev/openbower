@@ -77,13 +77,15 @@ export const SETTLED_CELL_STATES = WIRE_CONSTANTS.SETTLED_CELL_STATES;
 export type SettledCellState = (typeof SETTLED_CELL_STATES)[number];
 
 // The fill refusals a client CLASSIFIES by code, mirroring the
-// server's FillErrorCode (lists/constants.py): the row-count echo
-// (the sheet re-reads its count so the next attempt echoes the new
-// truth) and the three whose offending surface is the OUTPUTS (they
-// name what the fill would write, so the drawer marks that pane).
-// Every other refusal renders through its verbatim detail alone and
-// needs no name here.
+// server's FillErrorCode (lists/constants.py): the two the client
+// RE-READS on (the row-count echo, so the next attempt echoes the new
+// truth, and the stale column order, so the next move is judged
+// against the set the sheet actually has) and the three whose
+// offending surface is the OUTPUTS (they name what the fill would
+// write, so the drawer marks that pane). Every other refusal renders
+// through its verbatim detail alone and needs no name here.
 export const ROW_COUNT_CHANGED_CODE = "row_count_changed";
+export const COLUMN_ORDER_STALE_CODE = "column_order_stale";
 export const COLUMN_COLLISION_CODE = "column_collision";
 export const RESERVED_KEY_CODE = "reserved_key";
 export const DERIVED_KEY_COLLISION_CODE = "derived_key_collision";
@@ -273,8 +275,9 @@ export async function saveRunAsList(
 }
 
 /** Append one BLANK column (no fill): the key derives server-side
- * from the label, through the same rule fill columns use, so a later
- * fill adopts the column instead of minting a sibling. Refusals
+ * from the label, through the same rule fill columns use, so an AI
+ * column that would land on the same key refuses rather than minting
+ * a sibling. Refusals
  * (reserved key, duplicate, cap) surface through the funnel as the
  * server's verbatim detail plus code; the 200 body is the updated
  * summary. */
@@ -283,6 +286,18 @@ export async function postColumn(
   body: { label: string; type: ColumnType },
 ): Promise<ApiResult<ListSummary>> {
   return http.post(apiRoutes.lists.columns(id), ListSummarySchema, body);
+}
+
+/** Reorder the sheet's columns, sending the WHOLE key order.
+ *
+ * Not a move instruction: the server checks the submitted keys are a
+ * permutation of the ones it holds, which a (from, to) pair cannot be
+ * checked against, and refuses with 409 when a teammate has added or
+ * deleted a column since this client read the sheet. The 200 body is
+ * the updated summary, so the caller renders the SERVER's order
+ * rather than trusting its own optimistic move. */
+export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListSummary>> {
+  return http.patch(apiRoutes.lists.columnOrder(id), ListSummarySchema, { keys });
 }
 
 /** Add an AI column and admit its fill in one server transaction;

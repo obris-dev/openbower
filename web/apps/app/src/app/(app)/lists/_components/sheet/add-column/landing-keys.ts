@@ -20,10 +20,10 @@ export function landingKeys(outputs: AgentOutput[]): string[] {
   return [...new Set(keys)];
 }
 
-/** Existing column keys this fill's landing keys would hit. A key
- * match is all the client can see: whether the hit adopts an empty
- * column or refuses an occupied one is the server's call at admission
- * (column emptiness is not knowable from paged rows). */
+/** Existing column keys this fill's landing keys would hit. A hit is
+ * refused at admission whether or not the column holds values, so a
+ * key match is the whole answer and the client needs to know nothing
+ * about emptiness (which paged rows could not tell it anyway). */
 export function collidingKeys(outputs: AgentOutput[], columns: ListColumn[]): string[] {
   const existing = new Set(columns.map((column) => column.key));
   return landingKeys(outputs).filter((key) => existing.has(key));

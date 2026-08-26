@@ -100,7 +100,7 @@ class WriteIfBlankTests(TestCase):
 
     def test_key_without_a_column_writes_untouched(self):
         # No column, no shape rule: the value stores as given, like any
-        # text cell (adoption and mapping decide keys upstream).
+        # text cell (key matching and mapping happen upstream).
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.write_cells(str(target.id), str(row.id), {"note": "Series B, 2024"})
