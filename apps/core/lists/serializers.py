@@ -120,6 +120,26 @@ class ColumnRefillRequest(serializers.Serializer):
     confirmed_row_count = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_LIST_ROWS)
 
 
+class ColumnOrderRequest(serializers.Serializer):
+    """PATCH /v1/lists/{id}/column-order: the full ordered key list.
+
+    The WHOLE order, not a move instruction, because the server has to
+    check the set is unchanged and a move (from, to) cannot be checked
+    against anything: it would apply to whatever the sheet happens to
+    hold now, which is the stale-client case this endpoint refuses."""
+
+    keys = serializers.ListField(
+        # The SHAPE a column key can have, the same expression
+        # ColumnDef pins: a key outside it names no column that could
+        # ever exist, so it is a malformed request and not a sheet that
+        # moved. Without it such a key reaches the stale check and gets
+        # told to try again, which can never work.
+        child=serializers.RegexField(r"^[a-z0-9_]+$", max_length=COLUMN_KEY_MAX_LENGTH),
+        min_length=1,
+        max_length=MAX_LIST_COLUMNS,
+    )
+
+
 class ColumnPromptRequest(serializers.Serializer):
     """PATCH /v1/lists/{id}/columns/{key}/prompt: the one editable fact
     of a column's fill agent, bounded by the contract's own prompt cap
@@ -130,8 +150,9 @@ class ColumnPromptRequest(serializers.Serializer):
 
 class ColumnAddRequest(serializers.Serializer):
     """POST /v1/lists/{id}/columns: one BLANK column. The key is not a
-    field; it derives server-side from the label (the one derivation
-    rule fills also use, so a later fill adopts this column by key)."""
+    field; it derives server-side from the label, by the one derivation
+    rule fills also use, so an output whose label reads the same lands
+    on this key and refuses rather than writing here."""
 
     label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
     type = serializers.ChoiceField(choices=[t.value for t in ColumnType])

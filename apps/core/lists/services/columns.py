@@ -1,9 +1,9 @@
 """Column custody: blank-column adds (the CSV-template flow; a blank
-column carries no fill member, and a later AI fill ADOPTS it by key,
-which is why the key derives through the runtime's one derivation
-rule; two rules would strand the column a fill was meant to land on)
-and the column-scoped fill-prompt edit. Account-scoped like every
-lists service."""
+column carries no fill member, and its key derives through the
+runtime's ONE derivation rule, because a key the sheet already has
+refuses an AI column that would land there and two derivation rules
+would make that refusal unpredictable), the column-scoped fill-prompt
+edit, and reordering. Account-scoped like every lists service."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from .lists import ListNotFound
 
 
 class ColumnRefused(Exception):
-    """Base for column-add refusals: `code` is the machine leg the view
-    maps to a status, str(self) is server-authored copy the client
-    renders verbatim (tier 1)."""
+    """Base for column-write refusals (adds and reorders alike): `code`
+    is the machine leg the view maps to a status, str(self) is
+    server-authored copy the client renders verbatim (tier 1)."""
 
     code = FillErrorCode.COLUMN_REFUSED
 
@@ -52,6 +52,31 @@ class ColumnsFull(ColumnRefused):
         super().__init__(f"A sheet holds at most {MAX_LIST_COLUMNS} columns.")
 
 
+class ColumnOrderStale(ColumnRefused):
+    """The submitted order does not name exactly the columns the sheet
+    has. Never a mutation: reorder is the one columns write that adds,
+    drops, and renames nothing, so a mismatch means the CLIENT's view
+    is stale (a teammate added or deleted a column while this one was
+    dragged), and the honest answer is to say so rather than to guess
+    which half of the disagreement was meant."""
+
+    code = FillErrorCode.COLUMN_ORDER_STALE
+
+    def __init__(self) -> None:
+        super().__init__("This sheet's columns changed while you were reordering; try the move again.")
+
+
+class ColumnKeysNotUnique(ColumnRefused):
+    """A repeat in the submitted order. Distinct from stale: no change
+    to the world makes this request right, so it answers 400 and says
+    so, rather than borrowing the stale refusal's "try again"."""
+
+    code = FillErrorCode.COLUMN_KEYS_NOT_UNIQUE
+
+    def __init__(self) -> None:
+        super().__init__("That reorder named the same column twice.")
+
+
 class ColumnService:
     def __init__(self, *, account_id: str, user_id: str) -> None:
         self.account_id = account_id
@@ -75,6 +100,43 @@ class ColumnService:
             if len(target.columns) >= MAX_LIST_COLUMNS:
                 raise ColumnsFull()
             target.columns = [*target.columns, {"key": key, "label": label, "type": column_type}]
+            target.save(update_fields=["columns", "updated_at"])
+        return target
+
+    def reorder(self, target_list_id: str, *, keys: list[str]) -> List:
+        """Rewrite the columns array in the given order and return the
+        updated list.
+
+        The key SET must be unchanged, which is what keeps this from
+        being a mutation door: every other columns writer decides what
+        a column IS, and this one may only decide where it sits. It
+        carries each column's dict across VERBATIM, so a fill member,
+        a type, and a label cannot be edited through an ordering
+        request even if the caller sends them.
+
+        The same List lock every columns writer takes, for the same
+        reason: a concurrent add appends to the array this read is
+        about to replace, and without the lock one write drops the
+        other's column."""
+        with transaction.atomic():
+            try:
+                target = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
+            except List.DoesNotExist as e:
+                raise ListNotFound(target_list_id) from e
+            by_key = {column["key"]: column for column in target.columns}
+            # A repeat is judged FIRST and separately, because it is
+            # the request being wrong rather than the sheet having
+            # moved, and the two owe the caller different answers.
+            if len(keys) != len(set(keys)):
+                raise ColumnKeysNotUnique()
+            # Length AND membership, against the STORED list rather
+            # than the map: by_key is already deduped, so a sheet whose
+            # columns somehow held a repeat would let an honest request
+            # naming each key once pass both checks and quietly drop
+            # one. Reorder adds and drops nothing, including that.
+            if len(keys) != len(target.columns) or set(keys) != set(by_key):
+                raise ColumnOrderStale()
+            target.columns = [by_key[key] for key in keys]
             target.save(update_fields=["columns", "updated_at"])
         return target
 

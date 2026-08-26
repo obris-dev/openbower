@@ -3,7 +3,7 @@ through this service's ONE-transaction methods under the List lock:
 anything less can append a column whose fill never lands, leaving the
 sheet carrying a column nothing will ever fill.
 admit() is the column add: caps and refusals, column resolution
-(adopt-or-refuse), the config snapshot, the ephemeral-agent create,
+(match-or-refuse), the config snapshot, the ephemeral-agent create,
 the bench prewrite seed, the row-count echo, the fill row, and the bulk
 insert of the queue. refill() is the one RECOVERY primitive,
 admission-shaped: a NEW fill over the column's unanswered rows.
@@ -878,8 +878,9 @@ class FillAdmissionService:
         """The columns this fill will own. Each output's OWN key IS its
         column key, single and multi alike (the outputs ARE the
         columns), which is why this returns a LIST and not a mapping.
-        Each key either adopts an EMPTY existing column or refuses an
-        occupied one; absent keys become new columns."""
+        Each key must be one this fill already owns or one no column
+        holds; any other existing key refuses, whether or not it has
+        values in it. Absent keys become new columns."""
         keys: list[str] = []
         claimed: dict[str, str] = {}
         for output in config.outputs:

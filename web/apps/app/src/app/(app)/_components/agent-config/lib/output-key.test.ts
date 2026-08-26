@@ -8,8 +8,9 @@ import { outputKey, outputsProblem } from "./output-key.ts";
 // (label, key) pairs. THE SAME VECTORS live on the server side, in
 // apps/core/lists/tests/test_column_keys.py, against the one function
 // this file mirrors. Changing one list without the other is the drift
-// they exist to catch: an AI fill ADOPTS a column BY KEY, so a
-// derivation that disagrees strands the column it meant to land on.
+// they exist to catch: a fill matches an output against a column BY
+// KEY, so a derivation that disagrees judges it against a different
+// column than the server does.
 const VECTORS: [string, string][] = [
   ["Contact Email", "contact_email"],
   ["LinkedIn URL!", "linkedin_url"],

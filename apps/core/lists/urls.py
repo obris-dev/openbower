@@ -11,6 +11,7 @@ urlpatterns = [
     api_path("<str:id>/rows", views.ListRowsView.as_view(), name="lists_rows"),
     api_path("<str:id>/columns", views.ColumnsView.as_view(), name="lists_columns"),
     api_path("<str:id>/columns/ai", views.AiColumnView.as_view(), name="lists_columns_ai"),
+    api_path("<str:id>/column-order", views.ColumnOrderView.as_view(), name="lists_columns_order"),
     api_path("<str:id>/columns/<str:key>/refill", views.ColumnRefillView.as_view(), name="lists_column_refill"),
     api_path("<str:id>/columns/<str:key>/prompt", views.ColumnPromptView.as_view(), name="lists_column_prompt"),
     api_path("<str:id>/fills", views.ListFillsView.as_view(), name="lists_fills"),

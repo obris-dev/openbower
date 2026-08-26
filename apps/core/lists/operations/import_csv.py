@@ -58,7 +58,7 @@ def column_key(label: str, *, taken: set[str]) -> str:
     """A stable snake_case key from a header label, unique within the
     sheet (data dicts key on it, so collisions would silently merge
     columns)."""
-    # The contract's derivation, never a local copy: an AI fill adopts
+    # The contract's derivation, never a local copy: an AI fill matches
     # a column BY KEY, so an imported header and an output label that
     # read the same must land the same.
     base = derive_column_key(label) or "column"

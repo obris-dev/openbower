@@ -72,6 +72,13 @@ violation shipped once and got caught).
 
 ## Errors, status, and copy
 
+- Only a **400 or a 409** carries user copy and a classifiable code
+  through the request funnel. 401 and 403 become `unauthenticated`
+  (the login boundary, not a message); every OTHER status renders
+  GENERIC_FAILURE with no code, its body being internals. So a server
+  refusal that wants its `detail` rendered or its `error` branched on
+  must answer 400 or 409: answering 422, or anything else, silently
+  loses the copy it wrote and the code the client tests for.
 - Every error message lands in one of THREE TIERS, by who can see the
   cause. (1) The server knows: it writes the copy and the client
   renders it VERBATIM (a run's `error`, every 400/409 `detail`

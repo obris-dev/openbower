@@ -30,11 +30,13 @@ COLUMN_LABEL_MAX_LENGTH = 80
 def derive_column_key(label: str, *, key: str = "") -> str:
     """THE label-to-key derivation, for every path that puts a column
     on a sheet: a CSV header, a blank column add, an agent output a
-    fill maps down. It lives on the CONTRACT because an AI fill ADOPTS
-    an existing column BY KEY, so a second rule anywhere does not
-    produce a second key, it strands the column the fill was meant to
-    land on. The web mirrors this one function
-    (agents/_components/builder/output-key.ts)."""
+    fill maps down. It lives on the CONTRACT because a fill decides
+    what an output key MEANS by matching it against the sheet's keys,
+    so a second derivation anywhere does not produce a second key, it
+    changes which column an output is judged against. What that match
+    then does is FillAdmissionService._resolve_columns's rule, stated
+    there and nowhere else. The web mirrors this one function
+    (_components/agent-config/lib/output-key.ts)."""
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 

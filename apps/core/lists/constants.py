@@ -134,6 +134,8 @@ class FillErrorCode(StrEnum):
     COLUMN_COLLISION = "column_collision"
     COLUMN_TYPE_CHANGED = "column_type_changed"
     COLUMN_EXISTS = "column_exists"
+    COLUMN_ORDER_STALE = "column_order_stale"
+    COLUMN_KEYS_NOT_UNIQUE = "column_keys_not_unique"
     DERIVED_KEY_COLLISION = "derived_key_collision"
     RESERVED_KEY = "reserved_key"
     COLUMNS_FULL = "columns_full"

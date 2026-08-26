@@ -37,7 +37,9 @@ export function PopoverItem({ className, ...props }: ComponentPropsWithoutRef<"b
       type="button"
       {...props}
       className={cn(
-        "block w-full px-4 py-2.5 text-left text-sm font-medium text-foreground hover:bg-wash focus-visible:bg-wash",
+        // disabled:, where DropdownItem uses data-disabled: (Headless
+        // UI stamps that attribute; this is a plain button).
+        "block w-full px-4 py-2.5 text-left text-sm font-medium text-foreground hover:bg-wash focus-visible:bg-wash disabled:opacity-40",
         className,
       )}
     />
