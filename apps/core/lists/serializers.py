@@ -7,6 +7,12 @@ from typing import Any
 
 from rest_framework import serializers
 
+from agents.coercion import coerce_config
+from agents.serializers import AgentConfigRequest
+from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
+from openbower_schema.agents import PROMPT_MAX_LENGTH
+from openbower_schema.fills import FillCounters, FillError
+from openbower_schema.fills import FillWire as WireFill
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
@@ -16,10 +22,11 @@ from .constants import (
     COLUMN_LABEL_MAX_LENGTH,
     LABEL_MAX_LENGTH,
     MAX_LIST_COLUMNS,
+    MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
     ColumnType,
 )
-from .models import Folder, List, ListRow
+from .models import Fill, Folder, List, ListRow
 
 
 class ColumnDef(serializers.Serializer):
@@ -70,6 +77,66 @@ class FolderRequest(serializers.Serializer):
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH)
 
 
+class AiColumnRequest(serializers.Serializer):
+    """POST /v1/lists/{id}/columns/ai: the quick tab sends `config`
+    (validated through the agents app's shared serializer, never
+    retyped), the other tab sends `agent_id`; exactly one of the two.
+    No column label rides the request: the OUTPUTS are the columns
+    (each output's key and label name what its cells land under).
+    `confirmed_row_count` echoes the count the user consented to
+    (admission 409s on drift)."""
+
+    config = AgentConfigRequest(required=False)
+    agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
+    confirmed_row_count = serializers.IntegerField(min_value=0)
+    test_run_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
+    # The optional DOWNWARD-only concurrency override; 0 means unset.
+    concurrency = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_FILL_CONCURRENCY)
+    # Scope: fill only the FIRST N eligible rows (0 = all, the absent
+    # default; a sent value must be positive).
+    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if (attrs.get("config") is not None) == bool(attrs.get("agent_id")):
+            raise serializers.ValidationError("exactly one of config or agent_id is required")
+        return attrs
+
+
+class ColumnRefillRequest(serializers.Serializer):
+    """POST /v1/lists/{id}/columns/{key}/refill: the column names
+    everything except the optional scope, so the body carries at most
+    `rows` (first N eligible unanswered rows; absent = all)."""
+
+    # Continue's leg: bound the new fill to THIS stopped fill's own
+    # unresolved rows (resume, never widen).
+    resume_fill = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
+
+    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+
+    # The consent echo, as the admit lane has. OPTIONAL because resume
+    # spends what a previous consent already bought and the widening
+    # gestures are the ones that need a number in front of them; 0
+    # means the caller showed no count and is not echoing one.
+    confirmed_row_count = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_LIST_ROWS)
+
+
+class ColumnPromptRequest(serializers.Serializer):
+    """PATCH /v1/lists/{id}/columns/{key}/prompt: the one editable fact
+    of a column's fill agent, bounded by the contract's own prompt cap
+    (the same bound the agent serializers enforce)."""
+
+    prompt = serializers.CharField(max_length=PROMPT_MAX_LENGTH)
+
+
+class ColumnAddRequest(serializers.Serializer):
+    """POST /v1/lists/{id}/columns: one BLANK column. The key is not a
+    field; it derives server-side from the label (the one derivation
+    rule fills also use, so a later fill adopts this column by key)."""
+
+    label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
+    type = serializers.ChoiceField(choices=[t.value for t in ColumnType])
+
+
 # Wire builders CONSTRUCT the contract models (never hand-assembled
 # dicts): a field the contract gained but these forgot, or a wrong
 # type, fails loudly here instead of drifting to the client's zod.
@@ -101,5 +168,38 @@ def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
     ).model_dump()
 
 
-def row_wire(row: ListRow) -> dict[str, Any]:
-    return WireListRow(id=str(row.id), position=row.position, data=row.data).model_dump()
+def row_wire(row: ListRow, states: dict[str, str] | None = None) -> dict[str, Any]:
+    """A sheet row with its AI cell states beside its values. ONE
+    shape rather than two paged reads walking in lockstep, which was a
+    client-side join carried over the network."""
+    return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
+
+
+def fill_wire(fill: Fill) -> dict[str, Any]:
+    # Two-tier error: both legs travel together or not at all (a code
+    # with no copy would leave the client nothing to render verbatim).
+    error = FillError(code=fill.error_code, message=fill.error_message) if fill.error_code else None
+    return WireFill(
+        id=str(fill.id),
+        list_id=fill.list_id,
+        agent_id=fill.agent_id,
+        status=fill.status,
+        column_keys=fill.column_keys or [],
+        # Every declared counter, projected by NAME off the model's own
+        # columns. Enumerating them here by hand is how a counter ships
+        # as a zero while the worker writes it.
+        counters=FillCounters(**{name: getattr(fill, name, 0) for name in FillCounters.model_fields}),
+        confirmed_row_count=fill.confirmed_row_count,
+        # The base model's attribution field is the wire's started_by;
+        # authorization stays account membership.
+        started_by=fill.user_id,
+        heartbeat_at=fill.heartbeat_at.isoformat() if fill.heartbeat_at else None,
+        error=error,
+        # The snapshot is FROZEN and nothing rewrites it, while this
+        # page shows all history: read strictly, one row written under
+        # an older contract would 500 this endpoint for that sheet
+        # forever, with no surface able to remove it.
+        config_snapshot=coerce_config(fill.config_snapshot or {}, origin=f"fill {fill.id} snapshot"),
+        created_at=fill.created_at.isoformat(),
+        updated_at=fill.updated_at.isoformat(),
+    ).model_dump()

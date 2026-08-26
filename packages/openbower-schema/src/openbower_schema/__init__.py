@@ -24,7 +24,17 @@ from .discover import (
     LookalikeItem,
     LookalikeListResponse,
 )
+from .fills import (
+    CellRunResult,
+    ColumnFillSummary,
+    ColumnPromptWire,
+    FillCounters,
+    FillError,
+    FillPage,
+    FillWire,
+)
 from .lists import (
+    ColumnFill,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -48,7 +58,15 @@ __all__ = [
     "AgentsList",
     "AuthUser",
     "CatalogModel",
+    "CellRunResult",
+    "ColumnFill",
+    "ColumnFillSummary",
+    "ColumnPromptWire",
     "Company",
+    "FillCounters",
+    "FillError",
+    "FillPage",
+    "FillWire",
     "FolderSummary",
     "FoldersList",
     "ImportResult",

@@ -6,12 +6,18 @@ run to a sibling's POST)."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta
 
 from django.db import transaction
 from django.utils import timezone
 
+from lists.constants import MAX_ACTIVE_FILLS
+from lists.services.fill_queue import live_fill_count
 from openbower_kernel.fields import min_ulid_at
+from openbower_schema.agents import AgentConfig
+from openbower_schema.fills import CellRunResult
 
 from ..constants import (
     TEST_RUN_ABANDON_SECONDS,
@@ -28,14 +34,34 @@ class TestRunNotFound(Exception):
         super().__init__(f"no test run {run_id}")
 
 
+class PaidLanesFull(Exception):
+    """The account cap counts BOTH metered lanes: live fills plus
+    pending bench runs young enough to still be live. One cap, one
+    constant, and neither lane counts the other's rows by reaching
+    into its models."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"This account is at its limit of {MAX_ACTIVE_FILLS} concurrent fills and tests; wait for one to finish."
+        )
+
+
 class TestRunActive(Exception):
     """One live run per account: the test endpoint is a metered path
-    (searches + completions per run), and until phase 5's job
+    (searches + completions per run), and until phase 5's fill
     machinery brings real spend controls, a young pending run refuses
     a second start. Your OWN run is superseded instead, but only past
     a short abandonment window (its thread may still be spending;
     instant supersede would fork concurrent paid runs on every
     reload-and-retest)."""
+
+
+def config_fingerprint(config: AgentConfig) -> str:
+    """The canonical digest of a drafted config: what makes a stored
+    bench run SEEDABLE by a fill admission (seed only when the
+    admitted config is THIS config; a near-miss must re-run, never
+    borrow answers produced by different instructions)."""
+    return hashlib.sha256(json.dumps(config.model_dump(), sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class TestRunService:
@@ -45,17 +71,31 @@ class TestRunService:
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
 
-    def start(self, *, user_id: str) -> AgentTestRun:
+    def assert_lane_available(self) -> None:
+        """Check-then-create, like the start guard's own create-create
+        window; the per-process test-thread semaphore backstops the
+        residual race. Liveness is judged by the WORST CASE here
+        exactly as the start guard judges it, so an older pending row
+        that provably finished never locks the account out."""
+        pending = AgentTestRun.objects.filter(
+            account_id=self.account_id,
+            status=TestRunStatus.PENDING,
+            id__gte=min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_WORST_CASE_SECONDS)),
+        ).count()
+        if live_fill_count(self.account_id) + pending >= MAX_ACTIVE_FILLS:
+            raise PaidLanesFull()
+
+    def start(self, *, user_id: str, config_fingerprint: str = "", row_id: str = "") -> AgentTestRun:
         # Age filters ride the (account_id, id) index via the ULID's
         # time prefix; created_at has no index of its own.
         AgentTestRun.objects.filter(
             account_id=self.account_id,
             id__lt=min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_MAX_AGE_SECONDS)),
         ).delete()
-        return self._guarded_create(user_id=user_id)
+        return self._guarded_create(user_id=user_id, config_fingerprint=config_fingerprint, row_id=row_id)
 
     @transaction.atomic
-    def _guarded_create(self, *, user_id: str) -> AgentTestRun:
+    def _guarded_create(self, *, user_id: str, config_fingerprint: str, row_id: str) -> AgentTestRun:
         # select_for_update serializes concurrent starts against the
         # SAME pending rows (the supersede check-then-create). Two
         # simultaneous starts with NO pending row can still both
@@ -88,7 +128,12 @@ class TestRunService:
             # SILENT past the abandonment window: the poll loop that
             # started it is gone (a closed tab); supersede.
             fail_run(str(run.id), "superseded by a newer test")
-        return AgentTestRun.objects.create(account_id=self.account_id, user_id=user_id)
+        return AgentTestRun.objects.create(
+            account_id=self.account_id,
+            user_id=user_id,
+            config_fingerprint=config_fingerprint,
+            row_id=row_id,
+        )
 
     @staticmethod
     def _abandoned(run: AgentTestRun, now: datetime) -> bool:
@@ -118,6 +163,21 @@ class TestRunService:
         if run.status == TestRunStatus.PENDING and run.user_id == user_id:
             AgentTestRun.objects.filter(id=str(run.id)).update(polled_at=timezone.now())
         return run
+
+    @staticmethod
+    def result_for(run: AgentTestRun) -> CellRunResult | None:
+        """A finished run's result as the CONTRACT MODEL, or None if
+        there is not one to read.
+
+        The read half of what the writer already does: results go into
+        the column through CellRunResult, so they come back out through
+        it too, and a caller reasons about typed fields instead of
+        probing a JSON blob for keys it hopes are there. A pending or
+        failed run has no result by definition, and the model default
+        {} is the same absence wearing a different shape."""
+        if run.status != TestRunStatus.COMPLETE or not run.result:
+            return None
+        return CellRunResult.model_validate(run.result)
 
 
 def run_is_pending(run_id: str) -> bool:

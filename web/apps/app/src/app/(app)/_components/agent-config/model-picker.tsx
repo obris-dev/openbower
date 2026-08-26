@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Button, Card, Combobox, type ComboboxItem } from "@bower/ui";
 import type { AgentCatalog } from "@bower/api";
 
-import { modelsTruncatedNote } from "../copy";
+import { modelsTruncatedNote } from "./copy";
 
 // The option value is an opaque JSON triple: source names and model
 // names are user/env-authored, so no separator character is safe.

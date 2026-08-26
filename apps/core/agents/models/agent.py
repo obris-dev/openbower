@@ -3,18 +3,13 @@ import logging
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from lists.constants import ColumnType
 from openbower_kernel.models import UserScopedModel
 from openbower_schema.agents import AgentConfig, AgentTools
 
+from ..coercion import coerce_config
 from ..constants import (
     LABEL_MAX_LENGTH,
-    MAX_AGENT_OUTPUTS,
     MODEL_MAX_LENGTH,
-    OUTPUT_DESCRIPTION_MAX_LENGTH,
-    OUTPUT_KEY_MAX_LENGTH,
-    OUTPUT_LABEL_MAX_LENGTH,
-    PROMPT_MAX_LENGTH,
     PROVIDER_MAX_LENGTH,
     SOURCE_MAX_LENGTH,
     AgentProvider,
@@ -81,50 +76,26 @@ class Agent(UserScopedModel):
     def config(self) -> AgentConfig:
         """The runtime/interchange config this row is custody for,
         TYPED at construction (the contract model is the one shape a
-        config ever travels as). Sizes CLAMP here: the contract's max
-        bounds validate on READ, so a stored row over any of them (a
-        future producer's bug, or a bound tightened after release)
-        must render clamped, never 500 the GET that touches it."""
-        # Enums coerce like lengths clamp: a stored type or provider a
-        # later version retired must render (type falls to "text",
-        # rendering-only anyway; a retired provider renders under the
-        # first spec and normally refuses at run time because no
-        # same-named source exists there; a deploy that DOES name one
-        # identically under the substitute spec would run it there,
-        # the render-over-refuse trade this read path makes).
-        column_types = {t.value for t in ColumnType}
-        stored_rows = self.outputs if isinstance(self.outputs, list) else []
-        rows = [o for o in stored_rows if isinstance(o, dict)][:MAX_AGENT_OUTPUTS]
-        outputs = [
-            {
-                "key": str(o.get("key", ""))[:OUTPUT_KEY_MAX_LENGTH],
-                "label": str(o.get("label", ""))[:OUTPUT_LABEL_MAX_LENGTH],
-                "type": o.get("type") if o.get("type") in column_types else "text",
-                "description": str(o.get("description", ""))[:OUTPUT_DESCRIPTION_MAX_LENGTH],
-            }
-            for o in rows
-        ]
-        if not outputs:
-            # The contract's min-1 must hold to RENDER at all; an
-            # all-junk row set falls to one placeholder that NAMES its
-            # brokenness (a run would write this column, and a cell
-            # under "unreadable output" is a diagnosis, not data; the
-            # log below is the trail to whatever wrote it).
-            outputs = [{"key": "unreadable_output", "label": "Unreadable output", "type": "text", "description": ""}]
-        provider = AgentProvider.OPENAI_COMPATIBLE.value if self.provider_retired else self.provider
-        if outputs != stored_rows or provider != self.provider or len(self.prompt) > PROMPT_MAX_LENGTH:
-            # Loud, not silent: a clamped or coerced read means some
-            # producer wrote what the contract refuses; renderable
-            # today, but the log is the trail to that producer.
-            logger.warning("agent %s: stored config clamped/coerced on read", self.id)
-        return AgentConfig(
-            prompt=self.prompt[:PROMPT_MAX_LENGTH],
-            provider=provider,
-            source=self.source,
-            model=self.model,
-            tools=self.tools_wire(),
-            outputs=outputs,
-        )
+        config ever travels as), and read TOLERANTLY: see
+        agents.coercion, which the fill's frozen snapshot shares.
+
+        The stored fields go in RAW. `provider_retired` stays as this
+        custody's own public read, which the admission lane refuses on;
+        the substitution itself belongs to the coercion, which performs
+        the same test and is the one place that trails it."""
+        stored = {
+            "prompt": self.prompt,
+            # RAW: the coercion performs this same test, so substituting
+            # first left its warning comparing a value to itself and the
+            # one case it exists to trail went silent. provider_retired
+            # stays as the public read the admission lane refuses on.
+            "provider": self.provider,
+            "source": self.source,
+            "model": self.model,
+            "tools": self.tools,
+            "outputs": self.outputs,
+        }
+        return coerce_config(stored, origin=f"agent {self.id}")
 
     def __str__(self) -> str:
         return self.label

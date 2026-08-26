@@ -4,7 +4,7 @@ import type { SelectHTMLAttributes } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@bower/ui";
 
-/** The toolbar-scale native select the builder's list pickers share
+/** The toolbar-scale native select the config editor's list pickers share
  * (the ui Select is Input-scale). Same platform rules as Select:
  * appearance-none removes the native arrow so the anchored chevron
  * can replace it, and caller className sizes the wrapper. */

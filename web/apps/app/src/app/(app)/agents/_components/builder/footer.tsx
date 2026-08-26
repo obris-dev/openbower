@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Eraser, FlaskConical, X } from "lucide-react";
+import { Eraser, FlaskConical } from "lucide-react";
 import { Button, PageFooter } from "@bower/ui";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { DELETE_AGENT_CONSEQUENCE, DELETE_AGENT_QUESTION } from "../copy";
-import { goToSection, type ChecklistItem } from "./readiness";
+import { type ChecklistItem, ReadinessChecklist } from "../../../_components/agent-config";
 
 /** The builder's pinned actions: the readiness checklist (its own
  * centered row on mobile), the delete confirm tier (owned here), and
@@ -34,32 +34,7 @@ export function BuilderFooter({
 
   return (
     <PageFooter>
-      {checklist && (
-        // Full-width and CENTERED on mobile (its own composed row
-        // above the actions); inline left on desktop.
-        <div
-          role="group"
-          className="flex w-full flex-wrap items-center justify-center gap-3 text-xs sm:w-auto sm:justify-start"
-          aria-label="What this action still needs"
-        >
-          {checklist.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => goToSection(item.anchor)}
-              className={
-                item.missing
-                  ? "inline-flex items-center gap-1 text-warning hover:underline"
-                  : "inline-flex items-center gap-1 text-muted"
-              }
-            >
-              {item.missing ? <X aria-hidden className="h-3 w-3" /> : <Check aria-hidden className="h-3 w-3" />}
-              {item.label}
-              {item.missing && <span className="sr-only"> (missing)</span>}
-            </button>
-          ))}
-        </div>
-      )}
+      {checklist && <ReadinessChecklist items={checklist} />}
       {showDelete &&
         (confirmingDelete ? (
           <ConfirmDelete

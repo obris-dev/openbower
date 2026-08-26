@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import timedelta
 from unittest.mock import patch
 
+import httpx
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -33,6 +34,10 @@ from agents.models import AgentTestRun
 from agents.providers import anthropic_compatible, openai_compatible
 from common.testing import TEST_IDENTITY, FakeResponse, login_session
 from openbower_kernel.fields import min_ulid_at
+from openbower_kernel.provider_config import ProviderSpec
+from openbower_schema.agents import CONFIDENCE_SUFFIX
+
+from .sources import source
 
 _SERP = {
     "tasks": [
@@ -59,8 +64,8 @@ _SERP = {
 # wire is the framework's to test, so we mock at the seams WE own (the
 # model boundary via model_for, the search seam at httpx).
 # A NON-canonical keyless source: the local-server posture.
-_LOCAL_SOURCE = {"local": {"base_url": "http://o.test/v1", "api_key": ""}}
-_CANONICAL_SOURCE = {"openai": {"base_url": "https://api.openai.com/v1", "api_key": "k"}}
+_LOCAL_SOURCE = source("local", "http://o.test/v1")
+_CANONICAL_SOURCE = source("openai", "https://api.openai.com/v1", api_key="k")
 _TEST_SETTINGS = {
     "OPENAI_COMPATIBLE_SOURCES": _LOCAL_SOURCE,
     "SEARCH_PROVIDER": "dataforseo",
@@ -145,9 +150,7 @@ class CatalogTests(TestCase):
         self.assertNotIn(("openai_compatible", "local", "nomic-embed-text:latest"), triples)
 
     def test_keyless_canonical_source_is_closed(self):
-        with self.settings(
-            OPENAI_COMPATIBLE_SOURCES={"openai": {"base_url": "https://api.openai.com/v1", "api_key": ""}}
-        ):
+        with self.settings(OPENAI_COMPATIBLE_SOURCES=source("openai", "https://api.openai.com/v1")):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m for m in body["models"] if m["provider"] == "openai_compatible"], [])
 
@@ -176,7 +179,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES={"vllm": {"base_url": "http://vllm.test/v1", "api_key": "k"}}),
+            self.settings(OPENAI_COMPATIBLE_SOURCES=source("vllm", "http://vllm.test/v1", api_key="k")),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         triples = [(m["provider"], m["source"], m["model"]) for m in body["models"]]
@@ -194,7 +197,9 @@ class CatalogTests(TestCase):
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
             self.settings(
                 OPENAI_COMPATIBLE_SOURCES=_CANONICAL_SOURCE,
-                ANTHROPIC_COMPATIBLE_SOURCES={"anthropic": {"base_url": "https://api.anthropic.com", "api_key": "k"}},
+                ANTHROPIC_COMPATIBLE_SOURCES=source(
+                    "anthropic", "https://api.anthropic.com", spec=ProviderSpec.ANTHROPIC_COMPATIBLE, api_key="k"
+                ),
             ),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
@@ -265,7 +270,7 @@ class CatalogTests(TestCase):
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
             self.settings(
                 OPENAI_COMPATIBLE_SOURCES={},
-                ANTHROPIC_COMPATIBLE_SOURCES={"gw": {"base_url": "http://gw.test", "api_key": ""}},
+                ANTHROPIC_COMPATIBLE_SOURCES=source("gw", "http://gw.test", spec=ProviderSpec.ANTHROPIC_COMPATIBLE),
             ),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
@@ -306,7 +311,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES={"vllm": {"base_url": "http://vllm.test/v1", "api_key": "k"}}),
+            self.settings(OPENAI_COMPATIBLE_SOURCES=source("vllm", "http://vllm.test/v1", api_key="k")),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m for m in body["models"] if m["provider"] == "openai_compatible"], [])
@@ -423,7 +428,15 @@ def _tool_returned(messages) -> bool:
 
 
 def _final(info: AgentInfo, **values) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=values)])
+    """A COMPLIANT answer: the schema requires every field now (that is
+    what makes it strict), so a test scripting one output still sends
+    the whole shape. Unscripted fields take the empty answer a model
+    gives when it has nothing, which is a blank value at zero
+    confidence."""
+    args = dict(values)
+    for name in info.output_tools[0].parameters_json_schema.get("properties", {}):
+        args.setdefault(name, 0.0 if name.endswith(CONFIDENCE_SUFFIX) else "")
+    return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
 
 def _scripted_model(behavior) -> FunctionModel:
@@ -437,13 +450,18 @@ def _scripted_model(behavior) -> FunctionModel:
 
 
 def _default_behavior(answer_values: dict):
-    """The happy script: search once, then answer the given values
-    (whichever kind asks)."""
+    """The happy script: search once, then answer the given values with
+    a confidence that clears the floor (every kind states one; the
+    runtime gates on nothing else)."""
 
     def behavior(kind, messages, info):
         if kind == "agentic" and not _tool_returned(messages):
             return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
-        return _final(info, **answer_values)
+        scored = dict(answer_values)
+        for key, value in answer_values.items():
+            if value:
+                scored[f"{key}_bwr_confidence"] = 0.95
+        return _final(info, **scored)
 
     return behavior
 
@@ -544,13 +562,13 @@ class RuntimeTests(TestCase):
             seen.append(messages[0].instructions or "")
             if kind == "agentic" and not _tool_returned(messages):
                 return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "x"})])
-            return _final(info, person="Jane Doe", profile="")
+            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
 
         self._test_call({"person": "Jane Doe", "profile": ""}, behavior=behavior)
-        self.assertIn("tools", seen[0])
+        self.assertIn("Use the provided tools", seen[0])
         seen.clear()
         self._test_call({"person": "Jane Doe", "profile": ""}, config={**_CONFIG, "tools": {}}, behavior=behavior)
-        self.assertTrue(seen and "tools" not in seen[0])
+        self.assertTrue(seen and "Use the provided tools" not in seen[0])
 
     def test_non_string_row_values_reject(self):
         # The row is a DictField of CharFields: structured values are a
@@ -612,7 +630,7 @@ class RuntimeTests(TestCase):
 
     def test_cells_carry_the_outputs_own_keys(self):
         # The runtime speaks config-local names; mapping onto a sheet's
-        # row-data keys is the fill job's concern (phase 5).
+        # row-data keys is the fill's concern (phase 5).
         config = {**_CONFIG, "outputs": [{"label": "Person", "type": "text", "description": "Full name"}]}
         body = self._test_call({"person": "Jane Doe"}, config=config)
         self.assertEqual(body["cells"], {"person": "Jane Doe"})
@@ -651,7 +669,7 @@ class AgenticLoopTests(TestCase):
             self.settings(**(settings or _TEST_SETTINGS)),
         ):
             run = run_cell(AgentConfig(**(config or self._TYPED_CONFIG)), row or {"name": "Acme"})
-        return {"cells": run.cells, "evidence": run.evidence, "searches": run.searches}
+        return {"cells": run.cells, "evidence": run.evidence, "searches": run.searches, "blank_cause": run.blank_cause}
 
     def test_model_drives_the_contacts_tool_with_the_scope_injected(self):
         # The model supplies query TERMS; the tool strips its site:
@@ -666,7 +684,13 @@ class AgenticLoopTests(TestCase):
         def behavior(kind, messages, info):
             self.assertEqual(kind, "agentic")
             if _tool_returned(messages):
-                return _final(info, person="Jane Doe", profile="https://www.linkedin.com/in/janedoe")
+                return _final(
+                    info,
+                    person="Jane Doe",
+                    profile="https://www.linkedin.com/in/janedoe",
+                    person_bwr_confidence=0.95,
+                    profile_bwr_confidence=0.95,
+                )
             return ModelResponse(
                 parts=[ToolCallPart(tool_name="find_contacts", args={"query": 'site:acme.com "VP Sales" Acme'})]
             )
@@ -684,6 +708,92 @@ class AgenticLoopTests(TestCase):
         self.assertEqual(body["cells"]["profile"], "https://www.linkedin.com/in/janedoe")
         self.assertEqual(len(body["searches"]), 1)
         self.assertEqual(len(body["evidence"]), 1)
+
+    def test_an_uncited_answer_drops_and_diagnoses_unverified(self):
+        # A search result is the best answer to the QUERY, not the
+        # truth about the ROW: an answer that names no support is
+        # unconfirmed, so the cell blanks and the cause says so.
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(info, person="Jane Doe", profile="")
+
+        body = self._run(behavior)
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "unverified")
+
+    def test_low_confidence_drops_and_diagnoses_unverified(self):
+        # The model's stated confidence IS the gate: an answer below
+        # the floor blanks and the cause says unverified (a guess and a
+        # fact carry identical weight in a spreadsheet cell).
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.6)
+
+        body = self._run(behavior)
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "unverified")
+
+    def test_whether_a_record_fits_the_row_is_the_models_judgment(self):
+        # The deliberate boundary, pinned so it stays deliberate. A
+        # generic company name returns plausible strangers, and the
+        # model answers with one at high confidence: the cell lands.
+        # Deciding a Harbor Media record does not answer a Blue Thistle
+        # question is judgment, and judgment is what an AI column is
+        # bought for. The runtime once policed this by matching the
+        # answer against company names, which read "Healthcare" as a
+        # person and gave "B2B software" no check at all; a general
+        # column cannot be built on that. The guard for this case is a
+        # better model and the confidence it reports, not a string
+        # rule here.
+        def serp(url, **kwargs):
+            return FakeResponse(
+                200,
+                {
+                    "tasks": [
+                        {
+                            "status_code": 20000,
+                            "result": [
+                                {
+                                    "items": [
+                                        {
+                                            "type": "organic",
+                                            "title": "Rowan Vale - Co-Founder @ Harbor",
+                                            "url": "https://uk.linkedin.com/in/rowanvale",
+                                            "description": "Supported by Harbor Media's marketing engine.",
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "founder"})])
+            return _final(
+                info,
+                person="Rowan Vale",
+                profile="",
+                person_bwr_confidence=0.95,
+            )
+
+        body = self._run(behavior, serp=serp, row={"name": "Blue Thistle Marketing"})
+        self.assertEqual(body["cells"]["person"], "Rowan Vale")
+
+    def test_an_answer_derived_from_the_task_itself_survives(self):
+        # Classifications and row-fed echoes rest on the task's own
+        # data, not on a record: nothing asks them to point at one.
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(info, person="B2B software", profile="", person_bwr_confidence=0.95)
+
+        body = self._run(behavior)
+        self.assertEqual(body["cells"]["person"], "B2B software")
 
     def test_tool_budget_bounds_a_looping_model(self):
         # No salvage (RULED: no validated answer IS signal): the budget
@@ -710,6 +820,46 @@ class AgenticLoopTests(TestCase):
         self.assertEqual(len(serp_calls), MAX_TOOL_CALLS)
         self.assertEqual(body["cells"], {})
         self.assertEqual(len(body["searches"]), MAX_TOOL_CALLS)
+        # Budget exhaustion is its OWN settled outcome, never
+        # model_error: refill must not re-buy the same refusal.
+        self.assertEqual(body["blank_cause"], "no_answer")
+
+    def test_a_provider_5xx_stays_transient(self):
+        # The infrastructure tier is untouched by the no_answer
+        # tombstone: a 5xx (like a timeout) still parks the row for
+        # retry rather than settling it.
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        def behavior(kind, messages, info):
+            raise ModelHTTPError(503, "gemma4:12b")
+
+        body = self._run(behavior, config={**self._TYPED_CONFIG, "tools": {}})
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "transient")
+
+    def test_an_sdk_timeout_is_transient_not_a_model_error(self):
+        # The SDK catches httpx's timeout and re-raises ITS OWN, which
+        # does not inherit from httpx.TimeoutException. Catching only
+        # the transport's type therefore matched nothing a real door
+        # can raise, and timeouts fell through to model_error: the
+        # worker does not park those, so the row never retried, the
+        # controller recorded a success and CLIMBED against a provider
+        # already timing out, and the consecutive-transient breaker
+        # never tripped. Raising the SDK type is the whole point of
+        # this test; raising httpx's would pass against the old code.
+        import anthropic
+        import openai
+
+        for timeout in (openai.APITimeoutError, anthropic.APITimeoutError):
+            with self.subTest(exc=timeout.__name__):
+                self.assertFalse(issubclass(timeout, httpx.TimeoutException))
+
+                def behavior(kind, messages, info, exc=timeout):
+                    raise exc(request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"))
+
+                body = self._run(behavior, config={**self._TYPED_CONFIG, "tools": {}})
+                self.assertEqual(body["cells"], {})
+                self.assertEqual(body["blank_cause"], "transient")
 
     def test_a_gated_toggle_never_spends(self):
         # Tools toggled with every door closed is a DECIDABLE blank: no
@@ -736,6 +886,8 @@ class AgenticLoopTests(TestCase):
                 info,
                 person="See https://made.up/fake for details",
                 profile="https://au.linkedin.com/in/janedoe/",
+                person_bwr_confidence=0.95,
+                profile_bwr_confidence=0.95,
             )
 
         body = self._run(behavior)
@@ -746,7 +898,13 @@ class AgenticLoopTests(TestCase):
         # The rendered prompt's own URLs join the allowed pool: a direct
         # agent can echo the row's website; fabrication still blanks.
         def behavior(kind, messages, info):
-            return _final(info, person="https://made.up/fake", profile="https://acme.com/about")
+            return _final(
+                info,
+                person="https://made.up/fake",
+                profile="https://acme.com/about",
+                person_bwr_confidence=0.95,
+                profile_bwr_confidence=0.95,
+            )
 
         body = self._run(
             behavior,
@@ -773,7 +931,7 @@ class AgenticLoopTests(TestCase):
         # through the same single call, no searches, no evidence.
         def behavior(kind, messages, info):
             self.assertEqual(kind, "answer")
-            return _final(info, person="Jane Doe", profile="")
+            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
 
         body = self._run(behavior, config={**self._TYPED_CONFIG, "tools": {}})
         self.assertEqual(body["cells"], {"person": "Jane Doe"})
@@ -953,6 +1111,29 @@ class TestRunLifecycleTests(TestCase):
         old = AgentTestRun.objects.get(id=aged)
         self.assertEqual(old.status, TestRunStatus.FAILED)
         self.assertIn("superseded", old.error)
+
+    def test_the_fill_lanes_account_cap_gates_the_bench(self):
+        # The bench is a metered lane like a fill: with the account's
+        # fill slots full, a test refuses on the SAME constant the
+        # fill lane reads, before any run row exists.
+        from lists.constants import MAX_ACTIVE_FILLS
+        from lists.models import Fill
+
+        for _ in range(MAX_ACTIVE_FILLS):
+            Fill.objects.create(
+                account_id=TEST_IDENTITY["account_id"],
+                user_id=TEST_IDENTITY["id"],
+                list_id="01LIST" + "A" * 20,
+                agent_id="01AGENT" + "A" * 19,
+                column_keys=["answer"],
+                config_snapshot={},
+                confirmed_row_count=1,
+            )
+        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
+            resp = self._post()
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.assertEqual(resp.json()["error"], "fills_full")
+        self.assertEqual(AgentTestRun.objects.count(), 0)
 
     def test_a_colleagues_live_run_refuses_and_is_never_superseded(self):
         # Foreign pendings win: no run id rides the 409 (adopting a

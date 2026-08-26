@@ -4,11 +4,18 @@ a missing row, so foreign ids are not an oracle)."""
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from django.db import transaction
 from django.db.models import Count
+from django.utils import timezone
 
+from agents.services import AgentService
+
+from ..cell_types import CellTypeMismatch, validate_cell
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
-from ..models import Folder, List, ListRow
+from ..models import Fill, FillTask, Folder, List, ListRow
+from . import cell_truth
 
 
 class ListsFull(Exception):
@@ -25,6 +32,27 @@ class ListNotFound(Exception):
 
 class FolderNotFound(Exception):
     """Missing OR foreign folder (cross-tenant reads as not-found)."""
+
+
+class RowNotFound(Exception):
+    """Missing row OR one outside the given list (reads as not-found)."""
+
+
+class CellMismatch(NamedTuple):
+    """One refused key and the why a user can act on."""
+
+    key: str
+    why: str
+
+
+class CellWriteResult(NamedTuple):
+    """One write_cells call's per-key verdicts: every attempted key
+    lands in exactly one of these. Blank values are ABSENT from all
+    three (a machine blank writes nothing and is not an event)."""
+
+    written: tuple[str, ...]
+    occupied: tuple[str, ...]
+    mismatched: tuple[CellMismatch, ...]
 
 
 class FolderService:
@@ -151,6 +179,59 @@ class ListService:
             locked.save(update_fields=["row_count", "updated_at"])
         return len(created)
 
+    def write_cells(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+        """THE cell writer for machine answers: write-if-blank per key,
+        so a user's cell is never destroyed (rows accept arbitrary keys
+        from import, snapshot, and manual entry, so nothing here is
+        machine-owned by construction). Values clamp at CELL_MAX_LENGTH
+        (authored input clamps, never rejects) and pass the column's
+        shape validator before anything writes; a blank value writes
+        nothing and reports nothing."""
+        attempted = {key: value[:CELL_MAX_LENGTH] for key, value in cells.items() if value.strip()}
+        if not attempted:
+            return CellWriteResult((), (), ())
+        with transaction.atomic():
+            # The hazard this guards is a read-modify-write of ONE
+            # row's data, so the lock is on THAT ROW: without it two
+            # concurrent fills can both see a cell blank and the later
+            # commit clobbers the earlier value. Two fills writing
+            # different rows never meet, which is what keeps the
+            # worker's pool wide at the terminal write.
+            #
+            # The list is read UNLOCKED, for the column types only.
+            # Appending a column cannot change an existing key's type,
+            # and retyping an occupied column does not exist; when it
+            # ships it takes the List lock itself.
+            try:
+                target = List.objects.get(id=list_id, account_id=self.account_id)
+            except List.DoesNotExist as e:
+                raise ListNotFound(list_id) from e
+            try:
+                row = ListRow.objects.select_for_update().get(id=row_id, list_id=str(target.id))
+            except ListRow.DoesNotExist as e:
+                raise RowNotFound(row_id) from e
+            types = {column["key"]: column.get("type", "") for column in target.columns}
+            written: list[str] = []
+            occupied: list[str] = []
+            mismatched: list[CellMismatch] = []
+            merged = dict(row.data)
+            for key, value in attempted.items():
+                if str(merged.get(key, "") or "").strip():
+                    occupied.append(key)
+                    continue
+                try:
+                    merged[key] = validate_cell(types.get(key, ""), value, key=key)
+                except CellTypeMismatch as e:
+                    mismatched.append(CellMismatch(key=e.key, why=e.why))
+                    continue
+                written.append(key)
+            if written:
+                # Only the data column writes, targeted by row id; the
+                # merge base was read under the row's own lock, so keys
+                # outside this call's writes carry through current.
+                ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(data=merged, updated_at=timezone.now())
+        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched))
+
     def rows_page(self, target: List, *, after_position: int, limit: int) -> list[ListRow]:
         return list(
             ListRow.objects.filter(list_id=str(target.id), position__gt=after_position).order_by("position")[:limit]
@@ -177,8 +258,11 @@ class ListService:
         return out
 
     def delete(self, target: List) -> None:
-        """Delete the list and its rows in one transaction (the service
-        owns child cleanup; no cascades in this codebase)."""
+        """Delete the list with its rows, fills, tasks, and cell states
+        in one transaction (the service owns child cleanup; no
+        cascades in this codebase, so anything left behind is orphaned
+        forever and a live orphaned fill would hold one of the
+        account's fill slots with nothing visible to cancel)."""
         with transaction.atomic():
             # Locked, not exists(): add_rows holds the List row while it
             # inserts, so the delete must wait for it or the row cleanup
@@ -187,5 +271,34 @@ class ListService:
             # service must not rely on that.
             if not List.objects.select_for_update().filter(id=target.id, account_id=self.account_id):
                 return
+            fills = Fill.objects.filter(list_id=str(target.id))
+            # ROWS FIRST, then the queue, because that is the order the
+            # worker's terminal write takes them: write_cells locks the
+            # ListRow, then complete_task writes the FillTask, both in
+            # one transaction. Deleting the other way round is an ABBA
+            # deadlock against any fill running on this sheet, and
+            # Postgres resolves it by aborting one side: a 500 on the
+            # delete, or a burned row attempt. Rows vanishing first is
+            # already a state the worker handles (RowNotFound resolves
+            # the fill CANCELLED, never failed).
             ListRow.objects.filter(list_id=str(target.id)).delete()
+            # Bounded by the PARENT key alone, deliberately. The
+            # account column is denormalized defence in depth for
+            # READS; on a purge it is a liability, because a task whose
+            # copy of it is blank would outlive the list forever, and
+            # the fills queryset that produced these ids is already
+            # list-scoped under an account-scoped lock.
+            FillTask.objects.filter(fill_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
+            # The columns' ephemeral agents die with the columns that
+            # owned them: nothing else can reach them once the fills are
+            # gone, and they are excluded from the roster and its cap,
+            # so a survivor is litter no surface can ever show. The ids
+            # come from the FILL rows, which are list-scoped and current;
+            # the caller's `target` may be a snapshot taken before the
+            # column it is about to delete even existed.
+            AgentService(account_id=self.account_id, user_id=self.user_id).delete_ephemeral(
+                [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
+            )
+            cell_truth.purge_list(str(target.id))
+            fills.delete()
             List.objects.filter(id=target.id, account_id=self.account_id).delete()

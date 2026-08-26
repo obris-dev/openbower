@@ -21,6 +21,7 @@ from typing import NamedTuple
 
 from pydantic_ai.models import Model
 
+from lists.constants import StoredCellState
 from openbower_schema.agents import AgentConfig
 
 from ..providers import model_for
@@ -43,6 +44,20 @@ class CellRun(NamedTuple):
     cells: dict[str, str]
     evidence: list[str]
     searches: list[SearchOutcome]
+    # WHY cells is empty (a StoredCellState value; "" when cells landed):
+    # the fill worker's outcome, straight off the run. transient means
+    # retry; everything else is a terminal diagnosed blank.
+    blank_cause: str = ""
+    # The cause an UNANSWERED output carries when the run answered
+    # others: a partially answered row settles only what it answered,
+    # so its silent outputs need their own why.
+    declined_cause: str = ""
+    # key -> the model's confidence and the reason it gave, for every
+    # answered output INCLUDING the ones the floor discarded (those
+    # also carry the value under `dropped`). The per-answer audit
+    # trail: a blank whose why is recoverable, and the only place the
+    # rejected distribution exists.
+    assessments: dict = {}
 
 
 def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: CellDeps):
@@ -58,35 +73,65 @@ def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: Cell
     tools = build_tools(config)
     if config.uses_tools and not tools:
         logger.info("cell: tools toggled but no door open; writing nothing without spending")
+        deps.blank_cause = StoredCellState.NO_TOOLS_DOOR
         return None
     answer = answerer.answer(prompt, tools, deps)
     if config.uses_tools and not deps.evidence:
         logger.info("cell: tools enabled but no evidence; writing nothing")
+        # The answerer's own cause (a transient, a validation miss)
+        # outranks the doctrine's: retrying is righter than diagnosing.
+        deps.blank_cause = deps.blank_cause or StoredCellState.NO_EVIDENCE
         return None
     return answer
 
 
-def run_cell(config: AgentConfig, row_data: dict, *, model: Model | None = None) -> CellRun:
+def run_cell(
+    config: AgentConfig, row_data: dict, *, model: Model | None = None, deps: CellDeps | None = None
+) -> CellRun:
     """One row's walk. Cells are keyed by the config's OWN output keys:
     the runtime speaks config-local names, and mapping them onto a
-    sheet's row-data keys is the fill job's concern (phase 5), not the
+    sheet's row-data keys is the fill's concern (phase 5), not the
     runtime's."""
     prompt = render_prompt(config.prompt, row_data).strip()
     if not prompt:
         # The one all-blank row a config can legitimately produce: every
         # {{token}} rendered empty. Diagnosed by emptiness itself.
         logger.info("cell: prompt rendered empty; writing nothing")
-        return CellRun({}, [], [])
+        return CellRun({}, [], [], StoredCellState.NO_EVIDENCE, StoredCellState.NO_EVIDENCE, {})
     # Raises ModelUnavailable on an unrunnable address: a config error
     # fails the run loudly; only per-row hazards degrade to blanks. A
     # caller that already resolved the address (the test POST's 400
     # gate) passes its model instead of resolving twice.
     if model is None:
         model = model_for(config.provider, config.source, config.model)
-    deps = CellDeps(prompt=prompt)
+    # A caller-built deps carries the caller's doors and callbacks (the
+    # fill worker's Standard search client and lease renewal); the
+    # prompt is stamped here either way, one construction path.
+    deps = deps if deps is not None else CellDeps()
+    deps.prompt = prompt
     answer = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
-    # Validation, stripping, clamping, and grounding all happened
-    # inside the framework run; what's left is keeping non-blanks.
-    cells = {key: value for key, value in answer.model_dump().items() if value} if answer is not None else {}
+    # Validation, stripping, clamping, grounding, and provenance
+    # verification all happened inside the framework run; what's left
+    # is keeping non-blank OUTPUT values (the companion confidence
+    # fields travel via deps.assessments, never as cells).
+    dump = answer.model_dump() if answer is not None else {}
+    cells = {output.key: dump[output.key] for output in config.outputs if dump.get(output.key)}
+    # An empty-cells run without a recorded cause: verification drops
+    # diagnose UNVERIFIED (an answer arrived; nothing confirmed it for
+    # this row); otherwise it is a validated answer whose every value
+    # was blank, the model honestly declining, which reads NO_EVIDENCE.
+    declined = deps.blank_cause or (
+        StoredCellState.UNVERIFIED if deps.verification_dropped else StoredCellState.NO_EVIDENCE
+    )
+    cause = "" if cells else declined
     logger.info("cell: %d evidence hits -> outputs %s", len(deps.evidence), sorted(cells))
-    return CellRun(cells, deps.evidence, deps.outcomes)
+    return CellRun(
+        cells,
+        deps.evidence,
+        deps.outcomes,
+        cause,
+        declined,
+        # NOT filtered to the landed cells: a dropped answer is the
+        # case an audit trail exists for.
+        deps.assessments,
+    )

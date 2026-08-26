@@ -44,6 +44,46 @@ class AgentService:
             outputs=[output.model_dump() for output in config.outputs],
         )
 
+    def delete_ephemeral(self, agent_ids: list[str]) -> int:
+        """Best-effort cleanup of the ephemeral rows a deleted surface
+        owned. Account-scoped and ephemeral-only, so a roster agent a
+        column happened to point at is never touched. Best effort by
+        design: the columns are already gone, so a row that resists
+        deletion is invisible litter, never a broken sheet."""
+        if not agent_ids:
+            return 0
+        deleted, _ = Agent.objects.filter(id__in=agent_ids, account_id=self.account_id, ephemeral=True).delete()
+        return deleted
+
+    def create_ephemeral(self, *, label: str, config: AgentConfig) -> Agent:
+        """The column custody's constructor: hidden from the roster,
+        EXCLUDED from MAX_AGENTS (ephemeral rows are bounded by the
+        columns that own them, one each), deleted with its column. An
+        ephemeral agent leaves this custody only by an explicit
+        promotion, never by appearing in list()."""
+        return Agent.objects.create(
+            account_id=self.account_id,
+            user_id=self.user_id,
+            label=label,
+            ephemeral=True,
+            provider=config.provider,
+            source=config.source,
+            model=config.model,
+            prompt=config.prompt,
+            tools=config.tools.model_dump(),
+            outputs=[output.model_dump() for output in config.outputs],
+        )
+
+    def get_for_fill(self, agent_id: str) -> Agent:
+        """The fill machinery's accessor, ephemeral-INCLUSIVE: a
+        column's agent may be either custody. get() stays roster-only
+        so the builder and roster paths cannot reach a column's
+        private row."""
+        try:
+            return Agent.objects.get(id=agent_id, account_id=self.account_id)
+        except Agent.DoesNotExist as e:
+            raise AgentNotFound(agent_id) from e
+
     def list(self) -> list[Agent]:
         """The roster: configured agents only, newest first."""
         return list(Agent.objects.filter(account_id=self.account_id, ephemeral=False).order_by("-id"))

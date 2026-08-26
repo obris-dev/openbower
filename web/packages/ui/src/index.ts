@@ -7,6 +7,7 @@ export { Button } from "./button";
 export { buttonClasses, TouchTarget, type ButtonSize, type ButtonVariant } from "./button-classes";
 export { Card } from "./card";
 export { Combobox, type ComboboxItem } from "./combobox";
+export { Drawer, type DrawerWidth } from "./drawer";
 export { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "./dropdown";
 export { EmptyState } from "./empty-state";
 export { PageState } from "./page-state";

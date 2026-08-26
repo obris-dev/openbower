@@ -53,8 +53,20 @@ violation shipped once and got caught).
   the cleanup); `Promise.all` for independent fetches. The one blessed
   `.then` is `dynamic(() => import(...).then(...))`.
 - Poll loops carry a generation counter checked after EVERY await
-  (including the first) and a hard binary budget; a superseded loop
-  returns silently.
+  (including the first) and a hard binary budget when the BROWSER is
+  the run's supervisor (the bench); a DURABLE, worker-supervised job
+  (a fill) polls open-ended against the worker's heartbeat instead,
+  each poll a short bounded request, staleness rendered as a warning
+  and never as failure; a superseded loop
+  returns silently. Such a loop NEVER stops on transport failures: the
+  job runs server-side whatever this page can reach, so repeated
+  failures back off toward a ceiling and surface the trouble, and a
+  loop that quit while its copy promised updates would be the lie.
+- A read whose enum the SERVER owns is tolerant on the client: the
+  deployed bundle predates the next contract, and a strict enum turns
+  one added member into a whole-page parse failure for every open tab.
+  Widen the read, map the unknown member to the value that promises
+  LEAST, and pin the mapping.
 - Every fetch result goes through `ensureOk` (or an explicit rendered
   failure state); a swallowed non-ok is a silent dead feature.
 
@@ -136,9 +148,29 @@ violation shipped once and got caught).
 - PURE modules (grammars, derivations, validation models) get node
   tests beside them in app code (`*.test.ts`); packages keep theirs
   in a `tests/` directory (the @bower/api precedent). Both run in the
-  `node --test` lane (`make test-web`). Components are covered by strict tsc + eslint +
-  click-through until a component-test lane earns its keep; logic that
-  wants a component test should usually be extracted to a pure module
-  instead.
+  `node --test` lane (`make test-web`).
+- A leaf's internals graduate to `(app)/_components/` the moment a
+  SECOND route composes them, as a family with an index. The agent
+  config editor (prompt, model, outputs, tools, and their grammars)
+  lived inside the agents builder while the builder was its only
+  consumer; the sheet's AI drawer composes the same config, and until
+  the move that drawer reached four levels up into a leaf whose index
+  exported one component. A leaf's index is what the rest of the app
+  may reach for, so a second consumer importing past it is the signal
+  to move, not to widen the index.
+- A component family whose pure modules outgrow a handful puts them in
+  a `lib/` leaf, tests included, leaving the family's own directory to
+  its components, its hook, and its index. The split is not about
+  tidying tests: a family like the agent builder was nine components
+  against fourteen files that render nothing, which is a feature
+  directory wearing a component directory's name. `lib/` is what a
+  reader can call without a renderer, so it is exactly the half that
+  carries tests, and pairing each module with its test stays worth
+  reading once the components are not interleaved with them. React
+  hooks are NOT lib: they need a renderer, so they sit with the
+  components they serve.
+- Components are covered by strict tsc + eslint + click-through until a
+  component-test lane earns its keep; logic that wants a component test
+  should usually be extracted to a pure module instead.
 - Never gate a command chain on a piped or echoed exit code: the check
   that is allowed to fail silently will.

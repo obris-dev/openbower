@@ -23,17 +23,10 @@ import { AGENT_LABEL_MAX_LENGTH, TEST_ROW_MAX_KEYS } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../_components/breadcrumbs";
-import { EMPTY_TOOLS } from "../tools-meta";
-import { draftEquals, draftProvider, saveShape, useAgentDraft, type Draft, type Provider } from "./draft";
+import { configMissing, EMPTY_TOOLS, sheetsTruncatedNote } from "../../../_components/agent-config";
+import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, goToSection, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
 import { BuilderFooter } from "./footer";
-import { ModelPicker } from "./model-picker";
-import { EMPTY_OUTPUT, OutputsEditor } from "./outputs-editor";
-import { PromptEditor } from "./prompt-editor";
-import { isContentful, outputsProblem } from "./output-key";
-import { buildChecklist, firstGap, goToSection, type Attempt } from "./readiness";
-import { promptVariables, stripVariable } from "./template";
 import { TestBench } from "./test-bench";
-import { ToolToggles } from "./tool-toggles";
 import { useTestRun } from "./use-test-run";
 
 type ModelTriple = { provider: Provider; source: string; model: string };
@@ -245,13 +238,8 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const outputsIssue = useMemo(() => outputsProblem(outputs), [outputs]);
   const outputsCause = outputsIssue?.message ?? null;
   const missing = useMemo(
-    () => ({
-      label: !label.trim(),
-      prompt: !prompt.trim(),
-      model: !provider || !source || !model,
-      outputs: !outputs.some(isContentful) || outputsIssue !== null,
-    }),
-    [label, prompt, provider, source, model, outputs, outputsIssue],
+    () => ({ label: !label.trim(), ...configMissing({ prompt, provider, source, model, outputs }) }),
+    [label, prompt, provider, source, model, outputs],
   );
   const problems = {
     label: attempted === "save" && missing.label,
@@ -380,11 +368,14 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
             prompt={prompt}
             onChange={setPrompt}
             warned={problems.prompt}
-            lists={lists}
-            listsLoading={listsLoading}
-            listsTruncated={listsTruncated}
-            sourceListId={variablesListId}
-            onSourceList={setVariablesListId}
+            source={{
+              kind: "picker",
+              lists,
+              listsLoading,
+              listsTruncated,
+              sourceListId: variablesListId,
+              onSourceList: setVariablesListId,
+            }}
           />
           <TestBench
             inputKeys={inputKeys}

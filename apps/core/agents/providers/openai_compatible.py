@@ -4,14 +4,21 @@ side by side)."""
 
 from __future__ import annotations
 
+import openai
 from django.conf import settings
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from openbower_kernel.provider_config import ProviderSpec, canonical_base
+from openbower_kernel.provider_config import SourceConfig
 
 from .base import ProviderDoor
+
+# What THIS spec's SDK raises when a call runs out of time. The
+# SDK catches httpx's timeout and re-raises its own, which is NOT
+# an httpx.TimeoutException subclass, so catching the transport's
+# type alone never fires for a real door.
+TIMEOUT_EXCEPTION: type[Exception] = openai.APITimeoutError
 
 # The canonical vendor's /v1/models lists EVERYTHING it serves
 # (embeddings, audio, images, moderation) with no capability flag, so
@@ -37,19 +44,17 @@ _EXCLUDE_PARTS = (
 
 
 class OpenAICompatibleDoor(ProviderDoor):
-    CANONICAL_BASE = canonical_base(ProviderSpec.OPENAI_COMPATIBLE)
-
     @property
-    def configured_sources(self) -> dict[str, dict[str, str]]:
+    def configured_sources(self) -> dict[str, SourceConfig]:
         return settings.OPENAI_COMPATIBLE_SOURCES
 
-    def _headers(self, source: dict[str, str]) -> dict[str, str]:
+    def _headers(self, source: SourceConfig) -> dict[str, str]:
         key = source["api_key"]
         return {"Authorization": f"Bearer {key}"} if key else {}
 
-    def _list_models(self, source: dict[str, str]) -> list[str]:
+    def _list_models(self, source: SourceConfig) -> list[str]:
         rows = self._probe_rows(source, "/models")
-        if self._is_canonical(source):
+        if source["canonical"]:
             rows = [
                 row
                 for row in rows
@@ -65,7 +70,7 @@ class OpenAICompatibleDoor(ProviderDoor):
         rows.sort(key=lambda row: row.get("created") or 0, reverse=True)
         return [str(row["id"]) for row in rows if row.get("id")]
 
-    def _pydantic_model(self, source: dict[str, str], model_name: str) -> Model:
+    def _pydantic_model(self, source: SourceConfig, model_name: str) -> Model:
         provider = OpenAIProvider(base_url=source["base_url"], api_key=self._key_or_placeholder(source))
         return OpenAIChatModel(model_name, provider=provider)
 

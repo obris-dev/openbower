@@ -23,11 +23,16 @@ export default async function ListDetailPage({ params }: { params: Promise<{ id:
   if (rows.status === "missing") notFound();
   if (rows.status === "unauthenticated") redirect(webRoutes.login);
   if (rows.status !== "ok") throw new Error("The sheet's rows could not be loaded.");
+  // Full-bleed: the sheet owns the shell's whole content viewport in
+  // the spreadsheet idiom (its own toolbar and status bands, the grid
+  // as the one scroll region), so this route adds no page container.
   return (
-    <div className="p-6">
-      <div className="mx-auto w-full max-w-7xl space-y-6 pb-24 pt-2">
-        <Sheet initialDetail={detail.data} initialRows={rows.data} />
-      </div>
+    // The HARD height (the shell's main is min-height only): the
+    // grid region inside the Sheet owns the ONLY scroll, so the page
+    // itself never scrolls. The 4rem mirrors @bower/ui sidebar.tsx's
+    // main calc (its top bar height); change them together.
+    <div className="flex h-[calc(100dvh-4rem)] flex-col overflow-hidden">
+      <Sheet initialDetail={detail.data} initialRows={rows.data} />
     </div>
   );
 }

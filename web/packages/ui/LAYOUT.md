@@ -36,8 +36,15 @@ reports; review against this list before adding a component.
    invalid email), often live: `FieldError`, id-linked to the input's
    `aria-describedby`. (b) A submission failure not attributable
    to one field (invalid credentials, rate limited) is a FORM-LEVEL
-   banner at the top of the form (`ErrorMessage`), persisting until the
-   next attempt: the standard error-summary pattern every serious login
-   form uses. (c) Toasts (`useToast`) are for outcomes of operations detached
+   banner (`ErrorMessage`), persisting until the next attempt: the
+   standard error-summary pattern every serious login form uses. It
+   sits at the TOP of the form, except where the form's action is
+   PINNED (a drawer footer, a page footer): there it leads that pinned
+   block, which is where the eye enters it. The banner's job is to be
+   read at the moment the attempt failed, and a pinned action is what
+   the user is looking at and what they will press again; a banner at
+   the top of a scrolled form is off screen at exactly that moment,
+   which is the failure mode the rule exists to prevent. One banner
+   either way, never both. (c) Toasts (`useToast`) are for outcomes of operations detached
    from a form the user is staring at (a fill failed, a save bounced). Never
    toast tier a or b; never banner tier c.

@@ -10,7 +10,13 @@ from pathlib import Path
 
 from django.test import SimpleTestCase
 
-from openbower_kernel.provider_config import ProviderConfigError, parse_provider_sources
+from openbower_kernel.provider_config import (
+    ProviderConfigError,
+    ProviderSpec,
+    SourceConfig,
+    make_source,
+    parse_provider_sources,
+)
 
 
 class ProviderConfigTests(SimpleTestCase):
@@ -30,17 +36,46 @@ base_url = "https://api.anthropic.com"
 """
         sources = parse_provider_sources(text)
         # Trailing slashes normalize; file order is preserved; keys ""
-        # unless inline.
+        # unless inline; concurrency 0 unless declared; canonical is
+        # decided HERE against the spec's vendor origin, so a self
+        # hosted base and the vendor's own are told apart once, at
+        # parse, and never re-derived per read.
         self.assertEqual(
             sources["openai_compatible"],
             {
-                "ollama": {"base_url": "http://localhost:11434/v1", "api_key": ""},
-                "openai": {"base_url": "https://api.openai.com/v1", "api_key": ""},
+                "ollama": {
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key": "",
+                    "concurrency": 0,
+                    "canonical": False,
+                },
+                "openai": {
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": "",
+                    "concurrency": 0,
+                    "canonical": True,
+                },
             },
         )
         self.assertEqual(
-            sources["anthropic_compatible"], {"anthropic": {"base_url": "https://api.anthropic.com", "api_key": ""}}
+            sources["anthropic_compatible"],
+            {
+                "anthropic": {
+                    "base_url": "https://api.anthropic.com",
+                    "api_key": "",
+                    "concurrency": 0,
+                    "canonical": True,
+                }
+            },
         )
+
+    def test_a_host_case_variant_of_the_vendor_origin_is_still_canonical(self):
+        # The comparison is case-insensitive: a shouted host must not
+        # read as a self-hosted server and open itself keyless.
+        sources = parse_provider_sources(
+            '[[openai_compatible]]\nname = "openai"\nbase_url = "https://API.OpenAI.com/v1"\n'
+        )
+        self.assertTrue(sources["openai_compatible"]["openai"]["canonical"])
 
     def test_inline_keys_parse(self):
         text = """
@@ -139,3 +174,116 @@ class EntryStrictnessTests(SimpleTestCase):
         with self.assertRaises(ProviderConfigError) as caught:
             resolve_provider_sources(Path("."))
         self.assertIn("cannot read", str(caught.exception))
+
+
+class ConcurrencyKeyTests(SimpleTestCase):
+    """The optional per-source fill ceiling: the operator's declared
+    integer, bounded 1..MAX_FILL_CONCURRENCY; absent parses as 0
+    (undeclared, the custody-class default applies)."""
+
+    def _entry(self, line: str) -> str:
+        return f'[[openai_compatible]]\nname = "openai"\nbase_url = "https://api.openai.com/v1"\n{line}\n'
+
+    def test_a_declared_ceiling_round_trips_as_int(self):
+        parsed = parse_provider_sources(self._entry("concurrency = 4"))["openai_compatible"]["openai"]
+        self.assertEqual(parsed["concurrency"], 4)
+
+    def test_the_bounds_are_inclusive(self):
+        from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
+
+        for value in (1, MAX_FILL_CONCURRENCY):
+            with self.subTest(value=value):
+                parsed = parse_provider_sources(self._entry(f"concurrency = {value}"))["openai_compatible"]["openai"]
+                self.assertEqual(parsed["concurrency"], value)
+
+    def test_undeclared_parses_as_zero(self):
+        parsed = parse_provider_sources(self._entry(""))["openai_compatible"]["openai"]
+        self.assertEqual(parsed["concurrency"], 0)
+
+    def test_out_of_range_and_wrong_type_values_refuse_naming_source_and_range(self):
+        from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
+
+        # 0 is not a declarable ceiling (it is the undeclared value);
+        # true must not slip through as 1 via bool's int subclassing.
+        for value in ("0", "65", "-1", '"4"', "1.5", "true"):
+            with self.subTest(value=value):
+                with self.assertRaises(ProviderConfigError) as caught:
+                    parse_provider_sources(self._entry(f"concurrency = {value}"))
+                self.assertIn("openai", str(caught.exception))
+                self.assertIn(str(MAX_FILL_CONCURRENCY), str(caught.exception))
+
+    def test_unknown_keys_still_refuse(self):
+        with self.assertRaises(ProviderConfigError) as caught:
+            parse_provider_sources(self._entry("concurency = 4"))
+        self.assertIn("concurency", str(caught.exception))
+
+    def test_the_example_template_parses_with_its_ceilings(self):
+        # The parser rejects unknown keys, so a template key it cannot
+        # parse would crash every copied config at boot; the template
+        # and the parser must move together.
+        from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
+
+        template = Path(__file__).resolve().parents[4] / "config" / "templates" / "providers.example.toml"
+        sources = parse_provider_sources(template.read_text(encoding="utf-8"))
+        self.assertEqual(sources["openai_compatible"]["ollama"]["concurrency"], 1)
+        self.assertEqual(sources["openai_compatible"]["openai"]["concurrency"], MAX_FILL_CONCURRENCY)
+        self.assertEqual(sources["anthropic_compatible"]["anthropic"]["concurrency"], MAX_FILL_CONCURRENCY)
+
+
+class UnparsableBaseTests(SimpleTestCase):
+    """A base_url the URL parser itself rejects. The scheme prefix
+    check passes it, and canonicality is decided by parsing the host,
+    so the parser is where a bare ValueError would escape: settings
+    import catches only ProviderConfigError, and a raw error out of
+    boot names nothing an operator can fix."""
+
+    def test_an_unparsable_base_refuses_as_OUR_error(self):
+        for base in ("http://[oops/v1", "https://[::1/v1"):
+            with self.subTest(base=base):
+                with self.assertRaises(ProviderConfigError) as caught:
+                    parse_provider_sources(f'[[openai_compatible]]\nname = "b"\nbase_url = "{base}"\n')
+                self.assertIn("b", str(caught.exception))
+
+    def test_the_constructor_answers_rather_than_raising(self):
+        # make_source is reached from a settings profile's seed too,
+        # and deciding "is this the vendor" is not the same job as
+        # refusing a file: an address nothing can parse is not it.
+        source = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://[oops/v1")
+        self.assertFalse(source["canonical"])
+
+
+class SourceConstructionTests(SimpleTestCase):
+    """Every SourceConfig reaches a consumer through make_source, from
+    either custody: the operator's file or a settings profile's seed.
+
+    The zero-config Ollama seed was a dict literal for a while. When
+    `canonical` joined the shape, the literal did not gain it, and the
+    first catalog read on the documented zero-config path
+    (DJANGO_ENV=local with no providers.toml) raised KeyError. These
+    pin the constructor as the only way in, so a fifth field cannot
+    strand a seed the same way."""
+
+    def test_canonical_is_derived_from_the_base_not_passed(self):
+        vendor = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="https://api.openai.com/v1", api_key="k")
+        self.assertTrue(vendor["canonical"])
+        own = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://localhost:11434/v1")
+        self.assertFalse(own["canonical"])
+
+    def test_a_constructed_source_carries_every_declared_field(self):
+        # The assertion that would have caught the stranded seed: the
+        # constructor's output is COMPLETE against the TypedDict, so
+        # adding a field here fails until the constructor sets it.
+        source = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://localhost:11434/v1")
+        self.assertEqual(set(source), set(SourceConfig.__annotations__))
+
+    def test_the_parser_and_a_seed_produce_the_same_shape(self):
+        parsed = parse_provider_sources(
+            """
+[[openai_compatible]]
+name = "ollama"
+base_url = "http://localhost:11434/v1"
+"""
+        )["openai_compatible"]["ollama"]
+        seeded = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://localhost:11434/v1")
+        self.assertEqual(set(parsed), set(seeded))
+        self.assertEqual(parsed, seeded)
