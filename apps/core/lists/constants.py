@@ -136,6 +136,7 @@ class FillErrorCode(StrEnum):
     COLUMN_EXISTS = "column_exists"
     COLUMN_ORDER_STALE = "column_order_stale"
     COLUMN_KEYS_NOT_UNIQUE = "column_keys_not_unique"
+    COLUMN_AGENT_MISSING = "column_agent_missing"
     DERIVED_KEY_COLLISION = "derived_key_collision"
     RESERVED_KEY = "reserved_key"
     COLUMNS_FULL = "columns_full"

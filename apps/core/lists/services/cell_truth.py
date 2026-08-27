@@ -67,10 +67,30 @@ def uniform(fill: Fill, state: StoredCellState) -> dict[str, StoredCellState]:
     return dict.fromkeys(fill.column_keys, state)
 
 
+def _purge_in_pages(**lookup: str) -> None:
+    """Delete matching cell states a page at a time.
+
+    The page is what bounds MEMORY, so the ids are read one page at a
+    time rather than read in full and then sliced: reading them all
+    first makes the peak the whole id set, which is the cost the
+    paging exists to avoid. Each pass asks for the next
+    FILL_WRITE_BATCH rows that still match, so the loop ends when a
+    pass comes back empty."""
+    while True:
+        ids = list(FillCellState.objects.filter(**lookup).values_list("id", flat=True)[:FILL_WRITE_BATCH])
+        if not ids:
+            return
+        FillCellState.objects.filter(id__in=ids).delete()
+
+
+def purge_column(list_id: str, column_key: str) -> None:
+    """A deleted column takes its cell states with it. Paged: the count
+    is bounded by the cells the column answered, which has no ceiling
+    short of the sheet."""
+    _purge_in_pages(list_id=list_id, column_key=column_key)
+
+
 def purge_list(list_id: str) -> None:
-    """A deleted list takes its cell states with it. Chunked because a
-    purge is unbounded by nature (there are no cascades, so the owning
-    service deletes its own children)."""
-    ids = list(FillCellState.objects.filter(list_id=list_id).values_list("id", flat=True))
-    for chunk in range(0, len(ids), FILL_WRITE_BATCH):
-        FillCellState.objects.filter(id__in=ids[chunk : chunk + FILL_WRITE_BATCH]).delete()
+    """A deleted list takes its cell states with it. Paged for the same
+    reason purge_column is."""
+    _purge_in_pages(list_id=list_id)

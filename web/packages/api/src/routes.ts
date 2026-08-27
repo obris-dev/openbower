@@ -69,6 +69,7 @@ export const apiRoutes = {
     // server refuses anything that is not a permutation of what it
     // holds).
     columnOrder: (id: string) => `/${API_VERSION}/lists/${id}/column-order`,
+    column: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${encodeURIComponent(key)}`,
     // POST: add an AI column and admit its fill in one transaction.
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
     // POST: refill a column's unanswered rows (a NEW job, fresh snapshot).

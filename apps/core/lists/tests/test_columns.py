@@ -12,12 +12,30 @@ from __future__ import annotations
 from django.test import TestCase
 from django.urls import reverse
 
+from agents.models import Agent
+from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import ListSummary
 
-from ..constants import MAX_LIST_COLUMNS
+from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
+from ..models import Fill, FillCellState, ListRow
 from ..services.columns import ColumnKeysNotUnique, ColumnOrderStale, ColumnService
 from ..services.lists import ListService
+
+
+def _config() -> AgentConfig:
+    return AgentConfig(
+        prompt="Find the contact for {{company}}",
+        provider="openai_compatible",
+        source="ollama",
+        model="test-model",
+        tools=AgentTools(),
+        outputs=[
+            AgentOutput(key="contact_name", label="Contact", type="text"),
+            AgentOutput(key="contact_url", label="Profile", type="url"),
+        ],
+    )
 
 
 class ColumnsViewTests(TestCase):
@@ -192,3 +210,186 @@ class ColumnOrderTests(TestCase):
             label="Theirs", columns=[{"key": "a", "label": "A", "type": "text"}], origin="manual"
         )
         self.assertEqual(self.reorder(["a"], list_id=str(other.id)).status_code, 404)
+
+
+class ColumnDeleteTests(TestCase):
+    """DELETE and PATCH /v1/lists/{id}/columns/{key}: the column's own
+    life. Delete takes any column, not only an AI one."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.agent = self.agents.create_ephemeral(label="Contact", config=_config())
+        self.sheet = self.lists.create(
+            label="Prospects",
+            columns=[
+                {"key": "company", "label": "Company", "type": "text"},
+                {"key": "contact_name", "label": "Contact", "type": "text", "fill": {"agent_id": str(self.agent.id)}},
+                {"key": "contact_url", "label": "Profile", "type": "url", "fill": {"agent_id": str(self.agent.id)}},
+            ],
+            origin="manual",
+        )
+        self.lists.add_rows(
+            self.sheet,
+            [
+                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
+                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
+            ],
+        )
+        for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
+            for key in ("contact_name", "contact_url"):
+                FillCellState.objects.create(
+                    account_id=TEST_IDENTITY["account_id"],
+                    list_id=str(self.sheet.id),
+                    row_id=str(row.id),
+                    column_key=key,
+                    state=StoredCellState.FILLED,
+                )
+
+    def url(self, key: str, list_id: str = "") -> str:
+        return reverse("lists_column_detail", kwargs={"id": list_id or str(self.sheet.id), "key": key})
+
+    def columns(self) -> list[str]:
+        self.sheet.refresh_from_db()
+        return [c["key"] for c in self.sheet.columns]
+
+    def test_deleting_a_column_takes_its_values_out_of_every_row(self) -> None:
+        resp = self.client.delete(self.url("contact_name"))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self.columns(), ["company", "contact_url"])
+        for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
+            self.assertNotIn("contact_name", row.data)
+            # The neighbours are untouched: the purge is one key, not
+            # the row.
+            self.assertIn("company", row.data)
+            self.assertIn("contact_url", row.data)
+
+    def test_it_purges_only_that_column_s_cell_states(self) -> None:
+        self.client.delete(self.url("contact_name"))
+        states = FillCellState.objects.filter(list_id=str(self.sheet.id))
+        self.assertEqual(states.filter(column_key="contact_name").count(), 0)
+        self.assertEqual(states.filter(column_key="contact_url").count(), 2)
+
+    def test_a_PLAIN_column_deletes_too(self) -> None:
+        resp = self.client.delete(self.url("company"))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self.columns(), ["contact_name", "contact_url"])
+        for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
+            self.assertNotIn("company", row.data)
+
+    def test_the_ephemeral_agent_survives_while_a_SIBLING_column_uses_it(self) -> None:
+        # One multi-output agent made both columns; deleting the first
+        # must not strand the second's config.
+        self.client.delete(self.url("contact_name"))
+        self.assertTrue(Agent.objects.filter(id=self.agent.id).exists())
+
+    def test_the_ephemeral_agent_dies_with_the_LAST_column_that_used_it(self) -> None:
+        self.client.delete(self.url("contact_name"))
+        self.client.delete(self.url("contact_url"))
+        self.assertFalse(Agent.objects.filter(id=self.agent.id).exists())
+
+    def test_a_live_fill_touching_the_column_is_cancelled(self) -> None:
+        fill = Fill.objects.create(
+            account_id=TEST_IDENTITY["account_id"],
+            list_id=str(self.sheet.id),
+            agent_id=str(self.agent.id),
+            column_keys=["contact_name", "contact_url"],
+            status=FillStatus.RUNNING,
+            confirmed_row_count=2,
+        )
+        self.client.delete(self.url("contact_name"))
+        fill.refresh_from_db()
+        # The sibling is stopped too rather than left writing into a
+        # column that no longer exists.
+        self.assertEqual(fill.status, FillStatus.CANCELLED)
+
+    def test_an_unknown_key_is_not_found(self) -> None:
+        self.assertEqual(self.client.delete(self.url("nope")).status_code, 404)
+
+    def test_a_foreign_sheet_reads_as_missing(self) -> None:
+        other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB", user_id="01OTHERUSERBBBBBBBBBBBBBBB").create(
+            label="Theirs", columns=[{"key": "a", "label": "A", "type": "text"}], origin="manual"
+        )
+        self.assertEqual(self.client.delete(self.url("a", list_id=str(other.id))).status_code, 404)
+
+    def test_rename_changes_the_label_and_never_the_key(self) -> None:
+        resp = self.client.patch(self.url("contact_name"), {"label": "Decision maker"}, content_type="application/json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.sheet.refresh_from_db()
+        column = next(c for c in self.sheet.columns if c["key"] == "contact_name")
+        self.assertEqual(column["label"], "Decision maker")
+        # The key stays, so the cells it holds stay reachable.
+        self.assertEqual(column["fill"], {"agent_id": str(self.agent.id)})
+        for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
+            self.assertIn("contact_name", row.data)
+
+    def test_renaming_an_unknown_key_is_not_found(self) -> None:
+        resp = self.client.patch(self.url("nope"), {"label": "X"}, content_type="application/json")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_refilling_an_ORPHANED_column_answers_in_the_users_terms(self) -> None:
+        # Deleting an agent leaves its columns orphaned ON PURPOSE, so
+        # this is a normal state, not an internal error: it must not
+        # 404 about an agent id the user never saw.
+        from ..services.fill_admission import ColumnAgentMissing, FillAdmissionService
+
+        Agent.objects.filter(id=self.agent.id).delete()
+        admission = FillAdmissionService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        with self.assertRaises(ColumnAgentMissing) as caught:
+            admission.refill(
+                list_id=str(self.sheet.id),
+                column_key="contact_name",
+                rows=None,
+                resume_fill_id="",
+                confirmed_row_count=2,
+            )
+        self.assertIn("deleted", str(caught.exception))
+        self.assertEqual(caught.exception.code, "column_agent_missing")
+
+    def test_the_purge_pages_until_the_column_is_empty(self) -> None:
+        # The fixtures are smaller than one page, so the loop only
+        # runs once and its termination is never exercised. Shrink the
+        # page instead of making 1,001 rows.
+        from unittest.mock import patch
+
+        from ..services import cell_truth
+
+        extra = [
+            FillCellState(
+                account_id=TEST_IDENTITY["account_id"],
+                list_id=str(self.sheet.id),
+                row_id=f"01ROW{n:021d}",
+                column_key="contact_name",
+                state=StoredCellState.FILLED,
+            )
+            for n in range(7)
+        ]
+        FillCellState.objects.bulk_create(extra)
+        total = FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count()
+        self.assertGreater(total, 2)
+
+        with patch.object(cell_truth, "FILL_WRITE_BATCH", 2):
+            cell_truth.purge_column(str(self.sheet.id), "contact_name")
+
+        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count(), 0)
+        # The neighbour is untouched: paging never widens the filter.
+        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_url").count(), 2)
+
+    def test_the_LAST_column_can_go(self) -> None:
+        # A sheet with no columns is a real state (every column
+        # deleted), so it must not be refused or crash the summary the
+        # response is built from.
+        for key in ("company", "contact_name", "contact_url"):
+            resp = self.client.delete(self.url(key))
+            self.assertEqual(resp.status_code, 200, resp.content)
+        self.sheet.refresh_from_db()
+        self.assertEqual(self.sheet.columns, [])
+        # The rows survive with their data emptied of every key.
+        rows = list(ListRow.objects.filter(list_id=str(self.sheet.id)))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r.data for r in rows], [{}, {}])
+        # And the sheet still reads back through the contract.
+        read = self.client.get(reverse("lists_detail", kwargs={"id": str(self.sheet.id)}))
+        self.assertEqual(read.status_code, 200, read.content)
+        ListSummary.model_validate(read.json())

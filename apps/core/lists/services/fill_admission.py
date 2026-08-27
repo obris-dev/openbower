@@ -23,7 +23,7 @@ from agents.models import Agent, AgentTestRun
 from agents.providers import ModelUnavailable, model_for
 from agents.runtime.answer import reserved_output_key
 from agents.runtime.prompts import prompt_variables
-from agents.services import AgentService, TestRunService, config_fingerprint
+from agents.services import AgentNotFound, AgentService, TestRunService, config_fingerprint
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 from openbower_schema.fills import SETTLED_CELL_STATES, CellRunResult
@@ -55,6 +55,18 @@ class FillRefused(Exception):
     renders verbatim (tier 1)."""
 
     code = FillErrorCode.FILL_REFUSED
+
+
+class ColumnAgentMissing(FillRefused):
+    """The agent this column ran on has been deleted. A deleted agent
+    deliberately leaves its columns ORPHANED (the values stay, they
+    just cannot be produced again), so this is a normal state and owes
+    the user a next step rather than a stack of internal vocabulary."""
+
+    code = FillErrorCode.COLUMN_AGENT_MISSING
+
+    def __init__(self) -> None:
+        super().__init__("The agent this column used has been deleted. Write a new prompt to fill it again.")
 
 
 class SameColumnFillActive(FillRefused):
@@ -564,7 +576,13 @@ class FillAdmissionService:
         )
         if fill is None:
             raise FillColumnNotFound(column_key)
-        agent = self.agents.get_for_fill(str(fill.get("agent_id", "")))
+        try:
+            agent = self.agents.get_for_fill(str(fill.get("agent_id", "")))
+        except AgentNotFound as e:
+            # Orphaned by an agent delete, which is allowed: answer in
+            # the user's terms instead of 404-ing about an agent id
+            # they never saw.
+            raise ColumnAgentMissing() from e
         if agent.provider_retired:
             raise ProviderRetiredRefusal()
         resolved = agent.config()
