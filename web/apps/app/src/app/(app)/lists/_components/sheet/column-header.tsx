@@ -3,10 +3,12 @@
 import { MouseSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, MoveLeft, MoveRight } from "lucide-react";
-import { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "@bower/ui";
+import { ChevronDown, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
+import { Input, Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
+import { useState } from "react";
 import { isNumericColumn, type ListColumn } from "@bower/api";
 
+import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { canMove, nudgeColumn } from "./lib/column-order";
 
 /** The one sensor a column drag listens to: the MOUSE.
@@ -18,9 +20,11 @@ import { canMove, nudgeColumn } from "./lib/column-order";
  *
  * No keyboard sensor: dnd-kit's lifts from the element holding these
  * listeners, which is the header CELL, so arming it would mean a
- * focusable th and a second tab stop on every column. The menu is
- * already the keyboard path to the same move, and the one touch uses,
- * so only the mouse gets the shortcut. */
+ * focusable th and a second tab stop on every column. The menu
+ * reaches the same move from the keyboard (its panel is a Popover, so
+ * Tab walks the items rather than the arrow keys a Menu would give),
+ * and it is the path touch uses too, so only the mouse gets the
+ * shortcut. */
 export function useColumnSensors() {
   return useSensors(
     // Distance, not delay: a press on the header must stay ambiguous
@@ -28,6 +32,131 @@ export function useColumnSensors() {
     // click on something inside the cell. 8px is past the noise of a
     // click that moved slightly.
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+  );
+}
+
+/** The column menu's two tiers: the verbs, and the delete confirm
+ * that REPLACES them.
+ *
+ * A Popover rather than a Dropdown, because a Menu's items are a
+ * fixed list and this panel has to swap its whole body. That is the
+ * primitive's stated purpose ("MIXED content, tiered flows"), and the
+ * roster's row menu is the same shape.
+ *
+ * Confirming HERE is the point: a confirm that opened somewhere else
+ * would make the user re-find which column they were deleting, which
+ * is exactly why a far-away confirm has to name the column in its
+ * question. */
+function ColumnMenu({
+  column,
+  columns,
+  close,
+  onMove,
+  onRename,
+  onDelete,
+}: {
+  column: ListColumn;
+  columns: ListColumn[];
+  close: () => void;
+  onMove: (direction: -1 | 1) => void;
+  onRename?: () => void;
+  onDelete?: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming && onDelete) {
+    return (
+      <div className="w-64 px-4 py-1.5">
+        <ConfirmDelete
+          question={`Delete the ${column.label} column?`}
+          // No cell count: it is a sheet-wide fact the client cannot
+          // know from paged rows, and a number we cannot stand behind
+          // is worse than none.
+          consequence="This deletes the column and everything in it."
+          onCancel={() => setConfirming(false)}
+          onDelete={() => {
+            close();
+            onDelete();
+          }}
+        />
+      </div>
+    );
+  }
+  // A Popover's items do not auto-close on click, so each verb closes
+  // the panel itself.
+  return (
+    <div className="w-52">
+      <PopoverItem disabled={!canMove(columns, column.key, -1)} onClick={() => { close(); onMove(-1); }}>
+        <span className="flex items-center gap-2">
+          <MoveLeft aria-hidden className="h-4 w-4 text-faint" />
+          Move left
+        </span>
+      </PopoverItem>
+      <PopoverItem disabled={!canMove(columns, column.key, 1)} onClick={() => { close(); onMove(1); }}>
+        <span className="flex items-center gap-2">
+          <MoveRight aria-hidden className="h-4 w-4 text-faint" />
+          Move right
+        </span>
+      </PopoverItem>
+      {onRename && (
+        <PopoverItem onClick={() => { close(); onRename(); }}>
+          <span className="flex items-center gap-2">
+            <Pencil aria-hidden className="h-4 w-4 text-faint" />
+            Rename
+          </span>
+        </PopoverItem>
+      )}
+      {onDelete && (
+        <PopoverItem className="text-danger" onClick={() => setConfirming(true)}>
+          <span className="flex itemsateems-center gap-2">
+            <Trash2 aria-hidden className="h-4 w-4" />
+            Delete
+          </span>
+        </PopoverItem>
+      )}
+    </div>
+  );
+}
+
+/** A column's name, being typed. Shared by the header's rename and by
+ * the pending cell a new plain column is named in, so naming a column
+ * is ONE gesture whether the column exists yet or not.
+ *
+ * It commits on Enter or blur and abandons on Escape, matching the
+ * sheet title's click-to-rename rather than opening a dialog for one
+ * field.
+ *
+ * Its own component so the input MOUNTS when renaming starts, which
+ * is what lets autoFocus do the focusing (the house rule: autoFocus
+ * on a fresh mount, never a ref-and-querySelector effect). */
+export function ColumnNameField({ label, onDone }: { label: string; onDone: (next: string) => void }) {
+  const [draft, setDraft] = useState(label);
+  return (
+    <Input
+      autoFocus
+      aria-label="Column name"
+      // A MIN width, not a width: the cell has nothing else to size it
+      // (a new column has no label yet, and a narrow one's label is
+      // shorter than the text being typed), so auto table layout would
+      // collapse the input to the width of what it currently holds.
+      className="w-full min-w-40"
+      value={draft}
+      // The press must not reach the cell's drag listeners, for the
+      // same reason the menu button stops it.
+      onMouseDown={(event) => event.stopPropagation()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => onDone(draft.trim())}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onDone(draft.trim());
+        }
+        // Escape abandons: restoring the original THEN closing would
+        // race the blur, so the empty string tells the caller nothing
+        // changed.
+        if (event.key === "Escape") onDone("");
+      }}
+    />
   );
 }
 
@@ -44,11 +173,16 @@ export function ColumnHeader({
   column,
   columns,
   onReorder,
+  onRename,
+  onDelete,
 }: {
   column: ListColumn;
   columns: ListColumn[];
   onReorder?: (keys: string[]) => void;
+  onRename?: (key: string, label: string) => void;
+  onDelete?: (column: ListColumn) => void;
 }) {
+  const [renaming, setRenaming] = useState(false);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: column.key,
     disabled: !onReorder,
@@ -88,13 +222,23 @@ export function ColumnHeader({
         isDragging ? "z-20 opacity-60" : ""
       }`}
     >
-      {onReorder === undefined ? (
+      {renaming && onRename ? (
+        <ColumnNameField
+          label={column.label}
+          onDone={(next) => {
+            setRenaming(false);
+            // Unchanged is not a rename: a PATCH here would spend a
+            // request and a re-render to write what is already there.
+            if (next && next !== column.label) onRename(column.key, next);
+          }}
+        />
+      ) : onReorder === undefined ? (
         label
       ) : (
         <div className={`flex items-center gap-1 ${numeric ? "justify-end" : "justify-between"}`}>
           {label}
-          <Dropdown>
-            <DropdownButton
+          <Popover className="relative">
+            <PopoverButton
               // The menu button sits INSIDE the drag surface, so its
               // press must not reach the cell's drag listeners. Stated
               // here rather than left to Headless UI cancelling its
@@ -112,26 +256,20 @@ export function ColumnHeader({
               className="relative shrink-0 rounded p-0.5 opacity-0 transition-opacity after:absolute after:-inset-1.5 after:content-[''] hover:bg-wash hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-600 group-hover/header:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:after:-inset-3.5"
             >
               <ChevronDown aria-hidden className="h-3 w-3" />
-            </DropdownButton>
-            <DropdownMenu anchor="bottom start">
-              <DropdownItem onClick={() => nudge(-1)} disabled={!canMove(columns, column.key, -1)}>
-                {/* The flex span is load-bearing: the item is a BLOCK
-                    and preflight makes an svg one too, so an icon
-                    passed as a bare sibling of the text takes its own
-                    line. Same wrapper the add-column menu uses. */}
-                <span className="flex items-center gap-2">
-                  <MoveLeft aria-hidden className="h-4 w-4 text-faint" />
-                  Move left
-                </span>
-              </DropdownItem>
-              <DropdownItem onClick={() => nudge(1)} disabled={!canMove(columns, column.key, 1)}>
-                <span className="flex items-center gap-2">
-                  <MoveRight aria-hidden className="h-4 w-4 text-faint" />
-                  Move right
-                </span>
-              </DropdownItem>
-            </DropdownMenu>
-          </Dropdown>
+            </PopoverButton>
+            <PopoverPanel anchor="bottom start" focus>
+              {({ close }) => (
+                <ColumnMenu
+                  column={column}
+                  columns={columns}
+                  close={close}
+                  onMove={(direction) => nudge(direction)}
+                  onRename={onRename && (() => setRenaming(true))}
+                  onDelete={onDelete && (() => onDelete(column))}
+                />
+              )}
+            </PopoverPanel>
+          </Popover>
         </div>
       )}
     </th>

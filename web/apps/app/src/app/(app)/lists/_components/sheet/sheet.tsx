@@ -23,6 +23,10 @@ import {
   postColumn,
   postFillRefill,
   reorderColumns,
+  renameColumn,
+  deleteColumn,
+  type ListColumn,
+  type ColumnType,
   updateList,
   webRoutes,
   type FillWire,
@@ -69,6 +73,8 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // null = closed; the KIND arrives with the opening gesture (the
   // Add column menu), so half-open states are unrepresentable.
   const [addColumnKind, setAddColumnKind] = useState<ColumnKind | null>(null);
+  // A plain column being named before it exists (see openAddColumn).
+  const [pendingColumn, setPendingColumn] = useState<{ type: ColumnType } | null>(null);
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
   // The fill attachment polls the FILLS alone; cell states ride the
@@ -139,6 +145,31 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     [detail, toast],
   );
 
+  const renameColumnTo = useCallback(
+    async (key: string, label: string) => {
+      const previous = detail.columns;
+      // Optimistic like the reorder: a rename is direct manipulation,
+      // so the header has to change under the pointer.
+      setDetail((current) => ({
+        ...current,
+        columns: current.columns.map((column) => (column.key === key ? { ...column, label } : column)),
+      }));
+      const res = await renameColumn(detail.id, key, label);
+      if (res.status === "unauthenticated") {
+        window.location.href = loginUrl();
+        return;
+      }
+      if (res.status !== "ok") {
+        setDetail((current) => ({ ...current, columns: previous }));
+        toast.error(res.message, "Column not renamed");
+        return;
+      }
+      setDetail(res.data);
+      setLabel(res.data.label);
+    },
+    [detail, toast],
+  );
+
   const refreshBusyRef = useRef(false);
   // Re-reads the pages already on screen. It is the ONLY walk of the
   // rows now, and it carries their states with them, so a value and
@@ -172,6 +203,27 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
       refreshBusyRef.current = false;
     }
   }, [detail.id]);
+
+  // Confirmed in the menu panel that asked, so this just does it.
+  const removeColumn = useCallback(
+    async (column: ListColumn) => {
+      const res = await deleteColumn(detail.id, column.key);
+      if (res.status === "unauthenticated") {
+        window.location.href = loginUrl();
+        return;
+      }
+      if (res.status !== "ok") {
+        toast.error(res.message, "Column not deleted");
+        return;
+      }
+      setDetail(res.data);
+      setLabel(res.data.label);
+      // The values left with the column, so the loaded rows still
+      // carry a key the sheet no longer has a header for.
+      await refreshLoadedRows();
+    },
+    [detail.id, toast, refreshLoadedRows],
+  );
 
   // Rows re-read when a live job progressed (status or attempted
   // moved), on first sight of a live job, and once on the
@@ -237,9 +289,43 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // gets focus back on close: ref focus for an imperative gesture
   // outside a mount, per the house focus rules.
   const addColumnInvokerRef = useRef<HTMLElement | null>(null);
+  // A PLAIN column is a name and a type, which is not a drawer's worth
+  // of decisions: it opens a pending header cell and is named in the
+  // grid. Only the AI kind keeps the drawer, where a prompt, a model,
+  // outputs and tools have to be chosen.
   function openAddColumn(kind: ColumnKind) {
+    if (kind !== "ai") {
+      setPendingColumn({ type: kind });
+      return;
+    }
     addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setAddColumnKind(kind);
+  }
+
+  async function namePendingColumn(label: string) {
+    const type = pendingColumn?.type;
+    if (type === undefined) return;
+    // Abandoned (Escape, or nothing typed): nothing was created, so
+    // there is nothing to undo.
+    if (!label) {
+      setPendingColumn(null);
+      return;
+    }
+    const res = await postColumn(detail.id, { label, type });
+    if (res.status === "unauthenticated") {
+      window.location.href = loginUrl();
+      return;
+    }
+    if (res.status !== "ok") {
+      // The cell STAYS open on a refusal (a taken name, a reserved
+      // key, the cap): the request is what has to change, and closing
+      // it would throw away what they typed.
+      toast.error(res.message, "Column not added");
+      return;
+    }
+    setPendingColumn(null);
+    setDetail(res.data);
+    setLabel(res.data.label);
   }
   function closeAddColumn() {
     setAddColumnKind(null);
@@ -489,6 +575,10 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           fills={{ listId: detail.id, jobs: fill.jobs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
           onAddColumn={openAddColumn}
           onReorder={reorderColumnsTo}
+          onRenameColumn={renameColumnTo}
+          onDeleteColumn={removeColumn}
+          pendingColumn={pendingColumn}
+          onNamePending={(label) => void namePendingColumn(label)}
         />
         {nextCursor && (
           <>

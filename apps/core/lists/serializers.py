@@ -120,6 +120,13 @@ class ColumnRefillRequest(serializers.Serializer):
     confirmed_row_count = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_LIST_ROWS)
 
 
+class ColumnRenameRequest(serializers.Serializer):
+    """PATCH /v1/lists/{id}/columns/{key}: the label, and only the
+    label. The key is the path, not a field, because it never moves."""
+
+    label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
+
+
 class ColumnOrderRequest(serializers.Serializer):
     """PATCH /v1/lists/{id}/column-order: the full ordered key list.
 

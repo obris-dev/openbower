@@ -5,6 +5,14 @@ import type { ComponentProps, ComponentPropsWithoutRef } from "react";
 import { cn } from "./cn";
 
 /** Anchored disclosure panel for MIXED content (tiered flows, forms):
+ *
+ * --anchor-padding is the VIEWPORT margin the flip and shift
+ * middleware keep. It defaults to zero, which lets a panel sit flush
+ * against a screen edge, and it is set HERE rather than at call sites
+ * because every caller passes `anchor` as a plain string: an object
+ * would be needed to carry padding, so one forgotten call site is a
+ * panel hugging the edge on a small screen.
+ *
  * unlike Dropdown's Menu, items are ordinary focusables, so Tab walks
  * them and clicks do not auto-close. Escape and outside-click still
  * dismiss, and focus returns to the trigger. */
@@ -22,7 +30,7 @@ export function PopoverPanel({
       {...props}
       className={cn(
         "z-50 overflow-hidden rounded-lg border border-hairline bg-surface py-1 shadow-lg outline-none",
-        "[--anchor-gap:0.5rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
+        "[--anchor-gap:0.5rem] [--anchor-padding:0.75rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
         className,
       )}
     />

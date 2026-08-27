@@ -67,6 +67,15 @@ def uniform(fill: Fill, state: StoredCellState) -> dict[str, StoredCellState]:
     return dict.fromkeys(fill.column_keys, state)
 
 
+def purge_column(list_id: str, column_key: str) -> None:
+    """A deleted column takes its cell states with it. Chunked for the
+    same reason purge_list is: the count is bounded by the cells the
+    column answered, which has no ceiling short of the sheet."""
+    ids = list(FillCellState.objects.filter(list_id=list_id, column_key=column_key).values_list("id", flat=True))
+    for chunk in range(0, len(ids), FILL_WRITE_BATCH):
+        FillCellState.objects.filter(id__in=ids[chunk : chunk + FILL_WRITE_BATCH]).delete()
+
+
 def purge_list(list_id: str) -> None:
     """A deleted list takes its cell states with it. Chunked because a
     purge is unbounded by nature (there are no cascades, so the owning

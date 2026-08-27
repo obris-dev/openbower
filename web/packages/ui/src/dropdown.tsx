@@ -26,7 +26,7 @@ export function DropdownMenu({
       anchor={anchor}
       className={cn(
         "z-50 w-48 overflow-hidden rounded-lg border border-hairline bg-surface py-1 shadow-lg outline-none",
-        "[--anchor-gap:0.5rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
+        "[--anchor-gap:0.5rem] [--anchor-padding:0.75rem] transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0",
         className,
       )}
     />

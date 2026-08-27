@@ -34,7 +34,7 @@ import {
 
 import { z } from "zod";
 
-import { http, type ApiResult } from "./request.ts";
+import { http, request, type ApiResult } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 
 // Rows paging, owned once: the server-rendered first page mirrors the
@@ -296,6 +296,24 @@ export async function postColumn(
  * rather than trusting its own optimistic move. */
 export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListSummary>> {
   return http.patch(apiRoutes.lists.columnOrder(id), ListSummarySchema, { keys });
+}
+
+/** Relabel one column. The KEY is the address and never changes: row
+ * data is keyed on it server-side, so a key that followed the label
+ * would strand every cell the column holds. */
+export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<ListSummary>> {
+  return http.patch(apiRoutes.lists.column(id, key), ListSummarySchema, { label });
+}
+
+/** Delete one column and everything in it. Any column, not only an AI
+ * one. The body is the updated summary, so the sheet re-renders its
+ * columns from the response. */
+export async function deleteColumn(id: string, key: string): Promise<ApiResult<ListSummary>> {
+  // Through `request` rather than `http.delete`, which is the
+  // no-content form: this DELETE answers with the updated summary, so
+  // the sheet re-renders its columns from the response like it does
+  // after every other columns write.
+  return request(apiRoutes.lists.column(id, key), ListSummarySchema, { method: "DELETE" });
 }
 
 /** Add an AI column and admit its fill in one server transaction;

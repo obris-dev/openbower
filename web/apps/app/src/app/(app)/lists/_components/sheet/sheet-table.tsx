@@ -5,11 +5,18 @@ import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortabl
 import { Plus } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { Dropdown, DropdownButton, DropdownMenu } from "@bower/ui";
-import { isNumericColumn, type ColumnFillSummary, type FillWire, type ListColumn, type RenderableListRow } from "@bower/api";
+import {
+  isNumericColumn,
+  type ColumnFillSummary,
+  type ColumnType,
+  type FillWire,
+  type ListColumn,
+  type RenderableListRow,
+} from "@bower/api";
 
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
 import { AddColumnMenuItems, type ColumnKind } from "./add-column";
-import { ColumnHeader, useColumnSensors } from "./column-header";
+import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, FillTrackerCell } from "./fill";
@@ -62,12 +69,21 @@ export function SheetTable({
   fills,
   onAddColumn,
   onReorder,
+  onRenameColumn,
+  onDeleteColumn,
+  pendingColumn,
+  onNamePending,
 }: {
   columns: ListColumn[];
   rows: RenderableListRow[];
   /** Absent on a sheet that cannot be reordered; its presence is what
    * arms both the drag and the header menu. */
   onReorder?: (keys: string[]) => void;
+  onRenameColumn?: (key: string, label: string) => void;
+  /** A plain column being named before it exists; null when none is. */
+  pendingColumn?: { type: ColumnType } | null;
+  onNamePending?: (label: string) => void;
+  onDeleteColumn?: (column: ListColumn) => void | Promise<void>;
   fills?: SheetFills;
   onAddColumn?: (kind: ColumnKind) => void;
 }) {
@@ -119,9 +135,26 @@ export function SheetTable({
           <th className="sticky top-0 bg-surface px-4 py-3 text-right font-medium">#</th>
           <SortableContext items={columns.map((column) => column.key)} strategy={horizontalListSortingStrategy}>
             {columns.map((column) => (
-              <ColumnHeader key={column.key} column={column} columns={columns} onReorder={onReorder} />
+              <ColumnHeader
+                key={column.key}
+                column={column}
+                columns={columns}
+                onReorder={onReorder}
+                onRename={onRenameColumn}
+                onDelete={onDeleteColumn}
+              />
             ))}
           </SortableContext>
+          {pendingColumn && onNamePending && (
+            // The new column is named BEFORE it exists, because its
+            // key derives from the label server-side and a rename
+            // never moves a key: creating first would leave a column
+            // called "Revenue" keyed on whatever placeholder it was
+            // born with.
+            <th className="sticky top-0 bg-surface px-4 py-3 font-medium">
+              <ColumnNameField label="" onDone={onNamePending} />
+            </th>
+          )}
           {onAddColumn && (
             <th className="sticky top-0 w-10 bg-surface px-2 py-2">
               {/* The same kind menu as the toolbar primary: one

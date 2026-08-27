@@ -39,6 +39,7 @@ from .serializers import (
     ColumnOrderRequest,
     ColumnPromptRequest,
     ColumnRefillRequest,
+    ColumnRenameRequest,
     FolderRequest,
     ListCreateRequest,
     ListPatchRequest,
@@ -48,7 +49,7 @@ from .serializers import (
     list_wire,
     row_wire,
 )
-from .services.columns import ColumnRefused, ColumnService
+from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
@@ -255,6 +256,36 @@ class AiColumnView(_ScopedView):
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
         return Response(fill_wire(fill), status=201)
+
+
+class ColumnDetailView(_ScopedView):
+    """PATCH /v1/lists/{id}/columns/{key} {label}: relabel one column.
+    DELETE: remove it and everything it holds.
+
+    Delete takes ANY column, not only an AI one: a plain column is the
+    same operation with less to clean up, and a sheet the user cannot
+    tidy is the worse failure. The 200 body is the updated list
+    summary, the shape every columns write returns."""
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnRenameRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            target = self.columns.rename(id, key=key, label=serializer.validated_data["label"])
+        except ColumnNotFound as e:
+            raise NotFound("no column with that key") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(list_wire(target))
+
+    def delete(self, request: Request, id: str, key: str) -> Response:
+        try:
+            target = self.columns.delete(id, key=key)
+        except ColumnNotFound as e:
+            raise NotFound("no column with that key") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(list_wire(target))
 
 
 class ColumnRefillView(_ScopedView):

@@ -7,17 +7,30 @@ edit, and reordering. Account-scoped like every lists service."""
 
 from __future__ import annotations
 
-from django.db import transaction
+from django.db import models, transaction
+from django.db.models import Value
 
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import derive_column_key
 
-from ..constants import MAX_LIST_COLUMNS, FillErrorCode
-from ..models import List
+from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
+from ..models import Fill, List, ListRow
+from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
+from .fill_queue import stop_fill
 from .lists import ListNotFound
+
+
+class _JsonbWithoutKey(models.Func):
+    """Postgres `data - 'key'`: the row's JSON minus one key, applied
+    by the database so a column's values leave every row in ONE
+    statement instead of a read-modify-write per row."""
+
+    arg_joiner = " - "
+    template = "%(expressions)s"
+    output_field = models.JSONField()
 
 
 class ColumnRefused(Exception):
@@ -75,6 +88,13 @@ class ColumnKeysNotUnique(ColumnRefused):
 
     def __init__(self) -> None:
         super().__init__("That reorder named the same column twice.")
+
+
+class ColumnNotFound(Exception):
+    """No column on this sheet holds that key."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"no column {key}")
 
 
 class ColumnService:
@@ -139,6 +159,96 @@ class ColumnService:
             target.columns = [by_key[key] for key in keys]
             target.save(update_fields=["columns", "updated_at"])
         return target
+
+    def _locked(self, target_list_id: str) -> List:
+        """The List row every columns writer takes before touching the
+        array, so a concurrent add cannot append to the version this
+        read is about to replace."""
+        try:
+            return List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
+        except List.DoesNotExist as e:
+            raise ListNotFound(target_list_id) from e
+
+    def rename(self, target_list_id: str, *, key: str, label: str) -> List:
+        """Relabel one column. The KEY never moves, and that is the
+        whole design: row data is a dict keyed on it, FillCellState
+        references it, and an agent output maps down to it, so a key
+        that followed the label would strand every cell the column
+        holds. A column relabelled "Decision maker" keeps whatever key
+        it was born with, which is correct because the key is
+        internal and the label is the user's."""
+        with transaction.atomic():
+            target = self._locked(target_list_id)
+            columns = list(target.columns)
+            for column in columns:
+                if column["key"] == key:
+                    column["label"] = label
+                    break
+            else:
+                raise ColumnNotFound(key)
+            target.columns = columns
+            target.save(update_fields=["columns", "updated_at"])
+        return target
+
+    def delete(self, target_list_id: str, *, key: str) -> List:
+        """Delete one column and everything it holds, in ONE
+        transaction: the values in every row, the cell states, the
+        column entry, and the ephemeral agent if nothing else needs it.
+
+        ANY column, not just an AI one. A plain column is the same
+        operation with less to clean up, and a sheet the user cannot
+        tidy is the worse failure.
+
+        The ORDER is the worker's order: row data first, then the
+        queue. The worker's terminal write locks the ListRow and then
+        writes the FillTask in one transaction, so taking them the
+        other way round here is an ABBA deadlock against any fill
+        running on this sheet, which Postgres resolves by aborting one
+        side. Purging the values first also means a worker that was
+        mid-row blocks on the row lock and finds its task abandoned
+        when it wakes, so it writes the deleted key back to nothing."""
+        with transaction.atomic():
+            target = self._locked(target_list_id)
+            doomed = next((column for column in target.columns if column["key"] == key), None)
+            if doomed is None:
+                raise ColumnNotFound(key)
+            # Read BEFORE the column leaves the array; afterwards there
+            # is nothing left to read it from.
+            agent_id = str((doomed.get("fill") or {}).get("agent_id", ""))
+            columns = [column for column in target.columns if column["key"] != key]
+
+            # ONE UPDATE, so an O(rows) write dissolves inside the
+            # transaction rather than stranding data invisibly.
+            ListRow.objects.filter(list_id=str(target.id)).update(data=_JsonbWithoutKey("data", Value(key)))
+
+            # Every fill that touched this column stops. A fill can own
+            # SEVERAL columns (one multi-output agent makes them
+            # together), so a live sibling is stopped too rather than
+            # left writing into a column that no longer exists; the
+            # sibling refills.
+            for fill_id in Fill.objects.filter(
+                list_id=str(target.id),
+                status__in=LIVE_FILL_STATUSES,
+                column_keys__contains=[key],
+            ).values_list("id", flat=True):
+                stop_fill(str(fill_id), FillStatus.CANCELLED)
+
+            cell_truth.purge_column(str(target.id), key)
+            target.columns = columns
+            target.save(update_fields=["columns", "updated_at"])
+
+            # The ephemeral agent dies with the LAST column that used
+            # it, never with the first: a multi-output agent's other
+            # columns still need their config readable.
+            self._retire_ephemeral(target, agent_id=agent_id)
+        return target
+
+    def _retire_ephemeral(self, target: List, *, agent_id: str) -> None:
+        if not agent_id:
+            return
+        if any((column.get("fill") or {}).get("agent_id") == agent_id for column in target.columns):
+            return
+        AgentService(account_id=self.account_id, user_id=self.user_id).delete_ephemeral([agent_id])
 
     def fill_config(self, target_list_id: str, *, column_key: str) -> AgentConfig:
         """The CURRENT config filling a column (what a refill would
