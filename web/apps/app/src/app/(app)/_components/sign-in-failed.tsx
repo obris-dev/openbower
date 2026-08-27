@@ -23,9 +23,7 @@ export function SignInFailed({ code }: { code: string }) {
       <Card className="w-full max-w-sm p-8 text-center" role="alert">
         <ShieldAlert aria-hidden className="mx-auto h-10 w-10 text-faint" />
         <h1 className="mt-4 text-lg font-semibold text-foreground">Sign-in didn&apos;t complete</h1>
-        <p className="mt-2 text-sm text-muted">
-          {DETAILS[code] ?? "Something went wrong finishing sign-in."} Nothing was changed on your account.
-        </p>
+        <p className="mt-2 text-sm text-muted">{DETAILS[code] ?? "Something went wrong finishing sign-in."}</p>
         <Button
           fullWidth
           className="mt-5"
