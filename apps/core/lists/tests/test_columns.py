@@ -346,3 +346,50 @@ class ColumnDeleteTests(TestCase):
             )
         self.assertIn("deleted", str(caught.exception))
         self.assertEqual(caught.exception.code, "column_agent_missing")
+
+    def test_the_purge_pages_until_the_column_is_empty(self) -> None:
+        # The fixtures are smaller than one page, so the loop only
+        # runs once and its termination is never exercised. Shrink the
+        # page instead of making 1,001 rows.
+        from unittest.mock import patch
+
+        from ..services import cell_truth
+
+        extra = [
+            FillCellState(
+                account_id=TEST_IDENTITY["account_id"],
+                list_id=str(self.sheet.id),
+                row_id=f"01ROW{n:021d}",
+                column_key="contact_name",
+                state=StoredCellState.FILLED,
+            )
+            for n in range(7)
+        ]
+        FillCellState.objects.bulk_create(extra)
+        total = FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count()
+        self.assertGreater(total, 2)
+
+        with patch.object(cell_truth, "FILL_WRITE_BATCH", 2):
+            cell_truth.purge_column(str(self.sheet.id), "contact_name")
+
+        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count(), 0)
+        # The neighbour is untouched: paging never widens the filter.
+        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_url").count(), 2)
+
+    def test_the_LAST_column_can_go(self) -> None:
+        # A sheet with no columns is a real state (every column
+        # deleted), so it must not be refused or crash the summary the
+        # response is built from.
+        for key in ("company", "contact_name", "contact_url"):
+            resp = self.client.delete(self.url(key))
+            self.assertEqual(resp.status_code, 200, resp.content)
+        self.sheet.refresh_from_db()
+        self.assertEqual(self.sheet.columns, [])
+        # The rows survive with their data emptied of every key.
+        rows = list(ListRow.objects.filter(list_id=str(self.sheet.id)))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r.data for r in rows], [{}, {}])
+        # And the sheet still reads back through the contract.
+        read = self.client.get(reverse("lists_detail", kwargs={"id": str(self.sheet.id)}))
+        self.assertEqual(read.status_code, 200, read.content)
+        ListSummary.model_validate(read.json())

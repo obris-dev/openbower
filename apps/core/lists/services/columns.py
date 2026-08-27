@@ -217,8 +217,14 @@ class ColumnService:
             agent_id = str((doomed.get("fill") or {}).get("agent_id", ""))
             columns = [column for column in target.columns if column["key"] != key]
 
-            # ONE UPDATE, so an O(rows) write dissolves inside the
-            # transaction rather than stranding data invisibly.
+            # ONE UPDATE over the sheet's rows, so an O(rows) write
+            # dissolves inside the transaction rather than stranding
+            # data invisibly. It touches rows that never held the key
+            # too, and that is accepted: narrowing it means asking the
+            # blob what it contains, and NOTHING in this codebase
+            # queries row data (FillCellState exists so counting
+            # filled cells never has to). The blob is storage; the
+            # structured record is what answers questions about it.
             ListRow.objects.filter(list_id=str(target.id)).update(data=_JsonbWithoutKey("data", Value(key)))
 
             # Every fill that touched this column stops. A fill can own
