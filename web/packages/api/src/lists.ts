@@ -59,8 +59,6 @@ export type CellState = ListRowWire["states"][string];
 // the per-row retry patience and per-run search bound the consent
 // footer cites.
 export const ROW_LEASE_STALE_SECONDS = WIRE_CONSTANTS.ROW_LEASE_STALE_SECONDS;
-export const FILL_ROW_ATTEMPTS = WIRE_CONSTANTS.FILL_ROW_ATTEMPTS;
-export const MAX_TOOL_CALLS = WIRE_CONSTANTS.MAX_TOOL_CALLS;
 // The SETTLED partition of CellState, off the contract document: the
 // causes that hold (and never re-spend) until the config changes.
 // The client derives its words-vs-dot split from this, never a

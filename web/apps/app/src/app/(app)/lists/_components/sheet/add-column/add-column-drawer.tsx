@@ -24,7 +24,6 @@ import { ensureOk } from "@/lib/ensure-ok";
 import { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, type ScopeChoice } from "../fill";
 import { type Attempt, buildChecklist, configMissing, configReady, draftProvider, EMPTY_OUTPUT, EMPTY_TOOLS, firstGap, goToSection, isContentful, type Missing, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, type Provider, ReadinessChecklist, ToolToggles } from "../../../../_components/agent-config";
 import { AgentsTab } from "./agents-tab";
-import { EstimateFooter } from "./estimate-footer";
 import { collidingKeys } from "./landing-keys";
 import { kindLabel, type ColumnKind } from "./menu-items";
 
@@ -310,22 +309,6 @@ function DrawerContent({
     setOutputsRefusal(null);
   }
 
-  const facts = useMemo(() => {
-    if (tab === "prompt") {
-      return {
-        model: model || undefined,
-        source: source || undefined,
-        toolsOn: Object.values(tools).some(Boolean),
-      };
-    }
-    if (!selectedAgent) return { model: undefined, source: undefined, toolsOn: false };
-    return {
-      model: selectedAgent.model,
-      source: selectedDetail?.config.source,
-      toolsOn: Object.values(selectedDetail?.config.tools ?? selectedAgent.tools).some(Boolean),
-    };
-  }, [tab, model, source, tools, selectedAgent, selectedDetail]);
-
   // The effective scope: min(N, rowCount) client-side for display and
   // consent; the server admits the true eligible count and the
   // response is truth. An unparseable N (the input can be emptied)
@@ -499,12 +482,6 @@ function DrawerContent({
             </FieldError>
           )}
         </fieldset>
-        <EstimateFooter
-          rowCount={scopedRows ?? rowCount}
-          model={facts.model}
-          source={facts.source}
-          toolsOn={facts.toolsOn}
-        />
         {showChecklist && checklist && <ReadinessChecklist items={checklist} />}
         {attempted !== null && tab === "agents" && !agentId && (
           <FieldError tone="warning">Choose an agent to fill this column, or write a prompt instead.</FieldError>
