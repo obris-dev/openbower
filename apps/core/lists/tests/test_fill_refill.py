@@ -498,19 +498,29 @@ class ResumeScopeTests(RefillTestCase):
 
 
 class RefillConsentTests(RefillTestCase):
-    def test_a_stale_echo_refuses_before_spending(self):
+    def test_a_grown_target_refuses_before_spending(self):
         # Refill starts METERED work on a set the server derives at
-        # click time. Without an echo the number the user agreed to and
-        # the number the click buys are never compared.
+        # click time. The echo is a spend CEILING: more owed rows than
+        # the user reviewed refuses; fewer just fills less.
         fill = self.admit()
         self.cancel(fill["id"])
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
-        resp = self.client.post(url, {"confirmed_row_count": 99}, content_type="application/json")
+        resp = self.client.post(url, {"confirmed_row_count": 1}, content_type="application/json")
         self.assertEqual(resp.status_code, 409, resp.content)
         self.assertEqual(resp.json()["error"], "row_count_changed")
         # Nothing was opened: the refusal rolls back inside the walk's
         # own transaction.
         self.assertEqual(Fill.objects.filter(list_id=str(self.sheet.id)).count(), 1)
+
+    def test_a_shrunken_target_admits_and_fills_less(self):
+        # Reviewed 99, the column owes 2: cheaper than consented, so
+        # refusing would be a gate defending nothing.
+        fill = self.admit()
+        self.cancel(fill["id"])
+        url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
+        resp = self.client.post(url, {"confirmed_row_count": 99}, content_type="application/json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(resp.json()["confirmed_row_count"], 2)
 
     def test_a_matching_echo_admits(self):
         fill = self.admit()
@@ -551,7 +561,7 @@ class RefillConsentTests(RefillTestCase):
         fill = self.admit()
         self.cancel(fill["id"])
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
-        resp = self.client.post(url, {"confirmed_row_count": 99}, content_type="application/json")
+        resp = self.client.post(url, {"confirmed_row_count": 1}, content_type="application/json")
         self.assertEqual(resp.status_code, 409, resp.content)
         detail = resp.json()["detail"]
         self.assertIn("2 rows left to fill", detail)

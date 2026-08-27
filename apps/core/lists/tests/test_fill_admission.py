@@ -188,6 +188,12 @@ class QuickPathTests(AdmissionTestCase):
             self.admit(confirmed_row_count=1)
         self.assertEqual(caught.exception.actual, 2)
 
+    def test_a_shrunken_sheet_admits_and_fills_less(self) -> None:
+        # Reviewed 99, the sheet has 2: fewer rows than consented is
+        # cheaper, never a betrayal, so the echo is growth-only.
+        fill = self.admit(confirmed_row_count=99)
+        self.assertEqual(fill.confirmed_row_count, 2)
+
     def test_empty_sheet_refuses(self) -> None:
         empty = self.lists.create(label="Empty", columns=[], origin="manual")
         with self.assertRaises(EmptyFill):
