@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "@bower/tailwind-config";
+
+/* Class-based dark mode (next-themes writes `.dark` on <html>), not the
+   prefers-color-scheme media default, so the toggle + cookie win. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+html.dark {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+@theme {
+  --font-display: var(--font-poppins);
+}
+
+::selection {
+  background: var(--color-signal);
+  color: var(--color-paper);
+}
+
+/* Scroll-reveal (progressive enhancement; no JS required). */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.reveal {
+  animation: reveal 0.7s ease-out both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 40%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
+}
