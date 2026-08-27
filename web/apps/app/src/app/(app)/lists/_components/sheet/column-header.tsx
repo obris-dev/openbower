@@ -82,10 +82,31 @@ function ColumnMenu({
       </div>
     );
   }
+  // Rename and Delete lead, then the moves: naming and removing are
+  // what a user comes to this menu for, and a move has the drag as its
+  // primary gesture (RULED, owner, 2026-08-27, over the sheet menu's
+  // danger-last order; Delete keeps its danger colour and its confirm).
+  //
   // A Popover's items do not auto-close on click, so each verb closes
   // the panel itself.
   return (
     <div className="w-52">
+      {onRename && (
+        <PopoverItem onClick={() => { close(); onRename(); }}>
+          <span className="flex items-center gap-2">
+            <Pencil aria-hidden className="h-4 w-4 text-faint" />
+            Rename
+          </span>
+        </PopoverItem>
+      )}
+      {onDelete && (
+        <PopoverItem className="text-danger" onClick={() => setConfirming(true)}>
+          <span className="flex items-center gap-2">
+            <Trash2 aria-hidden className="h-4 w-4" />
+            Delete
+          </span>
+        </PopoverItem>
+      )}
       <PopoverItem disabled={!canMove(columns, column.key, -1)} onClick={() => { close(); onMove(-1); }}>
         <span className="flex items-center gap-2">
           <MoveLeft aria-hidden className="h-4 w-4 text-faint" />
@@ -98,22 +119,6 @@ function ColumnMenu({
           Move right
         </span>
       </PopoverItem>
-      {onRename && (
-        <PopoverItem onClick={() => { close(); onRename(); }}>
-          <span className="flex items-center gap-2">
-            <Pencil aria-hidden className="h-4 w-4 text-faint" />
-            Rename
-          </span>
-        </PopoverItem>
-      )}
-      {onDelete && (
-        <PopoverItem className="text-danger" onClick={() => setConfirming(true)}>
-          <span className="flex itemsateems-center gap-2">
-            <Trash2 aria-hidden className="h-4 w-4" />
-            Delete
-          </span>
-        </PopoverItem>
-      )}
     </div>
   );
 }
