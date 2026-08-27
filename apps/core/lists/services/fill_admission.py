@@ -1,7 +1,10 @@
 """Fill admission: the GATE. Everything that creates a fill goes
-through this service's ONE-transaction methods under the List lock:
-anything less can append a column whose fill never lands, leaving the
-sheet carrying a column nothing will ever fill.
+through this service's ONE-transaction methods, and the columns write
+lands in the same transaction as the fill and its queue: anything less
+can append a column whose fill never lands, leaving the sheet carrying
+a column nothing will ever fill. The List lock is taken LATE inside
+that transaction, over the columns write and the bench seed alone;
+admit()'s docstring carries the why.
 admit() is the column add: caps and refusals, column resolution
 (match-or-refuse), the config snapshot, the ephemeral-agent create,
 the bench prewrite seed, the row-count echo, the fill row, and the bulk
@@ -43,7 +46,7 @@ from ..constants import (
 )
 from ..models import Fill, FillCellState, FillTask, List, ListRow
 from . import cell_truth
-from .fill_queue import try_finish
+from .fill_queue import live_fill_count, try_finish
 from .lists import ListNotFound, ListService
 
 logger = logging.getLogger(__name__)
@@ -492,30 +495,41 @@ class FillAdmissionService:
         rows past it stay not-attempted (the designed state a later
         refill extends).
 
-        The agent resolve and the model probe run BEFORE the lock on
-        purpose: the probe is an HTTP call (a cold roster probe
-        measured 1.9s healthy, and a dead source pays the list timeout)
-        and the List row lock is the one ListService.write_cells takes
-        for every row a worker completes. Holding it across a network
-        call stalls an in-flight fill on the same sheet for as long as
-        the provider takes to answer. Neither step touches the list, so
-        neither needs it locked."""
+        The List lock is taken LAST, and held only across what needs
+        it: the columns write, and the bench seed, whose row write must
+        follow the List lock (the delete paths' order) and whose type
+        validation needs the claimed column. Everything before it (the
+        guards, the eligible walk, the fill row, and the queue insert,
+        which is one FillTask per targeted row and the expensive part
+        of admission) touches no column, so none of it needs the list
+        locked. A Postgres row lock cannot be released early, so the
+        only way to hold it briefly is to acquire it late.
+
+        What that costs is one wasted build when a deferred guard
+        actually fires: the queue is inserted, the lock is taken, the
+        columns disagree, and the whole transaction rolls back. Never a
+        wrong result, and the preview keeps it to true RACES by running
+        every deterministic refusal up front; the likeliest race is a
+        double-submitted Fill button, whose loser wastes one build and
+        hears the same-column refusal it should.
+
+        What it buys is that a 50,000 row admission no longer blocks
+        every other sheet-level write for the length of its insert. The
+        List row lock is taken by column adds, renames, reorders and
+        deletes, by add_rows, by the list delete, and by another
+        admission. It is NOT taken by the worker: write_cells locks the
+        ListRow and reads the list unlocked, for the column types only.
+
+        The agent resolve and the model probe run before the
+        transaction for a related reason: the probe is an HTTP call (a
+        cold roster probe measured 1.9s healthy, and a dead source pays
+        the list timeout), and nothing that slow belongs inside a
+        transaction at all."""
         agent, resolved = self._resolve_agent(config=config, agent_id=agent_id)
         self._check_model(resolved)
         with transaction.atomic():
-            try:
-                target = List.objects.select_for_update().get(id=list_id, account_id=self.account_id)
-            except List.DoesNotExist as e:
-                raise ListNotFound(list_id) from e
-
-            row_count = ListRow.objects.filter(list_id=str(target.id)).count()
-            if row_count == 0:
-                raise EmptyFill()
-            # The consent echo guards the sheet total the user READ,
-            # which a scoped fill never shows: it asked for the first N
-            # usable rows, and sheet growth cannot change what N means.
-            if rows == 0 and row_count != confirmed_row_count:
-                raise RowCountChanged(row_count)
+            target = self._list_or_raise(list_id)
+            self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
 
             if agent is None:
                 # The ephemeral row needs SOME label for custody
@@ -526,10 +540,10 @@ class FillAdmissionService:
                 agent = self.agents.create_ephemeral(
                     label=resolved.outputs[0].label[:AGENT_LABEL_MAX_LENGTH], config=resolved
                 )
-            column_keys = self._claim_columns(target, config=resolved, agent_id=str(agent.id))
+            column_keys = self._preview_columns(target, config=resolved)
             eligible = self._iter_eligible_rows(target, prompt=resolved.prompt)
             targets = islice(eligible, rows) if rows else eligible
-            fill = self._open_fill(
+            fill, seed = self._open_fill(
                 target,
                 agent=agent,
                 resolved=resolved,
@@ -540,6 +554,19 @@ class FillAdmissionService:
             )
             if not fill.confirmed_row_count:
                 raise NoEligibleRows()
+
+            # The lock, last, over the writes that need it. The guards
+            # run AGAIN here because the reads above were unlocked:
+            # this is the judgement that counts, and the work above is
+            # discarded with the transaction if it refuses. The seed
+            # settles after the claim on purpose: its row write must
+            # take the ListRow lock AFTER this List lock (the order
+            # every delete path takes), and against the claimed column
+            # so its type validator exists.
+            locked = self._list_or_raise(list_id, lock=True)
+            self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
+            self._claim_columns(locked, config=resolved, agent_id=str(agent.id), fill_id=str(fill.id))
+            fill = self._settle_fill(fill, locked, seed=seed)
         return fill
 
     def refill(
@@ -563,19 +590,15 @@ class FillAdmissionService:
         the target set (the changed prompt is a changed ask; see
         RefillTargets).
 
-        Like admit, the agent resolve and the model probe happen
-        BEFORE the lock (see admit's note on why network IO must not
-        hold it). Reaching the agent needs the column's fill member,
-        so this reads the list UNLOCKED first; the locked read inside
-        the transaction is the one every decision is made against, and
-        a column deleted in between simply refuses there."""
+        Like admit, the shape is judged and the queue built against
+        UNLOCKED reads, and the List lock comes last, over the claim
+        and the settle alone; the locked pass re-runs the guards, and
+        that re-judgement is the one that counts (a column deleted in
+        between simply refuses there, rolling the built fill back).
+        The agent resolve and the model probe also run before the
+        transaction entirely: network IO must not hold any of it."""
         peek = self._list_or_raise(list_id)
-        fill = next(
-            (column.get("fill") for column in peek.columns if column["key"] == column_key and column.get("fill")),
-            None,
-        )
-        if fill is None:
-            raise FillColumnNotFound(column_key)
+        fill = self._require_fill_column(peek, column_key)
         try:
             agent = self.agents.get_for_fill(str(fill.get("agent_id", "")))
         except AgentNotFound as e:
@@ -588,21 +611,19 @@ class FillAdmissionService:
         resolved = agent.config()
         self._check_model(resolved)
         with transaction.atomic():
-            target = self._list_or_raise(list_id, lock=True)
-            if not any(column["key"] == column_key and column.get("fill") for column in target.columns):
-                raise FillColumnNotFound(column_key)
+            # Unlocked while the shape is worked out and the queue is
+            # built; the List lock comes at the end, over the claim and
+            # the settle. Same reasoning as admit.
+            target = self._list_or_raise(list_id)
+            self._require_fill_column(target, column_key)
             # The stopped fill's shape, re-derived from the CURRENT
             # config (each output's own key is its column key). The
             # config is FRESH on purpose so agent edits apply, which
             # means the output set can differ from the one that built
             # these columns: a new output has to become a real column
             # here or its answers land nowhere a surface can read.
-            owned = frozenset(
-                column["key"]
-                for column in target.columns
-                if (column.get("fill") or {}).get("agent_id") == str(agent.id)
-            )
-            column_keys = self._claim_columns(target, config=resolved, agent_id=str(agent.id), owned=owned)
+            owned = self._owned_keys(target, str(agent.id))
+            column_keys = self._preview_columns(target, config=resolved, owned=owned)
             if column_key not in column_keys:
                 # The URL names the column; the CONFIG names what the
                 # new fill will write, and an output removed or renamed
@@ -651,7 +672,9 @@ class FillAdmissionService:
             # pass, so this is one lazy stream: a scoped refill stops
             # at its N, and nothing behind it has been fetched.
             targets = islice(remaining, rows) if rows else remaining
-            fill = self._open_fill(target, agent=agent, resolved=resolved, column_keys=column_keys, targets=targets)
+            fill, seed = self._open_fill(
+                target, agent=agent, resolved=resolved, column_keys=column_keys, targets=targets
+            )
             if not fill.confirmed_row_count:
                 # EMPTY is diagnosed first. A finished column consents
                 # to nothing, and checking the echo before this made
@@ -676,6 +699,21 @@ class FillAdmissionService:
             # answer to the same question, not drift.
             if rows == 0 and confirmed_row_count and fill.confirmed_row_count != confirmed_row_count:
                 raise TargetCountChanged(fill.confirmed_row_count)
+
+            # The lock, last, over the claim and the settle. The guards
+            # that read the array run AGAIN here, against the locked
+            # copy, because everything above judged an unlocked read;
+            # a refusal rolls the fill and its queue back with it.
+            locked = self._list_or_raise(list_id, lock=True)
+            self._require_fill_column(locked, column_key)
+            self._claim_columns(
+                locked,
+                config=resolved,
+                agent_id=str(agent.id),
+                owned=self._owned_keys(locked, str(agent.id)),
+                fill_id=str(fill.id),
+            )
+            fill = self._settle_fill(fill, locked, seed=seed)
         return fill
 
     def _open_fill(
@@ -688,13 +726,16 @@ class FillAdmissionService:
         targets: Iterator[tuple[str, int]],
         concurrency: int = 0,
         test_run_id: str = "",
-    ) -> Fill:
+    ) -> tuple[Fill, tuple[AgentTestRun, int] | None]:
         """Everything after the DECISION, shared by both admission
-        paths: the fill row carrying its frozen config, the optional
-        bench seed, the QUEUE, and the completes-on-the-spot case. Runs
-        under the caller's List lock, because a column and the fill that
-        populates it must land together or the sheet keeps a column
-        nothing will ever fill.
+        paths: the fill row carrying its frozen config, the QUEUE, and
+        the DETECTION of the bench seed (returned, not applied: the
+        walk is the only thing that knows the borrowed row's position,
+        and the caller settles it under the List lock, after the
+        claim). Runs UNLOCKED, inside the caller's transaction: the
+        transaction is what makes the column and the fill land
+        together; the lock comes later and covers only the writes that
+        need it.
 
         `targets` is CONSUMED, in FILL_WRITE_BATCH steps: nothing here
         holds the sheet in memory, and a 50,000 row fill peaks at one
@@ -757,48 +798,23 @@ class FillAdmissionService:
             # with the queue it counts.
             FillTask.objects.bulk_create(tasks)
 
-        # WHICH FILL SPEAKS FOR THIS COLUMN, stored where the column
-        # lives rather than re-derived per read. Reconstructing it
-        # meant walking every fill the sheet has ever had, newest
-        # first, on a four second poll: the same read-time derivation
-        # the cell record exists to have deleted, and unbounded in the
-        # one direction that only grows. Written here because the Fill
-        # row must exist first, so it cannot ride the column append;
-        # the caller's List lock already covers both writes.
-        columns = [dict(column) for column in target.columns]
-        for column in columns:
-            if column["key"] in column_keys and column.get("fill"):
-                column["fill"] = {**column["fill"], "current_fill_id": str(fill.id)}
-        target.columns = columns
-        target.save(update_fields=["columns", "updated_at"])
+        # No columns write here. The caller claims them AFTER this
+        # returns, under the List lock, in one write that carries both
+        # the agent link and this fill's id: the queue insert is the
+        # expensive part of admission and it has no business happening
+        # between two writes to the same array.
 
-        counters: dict[str, int] = {}
-        if seeded_at is not None and borrowed is not None:
-            counters = self._seed_borrowed_row(fill, target, run=borrowed, position=seeded_at)
-        # The row count is a TOTAL and assigns; the seed's counters are
-        # DELTAS and add, the same F() shape the worker's bump uses.
-        # Both land in one update because they describe the same fill.
-        # Assignment would work today (this row is three statements old
-        # and nothing outside this transaction can see it yet), which
-        # is exactly the reason not to write it that way: the values
-        # are deltas whatever the row currently holds, and syntax that
-        # only reads as correct once you have gone to find the create
-        # is how the next writer here gets it wrong.
-        Fill.objects.filter(id=fill.id).update(
-            confirmed_row_count=consented,
-            **{key: models.F(key) + delta for key, delta in counters.items()},
-        )
-        if consented:
-            # A fill can be born drained: every row it consented to was
-            # answered on the bench, so nothing is claimable and no
-            # worker would ever visit it. That is the same question the
-            # worker asks after its last row, so it is the same rule,
-            # not a copy of it. Guarded on `consented` because a fill
-            # with no rows is a REFUSAL the caller is about to raise,
-            # never a completion.
-            try_finish(str(fill.id))
+        Fill.objects.filter(id=fill.id).update(confirmed_row_count=consented)
         fill.refresh_from_db()
-        return fill
+        # The seed is DETECTED here (only the walk knows the borrowed
+        # row's position) but APPLIED by _settle_fill, under the List
+        # lock and after the claim. It must be: the seed's row write
+        # takes a ListRow lock, which may only follow the List lock
+        # (the order every delete path takes; the reverse deadlocks),
+        # and its type validation reads the columns array, which
+        # carries the new column only once the claim has written it.
+        seed = (borrowed, seeded_at) if borrowed is not None and seeded_at is not None else None
+        return fill, seed
 
     @staticmethod
     def _iter_eligible_rows(target: List, *, prompt: str) -> Iterator[tuple[str, int]]:
@@ -860,7 +876,13 @@ class FillAdmissionService:
             raise ModelUnrunnable(str(e)) from e
 
     def _claim_columns(
-        self, target: List, *, config: AgentConfig, agent_id: str, owned: frozenset[str] = frozenset()
+        self,
+        target: List,
+        *,
+        config: AgentConfig,
+        agent_id: str,
+        fill_id: str,
+        owned: frozenset[str] = frozenset(),
     ) -> list[str]:
         """Resolve, guard, append: the ONE sequence that turns a set of
         outputs into columns a fill may write, run by BOTH admission
@@ -882,15 +904,92 @@ class FillAdmissionService:
         # and saying "this sheet already has that column" instead would
         # be true and useless: the column is there because the fill the
         # user just started put it there.
-        self._check_columns_free(target, column_keys=[output.key for output in config.outputs])
+        # The fill being opened is one value wearing two roles: the id
+        # the guards must EXCLUDE (it is already live) and the id the
+        # claimed columns record as current. One REQUIRED parameter,
+        # because a default here would stamp current_fill_id="" (the
+        # contract's "column predates the write") silently.
+        self._check_columns_free(target, column_keys=[output.key for output in config.outputs], opening=fill_id)
         column_keys = self._resolve_columns(target, config=config, owned=owned)
-        self._check_guards(target, column_keys=column_keys, config=config)
+        self._check_guards(target, column_keys=column_keys, opening=fill_id)
         # No retype set and no occupancy probe: a column that exists
         # keeps the type it was created with, and resolution above has
         # already refused both an existing key we do not own and an
         # owned one whose output changed shape.
-        self._append_columns(target, column_keys=column_keys, config=config, agent_id=agent_id)
+        self._append_columns(target, column_keys=column_keys, config=config, agent_id=agent_id, fill_id=fill_id)
         return column_keys
+
+    @staticmethod
+    def _owned_keys(target: List, agent_id: str) -> frozenset[str]:
+        """The keys this agent already fills on this sheet: what a
+        refill may write without the existence rule refusing its own
+        columns. ONE derivation, called by the unlocked pass and the
+        locked one, because two hand-spelled copies drifting by a typo
+        is exactly the failure mode a double-judgment design invites."""
+        return frozenset(
+            column["key"] for column in target.columns if (column.get("fill") or {}).get("agent_id") == agent_id
+        )
+
+    @staticmethod
+    def _require_fill_column(target: List, column_key: str) -> dict:
+        """The named column's fill member, or the 404-shaped refusal
+        (a column the sheet does not have, or a plain one, is not a
+        refill target)."""
+        fill = next(
+            (column.get("fill") for column in target.columns if column["key"] == column_key and column.get("fill")),
+            None,
+        )
+        if fill is None:
+            raise FillColumnNotFound(column_key)
+        return fill
+
+    def _preview_columns(self, target: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
+        """The keys this fill will own, judged WITHOUT taking a lock.
+
+        The keys themselves come from the OUTPUTS, never from the
+        sheet, so this cannot disagree with what the locked claim
+        decides; the sheet only decides whether to REFUSE, and this
+        runs the refusals that cost nothing so an admission doomed by
+        an existing column does not build a queue first.
+
+        It mirrors the claim's order (live fills before existence, so
+        a second admit on a column a fill is writing hears that, not
+        the useless "this sheet already has that column"), and it runs
+        every DETERMINISTIC refusal: an account at its fill cap or a
+        sheet at its column cap would otherwise build up to 50,000
+        FillTask rows before hearing a "no" that was knowable up
+        front, every time rather than rarely. The cap is read through
+        live_fill_count, the lock-free count the bench lane shares;
+        the select_for_update half of the cap stays locked-only,
+        because taking fill-row locks here would invert the
+        List-then-Fill order its serialization depends on. The claim,
+        under the List lock at the end of admission, is the judgement
+        that counts."""
+        self._check_columns_free(target, column_keys=[output.key for output in config.outputs])
+        keys = self._resolve_columns(target, config=config, owned=owned)
+        # The cap BEFORE the column arithmetic, mirroring _check_guards:
+        # an account at both caps must hear fills_full (a 409, "wait
+        # for one to finish") and not columns_full (a 400, "change the
+        # request"), because waiting actually fixes the first and the
+        # second would send them off to delete columns for nothing.
+        if live_fill_count(self.account_id) >= MAX_ACTIVE_FILLS:
+            raise AccountFillsFull()
+        self._check_column_cap(target, column_keys=keys)
+        return keys
+
+    def _check_row_count(self, list_id: str, *, rows: int, confirmed_row_count: int) -> None:
+        """The sheet has rows, and it has the count the user consented
+        to. Run unlocked to fail fast and again under the lock, where
+        the List lock (not this read) is what makes the second answer
+        authoritative; one body so the two passes cannot drift."""
+        row_count = ListRow.objects.filter(list_id=list_id).count()
+        if row_count == 0:
+            raise EmptyFill()
+        # The consent echo guards the sheet total the user READ, which
+        # a scoped fill never shows: it asked for the first N usable
+        # rows, and sheet growth cannot change what N means.
+        if rows == 0 and row_count != confirmed_row_count:
+            raise RowCountChanged(row_count)
 
     def _resolve_columns(self, target: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
         """The columns this fill will own. Each output's OWN key IS its
@@ -925,22 +1024,33 @@ class FillAdmissionService:
                 raise ColumnTypeChanged(key=key, stored=stored_types[key], wanted=wanted)
         return keys
 
-    def _check_guards(self, target: List, *, column_keys: list[str], config: AgentConfig) -> None:
+    def _check_guards(self, target: List, *, column_keys: list[str], opening: str = "") -> None:
         # columns-free is checked by the caller BEFORE resolution, so
         # the live-fill refusal wins over the existence one.
-        self._check_account_cap()
+        self._check_account_cap(opening=opening)
+        self._check_column_cap(target, column_keys=column_keys)
+
+    @staticmethod
+    def _check_column_cap(target: List, *, column_keys: list[str]) -> None:
+        """ONE spelling of the column-cap arithmetic, called by the
+        preview and the locked claim: two hand-spelled copies are how
+        the passes drift, and this file has the receipts."""
         new_keys = set(column_keys) - {column["key"] for column in target.columns}
         if len(target.columns) + len(new_keys) > MAX_LIST_COLUMNS:
             raise ColumnsFull()
 
     @staticmethod
-    def _check_columns_free(target: List, *, column_keys: list[str]) -> None:
-        live = Fill.objects.filter(list_id=str(target.id), status__in=LIVE_FILL_STATUSES)
+    def _check_columns_free(target: List, *, column_keys: list[str], opening: str = "") -> None:
+        """`opening` is the fill this admission just created, if the
+        claim runs after it. Admission opens the fill BEFORE taking the
+        List lock, so without this the guard finds our own live fill on
+        our own column and refuses the admission to itself."""
+        live = Fill.objects.filter(list_id=str(target.id), status__in=LIVE_FILL_STATUSES).exclude(id=opening)
         taken = {key for fill in live for key in fill.column_keys or ()}
         if taken & set(column_keys):
             raise SameColumnFillActive()
 
-    def _check_account_cap(self) -> None:
+    def _check_account_cap(self, *, opening: str = "") -> None:
         # The account cap must serialize ACROSS lists (the List lock
         # only covers same-list admits): lock the account's live fill
         # rows in id order so concurrent admits at the cap boundary
@@ -954,10 +1064,16 @@ class FillAdmissionService:
         list(
             Fill.objects.select_for_update()
             .filter(account_id=self.account_id, status__in=LIVE_FILL_STATUSES)
+            .exclude(id=opening)
             .order_by("id")
             .only("id")
         )
-        account_live = Fill.objects.filter(account_id=self.account_id, status__in=LIVE_FILL_STATUSES).count()
+        # EXCLUDED from the count as well as the locks above: this
+        # admission's own fill is already live by the time the cap is
+        # judged, and counting it would refuse one fill early.
+        account_live = (
+            Fill.objects.filter(account_id=self.account_id, status__in=LIVE_FILL_STATUSES).exclude(id=opening).count()
+        )
         if account_live >= MAX_ACTIVE_FILLS:
             raise AccountFillsFull()
 
@@ -973,10 +1089,20 @@ class FillAdmissionService:
         return MAX_LIST_ROWS
 
     @staticmethod
-    def _append_columns(target: List, *, column_keys: list[str], config: AgentConfig, agent_id: str) -> None:
-        """One whole-array columns write: new columns append with the
-        fill link and the output's type; an existing one gains only the
-        link.
+    def _append_columns(
+        target: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_id: str
+    ) -> None:
+        """THE one columns write of an admission: new columns append
+        with the fill link and the output's type, an existing one gains
+        the link, and every claimed column learns which fill now speaks
+        for it.
+
+        Both facts ride ONE write because the fill row already exists
+        when this runs: admission opens the fill and its queue before
+        taking the List lock, so there is nothing left to fill in
+        afterwards. Storing `current_fill_id` here rather than
+        re-deriving it per read is what keeps the four second poll off
+        a walk of every fill the sheet has ever had, newest first.
 
         A column NEVER changes type here. Type is not display-only at
         the write seam, where write_cells gates every value through the
@@ -989,7 +1115,7 @@ class FillAdmissionService:
         for column in columns:
             output = outputs_by_key.get(column["key"])
             if output is not None and column["key"] in column_keys:
-                column["fill"] = {"agent_id": agent_id}
+                column["fill"] = {"agent_id": agent_id, "current_fill_id": fill_id}
         for key in column_keys:
             if key in existing:
                 continue
@@ -1003,7 +1129,7 @@ class FillAdmissionService:
                     "key": key,
                     "label": output.label[:COLUMN_LABEL_MAX_LENGTH],
                     "type": output.type,
-                    "fill": {"agent_id": agent_id},
+                    "fill": {"agent_id": agent_id, "current_fill_id": fill_id},
                 }
             )
         target.columns = columns
@@ -1022,6 +1148,33 @@ class FillAdmissionService:
         if run is None or not run.row_id or run.config_fingerprint != config_fingerprint(config):
             return None
         return run
+
+    def _settle_fill(self, fill: Fill, target: List, *, seed: tuple[AgentTestRun, int] | None) -> Fill:
+        """The locked tail of both admission paths: apply the bench
+        seed if the walk found one, then ask whether the fill was born
+        drained. Runs AFTER _claim_columns, under the List lock, so the
+        seed's row write takes its ListRow lock in the same List-then-
+        row order every delete path takes, and write_cells sees the
+        claimed column's type instead of missing it."""
+        if seed is not None:
+            run, position = seed
+            counters = self._seed_borrowed_row(fill, target, run=run, position=position)
+            # DELTAS and F(), the same shape the worker's bump uses:
+            # assignment would work today (nothing outside this
+            # transaction can see the row yet), which is exactly the
+            # reason not to write it that way.
+            Fill.objects.filter(id=fill.id).update(**{key: models.F(key) + delta for key, delta in counters.items()})
+        if fill.confirmed_row_count:
+            # A fill can be born drained: every row it consented to was
+            # answered on the bench, so nothing is claimable and no
+            # worker would ever visit it. That is the same question the
+            # worker asks after its last row, so it is the same rule,
+            # not a copy of it. Guarded on the count because a fill
+            # with no rows is a REFUSAL the caller is about to raise,
+            # never a completion.
+            try_finish(str(fill.id))
+        fill.refresh_from_db()
+        return fill
 
     def _seed_borrowed_row(self, fill: Fill, target: List, *, run: AgentTestRun, position: int) -> dict[str, int]:
         """Write the borrowed row's answers and close its task DONE,

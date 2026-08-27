@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.db import connection
+from django.test import TestCase
+from django.test.utils import CaptureQueriesContext, override_settings
 
 from agents.models import Agent, AgentTestRun
 from agents.providers import ModelUnavailable
@@ -17,6 +19,7 @@ from openbower_schema.fills import CellRunResult
 from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
+    MAX_LIST_COLUMNS,
     FillStatus,
     FillTaskStatus,
     StoredCellState,
@@ -25,6 +28,7 @@ from ..models import Fill, FillCellState, FillTask
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
+    ColumnsFull,
     DerivedKeyCollision,
     EmptyFill,
     FillAdmissionService,
@@ -358,6 +362,28 @@ class BenchSeedTests(AdmissionTestCase):
         self.assertEqual(len(targeted(str(fill.id))), 2)
         self.assertEqual(queued_row_ids(str(fill.id)), [str(rows_other.id)])
 
+    def test_a_seeded_cell_passes_the_new_columns_type_validator(self) -> None:
+        # The seed used to write before the column was claimed, so
+        # write_cells found no type for the key and stored the value
+        # raw: a number cell kept "1,234" un-normalized and a non-number
+        # was recorded FILLED instead of TYPE_MISMATCH.
+        config = quick_config(outputs=[AgentOutput(key="answer", label="Answer", type="number")])
+        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
+        run = self._run_for(config, row_id=str(row.id), cells={"answer": "1,234"})
+        self.admit(config=config, test_run_id=str(run.id))
+        row.refresh_from_db()
+        self.assertEqual(row.data["answer"], "1234")
+
+    def test_a_seeded_non_number_is_a_type_mismatch_not_a_fill(self) -> None:
+        config = quick_config(outputs=[AgentOutput(key="answer", label="Answer", type="number")])
+        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
+        run = self._run_for(config, row_id=str(row.id), cells={"answer": "about $5M"})
+        fill = self.admit(config=config, test_run_id=str(run.id))
+        row.refresh_from_db()
+        self.assertNotIn("answer", row.data)
+        state = FillCellState.objects.get(fill_id=str(fill.id), row_id=str(row.id), column_key="answer")
+        self.assertEqual(state.state, StoredCellState.TYPE_MISMATCH)
+
     def test_a_fully_seeded_fill_completes_at_admission(self) -> None:
         # A one-row sheet whose only row seeds from the bench leaves
         # ZERO claimable rows: no worker would ever visit the fill, so
@@ -442,3 +468,117 @@ class BenchSeedTests(AdmissionTestCase):
         run = self._run_for(config, row_id="", cells={"answer": "x"})
         fill = self.admit(config=config, test_run_id=str(run.id))
         self.assertEqual(len(targeted(str(fill.id))), 2)
+
+
+class AdmissionLockSpanTests(AdmissionTestCase):
+    """Where admission takes the List row lock, and for how long.
+
+    The lock exists for ONE thing, the columns array write, and the
+    expensive part of admission (a FillTask per targeted row) must not
+    happen while it is held: that same lock is taken by every column
+    add, rename, reorder and delete, by add_rows, by the list delete,
+    and by another admission, so a large fill holding it stalls all of
+    them.
+
+    A Postgres row lock cannot be released early, so the only way to
+    hold it briefly is to take it LATE."""
+
+    def sql(self, captured) -> list[str]:
+        return [q["sql"].lstrip().upper() for q in captured.captured_queries]
+
+    def index_of(self, sql: list[str], match) -> int:
+        """First statement matching, as a FAILURE rather than a bare
+        StopIteration when a marker disappears from the query stream."""
+        index = next((i for i, statement in enumerate(sql) if match(statement)), None)
+        self.assertIsNotNone(index, "expected statement not found in the captured queries")
+        return index
+
+    def test_the_lock_is_taken_AFTER_the_queue_is_inserted(self) -> None:
+        with CaptureQueriesContext(connection) as captured:
+            self.admit()
+        sql = self.sql(captured)
+        locked_at = self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
+        queued_at = self.index_of(sql, lambda s: s.startswith('INSERT INTO "LISTS_FILLTASK"'))
+        self.assertLess(
+            queued_at,
+            locked_at,
+            "the queue insert must run BEFORE the List lock is taken, or a large fill blocks "
+            "every other sheet-level write for the length of its insert",
+        )
+
+    def test_a_seeded_admit_takes_the_list_lock_before_the_row_lock(self) -> None:
+        # The seed writes a ListRow through write_cells, which locks
+        # that row. Every delete path takes List first, then ListRows,
+        # and its comments call the reverse order an ABBA deadlock. So
+        # the seed must settle AFTER the List lock, never before.
+        config = quick_config()
+        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
+        run = AgentTestRun.objects.create(
+            account_id=ACCOUNT,
+            user_id=USER,
+            status="complete",
+            config_fingerprint=config_fingerprint(config),
+            row_id=str(row.id),
+            result={"cells": {"answer": "seeded"}, "evidence": ["seen"], "searches": []},
+        )
+        with CaptureQueriesContext(connection) as captured:
+            self.admit(config=config, test_run_id=str(run.id))
+        sql = self.sql(captured)
+        # Quoted, because a bare LISTS_LIST also matches LISTS_LISTROW
+        # and would bind both indexes to the same statement.
+        list_lock = self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
+        row_lock = self.index_of(sql, lambda s: '"LISTS_LISTROW"' in s and "FOR UPDATE" in s)
+        self.assertLess(list_lock, row_lock, "the seed's row lock must come AFTER the List lock")
+
+    def test_deterministic_refusals_never_build_the_queue(self) -> None:
+        # An account at its cap and a sheet at its column cap are both
+        # knowable before any work: hearing the "no" after inserting up
+        # to 50,000 FillTask rows would waste the build EVERY time, not
+        # on a race.
+        for n in range(MAX_ACTIVE_FILLS):
+            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            self.lists.add_rows(sheet, [{"company": "acme.com"}])
+            self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+        with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
+            self.admit()
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_FILLTASK"')]
+        self.assertEqual(inserts, [], "the cap was knowable before the queue was built")
+
+    def test_at_both_caps_the_fill_cap_wins(self) -> None:
+        # fills_full is a 409 whose fix is waiting; columns_full is a
+        # 400 whose fix is changing the sheet. An account at both must
+        # hear the one that waiting actually fixes, the same precedence
+        # the locked claim keeps.
+        for n in range(MAX_ACTIVE_FILLS):
+            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            self.lists.add_rows(sheet, [{"company": "acme.com"}])
+            self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+        wide = self.lists.create(
+            label="Wide",
+            columns=[{"key": f"c{n}", "label": f"C{n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)],
+            origin="manual",
+        )
+        self.lists.add_rows(wide, [{"c0": "x"}])
+        with self.assertRaises(AccountFillsFull):
+            self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
+
+    def test_a_full_sheet_refuses_before_building_the_queue(self) -> None:
+        wide = self.lists.create(
+            label="Wide",
+            columns=[{"key": f"c{n}", "label": f"C{n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)],
+            origin="manual",
+        )
+        self.lists.add_rows(wide, [{"c0": "x"}])
+        with CaptureQueriesContext(connection) as captured, self.assertRaises(ColumnsFull):
+            self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_FILLTASK"')]
+        self.assertEqual(inserts, [], "the column cap was knowable before the queue was built")
+
+    def test_the_columns_array_is_written_ONCE(self) -> None:
+        # It used to be written twice: the append, then a separate
+        # current_fill_id stamp, with the queue insert in between.
+        # Those two writes are what forced the lock to span the insert.
+        with CaptureQueriesContext(connection) as captured:
+            self.admit()
+        writes = [s for s in self.sql(captured) if s.startswith('UPDATE "LISTS_LIST"')]
+        self.assertEqual(len(writes), 1, writes)
