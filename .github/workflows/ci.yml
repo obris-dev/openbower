@@ -87,3 +87,4 @@ jobs:
       # (a "use client" export CALLED from a server component) surface
       # only here; lint, tsc, and unit tests all pass over them.
       - run: cd web && pnpm --filter @bower/app exec next build
+      - run: cd web && pnpm --filter @bower/marketing exec next build
