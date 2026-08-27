@@ -90,15 +90,19 @@ class AccountFillsFull(FillRefused):
 
 
 class RowCountChanged(FillRefused):
-    """The consent echo failed: the sheet grew (or shrank) after the
-    user read the numbers."""
+    """The consent echo failed: the sheet GREW after the user read the
+    numbers, so an unscoped fill would spend past the count the button
+    named. Growth only (RULED, owner, 2026-08-27): the number is a
+    spend CEILING, and a ceiling is violated only upward; a shrunken
+    sheet fills fewer rows than consented, which betrays no one and
+    refusing it was pure friction."""
 
     code = FillErrorCode.ROW_COUNT_CHANGED
 
     def __init__(self, actual: int) -> None:
         self.actual = actual
         super().__init__(
-            f"The sheet changed while you reviewed; it now has {actual} rows. Check the numbers and start again."
+            f"The sheet has grown since you reviewed; it now has {actual} rows. Check the numbers and start again."
         )
 
 
@@ -116,7 +120,7 @@ class TargetCountChanged(FillRefused):
     def __init__(self, actual: int) -> None:
         self.actual = actual
         super().__init__(
-            f"This column has {actual} rows left to fill, not the number you reviewed. Check it and start again."
+            f"This column has {actual} rows left to fill, more than the number you reviewed. Check it and start again."
         )
 
 
@@ -694,10 +698,11 @@ class FillAdmissionService:
             # fill back with everything else.
             #
             # UNSCOPED asks only, the same rule admit follows: a scoped
-            # ask names its own N and never showed a total, so finding
-            # fewer rows owed than the user asked for is a cheaper
-            # answer to the same question, not drift.
-            if rows == 0 and confirmed_row_count and fill.confirmed_row_count != confirmed_row_count:
+            # ask names its own N and never showed a total. And GROWTH
+            # only, also admit's rule: the number is a spend ceiling,
+            # so fewer owed rows than reviewed is a cheaper answer to
+            # the same question, never drift worth refusing.
+            if rows == 0 and confirmed_row_count and fill.confirmed_row_count > confirmed_row_count:
                 raise TargetCountChanged(fill.confirmed_row_count)
 
             # The lock, last, over the claim and the settle. The guards
@@ -987,8 +992,10 @@ class FillAdmissionService:
             raise EmptyFill()
         # The consent echo guards the sheet total the user READ, which
         # a scoped fill never shows: it asked for the first N usable
-        # rows, and sheet growth cannot change what N means.
-        if rows == 0 and row_count != confirmed_row_count:
+        # rows, and sheet growth cannot change what N means. GROWTH
+        # only: the count is a spend ceiling, so only more rows than
+        # consented refuses; fewer just fills less.
+        if rows == 0 and row_count > confirmed_row_count:
             raise RowCountChanged(row_count)
 
     def _resolve_columns(self, target: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
