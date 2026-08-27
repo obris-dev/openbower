@@ -82,10 +82,10 @@ function ColumnMenu({
       </div>
     );
   }
-  // Rename and Delete lead, then the moves: naming and removing are
-  // what a user comes to this menu for, and a move has the drag as its
-  // primary gesture (RULED, owner, 2026-08-27, over the sheet menu's
-  // danger-last order; Delete keeps its danger colour and its confirm).
+  // Rename leads (it is what the menu is most often opened for), the
+  // moves follow, and Delete sits last: the sheet's overflow menu puts
+  // danger last for the same reason, so a destructive verb is never
+  // where a mis-aimed click lands.
   //
   // A Popover's items do not auto-close on click, so each verb closes
   // the panel itself.
@@ -96,14 +96,6 @@ function ColumnMenu({
           <span className="flex items-center gap-2">
             <Pencil aria-hidden className="h-4 w-4 text-faint" />
             Rename
-          </span>
-        </PopoverItem>
-      )}
-      {onDelete && (
-        <PopoverItem className="text-danger" onClick={() => setConfirming(true)}>
-          <span className="flex items-center gap-2">
-            <Trash2 aria-hidden className="h-4 w-4" />
-            Delete
           </span>
         </PopoverItem>
       )}
@@ -119,6 +111,14 @@ function ColumnMenu({
           Move right
         </span>
       </PopoverItem>
+      {onDelete && (
+        <PopoverItem className="text-danger" onClick={() => setConfirming(true)}>
+          <span className="flex items-center gap-2">
+            <Trash2 aria-hidden className="h-4 w-4" />
+            Delete
+          </span>
+        </PopoverItem>
+      )}
     </div>
   );
 }
