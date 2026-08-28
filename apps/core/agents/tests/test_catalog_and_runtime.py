@@ -12,7 +12,6 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import httpx
-from ddgs.exceptions import DDGSException
 from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.test import TestCase
 from django.urls import reverse
@@ -21,7 +20,6 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.constants import (
-    FREE_DOOR_PROBE_QUERY,
     MAX_TOOL_CALLS,
     MODEL_MAX_LENGTH,
     PROBE_FAILURE_TTL_SECONDS,
@@ -358,31 +356,55 @@ class SearchAvailabilityTests(TestCase):
         self.assertFalse(body["search_available"])
 
     def test_duckduckgo_hits_map_and_failures_are_diagnosed(self):
-        from agents.search import search
+        from agents.search import SearchHit, _DuckduckgoPage, search
 
-        class FakeDDGS:
-            def __init__(self, timeout=None):
-                pass
-
-            def text(self, query, max_results=8):
-                return [{"title": "Jane Doe | Site", "href": "https://x.test/jane", "body": "VP of Sales."}]
-
-        with patch("agents.search.DDGS", FakeDDGS), self.settings(SEARCH_PROVIDER="duckduckgo"):
+        hit = SearchHit("Jane Doe | Site", "https://x.test/jane", "VP of Sales.")
+        with (
+            patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(200, [hit])),
+            self.settings(SEARCH_PROVIDER="duckduckgo"),
+        ):
             outcome = search("acme")
         self.assertFalse(outcome.failed)
         self.assertEqual(outcome.hits[0].url, "https://x.test/jane")
 
-        class ThrottledDDGS(FakeDDGS):
-            def text(self, query, max_results=8):
-                raise RuntimeError("ratelimit")
-
-        with patch("agents.search.DDGS", ThrottledDDGS), self.settings(SEARCH_PROVIDER="duckduckgo"):
+        # A status the door does not classify as a refusal is a
+        # per-query error, reported once.
+        with (
+            patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(500, [])),
+            self.settings(SEARCH_PROVIDER="duckduckgo"),
+        ):
             outcome = search("acme")
         self.assertTrue(outcome.failed)
-        # Not the library's own exception, so not a refusal the seam
-        # can classify: a per-query error, reported once.
         self.assertEqual(outcome.cause, "error")
         self.assertEqual(outcome.attempts, 1)
+
+    def test_the_free_door_parses_the_engines_own_page_shape(self):
+        # The library's parser is the one used (its xpaths are the
+        # engine's page contract); this pins that the seam feeds it a
+        # 200 and reads its results, with the status kept beside them.
+        from agents.search import _duckduckgo_fetch
+
+        class Page:
+            status_code = 200
+            text = (
+                "<html><body><div class='result'><div class='body'><h2>Acme</h2>"
+                "<a href='https://acme.com/'>Acme makes things.</a></div></div></body></html>"
+            )
+
+        with patch("ddgs.http_client2.HttpClient2.request", return_value=Page()):
+            page = _duckduckgo_fetch("acme")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(
+            [(h.title, h.url, h.snippet) for h in page.hits], [("Acme", "https://acme.com/", "Acme makes things.")]
+        )
+
+        class Challenge:
+            status_code = 202
+            text = "<html>challenge</html>"
+
+        with patch("ddgs.http_client2.HttpClient2.request", return_value=Challenge()):
+            page = _duckduckgo_fetch("acme")
+        self.assertEqual((page.status_code, page.hits), (202, []))
 
     def test_credentialed_provider_is_available(self):
         with self.settings(**{**_TEST_SETTINGS, "OPENAI_COMPATIBLE_SOURCES": {}}):
@@ -431,25 +453,21 @@ def _serp_response(url, **kwargs):
     return FakeResponse(404, {})
 
 
-class _ScriptedDDGS:
-    """The free door, scripted per query: each entry in a query's queue
-    is a hit list or an exception to raise, consumed in order (the last
-    entry repeats). `calls` records every query the door received, the
-    probe included."""
-
+def _scripted_free_door(pages: list):
+    """The free door scripted as the PAGES the engine answers with, in
+    order (the last repeats): a `_DuckduckgoPage`, or an exception to
+    raise. Returns the fetch stand-in and the list of queries it saw."""
+    queue = list(pages)
     calls: list[str] = []
-    script: dict[str, list] = {}
 
-    def __init__(self, timeout=None):
-        pass
-
-    def text(self, query, max_results=8):
-        type(self).calls.append(query)
-        queue = type(self).script[query]
+    def fetch(query):
+        calls.append(query)
         item = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(item, Exception):
             raise item
         return item
+
+    return fetch, calls
 
 
 class _HeaderedResponse(FakeResponse):
@@ -463,70 +481,60 @@ class SearchBackoffTests(TestCase):
     schedule inside one seam call, the outcome says which door, why,
     and how many tries, and nothing else is retried at all."""
 
-    _NO_RESULTS = DDGSException("No results found.")
-    _HIT = [{"title": "Acme", "href": "https://acme.com", "body": "Acme."}]
-    _PROBE = [{"title": "Wikipedia", "href": "https://wikipedia.org", "body": "Wiki."}]
-
-    def _free_door(self, script: dict) -> list[float]:
-        _ScriptedDDGS.calls = []
-        _ScriptedDDGS.script = {k: list(v) for k, v in script.items()}
+    def _free_door(self, pages: list) -> tuple[list[float], list[str]]:
+        fetch, calls = _scripted_free_door(pages)
         sleeps: list[float] = []
-        self.enterContext(patch("agents.search.DDGS", _ScriptedDDGS))
+        self.enterContext(patch("agents.search._duckduckgo_fetch", side_effect=fetch))
         self.enterContext(patch("agents.search._sleep", sleeps.append))
         self.enterContext(self.settings(SEARCH_PROVIDER="duckduckgo"))
-        return sleeps
+        return sleeps, calls
 
-    def test_a_throttled_free_door_retries_the_same_query_on_the_schedule(self):
-        from agents.search import search
+    def test_a_challenged_free_door_retries_the_same_query_on_the_schedule(self):
+        # 202 is the engine's bot challenge (a page with no results in
+        # it), which the library would have read as "no results".
+        from agents.search import SearchHit, _DuckduckgoPage, search
 
-        sleeps = self._free_door(
-            {
-                "acme": [self._NO_RESULTS, self._NO_RESULTS, self._HIT],
-                FREE_DOOR_PROBE_QUERY: [self._NO_RESULTS, self._NO_RESULTS],
-            }
+        hit = SearchHit("Acme", "https://acme.com", "Acme.")
+        sleeps, calls = self._free_door(
+            [_DuckduckgoPage(202, []), _DuckduckgoPage(429, []), _DuckduckgoPage(200, [hit])]
         )
         outcome = search("acme")
         self.assertFalse(outcome.failed)
         self.assertEqual(outcome.attempts, 3)
         self.assertEqual(outcome.provider, "duckduckgo")
         self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS[:2]))
-        # The probe runs after each empty answer; the query itself is
-        # never rephrased.
-        self.assertEqual(_ScriptedDDGS.calls, ["acme", FREE_DOOR_PROBE_QUERY] * 2 + ["acme"])
+        # The query itself is never rephrased.
+        self.assertEqual(calls, ["acme"] * 3)
 
     def test_a_door_that_never_stops_refusing_exhausts_the_schedule(self):
-        from agents.search import search
+        from agents.search import _DuckduckgoPage, search
 
-        sleeps = self._free_door({"acme": [self._NO_RESULTS], FREE_DOOR_PROBE_QUERY: [self._NO_RESULTS]})
+        sleeps, _ = self._free_door([_DuckduckgoPage(202, [])])
         outcome = search("acme")
         self.assertTrue(outcome.failed)
         self.assertEqual(outcome.cause, "rate_limited")
         self.assertEqual(outcome.attempts, len(SEARCH_BACKOFF_SECONDS) + 1)
         self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS))
 
-    def test_an_honest_empty_is_told_apart_by_the_probe(self):
-        # The library raises the SAME exception for a throttled engine
-        # page and a query that matched nothing; the probe answering
-        # is what makes this an empty answer rather than a refusal.
-        from agents.search import search
+    def test_an_honest_empty_is_a_200_with_nothing_in_it(self):
+        from agents.search import _DuckduckgoPage, search
 
-        sleeps = self._free_door({"acme": [self._NO_RESULTS], FREE_DOOR_PROBE_QUERY: [self._PROBE]})
+        sleeps, calls = self._free_door([_DuckduckgoPage(200, [])])
         outcome = search("acme")
         self.assertFalse(outcome.failed)
         self.assertEqual(outcome.hits, [])
         self.assertEqual(outcome.attempts, 1)
-        self.assertEqual(sleeps, [])
+        self.assertEqual((sleeps, calls), ([], ["acme"]))
 
-    def test_a_free_door_timeout_is_reported_once_without_a_probe(self):
+    def test_a_free_door_timeout_is_reported_once(self):
         from agents.search import search
 
-        sleeps = self._free_door({"acme": [DDGSTimeout("timed out")]})
+        sleeps, calls = self._free_door([DDGSTimeout("timed out")])
         outcome = search("acme")
         self.assertTrue(outcome.failed)
         self.assertEqual(outcome.cause, "timeout")
         self.assertEqual(outcome.attempts, 1)
-        self.assertEqual(sleeps, [])
-        self.assertEqual(_ScriptedDDGS.calls, ["acme"])
+        self.assertEqual((sleeps, calls), ([], ["acme"]))
 
     def _paid_door(self, responses: list) -> tuple[list[float], list[str]]:
         sleeps: list[float] = []
@@ -861,7 +869,9 @@ class AgenticLoopTests(TestCase):
         # DuckDuckGo is the configured door here, tripwired: ONLY the
         # contacts pin can route this query to dataforseo (under the
         # paid-door setting this test would pass with the pin deleted).
-        ddg = patch("agents.search.DDGS", side_effect=AssertionError("the free door must not serve contacts"))
+        ddg = patch(
+            "agents.search._duckduckgo_fetch", side_effect=AssertionError("the free door must not serve contacts")
+        )
         ddg.start()
         self.addCleanup(ddg.stop)
         body = self._run(behavior, serp=serp, settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"})
@@ -1049,9 +1059,10 @@ class AgenticLoopTests(TestCase):
                 return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
             return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
 
-        _ScriptedDDGS.calls, _ScriptedDDGS.script = [], {"Acme": [DDGSException("No results found.")]}
-        _ScriptedDDGS.script[FREE_DOOR_PROBE_QUERY] = [DDGSException("No results found.")]
-        with patch("agents.search.DDGS", _ScriptedDDGS), patch("agents.search._sleep"):
+        from agents.search import _DuckduckgoPage
+
+        challenged, _ = _scripted_free_door([_DuckduckgoPage(202, [])])
+        with patch("agents.search._duckduckgo_fetch", side_effect=challenged), patch("agents.search._sleep"):
             body = self._run(
                 web_behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},

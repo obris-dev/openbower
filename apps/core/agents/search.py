@@ -25,8 +25,7 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 import httpx
-from ddgs import DDGS
-from ddgs.exceptions import DDGSException
+from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.conf import settings
 
@@ -34,7 +33,6 @@ from openbower_schema.agents import TestSearch
 
 from .constants import (
     DATAFORSEO_TIMEOUT_SECONDS,
-    FREE_DOOR_PROBE_QUERY,
     SEARCH_BACKOFF_SECONDS,
     SEARCH_HIT_COUNT,
     SEARCH_TIMEOUT_SECONDS,
@@ -181,42 +179,58 @@ def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> 
     raise AssertionError("unreachable: the last schedule step returns")
 
 
-# ddgs raises this exact message when every engine came back empty,
-# which is ALSO what a throttled engine page produces (a non-200 reads
-# as no results inside the library), so the message alone cannot say
-# which. The probe below can.
-_DDGS_NO_RESULTS = "No results found."
+# The free door is DuckDuckGo's OWN engine, called through the ddgs
+# library's engine class rather than its aggregator. The aggregator
+# fans a query out to a dozen scrapers, drops every engine that
+# refuses (it reads any non-200 as "no results"), and answers from
+# whichever is left, so under partial throttling it silently swaps
+# indexes and an honest-looking empty can mean "Yahoo has not indexed
+# it". The engine class exposes the raw status, which is the one fact
+# a rate limit needs: html.duckduckgo.com answers a bot challenge as
+# 202 (a page with no results in it), and a plain refusal as 403, 429,
+# or 503. A 200 with nothing in it is an honest empty.
+_DUCKDUCKGO_REFUSALS = frozenset({202, 403, 429, 503})
+_DUCKDUCKGO_REGION = "us-en"
+_DUCKDUCKGO_SAFESEARCH = "moderate"
+
+
+class _DuckduckgoPage(NamedTuple):
+    """One results page as the engine answered it: the status the
+    library would have thrown away, and the hits parsed off a 200
+    (empty on any other status)."""
+
+    status_code: int
+    hits: list[SearchHit]
+
+
+def _duckduckgo_fetch(query: str) -> _DuckduckgoPage:
+    """The seam's one library touch: the engine's own request path
+    (its headers and TLS shape included) and its own parser, with the
+    status kept. Tests script pages, not clients."""
+    engine = Duckduckgo(timeout=SEARCH_TIMEOUT_SECONDS)
+    payload = engine.build_payload(
+        query=query, region=_DUCKDUCKGO_REGION, safesearch=_DUCKDUCKGO_SAFESEARCH, timelimit=None
+    )
+    try:
+        response = engine.http_client.request(engine.search_method, engine.search_url, data=payload)
+    finally:
+        engine.http_client.client.close()
+    if response.status_code != 200:
+        return _DuckduckgoPage(response.status_code, [])
+    results = engine.post_extract_results(engine.extract_results(response.text))
+    return _DuckduckgoPage(200, [SearchHit(title=r.title, url=r.href, snippet=r.body) for r in results])
 
 
 def _duckduckgo(query: str, count: int) -> list[SearchHit]:
-    """The free door cannot distinguish "refused" from "nothing
-    matched", so an empty answer is checked against a query that
-    always has hits: the probe answering means the door is open and
-    the query was honestly empty; the probe failing too means the door
-    is throttling us. One extra keyless call per empty answer is the
-    price of not blanking a row for a throttle, and not parking a row
-    for an honest empty."""
     try:
-        results = DDGS(timeout=SEARCH_TIMEOUT_SECONDS).text(query, max_results=count)
+        page = _duckduckgo_fetch(query)
     except DDGSTimeout as e:
         raise SearchTimedOut(str(e)) from e
-    except DDGSException as e:
-        if not _free_door_open():
-            raise SearchRateLimited(str(e)) from e
-        if str(e) == _DDGS_NO_RESULTS:
-            return []
-        raise
-    return [
-        SearchHit(title=str(r.get("title", "")), url=str(r.get("href", "")), snippet=str(r.get("body", "")))
-        for r in results
-    ][:count]
-
-
-def _free_door_open() -> bool:
-    try:
-        return bool(DDGS(timeout=SEARCH_TIMEOUT_SECONDS).text(FREE_DOOR_PROBE_QUERY, max_results=1))
-    except DDGSException:
-        return False
+    if page.status_code in _DUCKDUCKGO_REFUSALS:
+        raise SearchRateLimited(f"duckduckgo returned {page.status_code}")
+    if page.status_code != 200:
+        raise ValueError(f"duckduckgo returned {page.status_code}")
+    return page.hits[:count]
 
 
 # DataForSEO's wire vocabulary (theirs, never ours to rename): only

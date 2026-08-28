@@ -111,11 +111,6 @@ DATAFORSEO_TIMEOUT_SECONDS = 64
 # 15s of waiting at most) before the seam gives up on it. Transport,
 # never the model's budget: a retry of one question is not a new one.
 SEARCH_BACKOFF_SECONDS = (1, 2, 4, 8)
-# The free door cannot say whether it refused us or the query simply
-# matched nothing (a throttled engine page and an honest empty raise
-# the same exception), so an empty answer is checked against a query
-# that always has hits: the probe answering means the door is open.
-FREE_DOOR_PROBE_QUERY = "wikipedia"
 # One validation retry per run: the framework re-asks once on an
 # invalid output, then None is signal.
 MODEL_RETRIES = 1
@@ -137,8 +132,7 @@ TEST_RUN_ERROR_MAX_LENGTH = 256
 # The runtime's worst case for ONE run, derived, never invented: every
 # completion the request budget allows at the completion timeout, plus
 # every paid search at its own timeout and its full backoff schedule
-# (the free door's timeout is shorter, so the paid door's bounds both;
-# the probe it runs on an empty answer fits inside the difference).
+# (the free door's timeout is shorter, so the paid door's bounds both).
 # The wire's poll_budget_seconds
 # publishes THIS (a hung run must not spin the client for the whole
 # stale window).

@@ -473,7 +473,7 @@ class WorkerTestCase(TransactionTestCase):
         # stored, so the refusals are the audit), and once the attempts
         # are spent the cell lands in the state the TOOL owns, never in
         # a bare transient and never as "found".
-        from ddgs.exceptions import DDGSException
+        from agents.search import _DuckduckgoPage
 
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
@@ -491,15 +491,9 @@ class WorkerTestCase(TransactionTestCase):
                 return _answer(info, "found")
             return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "acme.com"})])
 
-        class RefusingDDGS:
-            def __init__(self, timeout=None):
-                pass
-
-            def text(self, query, max_results=8):
-                raise DDGSException("No results found.")
-
         with (
-            patch("agents.search.DDGS", RefusingDDGS),
+            # The engine's bot challenge: a 202 with no results in it.
+            patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(202, [])),
             patch("agents.search._sleep"),
             self.settings(SEARCH_PROVIDER="duckduckgo"),
         ):
