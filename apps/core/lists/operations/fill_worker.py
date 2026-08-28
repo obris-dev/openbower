@@ -469,12 +469,12 @@ class FillWorkerOperation:
         self,
         fill: Fill,
         config: AgentConfig,
-        row_outcome: FillTask,
+        task: FillTask,
         controller: AdaptiveConcurrency,
         breakers: _Breakers,
     ) -> None:
         try:
-            self._run_row_inner(fill, config, row_outcome, controller, breakers)
+            self._run_row_inner(fill, config, task, controller, breakers)
         except DatabaseError:
             close_old_connections()
             raise
@@ -489,7 +489,7 @@ class FillWorkerOperation:
         self,
         fill: Fill,
         config: AgentConfig,
-        row_outcome: FillTask,
+        task: FillTask,
         controller: AdaptiveConcurrency,
         breakers: _Breakers,
     ) -> None:
@@ -500,9 +500,9 @@ class FillWorkerOperation:
         generation = controller.generation()
         # Pre-spend liveness: cancellation granularity is between rows
         # (in-flight spend is sunk cost, stated openly).
-        if not self.queue.fill_is_live(str(row_outcome.fill_id)):
+        if not self.queue.fill_is_live(str(task.fill_id)):
             return
-        row = ListRow.objects.filter(id=row_outcome.row_id, list_id=fill.list_id).first()
+        row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
         if row is None:
             # The list (or the row) went away mid-walk: resolve the fill
             # CANCELLED, a user deletion is never a failure story.
@@ -548,7 +548,7 @@ class FillWorkerOperation:
         # released lease raises it with no park behind it) and not
         # `not_before` (which the next claim clears, so a task that
         # parked and then lost its worker reads as never parked).
-        was_parked = row_outcome.parked
+        was_parked = task.parked
         # Per-row model resolution ON PURPOSE: a run closes its model's
         # client, so concurrent rows must never share one (the first
         # finisher would kill every sibling's completion).
@@ -577,8 +577,8 @@ class FillWorkerOperation:
             # decided here either; the next claim sees the attempt
             # count and gives up.
             parked = self.queue.park_task(
-                row_outcome,
-                backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * row_outcome.attempts,
+                task,
+                backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts,
                 result=result.model_dump(),
             )
             if parked and not was_parked:
@@ -617,7 +617,7 @@ class FillWorkerOperation:
                         # for the column: its own cause (the user's next
                         # step differs).
                         states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-                landed = self.queue.complete_task(fill, row_outcome, states=states, result=result.model_dump())
+                landed = self.queue.complete_task(fill, task, states=states, result=result.model_dump())
                 if not landed:
                     raise _ClaimLost()
         except _ClaimLost:
@@ -640,7 +640,7 @@ class FillWorkerOperation:
             # wire carries, so `make logs` answers "what is slow".
             logger.info(
                 "fill_worker: row %s %s in %.0fs (%.0fs waiting on search) | concurrency %d",
-                row_outcome.row_id,
+                task.row_id,
                 "filled" if answered else declined,
                 row_seconds,
                 search_wait,
