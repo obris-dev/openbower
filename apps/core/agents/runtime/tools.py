@@ -12,6 +12,7 @@ which door the operator picked for the rest)."""
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -31,6 +32,8 @@ from ..constants import (
 )
 from ..search import SearchOutcome, contacts_available, search, search_available
 from .grounding import canonical_url
+
+logger = logging.getLogger(__name__)
 
 # The tool notes are ONE small vocabulary, so the model never reads
 # prose that varies. Each one says what the records list cannot: why
@@ -156,7 +159,7 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
     """Search the web. Returns JSON: {"records": [{"record": N,
     "tool": "web", "title", "url", "snippet"}]}, exactly as the search
     provider returned them."""
-    query = query.strip()[:QUERY_MAX_LENGTH]
+    query = _clamp_query(query.strip(), tool=AgentTool.WEB_SEARCH)
     if not query:
         return _result([], NOTE_EMPTY_QUERY)
     if _already_searched(ctx.deps, query):
@@ -172,7 +175,7 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     query = re.sub(r"(?i)\bsite\s*:\s*\S+\s*", "", query).strip()
     if not query:
         return _result([], NOTE_EMPTY_QUERY)
-    query = f"site:{DEFAULT_PEOPLE_SITE} {query}"[:QUERY_MAX_LENGTH]
+    query = _clamp_query(f"site:{DEFAULT_PEOPLE_SITE} {query}", tool=AgentTool.FIND_CONTACTS)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
     return _pool(ctx.deps, ctx.deps.contacts_search_fn, query, tool="contacts", door=AgentTool.FIND_CONTACTS)
@@ -187,6 +190,19 @@ def build_tools(config: AgentConfig) -> list[Tool]:
     if config.finds_contacts and contacts_available():
         tools.append(Tool(find_contacts))
     return tools
+
+
+def _clamp_query(query: str, *, tool: AgentTool) -> str:
+    """The authored-value clamp at the metered boundary, LOGGED when it
+    bites: a cut query is a different question than the model asked,
+    and a model that keeps writing past the bound is worth knowing
+    about (the tool docstring tells it nothing about the length)."""
+    if len(query) <= QUERY_MAX_LENGTH:
+        return query
+    logger.warning(
+        "%s query truncated from %d to %d chars: %r", tool, len(query), QUERY_MAX_LENGTH, query[:QUERY_MAX_LENGTH]
+    )
+    return query[:QUERY_MAX_LENGTH]
 
 
 def _already_searched(deps: CellDeps, query: str) -> bool:

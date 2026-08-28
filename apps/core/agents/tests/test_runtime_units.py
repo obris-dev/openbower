@@ -200,9 +200,18 @@ class ToolPoolTests(SimpleTestCase):
             seen.append(query)
             return SearchOutcome(query, [], failed=False)
 
-        with patch("agents.runtime.tools.search", side_effect=fake_search):
+        # The clamp is LOGGED: a cut query is a different question than
+        # the model asked, and silence would hide a model that keeps
+        # overrunning the bound.
+        with (
+            patch("agents.runtime.tools.search", side_effect=fake_search),
+            self.assertLogs("agents.runtime.tools", level="WARNING") as logs,
+        ):
             web_search(self._Ctx(CellDeps()), "q" * (QUERY_MAX_LENGTH + 64))
         self.assertEqual(len(seen[0]), QUERY_MAX_LENGTH)
+        self.assertIn(f"web_search query truncated from {QUERY_MAX_LENGTH + 64} to {QUERY_MAX_LENGTH}", logs.output[0])
+        with patch("agents.runtime.tools.search", side_effect=fake_search), self.assertNoLogs("agents.runtime.tools"):
+            web_search(self._Ctx(CellDeps()), "q" * QUERY_MAX_LENGTH)
 
 
 class RenderPromptTests(SimpleTestCase):
