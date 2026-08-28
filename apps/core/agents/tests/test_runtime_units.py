@@ -147,6 +147,48 @@ class ToolPoolTests(SimpleTestCase):
             find_contacts(self._Ctx(deps), "")
         searched.assert_not_called()
 
+    def test_an_exhausted_rate_limit_closes_the_door_for_the_run(self):
+        # The closed note never says "answer from the records already
+        # gathered"; every later call (either tool) is refused BEFORE
+        # the spend and leaves no outcome, so the stored searches show
+        # only what hit the wire.
+        import json
+
+        from agents.runtime.tools import NOTE_DOOR_CLOSED, CellDeps, find_contacts, web_search
+        from agents.search import SearchOutcome
+
+        deps = CellDeps()
+        exhausted = SearchOutcome("acme", [], failed=True, cause="rate_limited", provider="duckduckgo", attempts=5)
+        with patch("agents.runtime.tools.search", return_value=exhausted):
+            first = json.loads(web_search(self._Ctx(deps), "acme"))
+        self.assertEqual(first, {"records": [], "note": NOTE_DOOR_CLOSED})
+        self.assertNotIn("answer from", NOTE_DOOR_CLOSED)
+        self.assertEqual(deps.door_closed, "web_search")
+        with patch("agents.runtime.tools.search") as searched:
+            second = json.loads(web_search(self._Ctx(deps), "acme inc"))
+            third = json.loads(find_contacts(self._Ctx(deps), "VP Sales Acme"))
+        searched.assert_not_called()
+        self.assertEqual(second["note"], NOTE_DOOR_CLOSED)
+        self.assertEqual(third["note"], NOTE_DOOR_CLOSED)
+        self.assertEqual(len(deps.outcomes), 1)
+
+    def test_a_timeout_or_error_leaves_the_door_open(self):
+        import json
+
+        from agents.runtime.tools import NOTE_FAILED, CellDeps, web_search
+        from agents.search import SearchOutcome
+
+        deps = CellDeps()
+        for cause in ("timeout", "error"):
+            with (
+                self.subTest(cause=cause),
+                patch("agents.runtime.tools.search", return_value=SearchOutcome("q " + cause, [], True, cause)),
+            ):
+                note = json.loads(web_search(self._Ctx(deps), "q " + cause))["note"]
+                self.assertEqual(note, NOTE_FAILED)
+                self.assertEqual(deps.door_closed, "")
+        self.assertEqual(len(deps.outcomes), 2)
+
     def test_model_authored_queries_clamp(self):
         from agents.constants import QUERY_MAX_LENGTH
         from agents.runtime.tools import CellDeps, web_search

@@ -176,14 +176,16 @@ services:
     # The worker traps SIGTERM/SIGINT and finishes the rows in flight; a
     # SIGKILL through the grace wastes a metered provider call AND burns
     # one of the row's counted attempts (attempts count at claim). The
-    # grace is the repo's own worst case for one row, ROW_LEASE_STALE_SECONDS
-    # x 6 = 1536s (the same bound TEST_RUN_WORST_CASE_SECONDS derives),
-    # plus headroom for the outcome write: a row that legitimately runs to
+    # grace is the repo's own worst case for one row, the runtime's
+    # TEST_RUN_WORST_CASE_SECONDS (1626s: every completion at its timeout
+    # plus every search at its timeout and full backoff schedule), plus
+    # headroom for the outcome write: a row that legitimately runs to
     # the bound still owes its result, and a grace set exactly AT the
-    # maximum would SIGKILL that write. Docker's default 10s would kill
-    # through nearly every real row. A stop during an active fill can
-    # therefore take minutes; that wait is the point.
-    stop_grace_period: 1600s
+    # maximum would SIGKILL that write. A parity test holds this value
+    # above the constant. Docker's default 10s would kill through nearly
+    # every real row. A stop during an active fill can therefore take
+    # minutes; that wait is the point.
+    stop_grace_period: 1700s
 
   web:
     build: ./web

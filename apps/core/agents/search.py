@@ -10,6 +10,11 @@ of this switch). An explicitly chosen door missing its credentials is
 NOT AVAILABLE: tools gate off in the UI and searches skip honestly.
 The seam stays swappable underneath if a provider ever needs to
 change.
+
+Transport is the seam's, never the model's: a rate limit is retried
+here, SAME query, on a bounded schedule, and the outcome says which
+door served it, why it failed, and how many tries it took. Each door
+classifies its own refusals, because the doors speak differently.
 """
 
 from __future__ import annotations
@@ -21,16 +26,49 @@ from typing import NamedTuple
 
 import httpx
 from ddgs import DDGS
+from ddgs.exceptions import DDGSException
+from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.conf import settings
 
-from .constants import DATAFORSEO_TIMEOUT_SECONDS, SEARCH_HIT_COUNT, SEARCH_TIMEOUT_SECONDS, SearchProvider
+from openbower_schema.agents import TestSearch
+
+from .constants import (
+    DATAFORSEO_TIMEOUT_SECONDS,
+    FREE_DOOR_PROBE_QUERY,
+    SEARCH_BACKOFF_SECONDS,
+    SEARCH_HIT_COUNT,
+    SEARCH_TIMEOUT_SECONDS,
+    SearchFailure,
+    SearchProvider,
+)
 
 logger = logging.getLogger(__name__)
+
+# Sleeping is a module seam so tests assert the schedule instead of
+# waiting it out.
+_sleep = time.sleep
 
 
 class SearchMisconfigured(Exception):
     """An unusable provider reached the seam: a CONFIG error (callers
     gate on availability), never a per-query hazard to swallow."""
+
+
+class SearchRateLimited(Exception):
+    """A door said slow down. `retry_after` is the door's own ask in
+    seconds when it made one (DataForSEO's header); the seam honors it
+    clamped to the schedule's longest step, and takes the schedule's
+    step otherwise."""
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class SearchTimedOut(Exception):
+    """A door said nothing in time. Raised by doors whose transport
+    does not speak httpx (the paid door's httpx timeout is caught by
+    its own type)."""
 
 
 class SearchHit(NamedTuple):
@@ -41,14 +79,37 @@ class SearchHit(NamedTuple):
 
 class SearchOutcome(NamedTuple):
     """One query's result AND its diagnosis: `failed` means the provider
-    errored (timeout, non-200, rate limit), distinct from an honest
-    zero-hit answer. Cells stay blank either way; the DIAGNOSTICS must
-    not be swallowed with the failure, or a throttled provider reads as
-    a bad agent."""
+    errored, distinct from an honest zero-hit answer, and `cause` says
+    why (a SearchFailure value, "" when clean). `provider` is the door
+    that served it and `attempts` how many tries this one call made
+    (1 when clean), so the stored audit shows what actually hit the
+    wire. Cells stay blank either way; the DIAGNOSTICS must not be
+    swallowed with the failure, or a throttled provider reads as a bad
+    agent."""
 
     query: str
     hits: list[SearchHit]
     failed: bool
+    cause: str = ""
+    provider: str = ""
+    attempts: int = 1
+    # Which TOOL asked (an AgentTool value), stamped by the runtime's
+    # pool: the seam serves doors, but the audit a user reads is by
+    # tool.
+    tool: str = ""
+
+    def wire(self) -> TestSearch:
+        """The ONE constructor for the stored and served diagnosis, so
+        the bench's writer and the fill worker's cannot drift."""
+        return TestSearch(
+            query=self.query,
+            hits=len(self.hits),
+            failed=self.failed,
+            cause=self.cause,
+            provider=self.provider,
+            attempts=self.attempts,
+            tool=self.tool,
+        )
 
 
 def _usable(provider: str) -> bool:
@@ -76,29 +137,86 @@ def contacts_available() -> bool:
 
 def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> SearchOutcome:
     """One query's SERP outcome; hits [] on any failure (a cell without
-    evidence stays empty, an outage never fails a fill). `provider`
-    overrides the configured door for callers that require a specific
-    one (find_contacts pins dataforseo). RAISES SearchMisconfigured on
-    an unusable door: availability gates keep the runtime away from
-    here, so arriving anyway is a config error, not a hazard."""
+    evidence stays empty, an outage never fails a fill). A rate limit
+    is retried, SAME query, once per step of SEARCH_BACKOFF_SECONDS;
+    rephrasing is the model's decision, never the seam's. A timeout or
+    any other error is a per-query hazard: reported once, not retried.
+    `provider` overrides the configured door for callers that require
+    a specific one (find_contacts pins dataforseo). RAISES
+    SearchMisconfigured on an unusable door: availability gates keep
+    the runtime away from here, so arriving anyway is a config error,
+    not a hazard."""
     provider = provider or settings.SEARCH_PROVIDER
     if not _usable(provider):
         raise SearchMisconfigured(f"search provider {provider!r} is unknown or missing credentials")
-    try:
-        hits = _DOORS[provider].run(query, count)
-    except Exception as e:  # any provider trouble = no evidence
-        logger.warning("search failed (%s): %s", type(e).__name__, e)
-        return SearchOutcome(query, [], failed=True)
-    logger.info("search %r -> %d hits (%s)", query[:120], len(hits), provider)
-    return SearchOutcome(query, hits, failed=False)
+    door = _DOORS[provider]
+    # One more try than there are pauses: the schedule is the waits
+    # BETWEEN tries.
+    for attempt, pause in enumerate((*SEARCH_BACKOFF_SECONDS, None), start=1):
+        try:
+            hits = door.run(query, count)
+        except SearchRateLimited as e:
+            if pause is None:
+                logger.warning("search rate limited after %d tries (%s): %s", attempt, provider, e)
+                return SearchOutcome(
+                    query, [], failed=True, cause=SearchFailure.RATE_LIMITED, provider=provider, attempts=attempt
+                )
+            wait = min(e.retry_after, max(SEARCH_BACKOFF_SECONDS)) if e.retry_after is not None else pause
+            logger.info("search rate limited (%s); retrying the same query in %ss", provider, wait)
+            _sleep(wait)
+            continue
+        except (SearchTimedOut, httpx.TimeoutException) as e:
+            logger.warning("search timed out (%s): %s", provider, e)
+            return SearchOutcome(
+                query, [], failed=True, cause=SearchFailure.TIMEOUT, provider=provider, attempts=attempt
+            )
+        except Exception as e:
+            # Every other failure is one flag on purpose: a bad payload,
+            # a drained balance, and an outage all mean no evidence for
+            # THIS query, and none of them asks for a retry.
+            logger.warning("search failed (%s: %s): %s", provider, type(e).__name__, e)
+            return SearchOutcome(query, [], failed=True, cause=SearchFailure.ERROR, provider=provider, attempts=attempt)
+        logger.info("search %r -> %d hits (%s, %d tries)", query[:120], len(hits), provider, attempt)
+        return SearchOutcome(query, hits, failed=False, provider=provider, attempts=attempt)
+    raise AssertionError("unreachable: the last schedule step returns")
+
+
+# ddgs raises this exact message when every engine came back empty,
+# which is ALSO what a throttled engine page produces (a non-200 reads
+# as no results inside the library), so the message alone cannot say
+# which. The probe below can.
+_DDGS_NO_RESULTS = "No results found."
 
 
 def _duckduckgo(query: str, count: int) -> list[SearchHit]:
-    results = DDGS(timeout=SEARCH_TIMEOUT_SECONDS).text(query, max_results=count)
+    """The free door cannot distinguish "refused" from "nothing
+    matched", so an empty answer is checked against a query that
+    always has hits: the probe answering means the door is open and
+    the query was honestly empty; the probe failing too means the door
+    is throttling us. One extra keyless call per empty answer is the
+    price of not blanking a row for a throttle, and not parking a row
+    for an honest empty."""
+    try:
+        results = DDGS(timeout=SEARCH_TIMEOUT_SECONDS).text(query, max_results=count)
+    except DDGSTimeout as e:
+        raise SearchTimedOut(str(e)) from e
+    except DDGSException as e:
+        if not _free_door_open():
+            raise SearchRateLimited(str(e)) from e
+        if str(e) == _DDGS_NO_RESULTS:
+            return []
+        raise
     return [
         SearchHit(title=str(r.get("title", "")), url=str(r.get("href", "")), snippet=str(r.get("body", "")))
         for r in results
     ][:count]
+
+
+def _free_door_open() -> bool:
+    try:
+        return bool(DDGS(timeout=SEARCH_TIMEOUT_SECONDS).text(FREE_DOOR_PROBE_QUERY, max_results=1))
+    except DDGSException:
+        return False
 
 
 # DataForSEO's wire vocabulary (theirs, never ours to rename): only
@@ -110,30 +228,27 @@ _DATAFORSEO_TASK_OK = 20000
 # "No Search Results": the provider's honest-empty status, success-shaped.
 DATAFORSEO_NO_RESULTS = 40102
 # "Internal SE Server Error": the provider's own upstream failed, a
-# documented transient worth exactly ONE retry (measured at ~20% of
-# searches during a degraded window; each miss pushes the model
-# toward re-querying its budget away). Binary pause between tries.
+# documented transient (measured at ~20% of searches during a degraded
+# window) that asks for exactly what a rate limit asks for: the same
+# query again, a little later.
 DATAFORSEO_SE_ERROR = 40101
-_DATAFORSEO_RETRY_PAUSE_SECONDS = 2
 # Their billing floor: depths below 10 cost the same 10.
 _DATAFORSEO_DEPTH_FLOOR = 10
 _DATAFORSEO_LANGUAGE = "en"
 _DATAFORSEO_LOCATION_US = 2840
 
 
-def _dataforseo(query: str, count: int) -> list[SearchHit]:
-    """One retry on the provider's OWN transient (40101), then the
-    failure is real and the failed flag tells it."""
+def _retry_after(response: httpx.Response) -> float | None:
+    """The header's delay-seconds form only; the HTTP-date form is
+    rare enough on this door that it takes the schedule's step."""
+    value = response.headers.get("Retry-After", "")
     try:
-        return _dataforseo_once(query, count)
-    except ValueError as e:
-        if str(DATAFORSEO_SE_ERROR) not in str(e):
-            raise
-        time.sleep(_DATAFORSEO_RETRY_PAUSE_SECONDS)
-        return _dataforseo_once(query, count)
+        return float(value) if value else None
+    except ValueError:
+        return None
 
 
-def _dataforseo_once(query: str, count: int) -> list[SearchHit]:
+def _dataforseo(query: str, count: int) -> list[SearchHit]:
     response = httpx.post(
         "https://api.dataforseo.com/v3/serp/google/organic/live/regular",
         json=[
@@ -147,21 +262,26 @@ def _dataforseo_once(query: str, count: int) -> list[SearchHit]:
         auth=(settings.DATAFORSEO_LOGIN, settings.DATAFORSEO_PASSWORD),
         timeout=DATAFORSEO_TIMEOUT_SECONDS,
     )
+    if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
+        raise SearchRateLimited("dataforseo returned 429", retry_after=_retry_after(response))
     if response.status_code != 200:
         raise ValueError(f"dataforseo returned {response.status_code}")
     tasks = response.json().get("tasks") or []
     task = tasks[0] if tasks else {}
-    if task.get("status_code") == DATAFORSEO_NO_RESULTS:
+    status = task.get("status_code")
+    if status == DATAFORSEO_NO_RESULTS:
         # 40102 IS the answer, not an error: the query matched nothing.
         # Read as failure it made the model burn its tool budget
         # re-asking variants of a question with no answer.
         return []
-    if task.get("status_code") != _DATAFORSEO_TASK_OK:
+    if status == DATAFORSEO_SE_ERROR:
+        raise SearchRateLimited(f"dataforseo task returned {status}: {task.get('status_message')}")
+    if status != _DATAFORSEO_TASK_OK:
         # A 200 envelope can carry a failed TASK (insufficient balance
         # is the likely paid-door failure); reading it as an honest
         # zero-hit drought is exactly the misdiagnosis the failed flag
         # exists to prevent.
-        raise ValueError(f"dataforseo task returned {task.get('status_code')}: {task.get('status_message')}")
+        raise ValueError(f"dataforseo task returned {status}: {task.get('status_message')}")
     results = (task.get("result") or [{}])[0].get("items") or []
     return [
         SearchHit(
@@ -176,7 +296,10 @@ def _dataforseo_once(query: str, count: int) -> list[SearchHit]:
 
 class _Door(NamedTuple):
     """One search door: its live call AND its usability, declared
-    together so registering a provider forces both questions."""
+    together so registering a provider forces both questions. A door's
+    `run` raises SearchRateLimited for the refusals the seam should
+    retry and SearchTimedOut (or httpx's timeout) for silence; anything
+    else it raises is a per-query error."""
 
     run: Callable[[str, int], list[SearchHit]]
     usable: Callable[[], bool]

@@ -25,10 +25,29 @@ from ..constants import (
     DEFAULT_PEOPLE_SITE,
     EVIDENCE_MAX_LINES,
     QUERY_MAX_LENGTH,
+    AgentTool,
+    SearchFailure,
     SearchProvider,
 )
 from ..search import SearchOutcome, contacts_available, search, search_available
 from .grounding import canonical_url
+
+# The tool notes are ONE small vocabulary, so the model never reads
+# prose that varies. Each one says what the records list cannot: why
+# it is empty, and what to do about it. Only the closed-door note tells
+# the model to stop; the others say the pool is what it has for THIS
+# query, which leaves the next query its own decision.
+NOTE_EMPTY_QUERY = "empty query"
+NOTE_REPEATED = "already searched that exact query; answer from the records already gathered"
+NOTE_FAILED = "search failed (provider error); the records already gathered are all you have for this query"
+# Never "answer from the records already gathered": with a closed
+# door that sentence is an instruction to guess. The runtime discards
+# the run either way (cell.py); this note just saves the completions a
+# well-behaved model would otherwise spend on rephrases.
+NOTE_DOOR_CLOSED = (
+    "search is unavailable right now (rate limited); stop searching and leave every output empty;"
+    " this row will be retried later"
+)
 
 
 def _live_web_search(query: str) -> SearchOutcome:
@@ -115,9 +134,17 @@ class CellDeps:
     seen: set[str] = field(default_factory=set)
     # WHY a blank row is blank (a StoredCellState value, "" while unset):
     # the answerer and the doctrine guards write it, the fill worker
-    # reads it (transient means retry, the rest are terminal causes).
+    # reads it (the retry causes park the row, the rest are terminal).
     # The bench ignores it; its searches diagnosis already tells.
     blank_cause: str = ""
+    # WHICH tool's door closed for this run (an AgentTool value, ""
+    # while open): set when a search exhausts its backoff, read by every
+    # later tool call (refused without touching the provider) and by
+    # the runtime's verdict. Sibling tool calls of one model turn run
+    # on parallel threads, so two can each burn one backoff before
+    # either sets this; like `seen`, the cost is a little extra waiting,
+    # never a wrong answer, so no lock guards it.
+    door_closed: str = ""
     # The search DOOR rides the dependency channel like every per-run
     # fact; the fill worker wraps these to time the search share of a
     # row without the runtime knowing it is being measured.
@@ -131,10 +158,10 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
     provider returned them."""
     query = query.strip()[:QUERY_MAX_LENGTH]
     if not query:
-        return _result([], "empty query")
+        return _result([], NOTE_EMPTY_QUERY)
     if _already_searched(ctx.deps, query):
-        return _result([], "already searched that exact query; answer from the records already gathered")
-    return _pool(ctx.deps, ctx.deps.web_search_fn(query), tool="web")
+        return _result([], NOTE_REPEATED)
+    return _pool(ctx.deps, ctx.deps.web_search_fn, query, tool="web", door=AgentTool.WEB_SEARCH)
 
 
 def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
@@ -144,11 +171,11 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     "snippet"}]}, exactly as the search provider returned them."""
     query = re.sub(r"(?i)\bsite\s*:\s*\S+\s*", "", query).strip()
     if not query:
-        return _result([], "empty query")
+        return _result([], NOTE_EMPTY_QUERY)
     query = f"site:{DEFAULT_PEOPLE_SITE} {query}"[:QUERY_MAX_LENGTH]
     if _already_searched(ctx.deps, query):
-        return _result([], "already searched that exact query; answer from the records already gathered")
-    return _pool(ctx.deps, ctx.deps.contacts_search_fn(query), tool="contacts")
+        return _result([], NOTE_REPEATED)
+    return _pool(ctx.deps, ctx.deps.contacts_search_fn, query, tool="contacts", door=AgentTool.FIND_CONTACTS)
 
 
 def build_tools(config: AgentConfig) -> list[Tool]:
@@ -175,10 +202,23 @@ def _result(records: list[dict], note: str = "") -> str:
     return json.dumps({"records": records, "note": note} if note else {"records": records}, ensure_ascii=False)
 
 
-def _pool(deps: CellDeps, outcome: SearchOutcome, *, tool: str) -> str:
+def _pool(deps: CellDeps, search_fn: Callable[[str], SearchOutcome], query: str, *, tool: str, door: AgentTool) -> str:
+    """Spend one search and pool what it returned. A closed door is
+    refused BEFORE the spend and appends no outcome, so the stored
+    searches record only what actually hit the wire (a door that just
+    said slow down must not get five more queries in the next
+    second). Any door closing closes the run: once the verdict is a
+    retry, a paid contacts search on this row is money spent on an
+    answer that will be discarded."""
+    if deps.door_closed:
+        return _result([], NOTE_DOOR_CLOSED)
+    outcome = search_fn(query)._replace(tool=door)
     deps.outcomes.append(outcome)
     if outcome.failed:
-        return _result([], "search failed (provider error); answer from the records already gathered")
+        if outcome.cause == SearchFailure.RATE_LIMITED:
+            deps.door_closed = door
+            return _result([], NOTE_DOOR_CLOSED)
+        return _result([], NOTE_FAILED)
     pooled = []
     for hit in outcome.hits:
         # Canonical dedupe: www./regional variants of one page pool

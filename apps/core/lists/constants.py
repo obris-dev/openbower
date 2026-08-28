@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from agents.constants import AgentTool
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
@@ -87,18 +88,16 @@ FILL_CONCURRENCY_HOSTED_START = 4
 # admission reads this same constant so the two lanes cannot drift;
 # the bench keeps its own per-process semaphore as a backstop.
 MAX_ACTIVE_FILLS = 4
-# Consecutive transient rows that fail the FILL config-tier (binary):
-# per-row attempts are patience for flaky moments, this breaker is
-# across-row detection of a dead or throttling provider.
+# Consecutive rows parked for retry that fail the FILL config-tier
+# (binary): per-row attempts are patience for flaky moments, this
+# breaker is across-row detection of a dead or throttling door, the
+# model's or a tool's search door alike (a search door that keeps
+# refusing parks its rows exactly as a throttling model does).
 CONSECUTIVE_TRANSIENT_LIMIT = 8
-# Consecutive failed FREE-door searches that fail the fill (binary): a
-# scraping door under ban pressure would otherwise blank a whole
-# column silently.
-FREE_SEARCH_FAILURE_BREAK = 8
 
 FILL_STATUS_MAX_LENGTH = 16
 FILL_TASK_STATUS_MAX_LENGTH = 16
-CELL_STATE_MAX_LENGTH = 16
+CELL_STATE_MAX_LENGTH = 32
 # The failed fill's two-tier error: code is the machine leg, message is
 # server-authored copy rendered verbatim (bounded like every authored
 # value).
@@ -248,6 +247,25 @@ class StoredCellState(StrEnum):
     TYPE_MISMATCH = "type_mismatch"
     MODEL_ERROR = "model_error"
     TRANSIENT = "transient"
+    # A tool's search door rate-limited the run past its backoff: the
+    # run's answer was discarded (it would have been built on whatever
+    # got through), the row parked and retried, and this is what an
+    # exhausted retry lands as. Keyed by TOOL, because a user reads
+    # "finding contacts" and "web search" as different things even
+    # though the seam under them is one.
+    SEARCH_THROTTLED = "search_throttled"
+    CONTACTS_THROTTLED = "contacts_throttled"
+
+
+# The causes that PARK a row for retry instead of settling a cell (the
+# worker's branch); every other cause is terminal for the run.
+RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.SEARCH_THROTTLED, StoredCellState.CONTACTS_THROTTLED)
+# Which throttled state a closed door lands as, by the tool that
+# closed it (a parity test pins that every tool has one).
+THROTTLED_STATE_BY_TOOL: dict[AgentTool, StoredCellState] = {
+    AgentTool.WEB_SEARCH: StoredCellState.SEARCH_THROTTLED,
+    AgentTool.FIND_CONTACTS: StoredCellState.CONTACTS_THROTTLED,
+}
 
 
 # The worker's idle heartbeat (binary): how long it sleeps when no fill

@@ -12,6 +12,8 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import httpx
+from ddgs.exceptions import DDGSException
+from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -19,9 +21,11 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.constants import (
+    FREE_DOOR_PROBE_QUERY,
     MAX_TOOL_CALLS,
     MODEL_MAX_LENGTH,
     PROBE_FAILURE_TTL_SECONDS,
+    SEARCH_BACKOFF_SECONDS,
     TEST_KEY_MAX_LENGTH,
     TEST_ROW_MAX_KEYS,
     TEST_RUN_MAX_AGE_SECONDS,
@@ -375,6 +379,10 @@ class SearchAvailabilityTests(TestCase):
         with patch("agents.search.DDGS", ThrottledDDGS), self.settings(SEARCH_PROVIDER="duckduckgo"):
             outcome = search("acme")
         self.assertTrue(outcome.failed)
+        # Not the library's own exception, so not a refusal the seam
+        # can classify: a per-query error, reported once.
+        self.assertEqual(outcome.cause, "error")
+        self.assertEqual(outcome.attempts, 1)
 
     def test_credentialed_provider_is_available(self):
         with self.settings(**{**_TEST_SETTINGS, "OPENAI_COMPATIBLE_SOURCES": {}}):
@@ -421,6 +429,161 @@ def _serp_response(url, **kwargs):
     if "dataforseo" in url:
         return FakeResponse(200, _SERP)
     return FakeResponse(404, {})
+
+
+class _ScriptedDDGS:
+    """The free door, scripted per query: each entry in a query's queue
+    is a hit list or an exception to raise, consumed in order (the last
+    entry repeats). `calls` records every query the door received, the
+    probe included."""
+
+    calls: list[str] = []
+    script: dict[str, list] = {}
+
+    def __init__(self, timeout=None):
+        pass
+
+    def text(self, query, max_results=8):
+        type(self).calls.append(query)
+        queue = type(self).script[query]
+        item = queue.pop(0) if len(queue) > 1 else queue[0]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class _HeaderedResponse(FakeResponse):
+    def __init__(self, status_code: int, json_data: dict | None = None, headers: dict | None = None) -> None:
+        super().__init__(status_code, json_data)
+        self.headers = headers or {}
+
+
+class SearchBackoffTests(TestCase):
+    """A rate limit is transport: the SAME query is retried on the
+    schedule inside one seam call, the outcome says which door, why,
+    and how many tries, and nothing else is retried at all."""
+
+    _NO_RESULTS = DDGSException("No results found.")
+    _HIT = [{"title": "Acme", "href": "https://acme.com", "body": "Acme."}]
+    _PROBE = [{"title": "Wikipedia", "href": "https://wikipedia.org", "body": "Wiki."}]
+
+    def _free_door(self, script: dict) -> list[float]:
+        _ScriptedDDGS.calls = []
+        _ScriptedDDGS.script = {k: list(v) for k, v in script.items()}
+        sleeps: list[float] = []
+        self.enterContext(patch("agents.search.DDGS", _ScriptedDDGS))
+        self.enterContext(patch("agents.search._sleep", sleeps.append))
+        self.enterContext(self.settings(SEARCH_PROVIDER="duckduckgo"))
+        return sleeps
+
+    def test_a_throttled_free_door_retries_the_same_query_on_the_schedule(self):
+        from agents.search import search
+
+        sleeps = self._free_door(
+            {
+                "acme": [self._NO_RESULTS, self._NO_RESULTS, self._HIT],
+                FREE_DOOR_PROBE_QUERY: [self._NO_RESULTS, self._NO_RESULTS],
+            }
+        )
+        outcome = search("acme")
+        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.attempts, 3)
+        self.assertEqual(outcome.provider, "duckduckgo")
+        self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS[:2]))
+        # The probe runs after each empty answer; the query itself is
+        # never rephrased.
+        self.assertEqual(_ScriptedDDGS.calls, ["acme", FREE_DOOR_PROBE_QUERY] * 2 + ["acme"])
+
+    def test_a_door_that_never_stops_refusing_exhausts_the_schedule(self):
+        from agents.search import search
+
+        sleeps = self._free_door({"acme": [self._NO_RESULTS], FREE_DOOR_PROBE_QUERY: [self._NO_RESULTS]})
+        outcome = search("acme")
+        self.assertTrue(outcome.failed)
+        self.assertEqual(outcome.cause, "rate_limited")
+        self.assertEqual(outcome.attempts, len(SEARCH_BACKOFF_SECONDS) + 1)
+        self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS))
+
+    def test_an_honest_empty_is_told_apart_by_the_probe(self):
+        # The library raises the SAME exception for a throttled engine
+        # page and a query that matched nothing; the probe answering
+        # is what makes this an empty answer rather than a refusal.
+        from agents.search import search
+
+        sleeps = self._free_door({"acme": [self._NO_RESULTS], FREE_DOOR_PROBE_QUERY: [self._PROBE]})
+        outcome = search("acme")
+        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.hits, [])
+        self.assertEqual(outcome.attempts, 1)
+        self.assertEqual(sleeps, [])
+
+    def test_a_free_door_timeout_is_reported_once_without_a_probe(self):
+        from agents.search import search
+
+        sleeps = self._free_door({"acme": [DDGSTimeout("timed out")]})
+        outcome = search("acme")
+        self.assertTrue(outcome.failed)
+        self.assertEqual(outcome.cause, "timeout")
+        self.assertEqual(outcome.attempts, 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(_ScriptedDDGS.calls, ["acme"])
+
+    def _paid_door(self, responses: list) -> tuple[list[float], list[str]]:
+        sleeps: list[float] = []
+        keywords: list[str] = []
+        queue = list(responses)
+
+        def post(url, **kwargs):
+            keywords.append(kwargs["json"][0]["keyword"])
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+        self.enterContext(patch("agents.search.httpx.post", side_effect=post))
+        self.enterContext(patch("agents.search._sleep", sleeps.append))
+        self.enterContext(self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"))
+        return sleeps, keywords
+
+    def test_the_paid_door_honors_retry_after_clamped_to_the_schedule(self):
+        from agents.search import search
+
+        sleeps, keywords = self._paid_door(
+            [
+                _HeaderedResponse(429, {}, {"Retry-After": "3"}),
+                _HeaderedResponse(429, {}, {"Retry-After": "600"}),
+                FakeResponse(200, _SERP),
+            ]
+        )
+        outcome = search("acme")
+        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.attempts, 3)
+        self.assertEqual(outcome.provider, "dataforseo")
+        self.assertEqual(sleeps, [3, max(SEARCH_BACKOFF_SECONDS)])
+        self.assertEqual(keywords, ["acme"] * 3)
+
+    def test_the_paid_doors_own_transient_task_code_is_a_rate_limit(self):
+        from agents.search import DATAFORSEO_SE_ERROR, search
+
+        sleeps, _ = self._paid_door(
+            [
+                FakeResponse(200, {"tasks": [{"status_code": DATAFORSEO_SE_ERROR, "status_message": "SE error"}]}),
+                FakeResponse(200, _SERP),
+            ]
+        )
+        outcome = search("acme")
+        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.attempts, 2)
+        self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
+
+    def test_a_paid_door_task_failure_is_an_error_reported_once(self):
+        from agents.search import search
+
+        sleeps, keywords = self._paid_door(
+            [FakeResponse(200, {"tasks": [{"status_code": 40201, "status_message": "insufficient balance"}]})]
+        )
+        outcome = search("acme")
+        self.assertTrue(outcome.failed)
+        self.assertEqual(outcome.cause, "error")
+        self.assertEqual(sleeps, [])
+        self.assertEqual(len(keywords), 1)
 
 
 def _tool_returned(messages) -> bool:
@@ -860,6 +1023,42 @@ class AgenticLoopTests(TestCase):
                 body = self._run(behavior, config={**self._TYPED_CONFIG, "tools": {}})
                 self.assertEqual(body["cells"], {})
                 self.assertEqual(body["blank_cause"], "transient")
+
+    def test_a_closed_search_door_discards_the_answer_and_names_the_tool(self):
+        # The model answers confidently from the residue of a throttled
+        # run: the answer is discarded, the row's cause is the retry
+        # state the TOOL owns, and the stored searches show the one
+        # exhausted query.
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
+
+        def serp(url, **kwargs):
+            return _HeaderedResponse(429, {}, {})
+
+        with patch("agents.search._sleep"):
+            body = self._run(behavior, serp=serp)
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "contacts_throttled")
+        self.assertEqual(len(body["searches"]), 1)
+        self.assertEqual(body["searches"][0].cause, "rate_limited")
+
+        def web_behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
+            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
+
+        _ScriptedDDGS.calls, _ScriptedDDGS.script = [], {"Acme": [DDGSException("No results found.")]}
+        _ScriptedDDGS.script[FREE_DOOR_PROBE_QUERY] = [DDGSException("No results found.")]
+        with patch("agents.search.DDGS", _ScriptedDDGS), patch("agents.search._sleep"):
+            body = self._run(
+                web_behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "search_throttled")
 
     def test_a_gated_toggle_never_spends(self):
         # Tools toggled with every door closed is a DECIDABLE blank: no

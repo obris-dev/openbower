@@ -99,7 +99,7 @@ class ClaimTests(TestCase):
         # window and the death-detection window were the same number.
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
-        self.assertTrue(self.queue.park_task(task, backoff_seconds=60))
+        self.assertTrue(self.queue.park_task(task, backoff_seconds=60, result={}))
         self.assertEqual(len(self.queue.claim_batch(fill, free_slots=1).tasks), 0)
         FillTask.objects.filter(id=task.id).update(not_before=timezone.now() - datetime.timedelta(seconds=1))
         again = self.queue.claim_batch(fill, free_slots=1).tasks
@@ -111,7 +111,7 @@ class ClaimTests(TestCase):
         # shimmers, because its task is still queued.
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
-        self.queue.park_task(task, backoff_seconds=0)
+        self.queue.park_task(task, backoff_seconds=0, result={})
         task.refresh_from_db()
         self.assertEqual(task.status, FillTaskStatus.QUEUED)
         self.assertFalse(FillCellState.objects.exists())
@@ -202,7 +202,7 @@ class TerminalWriteTests(TestCase):
         for _ in range(FILL_ROW_ATTEMPTS):
             task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
             self.assertFalse(self.queue.exhausted(task))
-            self.queue.park_task(task, backoff_seconds=0)
+            self.queue.park_task(task, backoff_seconds=0, result={})
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
         self.assertTrue(self.queue.exhausted(task))
@@ -265,7 +265,7 @@ class CompletionTests(TestCase):
         # every reader had to re-derive as finished.
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
-        self.queue.park_task(task, backoff_seconds=60)
+        self.queue.park_task(task, backoff_seconds=60, result={})
         self.assertFalse(self.queue.try_finish(str(fill.id)))
 
     def test_fail_fill_is_cas_from_live_states(self) -> None:

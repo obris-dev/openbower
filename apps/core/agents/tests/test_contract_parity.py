@@ -60,9 +60,29 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         from agents.constants import SearchProvider
         from agents.search import _DOORS
         from conf.settings import base as settings_base
+        from openbower_schema.agents import SearchProviderWire
 
         self.assertEqual(set(_DOORS), set(SearchProvider))
         self.assertEqual(set(settings_base._SEARCH_DOORS), {p.value for p in SearchProvider})
+        self.assertEqual(set(get_args(SearchProviderWire)), {p.value for p in SearchProvider})
+
+    def test_the_worker_stop_grace_clears_one_runs_worst_case(self):
+        # Compose cannot import the constant, so the worker's
+        # stop_grace_period restates it by hand: a grace BELOW the
+        # worst case SIGKILLs a legitimately slow row through its
+        # outcome write, which is exactly what the grace exists to
+        # prevent. The worst case moves whenever a timeout, the tool
+        # budget, or the search backoff schedule moves; this is what
+        # makes the compose value follow.
+        import re
+        from pathlib import Path
+
+        from agents.constants import TEST_RUN_WORST_CASE_SECONDS
+
+        compose = (Path(__file__).resolve().parents[4] / "docker-compose.yml").read_text()
+        graces = [int(value) for value in re.findall(r"^\s*stop_grace_period:\s*(\d+)s\s*$", compose, re.MULTILINE)]
+        self.assertEqual(len(graces), 1, "one worker grace expected in docker-compose.yml")
+        self.assertGreater(graces[0], TEST_RUN_WORST_CASE_SECONDS)
 
 
 class ReservedKeyParityPins(SimpleTestCase):

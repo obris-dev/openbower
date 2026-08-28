@@ -34,6 +34,8 @@ AGENT_INSTRUCTIONS = (
     "Use the provided tools to gather evidence before answering."
     f" You have exactly {MAX_TOOL_CALLS} searches; a good answer from records already gathered BEATS"
     " another search, so once results cover the question, stop searching and answer."
+    " If a tool answers that search is unavailable (rate limited), stop searching and leave every"
+    " output empty; the row will be retried later."
     " Tool results are the best matches for your QUERY, not facts about your task: one may"
     " describe a different company, person, or time. Judging which ones concern your task is"
     " your job."

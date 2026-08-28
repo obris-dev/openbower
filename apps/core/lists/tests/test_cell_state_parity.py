@@ -29,7 +29,7 @@ from django.test import SimpleTestCase
 from openbower_schema.fills import SETTLED_CELL_STATES
 from openbower_schema.lists import WireCellState
 
-from ..constants import StoredCellState
+from ..constants import CELL_STATE_MAX_LENGTH, StoredCellState
 
 STORED_ONLY = {"filled"}
 WIRE_ONLY = {"pending"}
@@ -60,3 +60,18 @@ class CellStateParityTests(SimpleTestCase):
     def test_neither_exclusive_word_leaks_into_the_settled_partition(self):
         # filled is not a blank cause; pending is not terminal.
         self.assertFalse(set(SETTLED_CELL_STATES) & (STORED_ONLY | WIRE_ONLY))
+
+    def test_every_tool_has_a_throttled_state_and_every_retry_cause_re_runs(self):
+        # A closed door lands as the state its TOOL owns; a tool added
+        # without one would KeyError mid-run. And a retry cause that
+        # was also settled would park a row and then never re-run it.
+        from agents.constants import AgentTool
+
+        from ..constants import RETRY_CAUSES, THROTTLED_STATE_BY_TOOL
+
+        self.assertEqual(set(THROTTLED_STATE_BY_TOOL), set(AgentTool))
+        for state in THROTTLED_STATE_BY_TOOL.values():
+            self.assertIn(state, RETRY_CAUSES)
+        self.assertFalse(set(RETRY_CAUSES) & set(SETTLED_CELL_STATES))
+        for state in StoredCellState:
+            self.assertLessEqual(len(state.value), CELL_STATE_MAX_LENGTH)

@@ -168,15 +168,33 @@ class AgentCatalog(BaseModel):
     )
     search_available: bool
     contacts_available: bool
+    search_provider: SearchProviderWire | None = Field(
+        description="Which door serves web search on this deployment (the server's SearchProvider, "
+        "pinned by a parity test), or null where none is configured. Client copy composes it: a "
+        "rate-limited cell names the paid door only where it is a remedy, never to someone already on it."
+    )
+
+
+# The search seam's doors, mirrored from the server enum (pinned).
+SearchProviderWire = Literal["duckduckgo", "dataforseo"]
 
 
 class TestSearch(BaseModel):
-    """One search query's diagnosis: failed means the provider errored
-    (rate limit, outage), distinct from an honest zero-hit answer."""
+    """One search query's diagnosis: failed means the provider errored,
+    distinct from an honest zero-hit answer, and `cause` says why
+    (rate_limited | timeout | error; "" when clean). `provider` is the
+    door that served it, `attempts` how many tries the seam made for
+    this one query (a rate limit is retried, same query, before it
+    counts as failed), and `tool` which tool asked (web_search |
+    find_contacts), so a reader can tell whose door refused."""
 
     query: str
     hits: int
     failed: bool
+    cause: str = ""
+    provider: str = ""
+    attempts: int = 1
+    tool: str = ""
 
 
 TestRunStatus = Literal["pending", "complete", "failed"]

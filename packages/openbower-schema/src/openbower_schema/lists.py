@@ -116,6 +116,11 @@ WireCellState = Literal[
     "type_mismatch",
     "model_error",
     "transient",
+    # A tool's search door kept rate-limiting the row past its retries:
+    # RETRYABLE (the door, not the config, is what refused), keyed by
+    # the tool so the cell can name it.
+    "search_throttled",
+    "contacts_throttled",
 ]
 
 

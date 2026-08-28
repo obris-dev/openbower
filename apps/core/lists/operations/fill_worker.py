@@ -18,12 +18,13 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import DatabaseError, close_old_connections, connections, transaction
 
+from agents.constants import SearchProvider
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
 from agents.runtime.tools import CellDeps
 from openbower_kernel.adaptive import AdaptiveConcurrency
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
-from openbower_schema.agents import AgentConfig, TestSearch
+from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
 from ..constants import (
@@ -32,7 +33,7 @@ from ..constants import (
     FILL_HEARTBEAT_REFRESH_SECONDS,
     FILL_RETRY_BACKOFF_SECONDS,
     FILL_WORKER_IDLE_SECONDS,
-    FREE_SEARCH_FAILURE_BREAK,
+    RETRY_CAUSES,
     FillFailureCode,
     StoredCellState,
 )
@@ -46,8 +47,7 @@ logger = logging.getLogger(__name__)
 
 def paid_search() -> bool:
     """Whether fills run their searches through the METERED door.
-    Public: the command narrates it at startup and the free-door
-    breaker arms off it."""
+    Public: the command narrates it at startup."""
     return bool(settings.DATAFORSEO_LOGIN and settings.DATAFORSEO_PASSWORD)
 
 
@@ -84,44 +84,60 @@ class _ClaimLost(Exception):
     it."""
 
 
-class _Breakers:
-    """The two across-row breakers, shared by a fill's row threads:
-    consecutive transients (a dead or throttling provider) and
-    consecutive FAILED free-door searches (a scraping door under ban
-    pressure). Either trips a config-tier fill failure."""
+_STOPPED = "it stopped rather than blanking the column. Filled cells are kept."
 
-    def __init__(self, *, free_search_door: bool) -> None:
+
+class _Breakers:
+    """The ONE across-row breaker, shared by a fill's row threads:
+    consecutive rows parked for retry mean a dead or throttling door,
+    whichever door it is (the model's, or a tool's search door), and
+    trip a config-tier fill failure that NAMES the door from the
+    cause that tripped it. Per-row attempts are patience for flaky
+    moments; this is the detection that the moment is not passing."""
+
+    def __init__(self, *, search_provider: str) -> None:
         self._lock = threading.Lock()
         self._transients = 0
-        self._search_failures = 0
-        self._free = free_search_door
+        self._search_provider = search_provider
         self.tripped: tuple[str, str] | None = None
 
-    def row_finished(self, *, transient: bool, searches: list, at_floor: bool) -> None:
-        """`at_floor` is whether the AIMD point is already 1. The free
-        door's breaker is a LAST resort: while there is width left to
-        give up, a failing door means back off, not stop. Only failures
-        that persist at one row in flight say the door is refusing us
-        rather than rate-limiting us."""
+    def row_finished(self, *, retry_cause: str) -> None:
+        """`retry_cause` is the RETRY_CAUSES value that parked the row,
+        "" for a row that finished terminally."""
         with self._lock:
             if self.tripped is not None:
                 # First trip wins: the failed fill's error must name
                 # the breaker that actually stopped the spend.
                 return
-            self._transients = self._transients + 1 if transient else 0
+            self._transients = self._transients + 1 if retry_cause else 0
             if self._transients >= CONSECUTIVE_TRANSIENT_LIMIT:
-                self.tripped = (
-                    FillFailureCode.PROVIDER_THROTTLED,
-                    "The model provider is throttling this fill; it stopped rather than blanking the column. Filled cells are kept.",
+                self.tripped = self._attribute(retry_cause)
+
+    def _attribute(self, retry_cause: str) -> tuple[str, str]:
+        """The failed fill's error, tier 1 (server-authored, rendered
+        verbatim): which tool, which door, and the remedy where one
+        exists. Named from the cause that tripped the streak: a mixed
+        streak reports its latest evidence."""
+        if retry_cause == StoredCellState.CONTACTS_THROTTLED:
+            return (
+                FillFailureCode.SEARCH_THROTTLED,
+                f"Finding contacts is being rate-limited by DataForSEO; {_STOPPED}",
+            )
+        if retry_cause == StoredCellState.SEARCH_THROTTLED:
+            if self._search_provider == SearchProvider.DATAFORSEO:
+                return (
+                    FillFailureCode.SEARCH_THROTTLED,
+                    f"Web search is being rate-limited by DataForSEO; {_STOPPED}",
                 )
-            if self._free:
-                for outcome in searches:
-                    self._search_failures = self._search_failures + 1 if outcome.failed else 0
-                if self._search_failures >= FREE_SEARCH_FAILURE_BREAK and at_floor:
-                    self.tripped = (
-                        FillFailureCode.SEARCH_THROTTLED,
-                        "DuckDuckGo is throttling this fill; connect DataForSEO for metered search.",
-                    )
+            return (
+                FillFailureCode.SEARCH_THROTTLED,
+                f"Web search is being rate-limited by the free search provider; {_STOPPED}"
+                " Connect DataForSEO for metered search.",
+            )
+        return (
+            FillFailureCode.PROVIDER_THROTTLED,
+            f"The model provider is throttling this fill; {_STOPPED}",
+        )
 
 
 class _FillState:
@@ -354,7 +370,7 @@ class FillWorkerOperation:
             fill,
             config,
             AdaptiveConcurrency(start=start, ceiling=window.ceiling),
-            _Breakers(free_search_door=config.uses_tools and not paid_search()),
+            _Breakers(search_provider=settings.SEARCH_PROVIDER),
             window.ceiling,
         )
         self._states[str(fill.id)] = state
@@ -418,20 +434,26 @@ class FillWorkerOperation:
 
     def _give_up(self, state: _FillState, task: FillTask) -> None:
         """A task past its attempt cap, closed WITHOUT spending: every
-        column it owed carries TRANSIENT, which is retryable, so a
+        column it owed carries the RETRY cause its last park recorded
+        (a park stores its run, so the cell can say whose door refused:
+        the model's, or a tool's search door), which is retryable, so a
         later refill re-targets the row under a fresh consent.
 
-        Transient rather than model_error because attempts only climb
-        through parks and lost leases, and a park only happens on the
-        infrastructure tier: reaching the cap means the provider kept
-        being unreachable, not that the model answered badly. That is
-        exactly what the cell's copy says, and it is the ONLY writer of
-        the terminal transient blank."""
+        A retry cause rather than model_error because attempts only
+        climb through parks and lost leases, and a park only happens on
+        the infrastructure tier: reaching the cap means a door kept
+        refusing, not that the model answered badly. A task that never
+        parked (its thread died every pass) has no stored cause and
+        lands as transient. This is the ONLY writer of the terminal
+        retry blanks; the stored run stays as the audit."""
+        cause = task.result.get("blank_cause", "") if isinstance(task.result, dict) else ""
         landed = self.queue.complete_task(
             state.fill,
             task,
-            states=cell_truth.uniform(state.fill, StoredCellState.TRANSIENT),
-            result={},
+            states=cell_truth.uniform(
+                state.fill, StoredCellState(cause) if cause in RETRY_CAUSES else StoredCellState.TRANSIENT
+            ),
+            result=task.result or {},
         )
         if landed:
             deltas = {"attempted": 1, "blank": 1}
@@ -535,31 +557,35 @@ class FillWorkerOperation:
         except ModelUnavailable as e:
             self.queue.fail_fill(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             return
-        # One constructor for the persisted searches shape: the bench
-        # seed stores TestSearch dumps into this same column.
-        searches = [TestSearch(query=o.query, hits=len(o.hits), failed=o.failed) for o in run.searches]
-        if run.blank_cause == StoredCellState.TRANSIENT:
-            # A park diagnoses NOTHING: nothing terminal happened, the
-            # cell is still owed, and it still shimmers because its task
-            # is still queued. Exhaustion is not decided here either;
-            # the next claim sees the attempt count and gives up.
-            if self.queue.park_task(row_outcome, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * row_outcome.attempts):
-                if not was_parked:
-                    self.queue.bump(str(fill.id), transient=1)
-            controller.record_throttle(generation)
-            breakers.row_finished(transient=True, searches=run.searches, at_floor=controller.current() <= 1)
-            return
         # What the run PRODUCED, through the contract model, so this
         # writer and the bench's cannot drift: a seeded row and a run
         # row land the same shape in the same column.
         result = CellRunResult(
             cells=dict(run.cells),
             evidence=list(run.evidence),
-            searches=searches,
+            searches=[o.wire() for o in run.searches],
             assessments=dict(run.assessments),
             blank_cause=run.blank_cause,
             declined_cause=run.declined_cause,
         )
+        if run.blank_cause in RETRY_CAUSES:
+            # A park diagnoses NOTHING on the sheet: nothing terminal
+            # happened, the cell is still owed, and it still shimmers
+            # because its task is still queued. The run is STORED
+            # though: the searches that refused are the audit, and the
+            # give-up path reads the cause off it. Exhaustion is not
+            # decided here either; the next claim sees the attempt
+            # count and gives up.
+            parked = self.queue.park_task(
+                row_outcome,
+                backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * row_outcome.attempts,
+                result=result.model_dump(),
+            )
+            if parked and not was_parked:
+                self.queue.bump(str(fill.id), transient=1)
+            controller.record_throttle(generation)
+            breakers.row_finished(retry_cause=run.blank_cause)
+            return
         # Per COLUMN, not per row: a run answers outputs independently,
         # so a column the run never answered carries the declined cause
         # and stays targetable instead of settling as answered.
@@ -620,13 +646,16 @@ class FillWorkerOperation:
                 search_wait,
                 controller.current(),
             )
-        # A FAILED search is a RATE signal, not a clean completion: the
-        # door is saying we are asking too fast, and counting it as
-        # clean climbed the point straight into the ban the breaker
-        # then had to kill the fill over. Backing off is the response;
-        # stopping is what happens when backing off runs out of room.
-        if any(outcome.failed for outcome in run.searches):
+        # A FAILED search is a RATE signal, not a clean completion, and
+        # so is one that only succeeded after the seam backed off (the
+        # door refused at least once; the seam's retry hides that from
+        # the outcome's flag, not from its attempt count): the door is
+        # saying we are asking too fast, and counting it as clean
+        # climbed the point straight into the ban the breaker then had
+        # to kill the fill over. Backing off is the response; stopping
+        # is what happens when backing off runs out of room.
+        if any(outcome.failed or outcome.attempts > 1 for outcome in run.searches):
             controller.record_throttle(generation)
         else:
             controller.record_success(generation)
-        breakers.row_finished(transient=False, searches=run.searches, at_floor=controller.current() <= 1)
+        breakers.row_finished(retry_cause="")

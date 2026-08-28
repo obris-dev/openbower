@@ -41,9 +41,9 @@ FILL_ROW_ATTEMPTS = 4
 # than this, so silence past this window means the CLAIMANT IS GONE (a
 # killed process, a dead thread), not that a row is merely slow. It
 # measures process death, NOT how long a row may take: one run's worst
-# case is six times this number, and a running row keeps its lease
-# renewed the whole way. The client's heartbeat warning judges against
-# it.
+# case (the runtime's TEST_RUN_WORST_CASE_SECONDS) is several multiples
+# of this number, and a running row keeps its lease renewed the whole
+# way. The client's heartbeat warning judges against it.
 ROW_LEASE_STALE_SECONDS = 256
 # Admission budget for the FREE search door (derived): MAX_TOOL_CALLS
 # searches per row times the largest sheet the free door should carry

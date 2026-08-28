@@ -18,6 +18,22 @@
           "title": "Search Available",
           "type": "boolean"
         },
+        "search_provider": {
+          "anyOf": [
+            {
+              "enum": [
+                "duckduckgo",
+                "dataforseo"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which door serves web search on this deployment (the server's SearchProvider, pinned by a parity test), or null where none is configured. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it.",
+          "title": "Search Provider"
+        },
         "support_followup": {
           "description": "The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify.",
           "title": "Support Followup",
@@ -34,7 +50,8 @@
         "support_followup",
         "truncated",
         "search_available",
-        "contacts_available"
+        "contacts_available",
+        "search_provider"
       ],
       "title": "AgentCatalog",
       "type": "object"
@@ -911,7 +928,9 @@
               "unparseable",
               "type_mismatch",
               "model_error",
-              "transient"
+              "transient",
+              "search_throttled",
+              "contacts_throttled"
             ],
             "type": "string"
           },
@@ -1265,8 +1284,18 @@
       "type": "object"
     },
     "TestSearch": {
-      "description": "One search query's diagnosis: failed means the provider errored\n(rate limit, outage), distinct from an honest zero-hit answer.",
+      "description": "One search query's diagnosis: failed means the provider errored,\ndistinct from an honest zero-hit answer, and `cause` says why\n(rate_limited | timeout | error; \"\" when clean). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts as failed), and `tool` which tool asked (web_search |\nfind_contacts), so a reader can tell whose door refused.",
       "properties": {
+        "attempts": {
+          "default": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "cause": {
+          "default": "",
+          "title": "Cause",
+          "type": "string"
+        },
         "failed": {
           "title": "Failed",
           "type": "boolean"
@@ -1275,8 +1304,18 @@
           "title": "Hits",
           "type": "integer"
         },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
         "query": {
           "title": "Query",
+          "type": "string"
+        },
+        "tool": {
+          "default": "",
+          "title": "Tool",
           "type": "string"
         }
       },

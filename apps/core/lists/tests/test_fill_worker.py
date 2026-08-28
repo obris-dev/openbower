@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from agents.constants import SEARCH_BACKOFF_SECONDS
 from openbower_kernel.provider_config import ProviderSpec, canonical_base, make_source
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
@@ -284,7 +285,7 @@ class WorkerTestCase(TransactionTestCase):
         with self._patched(answering_model(lambda prompt: "found")), ThreadPoolExecutor(max_workers=1) as pool:
             state = supervisor._admit(self.fill)
             for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-                state.breakers.row_finished(transient=True, searches=[], at_floor=True)
+                state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
             self.assertIsNotNone(state.breakers.tripped)
             supervisor._serve(self.fill, pool)
         self.fill.refresh_from_db()
@@ -464,6 +465,67 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(task.status, FillTaskStatus.DONE)
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.TRANSIENT)
+
+    def test_a_rate_limited_search_door_parks_the_row_and_the_cell_names_the_tool(self) -> None:
+        # The model searches, the free door refuses past its backoff,
+        # and the model answers anyway from nothing: the answer is
+        # discarded, the row parks like a model 429 would (its run
+        # stored, so the refusals are the audit), and once the attempts
+        # are spent the cell lands in the state the TOOL owns, never in
+        # a bare transient and never as "found".
+        from ddgs.exceptions import DDGSException
+
+        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
+        config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
+        with patch("lists.services.fill_admission.model_for"):
+            solo = self.lists.create(
+                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            )
+            self.lists.add_rows(solo, [{"company": "acme.com"}])
+            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
+                list_id=str(solo.id), config=config, confirmed_row_count=1
+            )
+
+        def fn(messages, info: AgentInfo):
+            if any(part.part_kind == "tool-return" for m in messages for part in m.parts):
+                return _answer(info, "found")
+            return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "acme.com"})])
+
+        class RefusingDDGS:
+            def __init__(self, timeout=None):
+                pass
+
+            def text(self, query, max_results=8):
+                raise DDGSException("No results found.")
+
+        with (
+            patch("agents.search.DDGS", RefusingDDGS),
+            patch("agents.search._sleep"),
+            self.settings(SEARCH_PROVIDER="duckduckgo"),
+        ):
+            self.run_worker(FunctionModel(fn), passes=1)
+            fill.refresh_from_db()
+            task = FillTask.objects.get(fill_id=str(fill.id))
+            self.assertEqual(fill.status, FillStatus.RUNNING)
+            self.assertEqual(fill.transient, 1)
+            self.assertTrue(task.parked)
+            self.assertEqual(task.result["blank_cause"], StoredCellState.SEARCH_THROTTLED)
+            self.assertEqual(task.result["cells"], {})
+            [search] = task.result["searches"]
+            self.assertEqual(
+                (search["cause"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
+            )
+            self.assertEqual(search["attempts"], len(SEARCH_BACKOFF_SECONDS) + 1)
+            self.assertFalse(FillCellState.objects.exists())
+            # The parked task is not yet due, so the first pass here is
+            # idle; the remaining attempts park again, and the claim
+            # past the cap gives up.
+            self.run_worker(FunctionModel(fn), passes=FILL_ROW_ATTEMPTS + 1)
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, FillStatus.COMPLETE)
+        self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
+        self.assertEqual(FillCellState.objects.get().state, StoredCellState.SEARCH_THROTTLED)
+        self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
 
     def test_a_drained_but_live_job_completes_on_the_next_pass(self) -> None:
         # A worker killed between its last terminal write and

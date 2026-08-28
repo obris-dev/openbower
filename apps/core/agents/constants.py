@@ -107,6 +107,15 @@ LIST_TIMEOUT_SECONDS = 16
 PROBE_FAILURE_TTL_SECONDS = 16
 SEARCH_TIMEOUT_SECONDS = 16
 DATAFORSEO_TIMEOUT_SECONDS = 64
+# A rate-limited query is retried, SAME query, on this schedule (binary,
+# 15s of waiting at most) before the seam gives up on it. Transport,
+# never the model's budget: a retry of one question is not a new one.
+SEARCH_BACKOFF_SECONDS = (1, 2, 4, 8)
+# The free door cannot say whether it refused us or the query simply
+# matched nothing (a throttled engine page and an honest empty raise
+# the same exception), so an empty answer is checked against a query
+# that always has hits: the probe answering means the door is open.
+FREE_DOOR_PROBE_QUERY = "wikipedia"
 # One validation retry per run: the framework re-asks once on an
 # invalid output, then None is signal.
 MODEL_RETRIES = 1
@@ -127,12 +136,15 @@ TEST_VALUE_MAX_LENGTH = 512
 TEST_RUN_ERROR_MAX_LENGTH = 256
 # The runtime's worst case for ONE run, derived, never invented: every
 # completion the request budget allows at the completion timeout, plus
-# every paid search at its own. The wire's poll_budget_seconds
+# every paid search at its own timeout and its full backoff schedule
+# (the free door's timeout is shorter, so the paid door's bounds both;
+# the probe it runs on an empty answer fits inside the difference).
+# The wire's poll_budget_seconds
 # publishes THIS (a hung run must not spin the client for the whole
 # stale window).
-TEST_RUN_WORST_CASE_SECONDS = (
-    MAX_TOOL_CALLS + 3
-) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * DATAFORSEO_TIMEOUT_SECONDS
+TEST_RUN_WORST_CASE_SECONDS = (MAX_TOOL_CALLS + 3) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * (
+    DATAFORSEO_TIMEOUT_SECONDS + sum(SEARCH_BACKOFF_SECONDS)
+)
 # A pending run is superseded only after this much SILENCE since its
 # last poll (the poll GET stamps polled_at). Sized ABOVE browser
 # background-tab throttling (a hidden tab's timers drop to about one
@@ -178,6 +190,16 @@ class SearchProvider(StrEnum):
 
     DUCKDUCKGO = "duckduckgo"
     DATAFORSEO = "dataforseo"
+
+
+class SearchFailure(StrEnum):
+    """WHY a search failed, as the seam classifies it: only a rate
+    limit is retried (it is the one failure that asks for a retry),
+    and only a rate limit closes the run's door."""
+
+    RATE_LIMITED = "rate_limited"
+    TIMEOUT = "timeout"
+    ERROR = "error"
 
 
 class AgentTool(StrEnum):

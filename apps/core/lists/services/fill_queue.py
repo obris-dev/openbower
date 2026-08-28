@@ -196,11 +196,14 @@ class FillQueueService:
                 cell_truth.write(fill, row_id=task.row_id, states=states)
         return landed == 1
 
-    def park_task(self, task: FillTask, *, backoff_seconds: int) -> bool:
-        """A 429 or timeout: the task stays QUEUED and comes round
-        again after a real backoff, rather than waiting out a lease it
-        never held. NOTHING is diagnosed, because nothing terminal
-        happened: a parked cell is still pending and still shimmers.
+    def park_task(self, task: FillTask, *, backoff_seconds: int, result: dict) -> bool:
+        """A 429 or timeout (the model's, or a search door's): the task
+        stays QUEUED and comes round again after a real backoff, rather
+        than waiting out a lease it never held. NOTHING is diagnosed on
+        the sheet, because nothing terminal happened: a parked cell is
+        still pending and still shimmers. The run IS stored (`result`,
+        the CellRunResult dump): the refusals it records are the audit,
+        and the give-up path reads its cause.
 
         Exhaustion is not decided here. A task at the cap is claimed
         one more time and written terminal by the claimer, so the same
@@ -216,6 +219,7 @@ class FillQueueService:
                 leased_by="",
                 not_before=timezone.now() + datetime.timedelta(seconds=backoff_seconds),
                 parked=True,
+                result=result,
             )
             == 1
         )

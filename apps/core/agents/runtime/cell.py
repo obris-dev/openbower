@@ -21,9 +21,10 @@ from typing import NamedTuple
 
 from pydantic_ai.models import Model
 
-from lists.constants import StoredCellState
+from lists.constants import THROTTLED_STATE_BY_TOOL, StoredCellState
 from openbower_schema.agents import AgentConfig
 
+from ..constants import AgentTool
 from ..providers import model_for
 from ..search import SearchOutcome
 from .answer import CellAnswerer
@@ -63,12 +64,13 @@ class CellRun(NamedTuple):
 def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: CellDeps):
     """The validated answer, or None for blank cells: ONE call (tools
     are a parameter; the run fills deps through RunContext as the model
-    calls them), ONE doctrine guard (tools meant to ground the answer
-    produced no evidence: writing from model memory is exactly the
-    fabrication path, so even a validated answer is discarded). No
-    salvage anywhere: no validated answer is SIGNAL. And no SPEND on a
+    calls them), then the doctrine guards (a search door that closed
+    mid-run means retry; tools meant to ground the answer produced no
+    evidence: writing from model memory is exactly the fabrication
+    path, so even a validated answer is discarded). No salvage
+    anywhere: no validated answer is SIGNAL. And no SPEND on a
     decidable blank: tools toggled with every door closed can never
-    produce evidence, so the guard fires BEFORE a completion is
+    produce evidence, so that guard fires BEFORE a completion is
     bought."""
     tools = build_tools(config)
     if config.uses_tools and not tools:
@@ -76,6 +78,16 @@ def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: Cell
         deps.blank_cause = StoredCellState.NO_TOOLS_DOOR
         return None
     answer = answerer.answer(prompt, tools, deps)
+    if deps.door_closed:
+        # A search door rate-limited this run past its backoff: the
+        # row is NOT done. Whatever the model answered was built on
+        # the residue of a throttled run (exactly the guess this guard
+        # exists for), so it is discarded and the row is retried, the
+        # same way a model-side rate limit parks it. Outranks the
+        # evidence guard: a closed door is a retry, never a diagnosis.
+        logger.info("cell: %s door closed (rate limited); the row will be retried", deps.door_closed)
+        deps.blank_cause = THROTTLED_STATE_BY_TOOL[AgentTool(deps.door_closed)]
+        return None
     if config.uses_tools and not deps.evidence:
         logger.info("cell: tools enabled but no evidence; writing nothing")
         # The answerer's own cause (a transient, a validation miss)

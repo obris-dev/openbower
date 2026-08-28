@@ -17,7 +17,7 @@ from rest_framework.response import Response
 
 from common.views import ScopedView
 from lists.constants import FillErrorCode
-from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, CatalogModel, TestSearch
+from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, CatalogModel
 from openbower_schema.fills import CellRunResult
 
 from .constants import TEST_RUN_MAX_CONCURRENT
@@ -107,6 +107,9 @@ class AgentCatalogView(_ScopedView):
             truncated=truncated,
             search_available=search_available(),
             contacts_available=contacts_available(),
+            # The test profile pins every door shut with an empty
+            # setting; the wire says "none" as null, never as "".
+            search_provider=settings.SEARCH_PROVIDER or None,
         )
         return Response(wire.model_dump())
 
@@ -153,7 +156,7 @@ def _execute_test(
             result = CellRunResult(
                 cells=run.cells,
                 evidence=run.evidence,
-                searches=[TestSearch(query=o.query, hits=len(o.hits), failed=o.failed) for o in run.searches],
+                searches=[o.wire() for o in run.searches],
                 blank_cause=run.blank_cause,
                 declined_cause=run.declined_cause,
                 assessments=run.assessments,

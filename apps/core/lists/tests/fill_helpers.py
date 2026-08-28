@@ -53,7 +53,7 @@ def settle(fill_id: str, row_id: str, cause: StoredCellState | None = None, caus
     queue = FillQueueService(worker_id=WORKER_ID)
     task = _claim(fill, row_id)
     if cause == StoredCellState.TRANSIENT:
-        assert queue.park_task(task, backoff_seconds=0), f"park missed for {fill_id}/{row_id}"
+        assert queue.park_task(task, backoff_seconds=0, result={}), f"park missed for {fill_id}/{row_id}"
         return
     per_column = causes if causes is not None else ({} if cause is None else cell_truth.uniform(fill, cause))
     states = {key: per_column.get(key, StoredCellState.FILLED) for key in fill.column_keys}
