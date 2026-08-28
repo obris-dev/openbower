@@ -247,9 +247,11 @@ class StoredCellState(StrEnum):
     TYPE_MISMATCH = "type_mismatch"
     MODEL_ERROR = "model_error"
     TRANSIENT = "transient"
-    # A tool's search door rate-limited the run past its backoff: the
-    # run's answer was discarded (it would have been built on whatever
-    # got through), the row parked and retried, and this is what an
+    # A tool's search door never answered the run: it rate-limited
+    # past the backoff, or every search failed (a refusing door also
+    # drops connections, which reads as timeouts). The run's answer
+    # was discarded (it would have been built on whatever got
+    # through), the row parked and retried, and this is what an
     # exhausted retry lands as. Keyed by TOOL, because a user reads
     # "finding contacts" and "web search" as different things even
     # though the seam under them is one.

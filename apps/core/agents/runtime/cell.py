@@ -88,6 +88,17 @@ def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: Cell
         logger.info("cell: %s door closed (rate limited); the row will be retried", deps.door_closed)
         deps.blank_cause = THROTTLED_STATE_BY_TOOL[AgentTool(deps.door_closed)]
         return None
+    if config.uses_tools and not deps.evidence and deps.outcomes and all(o.failed for o in deps.outcomes):
+        # Every search this row made failed and nothing came back: the
+        # door never answered this row, whatever it said (a connect
+        # timeout from a refusing door reads as "timeout", not as a
+        # rate limit, and a single one never closes the door). "None
+        # found" is a claim such a run cannot make, so it parks and
+        # retries under the state of the tool that went unanswered.
+        unanswered = deps.outcomes[-1].tool
+        logger.info("cell: every %s search failed with no evidence; the row will be retried", unanswered)
+        deps.blank_cause = THROTTLED_STATE_BY_TOOL[AgentTool(unanswered)]
+        return None
     if config.uses_tools and not deps.evidence:
         logger.info("cell: tools enabled but no evidence; writing nothing")
         # The answerer's own cause (a transient, a validation miss)

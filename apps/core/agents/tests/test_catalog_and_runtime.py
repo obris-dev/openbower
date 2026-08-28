@@ -453,6 +453,12 @@ def _serp_response(url, **kwargs):
     return FakeResponse(404, {})
 
 
+def _raise_or_return(item):
+    if isinstance(item, Exception):
+        raise item
+    return item
+
+
 def _scripted_free_door(pages: list):
     """The free door scripted as the PAGES the engine answers with, in
     order (the last repeats): a `_DuckduckgoPage`, or an exception to
@@ -1033,6 +1039,43 @@ class AgenticLoopTests(TestCase):
                 body = self._run(behavior, config={**self._TYPED_CONFIG, "tools": {}})
                 self.assertEqual(body["cells"], {})
                 self.assertEqual(body["blank_cause"], "transient")
+
+    def test_a_row_whose_every_search_failed_is_never_none_found(self):
+        # A refusing door also drops connections, which the seam reads
+        # as timeouts, and a single timeout never closes the door. A
+        # run that ends with NO evidence and EVERY search failed was
+        # never answered by the door, so it parks under the tool's
+        # state instead of settling as no_evidence; a run with even one
+        # answered search keeps its honest diagnosis.
+        from agents.search import _DuckduckgoPage
+
+        calls = {"n": 0}
+
+        def behavior(kind, messages, info):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": f"Acme {calls['n']}"})])
+            return _final(info, person="", profile="")
+
+        with patch("agents.search._duckduckgo_fetch", side_effect=DDGSTimeout("timed out")):
+            body = self._run(
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual([s.cause for s in body["searches"]], ["timeout", "timeout"])
+        self.assertEqual(body["blank_cause"], "search_throttled")
+
+        calls["n"] = 0
+        pages = iter([DDGSTimeout("timed out"), _DuckduckgoPage(200, [])])
+        with patch("agents.search._duckduckgo_fetch", side_effect=lambda q: _raise_or_return(next(pages))):
+            body = self._run(
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual([s.cause for s in body["searches"]], ["timeout", ""])
+        self.assertEqual(body["blank_cause"], "no_evidence")
 
     def test_a_closed_search_door_discards_the_answer_and_names_the_tool(self):
         # The model answers confidently from the residue of a throttled

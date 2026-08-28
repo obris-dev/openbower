@@ -121,17 +121,17 @@ class _Breakers:
         if retry_cause == StoredCellState.CONTACTS_THROTTLED:
             return (
                 FillFailureCode.SEARCH_THROTTLED,
-                f"Finding contacts is being rate-limited by DataForSEO; {_STOPPED}",
+                f"Finding contacts is being rate-limited or refused by DataForSEO; {_STOPPED}",
             )
         if retry_cause == StoredCellState.SEARCH_THROTTLED:
             if self._search_provider == SearchProvider.DATAFORSEO:
                 return (
                     FillFailureCode.SEARCH_THROTTLED,
-                    f"Web search is being rate-limited by DataForSEO; {_STOPPED}",
+                    f"Web search is being rate-limited or refused by DataForSEO; {_STOPPED}",
                 )
             return (
                 FillFailureCode.SEARCH_THROTTLED,
-                f"Web search is being rate-limited by the free search provider; {_STOPPED}"
+                f"Web search is being rate-limited or refused by the free search provider; {_STOPPED}"
                 " Connect DataForSEO for metered search.",
             )
         return (

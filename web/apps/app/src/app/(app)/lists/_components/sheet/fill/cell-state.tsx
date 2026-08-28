@@ -39,8 +39,8 @@ const RETRYABLE_CAUSES: Record<RetryableCause, string> = {
   // Keyed by TOOL on the wire, because a user reads "finding
   // contacts" and "web search" as different things even though one
   // seam serves both.
-  search_throttled: "Web search kept rate-limiting this row; retries exhausted",
-  contacts_throttled: "Finding contacts kept rate-limiting this row; retries exhausted",
+  search_throttled: "Web search couldn't be reached for this row (rate limited or refusing); retries exhausted",
+  contacts_throttled: "Finding contacts couldn't be reached for this row (rate limited or refusing); retries exhausted",
   // A cause this build has never heard of. It claims nothing about
   // WHY, because it cannot know: the server named a reason this
   // bundle predates.
