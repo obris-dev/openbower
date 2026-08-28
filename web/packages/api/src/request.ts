@@ -4,7 +4,7 @@
 
 import type { ZodType } from "zod";
 
-import { buildApiUrl } from "./routes.ts";
+import { buildApiFetchUrl } from "./routes.ts";
 
 export type ApiResult<T> =
   | { status: "ok"; data: T }
@@ -21,7 +21,7 @@ export const GENERIC_FAILURE = "Something went wrong. Please try again.";
 // classifier, never here.
 export async function fetchJson(path: string, init?: RequestInit): Promise<{ res: Response; body: unknown } | null> {
   try {
-    const res = await fetch(buildApiUrl(path), init);
+    const res = await fetch(buildApiFetchUrl(path), init);
     const body = res.status === 204 ? null : await res.json().catch(() => null);
     return { res, body };
   } catch {

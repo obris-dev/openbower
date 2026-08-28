@@ -285,6 +285,18 @@ class FillWorkerOperation:
             logger.warning("fill_worker: pausing claims on %s after %d dead row threads", fill.id, state.deaths)
             state.deaths = 0
             return
+        if self.stop.is_set():
+            # A stop request stops BUYING, and this is the line where
+            # buying starts: the claim below stamps an attempt before any
+            # row runs, so a shutdown that outran it would spend both a
+            # metered call and one of the row's retries. It also sits
+            # above the claim-time roster resolve, which is a live network
+            # probe charged per fill per pass: a pass that will buy
+            # nothing has no use for it while the drain is waiting.
+            # Rows already in flight still finish, which is what the drain
+            # is for. Best effort by nature: stop can arrive after this
+            # check, and that pass buys one more batch.
+            return
         # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
         # hours later re-resolves against the current world); a refusal
         # is a config-tier fill failure. The resolved object is

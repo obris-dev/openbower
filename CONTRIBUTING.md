@@ -73,6 +73,18 @@ jobs alongside each part of the codebase as it lands. `make help` lists
 every current target; development setup docs land the same way, with the
 code they describe.
 
+A pnpm MAJOR bump is the one dependency change the containerized stack
+does not absorb on its own: the web dependency volumes are named, so they
+survive a rebuild by design, and the old major's per-package layout then
+stops resolving. Run `make reset-web-deps` once after pulling such a
+change, then `make up`.
+
+The app RUNS in Docker (`make up`) and the checks RUN ON THE HOST:
+`make test` and `make schema` use the host's uv and pnpm against the
+compose database, which is what CI does too, so a green local check and a
+green CI run mean the same thing. Running a check inside a container
+(`make local-exec`) is for diagnosing the container itself.
+
 ## House style
 
 - Match the surrounding code; linters are the authority (ruff for Python,

@@ -1,6 +1,68 @@
-# Local services for the open app. Phase-scoped: services appear when a
-# phase needs them (the app db arrived with auth). Dev data here is cheap
-# to rebuild, so the volume is ephemeral.
+# The full local stack for the open app: db, the Django api, the fill
+# worker, and the web dev servers. `make up` runs it; the containers
+# bind-mount the checkout, so edits hot-reload without a rebuild.
+#
+# The project name is PINNED so every checkout of this repo (a worktree,
+# a renamed clone) resolves to ONE project instead of a rival stack whose
+# containers do not collide but whose published ports do.
+name: openbower
+
+# The core image's shared definition, at the top level rather than on any
+# one service: whichever service is deleted first must not take the build,
+# the env, or the gateway mapping with it.
+x-core-build: &core_build
+  # Build context = repo root: the uv workspace's single lock + every
+  # member pyproject live there; Dockerfile is the core member's.
+  context: .
+  dockerfile: apps/core/Dockerfile
+
+# Optional: `make up` seeds it from .env.example, and the bind mount
+# lets manage.py's own dotenv load it at runtime anyway; a hard
+# requirement here would fail every compose command (db-up included) on a
+# checkout that hasn't run `make up` yet.
+x-core-env-file: &core_env_file
+  - path: ./apps/core/.env
+    required: false
+
+x-core-env: &core_env
+  # This stack IS the local profile by construction, so the profile rides
+  # here (authoritative over the env file) rather than trusting every .env
+  # to say it.
+  DJANGO_ENV: local
+  # The network topology, overriding local.py's localhost seeds. Identity
+  # URLs (OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL) are deliberately ABSENT
+  # here: they name the services for the browser and for the token's
+  # resource indicators, so they stay on localhost. Only transport moves.
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  # By SERVICE NAME over the shared suite network, not through the host
+  # gateway: a loopback-published port (which is how those services are
+  # published, and should be) is unreachable from a container on Linux,
+  # where the gateway is the bridge IP rather than the host's loopback.
+  # Overridable, so a deployment pointing at its own IdP is not stuck with
+  # the sibling dev stack's service names.
+  OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-http://auth:8001}
+  OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-http://data:8003}
+  # Overridable: the default is a host-run Ollama, but the door is any
+  # OpenAI-compatible server, so a remote box or a different port is a
+  # variable rather than an edit here.
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+
+x-host-gateway: &host_gateway
+  # For the genuinely HOST-run process (Ollama). Docker Desktop maps
+  # host.docker.internal automatically; Linux does not, so map it
+  # explicitly or the call dies in DNS. Note that on Linux this reaches
+  # the bridge IP, so a host process must listen beyond loopback for a
+  # container to reach it (OLLAMA_HOST=0.0.0.0 for Ollama's default).
+  - "host.docker.internal:host-gateway"
+
+# Bind the whole workspace for hot-reload (canonical uv pattern); the
+# anonymous volume keeps the .venv the image built OFF the bind mount, so
+# the container's linux venv never lands in the host checkout.
+x-core-volumes: &core_volumes
+  - .:/app
+  - /app/.venv
+
 services:
   db:
     image: postgres:16-alpine
@@ -8,9 +70,201 @@ services:
       POSTGRES_DB: openbower
       POSTGRES_USER: openbower
       POSTGRES_PASSWORD: openbower
-    ports: ["5433:5432"]
+    # Published on 5433, not 5432, so this db never collides with another
+    # Postgres already on the host's default port (suite convention);
+    # host-run tests and psql use 5433. Loopback only: the published port
+    # is for this machine, and sibling containers reach it as `db:5432`.
+    ports: ["127.0.0.1:5433:5432"]
+    volumes:
+      # Named, so the data survives `make down` and dies only with the
+      # explicit `make reset`. An anonymous volume would be orphaned on
+      # every down instead, leaking a full data directory per cycle.
+      - bower_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openbower"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # One-shot pre-start setup, run once per `up` and gated before core and
+  # the worker start (both depend_on it: service_completed_successfully).
+  # Migrate rides here because the local profile's loop is zero-step (a
+  # fresh clone must serve after `make up` alone); keeping it OUT of
+  # core's own command means restarting/rolling core alone doesn't re-run
+  # it.
+  core-setup:
+    build: *core_build
+    image: &core_image openbower-core:local
+    command: sh -c "uv run --frozen --package openbower-core python apps/core/manage.py migrate --no-input
+      && uv run --frozen --package openbower-core python apps/core/manage.py createcachetable"
+    env_file: *core_env_file
+    environment: *core_env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes: *core_volumes
+    extra_hosts: *host_gateway
+
+  core:
+    # core-setup owns the `build:` and every other core service just names
+    # the image: three services declaring one build target race to write
+    # the same tag. Both services here depend on core-setup, so the image
+    # is always built before they start. Pre-start setup lives there too,
+    # so restarting/rolling core alone doesn't re-run it.
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py runserver 0.0.0.0:8002
+    # Loopback only: this is a DEBUG server holding the operator's sheets
+    # and provider access, and ALLOWED_HOSTS is no defense (the Host
+    # header is caller-supplied). Sibling containers use `core:8002`.
+    ports:
+      - "127.0.0.1:8002:8002"
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    networks: [default, suite]
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # A boot failure here should stay loud rather than loop, so no restart
+    # policy; a deployed profile supplies its own supervision.
+    #
+    # Probes /healthz via stdlib urllib (no wget/curl in the image).
+    # urlopen raises HTTPError on 503 so a degraded DB/cache fails the
+    # check just as cleanly as the server being down. The start period
+    # covers a cold first start, where `uv run` re-syncs the venv from
+    # the network before Django serves anything.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/healthz', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 300s
+
+  # The api above RELOADS on edit (runserver + the bind mount). The worker
+  # does not, and cannot: a custom command gets no reloader, and a reloader
+  # kills and respawns, which would drop a row mid flight against a metered
+  # provider. A change to worker code needs `make restart-worker`, and a
+  # restart resumes whatever fill was live. Compose runs exactly ONE
+  # worker (each enforces a source's declared ceiling on its own, so two
+  # double the load on that box).
+  worker:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    # Deliberately NOT on the suite network: nothing in the fill path
+    # calls the IdP or the data service, and `worker` is a name the other
+    # stack also uses, so joining would put two A records behind it.
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # No restart policy, matching core above: in the local profile a crash
+    # is a signal to read. Every restart policy has the daemon-startup
+    # property, `on-failure` included (a drain longer than dockerd's
+    # shutdown timeout exits non-zero, which qualifies), so any of them
+    # brings the worker back ALONE against a db and core that carry none.
+    # The routine failures are already handled in the loop: a DatabaseError
+    # idles and retries, and a per-fill exception is caught per fill.
+    #
+    # The worker traps SIGTERM/SIGINT and finishes the rows in flight; a
+    # SIGKILL through the grace wastes a metered provider call AND burns
+    # one of the row's counted attempts (attempts count at claim). The
+    # grace is the repo's own worst case for one row, ROW_LEASE_STALE_SECONDS
+    # x 6 = 1536s (the same bound TEST_RUN_WORST_CASE_SECONDS derives),
+    # plus headroom for the outcome write: a row that legitimately runs to
+    # the bound still owes its result, and a grace set exactly AT the
+    # maximum would SIGKILL that write. Docker's default 10s would kill
+    # through nearly every real row. A stop during an active fill can
+    # therefore take minutes; that wait is the point.
+    stop_grace_period: 1600s
+
+  web:
+    build: ./web
+    working_dir: /web
+    # pnpm itself is baked into the image (see web/Dockerfile). Install
+    # still runs at start because the node_modules volume mounts would hide
+    # anything baked in; `pnpm install` is a no-op when the lockfile
+    # matches what's already in the volume. `--frozen-lockfile` because a
+    # stale lockfile must refuse here rather than be silently rewritten
+    # through the bind mount from a platform the host did not resolve on.
+    # confirmModulesPurge=false because a container start has no TTY: pnpm
+    # asks before replacing a node_modules laid out by an older major, and
+    # an unanswered prompt aborts the start.
+    # `pnpm dev` runs every app in parallel (the product app on 3003, the
+    # marketing site on 3005), one install for the whole workspace.
+    command: sh -c "pnpm install --frozen-lockfile --config.confirmModulesPurge=false && pnpm dev"
+    environment:
+      # Browser-visible origins (NEXT_PUBLIC_* inlines at build/dev time).
+      NEXT_PUBLIC_API_URL: http://localhost:8002
+      NEXT_PUBLIC_AUTH_URL: http://localhost:8001
+      NEXT_PUBLIC_APP_URL: http://localhost:3003
+      # Server-side fetches cross the compose network instead; localhost
+      # inside this container is this container. Read by @bower/api's
+      # resolveApiBase (the app's SSR fetches) and the marketing session
+      # probe, server-only in both.
+      API_INTERNAL_URL: http://core:8002
+    ports:
+      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:3005:3005"
+    volumes:
+      - ./web:/web
+      # One volume per node_modules and per build cache the workspace
+      # creates. pnpm writes a node_modules into EVERY package with
+      # dependencies (pnpm-workspace.yaml covers apps/* AND packages/*),
+      # and an unmasked one lands in the host checkout carrying linux
+      # symlinks into a store the host does not have, which breaks
+      # host-run pnpm afterwards. A new workspace project needs a line
+      # here.
+      - bower_node_modules:/web/node_modules
+      - bower_app_node_modules:/web/apps/app/node_modules
+      - bower_marketing_node_modules:/web/apps/marketing/node_modules
+      - bower_api_node_modules:/web/packages/api/node_modules
+      - bower_auth_node_modules:/web/packages/auth/node_modules
+      - bower_schema_node_modules:/web/packages/schema/node_modules
+      - bower_ui_node_modules:/web/packages/ui/node_modules
+      - bower_tailwind_node_modules:/web/packages/tailwind-config/node_modules
+      - bower_eslint_node_modules:/web/packages/eslint-config/node_modules
+      - bower_app_next:/web/apps/app/.next
+      - bower_marketing_next:/web/apps/marketing/.next
+    depends_on:
+      # service_healthy (not the default service_started) means web only
+      # starts once core's /healthz is green. Without this, web boots
+      # while Django is still resolving uv venv + running migrations and
+      # the first SSR fetches eat connection-refused.
+      core:
+        condition: service_healthy
+
+# The cross-stack network: the identity provider and data service are a
+# SEPARATE stack (a private repo in dev, the hosted services otherwise),
+# and containers reach them by service name over this network. Declared
+# external so neither stack owns it; `make up` creates it. With those
+# services absent the name simply does not resolve, which is the same
+# outcome as the port being closed.
+# Service names on this network are a SHARED namespace across both
+# stacks (core, auth, data today), so a name added here must not collide
+# with one the other stack joins.
+networks:
+  suite:
+    external: true
+    name: openbower-suite
+
+volumes:
+  bower_pgdata:
+  bower_node_modules:
+  bower_app_node_modules:
+  bower_marketing_node_modules:
+  bower_api_node_modules:
+  bower_auth_node_modules:
+  bower_schema_node_modules:
+  bower_ui_node_modules:
+  bower_tailwind_node_modules:
+  bower_eslint_node_modules:
+  bower_app_next:
+  bower_marketing_next:
