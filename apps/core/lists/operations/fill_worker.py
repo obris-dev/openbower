@@ -37,7 +37,7 @@ from ..constants import (
     FillFailureCode,
     StoredCellState,
 )
-from ..models import Fill, FillTask, ListRow
+from ..models import Fill, FillTask, List, ListRow
 from ..services import cell_truth
 from ..services.fill_queue import FillQueueService
 from ..services.lists import ListNotFound, ListService, RowNotFound
@@ -504,11 +504,19 @@ class FillWorkerOperation:
             return
         row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
         if row is None:
-            # The list (or the row) went away mid-walk: resolve the fill
-            # CANCELLED, a user deletion is never a failure story.
-            # ListService.delete purges the fill in its own txn; this is
-            # the racing walker noticing before that commit lands.
-            self.queue.cancel_fill(str(fill.id))
+            if not List.objects.filter(id=fill.list_id).exists():
+                # The whole list went away mid-walk: resolve the fill
+                # CANCELLED, a user deletion is never a failure story.
+                # ListService.delete purges the fill in its own txn;
+                # this is the racing walker noticing before that
+                # commit lands.
+                self.queue.cancel_fill(str(fill.id))
+                return
+            # The row alone is gone: this task closes as ROW_MISSING (no
+            # cell to diagnose, nothing a resume could owe) and the fill
+            # goes on with the rows that still exist.
+            if self.queue.mark_row_missing(task) and task.parked:
+                self.queue.bump(str(fill.id), transient=-1)
             return
         # No DB in deps callbacks: they execute on the framework's
         # ephemeral executor threads, where a connection opened is a

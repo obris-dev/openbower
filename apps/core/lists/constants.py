@@ -182,11 +182,17 @@ class FillTaskStatus(StrEnum):
     ABANDONED is the durable record of consent granted and NOT spent.
     Cancel writes it over the fill's unclaimed tasks in one statement,
     which is what lets a later resume ask what a stopped fill still
-    owed instead of reconstructing it."""
+    owed instead of reconstructing it.
+
+    ROW_MISSING is the one task outcome that has no cell to carry it:
+    the row was gone when the task came up, so there is nothing to
+    diagnose and nothing a resume could owe (unlike ABANDONED, which a
+    resume re-targets). The fill goes on without it."""
 
     QUEUED = "queued"
     DONE = "done"
     ABANDONED = "abandoned"
+    ROW_MISSING = "row_missing"
 
 
 class FillStatus(StrEnum):

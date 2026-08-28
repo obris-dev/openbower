@@ -33,7 +33,7 @@ from ..constants import (
     FillTaskStatus,
     StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask, ListRow
+from ..models import Fill, FillCellState, FillTask, List, ListRow
 from ..operations.fill_worker import FillWorkerOperation, _FillState
 from ..services.fill_admission import FillAdmissionService
 from ..services.fill_queue import FillQueueService
@@ -520,6 +520,31 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.SEARCH_THROTTLED)
         self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
+
+    def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
+        # One row gone, the list still here: its task is ROW_MISSING
+        # (nothing to diagnose, nothing a resume could owe), no cell
+        # state is written for it, and the other row fills normally.
+        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
+        ListRow.objects.filter(id=gone.id).delete()
+        self.run_worker(answering_model(lambda prompt: "found"))
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
+        self.assertEqual(counting(self.fill), {"attempted": 1, "filled": 1})
+        statuses = {t.row_id: t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}
+        self.assertEqual(statuses[str(gone.id)], FillTaskStatus.ROW_MISSING)
+        self.assertEqual(set(statuses.values()), {FillTaskStatus.ROW_MISSING, FillTaskStatus.DONE})
+        self.assertFalse(FillCellState.objects.filter(row_id=str(gone.id)).exists())
+
+    def test_a_purged_list_cancels_the_fill(self) -> None:
+        # The whole list gone is a different fact: nothing is owed to
+        # anyone, and a user deletion is never a failure story.
+        ListRow.objects.filter(list_id=str(self.sheet.id)).delete()
+        List.objects.filter(id=self.sheet.id).delete()
+        self.run_worker(answering_model(lambda prompt: "found"))
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.CANCELLED)
+        self.assertFalse(FillCellState.objects.exists())
 
     def test_a_drained_but_live_job_completes_on_the_next_pass(self) -> None:
         # A worker killed between its last terminal write and

@@ -196,6 +196,24 @@ class FillQueueService:
                 cell_truth.write(fill, row_id=task.row_id, states=states)
         return landed == 1
 
+    def mark_row_missing(self, task: FillTask) -> bool:
+        """Close a task whose row no longer exists: terminal, with no
+        cell to diagnose and nothing a resume could owe. The same CAS
+        as the other terminal writes, so a reclaimed lease misses."""
+        return (
+            FillTask.objects.filter(
+                id=task.id,
+                leased_by=self.worker_id,
+                status=FillTaskStatus.QUEUED,
+            ).update(
+                status=FillTaskStatus.ROW_MISSING,
+                result={},
+                leased_at=None,
+                leased_by="",
+            )
+            == 1
+        )
+
     def park_task(self, task: FillTask, *, backoff_seconds: int, result: dict) -> bool:
         """A 429 or timeout (the model's, or a search door's): the task
         stays QUEUED and comes round again after a real backoff, rather
