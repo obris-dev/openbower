@@ -118,19 +118,49 @@ function resolveOrigin(fromEnv: string | undefined, devFallback: string, varName
   return devFallback;
 }
 
-/** App backend origin (no trailing slash). Throws in prod if unset. */
+/** The app backend's IDENTITY: the origin the BROWSER dials. Throws in
+ * prod if unset. Every value handed to a browser (a redirect Location,
+ * an href, a serialized prop) comes from here. */
 export function resolveApiBase(): string {
   return resolveOrigin(process.env.NEXT_PUBLIC_API_URL, "http://localhost:8002", "NEXT_PUBLIC_API_URL");
 }
 
-/** IdP origin (no trailing slash). Throws in prod if unset. */
+/** TRANSPORT for fetches this PROCESS makes, which is a different fact
+ * from the identity above: a container's localhost is itself, so compose
+ * supplies API_INTERNAL_URL as the sibling-service route. Server-only and
+ * runtime-read; absent, it collapses to the identity, so host runs and
+ * hosted deploys configure nothing.
+ *
+ * Never hand this to a browser: `core:8002` is a compose service name
+ * that resolves nowhere outside the network. That is why the two bases
+ * are separate functions and the fetch funnel is the only caller (the
+ * same split auth_client/idp_urls.py draws server-side). */
+function resolveApiInternalBase(): string {
+  if (typeof window === "undefined") {
+    const internal = process.env.API_INTERNAL_URL?.replace(/\/$/, "");
+    if (internal) return internal;
+  }
+  return resolveApiBase();
+}
+
+/** IdP origin (no trailing slash). Throws in prod if unset. No internal
+ * twin on purpose: nothing server-side here calls the IdP (the browser
+ * navigates to it, and Django owns the server-to-server calls through
+ * its own OPENBOWER_AUTH_INTERNAL_URL). */
 export function resolveAuthBase(): string {
   return resolveOrigin(process.env.NEXT_PUBLIC_AUTH_URL, "http://localhost:8001", "NEXT_PUBLIC_AUTH_URL");
 }
 
-/** Join the app base with an `apiRoutes` path (absolute URLs pass through). */
+/** Join the app's IDENTITY base with an `apiRoutes` path (absolute URLs
+ * pass through). For URLs the browser will follow. */
 export function buildApiUrl(path: string): string {
   return path.startsWith("http") ? path : `${resolveApiBase()}${path}`;
+}
+
+/** Join the TRANSPORT base with an `apiRoutes` path. For the fetch
+ * funnel only (see resolveApiInternalBase). */
+export function buildApiFetchUrl(path: string): string {
+  return path.startsWith("http") ? path : `${resolveApiInternalBase()}${path}`;
 }
 
 /** Join the IdP base with an `authRoutes` path (absolute URLs pass through). */

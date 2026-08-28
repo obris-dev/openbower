@@ -22,23 +22,46 @@ Run requirements and setup docs land with the phases that need them.
 
 ## Running it (the self-host footprint)
 
-A working deploy is four services. `docker-compose.yml` carries the
-database; the other three run as processes, and a containerized deploy
-runs the same commands as services next to the compose `db`:
+A working deploy is four long-running services plus a one-shot
+migrator, and `docker-compose.yml` carries all of them: `make up` on
+a fresh clone builds the images, seeds `apps/core/.env` from its
+example, and serves. The containers bind-mount the checkout, so edits
+hot-reload without a rebuild.
 
-| Service | What it runs | Local target |
-|---------|--------------|--------------|
-| db      | Postgres 16 (the compose service; host port 5433 locally) | `make db-up` |
-| api     | the Django backend on :8002 | `make api-local` |
-| worker  | `manage.py fill_worker`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make worker-local` |
-| web     | the Next.js app on :3003 | `make web-local` |
+| Service | What it runs | Where to look |
+|---------|--------------|---------------|
+| db      | Postgres 16 (host port 5433) | `make local-dbshell` for psql |
+| core-setup | migrations and the cache table, once per start; core and the worker wait for it to finish | `make logs` |
+| core    | the Django api on :8002 | `make logs-core` |
+| worker  | `manage.py fill_worker`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
+| web     | the Next.js apps: the product app on :3003, the marketing site on :3005 | `make logs-web` |
 
-`make local` starts api, worker, and web detached with the db up;
-`make stop` stops them, and `make logs` tails
-`/tmp/openbower/api.log`, `/tmp/openbower/worker.log`, and
-`/tmp/openbower/web.log`. The worker takes `--once` (exit when no job
-has claimable work, the CI smoke), and SIGTERM or SIGINT lets rows in
-flight finish before it exits, so a supervisor can restart it safely.
+`make stop` halts the stack in place and `make up` resumes it;
+`make down` removes the containers; the database and the web
+dependencies survive in named volumes, while the Python venv is an
+anonymous volume the next start re-syncs (`make prune-venvs` clears the
+strays). `make reset` removes the named volumes too, which is how you
+get a clean database. The stack needs Docker Compose v2.24 or newer. `make logs` tails
+everything. Compose runs exactly ONE worker. The worker takes `--once`
+(exit when no job has claimable work, the suite's smoke), and SIGTERM
+or SIGINT lets rows in flight finish before it exits, so a restart is
+always safe: it can also take a while, because a row already talking to
+a provider is allowed to finish. `make db-up` starts just the database,
+which is what the host-run test suite needs.
+
+Signing in needs an identity provider, which is a SEPARATE service (the
+hosted one, or a local stack in development) along with the data service
+behind look-alike discovery. The containers reach both by name over a
+docker network called `openbower-suite`, which `make up` creates; a
+bare `docker compose up` will refuse until that network exists. Repointing the app at a different identity provider means setting both
+halves: `OPENBOWER_AUTH_URL`, the IDENTITY (the browser's authorize
+target, and the audience the token names), and
+`OPENBOWER_AUTH_INTERNAL_URL`, the transport this process dials. The
+data service takes the matching pair. The two halves take DIFFERENT
+channels under compose: the identity pair is deliberately absent from
+the `environment:` block, so it comes from `apps/core/.env`, while the
+transport pair is interpolated there and so comes from your shell or a
+project-root `.env`.
 
 Environment facts the footprint needs (`apps/core/.env.example`
 carries the full annotated list):

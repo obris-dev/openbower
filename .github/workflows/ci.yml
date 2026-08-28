@@ -21,6 +21,16 @@ jobs:
       - name: Branch name follows <type>/<kebab-slug>
         run: sh scripts/check-branch-name.sh "$HEAD_REF"
 
+  # The stack file is the only way to run the app, so a malformed anchor,
+  # a bad depends_on condition, or an env_file path that only resolves on
+  # the author's machine fails here rather than on a contributor's first
+  # clone.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config -q
+
   lint-python:
     runs-on: ubuntu-latest
     steps:
@@ -68,9 +78,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No version pin: action-setup reads packageManager from
+      # web/package.json, which is the one home for it (the web image
+      # does the same via corepack).
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -1,0 +1,8 @@
+# Build context for the web dev image is the web/ workspace. Exclude
+# installed/built artifacts so the container does a clean `pnpm install` from
+# the lockfile (no host node_modules leaking in) and the context stays small.
+**/node_modules
+**/.next
+**/dist
+.DS_Store
+.idea

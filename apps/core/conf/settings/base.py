@@ -113,6 +113,16 @@ OPENBOWER_AUTH_URL = os.environ["OPENBOWER_AUTH_URL"].rstrip("/")
 # URIs protect the flow.
 OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "openbower-app")
 
+# Server-to-server transport to the IdP. Inside a container, localhost is
+# the container, so the network path this process uses can differ from the
+# browser's. OPENBOWER_AUTH_URL stays the service's IDENTITY everywhere it
+# names the service (resource indicators, browser navigation); this base
+# carries only the HTTP calls this process makes itself (token exchange,
+# revocation, /me). Defaults to the canonical URL, so host runs set nothing.
+# `or`, not get(default): a set-but-empty `NAME=` must fall back, not
+# become a relative URL that fails every call to this service.
+OPENBOWER_AUTH_INTERNAL_URL = (os.environ.get("OPENBOWER_AUTH_INTERNAL_URL") or OPENBOWER_AUTH_URL).rstrip("/")
+
 # The IdP's OWN API version prefix, for the cross-service /me call. Separate
 # from this app's API_VERSION_PREFIX so bumping ours never repoints it.
 OPENBOWER_AUTH_API_VERSION = os.environ.get("OPENBOWER_AUTH_API_VERSION", "v1")
@@ -122,6 +132,11 @@ OPENBOWER_AUTH_API_VERSION = os.environ.get("OPENBOWER_AUTH_API_VERSION", "v1")
 # access token (which carries data:read). Same settings trio as the IdP
 # client above. Required; local.py / cloud.py supply env defaults.
 OPENBOWER_DATA_URL = os.environ["OPENBOWER_DATA_URL"].rstrip("/")
+# Same identity/transport split as the IdP above: every data-service call is
+# server-to-server, so transport crosses this base while OPENBOWER_DATA_URL
+# stays the audience the token names. Defaults to the canonical URL (`or`,
+# not get(default), for the same set-but-empty reason as the IdP base).
+OPENBOWER_DATA_INTERNAL_URL = (os.environ.get("OPENBOWER_DATA_INTERNAL_URL") or OPENBOWER_DATA_URL).rstrip("/")
 OPENBOWER_DATA_API_VERSION = os.environ.get("OPENBOWER_DATA_API_VERSION", "v1")
 DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"))
 

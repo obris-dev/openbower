@@ -1,5 +1,15 @@
+# COMPOSE_PROJECT_NAME in the environment OVERRIDES the compose file's
+# own `name:`, which would split one checkout into two projects with
+# their own containers and volumes. Passing -p makes the pin
+# authoritative over the environment.
+PROJECT := openbower
+COMPOSE := docker compose -p $(PROJECT)
+# Exported as well as passed, so a raw `docker compose` in any recipe or
+# sub-shell resolves to the same project.
+export COMPOSE_PROJECT_NAME := $(PROJECT)
+
 .DEFAULT_GOAL := help
-.PHONY: help hooks db-up api-local web-local worker-local local stop logs test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-web local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -15,86 +25,132 @@ hooks: ## Install the git pre-commit hook (branch-name check)
 	chmod +x "$$hook"; \
 	echo "pre-commit hook installed at $$hook"
 
-db-up: ## Start the databases (docker compose) and wait for health
-	docker compose up -d --wait
+db-up: suite-network ## Start just the database (what host-run tests need)
+	$(COMPOSE) up -d --wait db
 
-api-local: db-up ## Run the app backend on :8002, attached (migrate + cache table first)
-	cd apps/core && uv run python manage.py migrate \
-		&& uv run python manage.py createcachetable \
-		&& uv run python manage.py runserver 8002
+# The .env seed as a file rule, so every target that starts the stack
+# gets it: without it core dies on the required DJANGO_SECRET_KEY, and
+# env_file is deliberately optional so compose itself will not say why.
+# ORDER-ONLY prerequisite (the `|`): seed only when the file is ABSENT.
+# A normal prerequisite rebuilds whenever the example is newer, so a pull
+# that touched .env.example would overwrite the operator's real keys.
+apps/core/.env: | apps/core/.env.example
+	@cp $(firstword $|) $@
+	@echo "seeded $@ from .env.example (dev values; edit it for real credentials)"
 
-web-local: ## Run the web app on :3003, attached
-	cd web/apps/app && pnpm dev
+# The cross-stack network the IdP and data service share with this stack
+# (see docker-compose.yml). Idempotent, and created by whichever stack
+# comes up first.
+suite-network:
+	@docker network inspect openbower-suite >/dev/null 2>&1 && exit 0; \
+	docker network create openbower-suite >/dev/null 2>&1 \
+		|| docker network inspect openbower-suite >/dev/null 2>&1 \
+		|| { echo "could not create the openbower-suite network:"; \
+		     docker network create openbower-suite >/dev/null; exit 1; }
 
-worker-local: db-up ## Run the fill worker attached (SIGINT finishes rows in flight)
-	cd apps/core && uv run python manage.py fill_worker
+# --wait-timeout covers the SERIAL cold path, not one term of it:
+# core-setup syncs its own venv, then core syncs its own (they hold
+# separate anonymous volumes), and `build` renews both by construction.
+# A bound above that chain keeps a container stuck RESTARTING from
+# blocking the target forever, without failing a start that is merely
+# slow.
+up: apps/core/.env suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3005, fill worker)
+	$(COMPOSE) up -d --wait --wait-timeout 900
+	@echo "up: api :8002, app :3003, marketing :3005, fill worker (make logs to tail, make stop to stop)"
 
-# Matching processes, MINUS this recipe's own shell. Make runs a whole
-# recipe line as `sh -c "<line>"`, so that line's own text (the pattern,
-# and the start command beside it) is in the shell's command line and
-# pgrep -f matches it. BSD pgrep hides this by excluding its ancestors;
-# procps (Linux) does not, so the guard below found itself and
-# `make local` would start no worker at all on a clean Linux box.
-# Excluding $$ makes both platforms agree.
-pids = pgrep -f "$(1)" | grep -vx "$$$$"
-running = $(call pids,$(1)) | grep -q .
-# Kill matching processes, skipping any SHELL that merely carries the
-# pattern in its own command line. `while read` forks a subshell of
-# the recipe shell, which inherits that whole command line and is
-# pgrep's SIBLING rather than its ancestor, so neither BSD's ancestor
-# exclusion nor the $$ filter above removes it: the loop SIGTERMs
-# itself and the real processes survive. Matching on the executable
-# instead of the pid answers "is this actually a service" directly.
+# Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
+# REMOVED with no policy to bring it back, and nothing else drains the
+# fill queue. Recover with `make up`.
 #
-# A DENY list, not an allow list: comm is settable (a runtime that
-# renames itself would survive an allow list and leave the port held,
-# which is the failure you only find on the next start). Skipping
-# shells fails toward killing instead, which is safe because the
-# pattern above is already specific to one service.
-kill_matching = $(call pids,$(1)) | while read pid; do \
-		case "$$(ps -o comm= -p $$pid 2>/dev/null)" in \
-			""|*sh) ;; \
-			*) kill "$$pid" 2>/dev/null || true ;; \
-		esac; \
-	done
+# --renew-anon-volumes: the anonymous .venv volume survives a recreate
+# otherwise, so a freshly built image's venv would be masked by the old
+# container's and the rebuild would deliver nothing.
+build: apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
+	$(COMPOSE) up --build -d --renew-anon-volumes --wait --wait-timeout 900
 
-local: db-up ## Start everything DETACHED (api :8002, web :3003, fill worker; logs in /tmp/openbower)
-	@mkdir -p /tmp/openbower
-	cd apps/core && uv run python manage.py migrate --no-input >/dev/null \
-		&& uv run python manage.py createcachetable >/dev/null
-# The API RELOADS here: this profile is a checkout running on your own
-# machine, so an edit is meant to be live without a restart. The fill
-# worker below does not, and cannot: a custom command gets no reloader,
-# and a reloader kills and respawns, which would drop a row mid flight
-# against a metered provider. So a change to WORKER code still needs a
-# restart, and a restart resumes whatever fill was live.
-	cd apps/core && (nohup uv run python manage.py runserver 8002 > /tmp/openbower/api.log 2>&1 &)
-	@$(call running,manage.py fill_worker) \
-		&& echo "fill worker already running; not starting a second (ONE per deploy: each enforces a source's declared ceiling on its own, so two double the load on that box)" \
-		|| (cd apps/core && nohup uv run python manage.py fill_worker > /tmp/openbower/worker.log 2>&1 &)
-	cd web/apps/app && (nohup pnpm dev > /tmp/openbower/web.log 2>&1 &)
-	@echo "up: api :8002, web :3003, fill worker (make logs to tail, make stop to stop)"
+down: ## Stop and remove the stack's containers (the db's data and installed dependencies survive)
+	$(COMPOSE) down
 
-stop: ## Stop the detached services (containers keep running; docker compose stop for those)
-	-@$(call kill_matching,manage.py runserver 8002)
-	-@$(call kill_matching,manage.py fill_worker)
-	-@$(call kill_matching,next dev.*3003)
+reset: ## Remove the stack AND its volumes (wipes the dev database and the installed dependencies)
+	$(COMPOSE) down -v
 
-logs: ## Tail the detached services' logs
-	tail -n 40 -F /tmp/openbower/api.log /tmp/openbower/worker.log /tmp/openbower/web.log
+stop: ## Stop the stack in place, waiting for the worker to finish rows in flight (make up resumes)
+	$(COMPOSE) stop
 
-test-core: ## Run the app backend's suite
+# Compose-file edits are applied by RECREATING a service, which restart
+# does not do: docker compose up -d --no-deps <service>. Without
+# --no-deps that also re-runs core-setup, whose cold venv sync is what
+# core's start period is sized for.
+restart: ## Restart all services in place (compose-file edits need make up, which recreates)
+	$(COMPOSE) restart
+
+restart-core: ## Restart just the api
+	$(COMPOSE) restart core
+
+restart-worker: ## Restart just the fill worker (what a change to worker code needs; it has no reloader)
+	$(COMPOSE) restart worker
+
+restart-web: ## Restart just the web container (app + marketing); use when host-side edits have confused its dev server
+	$(COMPOSE) restart web
+
+# The reclaim path for the anonymous .venv volumes that build and down
+# cycles strand, one per container. Scoped by NAME SHAPE only (a 64-hex
+# id), so it can never match a named volume (this stack names every one
+# that matters), but it IS daemon-wide: another project's dangling
+# anonymous volumes go with it, including a stack whose database volume
+# was never named.
+# The web dependency volumes are NAMED, so they survive `down` and a
+# rebuild by design. A pnpm MAJOR bump is the case where that is wrong:
+# the per-package trees keep the old major's layout while the root is
+# rewritten, and modules stop resolving. Recreating them is the migration.
+reset-web-deps: ## Recreate the web dependency volumes (needed after a pnpm major bump)
+	$(COMPOSE) rm -sf web >/dev/null 2>&1 || true
+	@docker volume ls --format '{{.Name}}' \
+		| grep -E '^$(PROJECT)_bower_.*(node_modules|next)$$' \
+		| xargs -r docker volume rm >/dev/null
+	@echo "web dependency volumes removed; the next make up reinstalls them"
+
+prune-venvs: ## Remove the dangling anonymous venv volumes left by build/down cycles
+	@vols="$$(docker volume ls -qf dangling=true -f 'name=^[0-9a-f]{64}$$')"; \
+	[ -n "$$vols" ] || { echo "nothing to reclaim"; exit 0; }; \
+	docker volume rm $$vols
+
+logs: ## Tail all container logs
+	$(COMPOSE) logs -f
+
+logs-core: ## Tail the api's logs
+	$(COMPOSE) logs -f core
+
+logs-worker: ## Tail the fill worker's logs
+	$(COMPOSE) logs -f worker
+
+logs-web: ## Tail the web dev servers' logs (app + marketing)
+	$(COMPOSE) logs -f web
+
+local-exec: ## Run a command in a container (e.g. make local-exec SVC=core CMD="uv run ruff check .")
+	@[ -n "$(SVC)" ] || { echo 'usage: make local-exec SVC=<service> CMD="<command>"'; exit 1; }
+	$(COMPOSE) exec $(SVC) $(CMD)
+
+local-manage: ## Run a Django manage.py command in the api container (e.g. make local-manage CMD=shell)
+	$(COMPOSE) exec core uv run --frozen --package openbower-core python apps/core/manage.py $(CMD)
+
+local-dbshell: ## Open a psql shell on the db service
+	$(COMPOSE) exec db psql -U openbower openbower
+
+test-core: db-up ## Run the app backend's suite (host-run, against the compose db)
 	cd apps/core && DJANGO_ENV=test DJANGO_SECRET_KEY=test-only uv run python manage.py test
 
 test-web: ## Run the web workspace's node tests (what CI runs)
-	cd web && pnpm -r test
+	cd web && pnpm install --frozen-lockfile && pnpm -r test
 
 test: test-core test-web ## Run every suite
 
 schema: ## Regenerate the shared contract (schema.json, then the web zod)
-	uv run python -m tools.schema_sync.generate
+	uv sync --all-packages
+	uv run --no-sync python -m tools.schema_sync.generate
 	cd web && pnpm --filter @bower/schema generate
 
 schema-check: ## Fail if the committed contract is stale
-	uv run python -m tools.schema_sync.generate --check
+	uv sync --all-packages
+	uv run --no-sync python -m tools.schema_sync.generate --check
 	cd web && pnpm --filter @bower/schema check
