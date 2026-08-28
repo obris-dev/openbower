@@ -48,6 +48,24 @@ AGENT_INSTRUCTIONS = (
     " EVERY field is required: answer every one, and never omit a field. An empty string is for"
     " an output you found NOTHING for; anything you did find goes in with the score it earned."
 )
+# The verdict call after a run spent its whole tool budget still
+# searching: no tools, the records it gathered rendered into the task,
+# and the same scoring conduct, so the confidence floor judges what it
+# did find instead of the budget deciding for it.
+CAPPED_INSTRUCTIONS = (
+    "Your search budget is spent. Answer ONLY from the records listed in the task; they are"
+    " everything you gathered. Records are the best matches for your QUERIES, not facts about"
+    " your task: one may describe a different company, person, or time. Judging which ones"
+    " concern your task is your job."
+    f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"
+    " explain what in the records supports your answer, and what you could not confirm, inferred"
+    " rather than read, or found ambiguous or out of date. Then state"
+    f" your confidence in its {CONFIDENCE_SUFFIX} field, where 1 is certain and stated outright by"
+    " the records and 0 is nothing supporting it at all."
+    " Use ONLY URLs that appear in the records; never invent one."
+    " EVERY field is required: answer every one, and never omit a field. An empty string is for"
+    " an output the records say NOTHING about; anything they do say goes in with the score it earned."
+)
 DIRECT_INSTRUCTIONS = (
     "Answer from your own knowledge."
     f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"

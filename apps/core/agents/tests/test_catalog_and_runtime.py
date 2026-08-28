@@ -974,33 +974,55 @@ class AgenticLoopTests(TestCase):
         body = self._run(behavior)
         self.assertEqual(body["cells"]["person"], "B2B software")
 
-    def test_tool_budget_bounds_a_looping_model(self):
-        # No salvage (RULED: no validated answer IS signal): the budget
-        # caps the spend, the cells stay blank, and the searches
-        # diagnosis shows what ran.
-        serp_calls: list[str] = []
+    def _looping(self, serp_calls: list[str]):
+        """A model that never stops searching: distinct queries per
+        call (a repeated EXACT query dedupes without spending), so the
+        loop actually spends the budget; and, when asked for a verdict
+        with the tools withheld, an answer from the records."""
+        calls = {"n": 0}
 
         def serp(url, **kwargs):
             serp_calls.append(url)
             return FakeResponse(200, _SERP)
 
-        calls = {"n": 0}
-
         def behavior(kind, messages, info):
-            # Distinct queries per call: a repeated EXACT query dedupes
-            # without spending (its own unit pin); the budget is about
-            # metered calls, so this loop must actually spend.
+            if kind == "answer":
+                self.assertIn("Records gathered", messages[0].parts[-1].content)
+                return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
             calls["n"] += 1
             return ModelResponse(
                 parts=[ToolCallPart(tool_name="find_contacts", args={"query": f"VP Sales Acme {calls['n']}"})]
             )
 
+        return behavior, serp
+
+    def test_a_capped_run_answers_from_what_it_gathered(self):
+        # RULED: the budget caps the SPEND, not the verdict. A model
+        # still searching when the cap lands is asked once, tools
+        # withheld, to judge the records it pooled; the confidence
+        # floor and grounding judge that answer like any other.
+        serp_calls: list[str] = []
+        behavior, serp = self._looping(serp_calls)
         body = self._run(behavior, serp=serp)
         self.assertEqual(len(serp_calls), MAX_TOOL_CALLS)
-        self.assertEqual(body["cells"], {})
         self.assertEqual(len(body["searches"]), MAX_TOOL_CALLS)
-        # Budget exhaustion is its OWN settled outcome, never
-        # model_error: refill must not re-buy the same refusal.
+        self.assertEqual(body["cells"], {"person": "Jane Doe"})
+        self.assertEqual(body["blank_cause"], "")
+
+    def test_a_capped_run_with_nothing_gathered_is_no_answer(self):
+        # Nothing pooled means nothing to judge from: no verdict call
+        # is bought, and the cap is the settled outcome (never
+        # model_error: refill must not re-buy the same refusal).
+        serp_calls: list[str] = []
+        behavior, _ = self._looping(serp_calls)
+
+        def empty(url, **kwargs):
+            serp_calls.append(url)
+            return FakeResponse(200, {"tasks": [{"status_code": 20000, "result": [{"items": []}]}]})
+
+        body = self._run(behavior, serp=empty)
+        self.assertEqual(len(serp_calls), MAX_TOOL_CALLS)
+        self.assertEqual(body["cells"], {})
         self.assertEqual(body["blank_cause"], "no_answer")
 
     def test_a_provider_5xx_stays_transient(self):

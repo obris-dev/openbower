@@ -3,7 +3,10 @@ CellAnswerer is built from the config-derived facts (the model, the
 declared outputs), so the OUTPUT TYPE and the schema-derived token cap
 are constructed once at __init__. There is ONE answer method; tools
 are a parameter, and no validated answer is SIGNAL (blank cells with
-the diagnosis), never something to salvage with a second completion.
+the diagnosis). The one second completion is the capped run's verdict
+call: the tool budget caps the SPEND, not the verdict, so a model
+still searching when the cap lands is asked once, tools withheld, to
+judge the records it pooled, under the same floor and grounding.
 Validation, whitespace stripping, the cell-ceiling clamp, and URL
 grounding all run INSIDE the framework (the schema and the
 output-validator seam); callers get a validated answer or None."""
@@ -11,6 +14,7 @@ output-validator seam); callers get a validated answer or None."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Annotated, NamedTuple
 
@@ -41,8 +45,18 @@ from ..constants import (
 from ..providers import MODEL_TIMEOUT_EXCEPTIONS, ModelUnavailable
 from ..search import SearchMisconfigured
 from .grounding import allowed_urls, ground_value, has_url
-from .prompts import AGENT_INSTRUCTIONS, DIRECT_INSTRUCTIONS
+from .prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS
 from .tools import CellDeps
+
+
+def _capped_task(prompt: str, deps: CellDeps) -> str:
+    """The verdict call's task: the original ask plus the pooled
+    records, as JSON so each record's own text is data inside a
+    string, never structure (the same shape the tools return them
+    in, so the model reads what it already read)."""
+    records = json.dumps([record.as_json() for record in deps.records], ensure_ascii=False)
+    return f"Task:\n{prompt}\n\nRecords gathered (your search budget is spent):\n{records}"
+
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +251,27 @@ class CellAnswerer:
             # collector (a fill would otherwise leak one pooled client
             # per row).
             try:
-                result = await agent.run(f"Task:\n{prompt}", deps=deps, usage_limits=limits)
+                try:
+                    result = await agent.run(f"Task:\n{prompt}", deps=deps, usage_limits=limits)
+                except UsageLimitExceeded:
+                    # The budget ran out while the model was still
+                    # reaching for a tool, so it was never asked for a
+                    # verdict. With records in the pool, ask ONCE, tools
+                    # withheld: the confidence floor and grounding then
+                    # judge what it gathered, instead of the cap deciding
+                    # the cell blank. With nothing pooled there is
+                    # nothing to judge from, and the cap stands.
+                    if not deps.records:
+                        raise
+                    logger.info(
+                        "cell: tool budget spent mid-search; asking for a verdict from %d records", len(deps.records)
+                    )
+                    verdict = self._agent(instructions=CAPPED_INSTRUCTIONS)
+                    result = await verdict.run(
+                        _capped_task(prompt, deps),
+                        deps=deps,
+                        usage_limits=UsageLimits(request_limit=1 + MODEL_RETRIES),
+                    )
                 return result.output
             finally:
                 # Best-effort: scripted test models own no HTTP client.
@@ -249,9 +283,10 @@ class CellAnswerer:
             return asyncio.run(run())
         except UsageLimitExceeded:
             # Its own cause, distinct from MODEL_ERROR: the budget spent
-            # without an answer is the model's verdict under this
-            # config, so the blank is settled, not infrastructure.
-            logger.info("cell: request/tool budget exhausted before an answer")
+            # with nothing gathered to judge from is the model's verdict
+            # under this config, so the blank is settled, not
+            # infrastructure.
+            logger.info("cell: request/tool budget exhausted with no records to answer from")
             deps.blank_cause = StoredCellState.NO_ANSWER
             return None
         except SearchMisconfigured:
