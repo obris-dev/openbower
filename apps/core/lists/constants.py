@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from agents.constants import AgentTool
+from agents.constants import ToolStatus
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
@@ -248,31 +248,32 @@ class StoredCellState(StrEnum):
     # SETTLED like NO_ANSWER (the same config re-buys the same
     # unconfirmable answer).
     UNVERIFIED = "unverified"
-    NO_TOOLS_DOOR = "no_tools_door"
     UNPARSEABLE = "unparseable"
     TYPE_MISMATCH = "type_mismatch"
     MODEL_ERROR = "model_error"
     TRANSIENT = "transient"
-    # A tool's search door never answered the run: it rate-limited
-    # past the backoff, or every search failed (a refusing door also
-    # drops connections, which reads as timeouts). The run's answer
-    # was discarded (it would have been built on whatever got
-    # through), the row parked and retried, and this is what an
-    # exhausted retry lands as. Keyed by TOOL, because a user reads
-    # "finding contacts" and "web search" as different things even
-    # though the seam under them is one.
-    SEARCH_THROTTLED = "search_throttled"
-    CONTACTS_THROTTLED = "contacts_throttled"
+    # A tool's door did not serve this row. The SHEET keys on the BASE
+    # status code only, never on a (tool, code) cross product: which
+    # tool, and the tool's own code, ride the cell record's `tools`
+    # map beside the state, so a tool can add a failure mode without
+    # this vocabulary growing. NOT_CONFIGURED is written at once (no
+    # retry changes it) and re-runs on Continue once set up;
+    # UNAVAILABLE (rate limited, unreachable, or erroring past the
+    # row's retries) parks first and lands after the attempt cap.
+    TOOL_NOT_CONFIGURED = "tool_not_configured"
+    TOOL_UNAVAILABLE = "tool_unavailable"
 
 
 # The causes that PARK a row for retry instead of settling a cell (the
 # worker's branch); every other cause is terminal for the run.
-RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.SEARCH_THROTTLED, StoredCellState.CONTACTS_THROTTLED)
-# Which throttled state a closed door lands as, by the tool that
-# closed it (a parity test pins that every tool has one).
-THROTTLED_STATE_BY_TOOL: dict[AgentTool, StoredCellState] = {
-    AgentTool.WEB_SEARCH: StoredCellState.SEARCH_THROTTLED,
-    AgentTool.FIND_CONTACTS: StoredCellState.CONTACTS_THROTTLED,
+RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
+# The cell state a blank cell takes for a tool's BASE status code (a
+# parity test pins that every non-open base code has one).
+CELL_STATE_BY_STATUS: dict[ToolStatus, StoredCellState] = {
+    ToolStatus.NOT_CONFIGURED: StoredCellState.TOOL_NOT_CONFIGURED,
+    ToolStatus.RATE_LIMITED: StoredCellState.TOOL_UNAVAILABLE,
+    ToolStatus.UNREACHABLE: StoredCellState.TOOL_UNAVAILABLE,
+    ToolStatus.ERROR: StoredCellState.TOOL_UNAVAILABLE,
 }
 
 

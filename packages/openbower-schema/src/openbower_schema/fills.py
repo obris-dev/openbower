@@ -84,6 +84,11 @@ class CellRunResult(BaseModel):
     # answered output INCLUDING the ones the floor discarded. The only
     # place the rejected distribution exists.
     assessments: dict[str, Any] = Field(default_factory=dict)
+    # tool -> its door's status code at the end of the run, for every
+    # toggled tool ("open" when it served). The record the cell state's
+    # `tools` is copied from; a run before tools reported statuses
+    # stores nothing here.
+    tools: dict[str, str] = Field(default_factory=dict)
 
 
 class FillError(BaseModel):

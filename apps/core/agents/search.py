@@ -1,20 +1,23 @@
-"""The search seam: `search(query) -> SearchOutcome` behind a provider
+"""The search seam: `search(query) -> DoorAnswer` behind a provider
 switch (settings.SEARCH_PROVIDER).
 
 TWO doors: "duckduckgo" (the DEFAULT: free, keyless, zero setup via
-the ddgs library, so web search works out of the box and offloads the
-paid door) and "dataforseo" (pay-as-you-go Google SERPs on a
-non-expiring balance, $1 trial credit; DATAFORSEO_LOGIN + PASSWORD;
-the live endpoint at ~$2/1k; the door contact search PINS regardless
-of this switch). An explicitly chosen door missing its credentials is
-NOT AVAILABLE: tools gate off in the UI and searches skip honestly.
-The seam stays swappable underneath if a provider ever needs to
-change.
+the ddgs library's DuckDuckGo engine, so web search works out of the
+box and offloads the paid door) and "dataforseo" (pay-as-you-go Google
+SERPs on a non-expiring balance, $1 trial credit; DATAFORSEO_LOGIN +
+PASSWORD; the live endpoint at ~$2/1k; the door contact search PINS
+regardless of this switch). An explicitly chosen door missing its
+credentials is NOT CONFIGURED: the status says so before any call is
+made, tools gate off in the UI, and a call that arrives anyway
+answers with that status instead of raising.
 
-Transport is the seam's, never the model's: a rate limit is retried
-here, SAME query, on a bounded schedule, and the outcome says which
-door served it, why it failed, and how many tries it took. Each door
-classifies its own refusals, because the doors speak differently.
+The seam serves DOORS and speaks in statuses (SearchStatus): open,
+not_configured, rate_limited, unreachable, error. It knows nothing
+about which tool asked; the runtime records that. Transport is the
+seam's, never the model's: a rate limit is retried here, SAME query,
+on a bounded schedule, and the answer says which door served it, what
+it said, and how many tries it took. Each door classifies its own
+refusals, because the doors speak differently.
 """
 
 from __future__ import annotations
@@ -26,18 +29,17 @@ from typing import NamedTuple
 
 import httpx
 from ddgs.engines.duckduckgo import Duckduckgo
+from ddgs.exceptions import DDGSException
 from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.conf import settings
-
-from openbower_schema.agents import TestSearch
 
 from .constants import (
     DATAFORSEO_TIMEOUT_SECONDS,
     SEARCH_BACKOFF_SECONDS,
     SEARCH_HIT_COUNT,
     SEARCH_TIMEOUT_SECONDS,
-    SearchFailure,
     SearchProvider,
+    SearchStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,11 +47,6 @@ logger = logging.getLogger(__name__)
 # Sleeping is a module seam so tests assert the schedule instead of
 # waiting it out.
 _sleep = time.sleep
-
-
-class SearchMisconfigured(Exception):
-    """An unusable provider reached the seam: a CONFIG error (callers
-    gate on availability), never a per-query hazard to swallow."""
 
 
 class SearchRateLimited(Exception):
@@ -63,10 +60,11 @@ class SearchRateLimited(Exception):
         self.retry_after = retry_after
 
 
-class SearchTimedOut(Exception):
-    """A door said nothing in time. Raised by doors whose transport
-    does not speak httpx (the paid door's httpx timeout is caught by
-    its own type)."""
+class SearchUnreachable(Exception):
+    """A door could not be reached or said nothing in time: a connect
+    or read timeout, a dropped connection. Raised by doors whose
+    transport does not speak httpx (the paid door's httpx transport
+    errors are caught by their own types)."""
 
 
 class SearchHit(NamedTuple):
@@ -75,78 +73,45 @@ class SearchHit(NamedTuple):
     snippet: str
 
 
-class SearchOutcome(NamedTuple):
-    """One query's result AND its diagnosis: `failed` means the provider
-    errored, distinct from an honest zero-hit answer, and `cause` says
-    why (a SearchFailure value, "" when clean). `provider` is the door
-    that served it and `attempts` how many tries this one call made
-    (1 when clean), so the stored audit shows what actually hit the
-    wire. Cells stay blank either way; the DIAGNOSTICS must not be
-    swallowed with the failure, or a throttled provider reads as a bad
-    agent."""
+class DoorAnswer(NamedTuple):
+    """What ONE door said to one query: the status (`open` with the
+    hits, `hits` empty being an honest zero-hit answer; any other
+    status with no hits), which door, and how many tries this call
+    made (1 when clean). The runtime wraps this into the tool's own
+    outcome; the diagnosis must never be swallowed with the failure,
+    or a throttled provider reads as a bad agent."""
 
-    query: str
+    status: SearchStatus
     hits: list[SearchHit]
-    failed: bool
-    cause: str = ""
-    provider: str = ""
-    attempts: int = 1
-    # Which TOOL asked (an AgentTool value), stamped by the runtime's
-    # pool: the seam serves doors, but the audit a user reads is by
-    # tool.
-    tool: str = ""
-
-    def wire(self) -> TestSearch:
-        """The ONE constructor for the stored and served diagnosis, so
-        the bench's writer and the fill worker's cannot drift."""
-        return TestSearch(
-            query=self.query,
-            hits=len(self.hits),
-            failed=self.failed,
-            cause=self.cause,
-            provider=self.provider,
-            attempts=self.attempts,
-            tool=self.tool,
-        )
+    provider: str
+    attempts: int
 
 
-def _usable(provider: str) -> bool:
-    """USABLE, not merely named: a provider with no credentials reads
-    as no search, never as a broken agent. Usability is DECLARED per
-    door in _DOORS, so a new provider cannot fall through to
-    keyless-by-default."""
+def door_status(provider: str) -> SearchStatus:
+    """A door's status BEFORE any call: NOT_CONFIGURED for an unknown
+    provider or one missing its credentials, OPEN otherwise. Usability
+    is DECLARED per door in _DOORS, so a new provider cannot fall
+    through to keyless-by-default. Gates the tools (the runtime never
+    offers a tool whose door is not open) and the catalog."""
     door = _DOORS.get(provider)
-    return door is not None and door.usable()
+    if door is None or not door.usable():
+        return SearchStatus.NOT_CONFIGURED
+    return SearchStatus.OPEN
 
 
-def search_available() -> bool:
-    """Gates the web_search tool: the CONFIGURED door, whatever it is
-    (a weaker one is the operator's tradeoff, just weaker results)."""
-    return _usable(settings.SEARCH_PROVIDER)
-
-
-def contacts_available() -> bool:
-    """Gates find_contacts: DataForSEO's credentials, REGARDLESS of the
-    web-search door. The LinkedIn x-rays need Google-grade
-    SERPs, so contacts route straight through dataforseo whenever its
-    credentials exist, whatever door serves the cheap web searches."""
-    return _usable(SearchProvider.DATAFORSEO)
-
-
-def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> SearchOutcome:
-    """One query's SERP outcome; hits [] on any failure (a cell without
-    evidence stays empty, an outage never fails a fill). A rate limit
-    is retried, SAME query, once per step of SEARCH_BACKOFF_SECONDS;
-    rephrasing is the model's decision, never the seam's. A timeout or
-    any other error is a per-query hazard: reported once, not retried.
-    `provider` overrides the configured door for callers that require
-    a specific one (find_contacts pins dataforseo). RAISES
-    SearchMisconfigured on an unusable door: availability gates keep
-    the runtime away from here, so arriving anyway is a config error,
-    not a hazard."""
+def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> DoorAnswer:
+    """One query's answer from its door. A rate limit is retried, SAME
+    query, once per step of SEARCH_BACKOFF_SECONDS; rephrasing is the
+    model's decision, never the seam's. Unreachable and error are
+    per-query hazards: reported once, not retried. `provider` overrides
+    the configured door for callers that require a specific one
+    (find_contacts pins dataforseo). A door that is not configured
+    answers NOT_CONFIGURED without a call: the runtime's gates keep it
+    from being asked, so arriving here is reported, never raised."""
     provider = provider or settings.SEARCH_PROVIDER
-    if not _usable(provider):
-        raise SearchMisconfigured(f"search provider {provider!r} is unknown or missing credentials")
+    if door_status(provider) is not SearchStatus.OPEN:
+        logger.warning("search asked of an unconfigured door (%r)", provider)
+        return DoorAnswer(SearchStatus.NOT_CONFIGURED, [], provider, attempts=0)
     door = _DOORS[provider]
     # One more try than there are pauses: the schedule is the waits
     # BETWEEN tries.
@@ -156,26 +121,23 @@ def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> 
         except SearchRateLimited as e:
             if pause is None:
                 logger.warning("search rate limited after %d tries (%s): %s", attempt, provider, e)
-                return SearchOutcome(
-                    query, [], failed=True, cause=SearchFailure.RATE_LIMITED, provider=provider, attempts=attempt
-                )
+                return DoorAnswer(SearchStatus.RATE_LIMITED, [], provider, attempts=attempt)
             wait = min(e.retry_after, max(SEARCH_BACKOFF_SECONDS)) if e.retry_after is not None else pause
             logger.info("search rate limited (%s); retrying the same query in %ss", provider, wait)
             _sleep(wait)
             continue
-        except (SearchTimedOut, httpx.TimeoutException) as e:
-            logger.warning("search timed out (%s): %s", provider, e)
-            return SearchOutcome(
-                query, [], failed=True, cause=SearchFailure.TIMEOUT, provider=provider, attempts=attempt
-            )
+        except (SearchUnreachable, httpx.TimeoutException, httpx.TransportError) as e:
+            logger.warning("search door unreachable (%s: %s): %s", provider, type(e).__name__, e)
+            return DoorAnswer(SearchStatus.UNREACHABLE, [], provider, attempts=attempt)
         except Exception as e:
-            # Every other failure is one flag on purpose: a bad payload,
-            # a drained balance, and an outage all mean no evidence for
-            # THIS query, and none of them asks for a retry.
+            # Every other failure is one status on purpose: a bad
+            # payload, a drained balance, and an unexpected status all
+            # mean the door answered wrongly for THIS query, and none
+            # of them asks for a retry.
             logger.warning("search failed (%s: %s): %s", provider, type(e).__name__, e)
-            return SearchOutcome(query, [], failed=True, cause=SearchFailure.ERROR, provider=provider, attempts=attempt)
+            return DoorAnswer(SearchStatus.ERROR, [], provider, attempts=attempt)
         logger.info("search %r -> %d hits (%s, %d tries)", query[:120], len(hits), provider, attempt)
-        return SearchOutcome(query, hits, failed=False, provider=provider, attempts=attempt)
+        return DoorAnswer(SearchStatus.OPEN, hits, provider, attempts=attempt)
     raise AssertionError("unreachable: the last schedule step returns")
 
 
@@ -206,7 +168,10 @@ class _DuckduckgoPage(NamedTuple):
 def _duckduckgo_fetch(query: str) -> _DuckduckgoPage:
     """The seam's one library touch: the engine's own request path
     (its headers and TLS shape included) and its own parser, with the
-    status kept. Tests script pages, not clients."""
+    status kept. Tests script pages, not clients. The library wraps
+    every transport failure in its own exception types (a timeout as
+    TimeoutException, a refused or dropped connection as a bare
+    DDGSException), which is why both read as UNREACHABLE here."""
     engine = Duckduckgo(timeout=SEARCH_TIMEOUT_SECONDS)
     payload = engine.build_payload(
         query=query, region=_DUCKDUCKGO_REGION, safesearch=_DUCKDUCKGO_SAFESEARCH, timelimit=None
@@ -224,8 +189,8 @@ def _duckduckgo_fetch(query: str) -> _DuckduckgoPage:
 def _duckduckgo(query: str, count: int) -> list[SearchHit]:
     try:
         page = _duckduckgo_fetch(query)
-    except DDGSTimeout as e:
-        raise SearchTimedOut(str(e)) from e
+    except (DDGSTimeout, DDGSException) as e:
+        raise SearchUnreachable(str(e)) from e
     if page.status_code in _DUCKDUCKGO_REFUSALS:
         raise SearchRateLimited(f"duckduckgo returned {page.status_code}")
     if page.status_code != 200:
@@ -293,7 +258,7 @@ def _dataforseo(query: str, count: int) -> list[SearchHit]:
     if status != _DATAFORSEO_TASK_OK:
         # A 200 envelope can carry a failed TASK (insufficient balance
         # is the likely paid-door failure); reading it as an honest
-        # zero-hit drought is exactly the misdiagnosis the failed flag
+        # zero-hit drought is exactly the misdiagnosis the status
         # exists to prevent.
         raise ValueError(f"dataforseo task returned {status}: {task.get('status_message')}")
     results = (task.get("result") or [{}])[0].get("items") or []
@@ -312,8 +277,9 @@ class _Door(NamedTuple):
     """One search door: its live call AND its usability, declared
     together so registering a provider forces both questions. A door's
     `run` raises SearchRateLimited for the refusals the seam should
-    retry and SearchTimedOut (or httpx's timeout) for silence; anything
-    else it raises is a per-query error."""
+    retry and SearchUnreachable (or httpx's transport errors) for a
+    door it could not reach; anything else it raises is a per-query
+    error."""
 
     run: Callable[[str, int], list[SearchHit]]
     usable: Callable[[], bool]

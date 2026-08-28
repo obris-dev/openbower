@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from django.db import models
 
+from agents.constants import ToolStatus
 from openbower_schema.fills import ColumnFillSummary
+from openbower_schema.lists import CellStateWire
 
 from ..constants import LIVE_FILL_STATUSES, FillStatus, FillTaskStatus, StoredCellState
 from ..models import Fill, FillCellState, FillTask, List, ListRow
@@ -55,16 +57,17 @@ class FillService:
         stop_fill(fill_id, FillStatus.CANCELLED)
         return self.get(fill_id)
 
-    def cell_states_for_rows(self, target: List, rows: list[ListRow]) -> dict[str, dict[str, str]]:
-        """row id -> {column key: state} for one page of rows.
+    def cell_states_for_rows(self, target: List, rows: list[ListRow]) -> dict[str, dict[str, CellStateWire]]:
+        """row id -> {column key: CellStateWire} for one page of rows.
 
         Two sources, and neither is a stored "pending":
 
-        DIAGNOSED BLANKS come from FillCellState, one indexed query.
-        FILLED is stored but never travels: a value on the row plus no
-        state IS the filled signal, so shipping it would be a word the
-        renderer already has. Never-attempted is the absence of a
-        record.
+        DIAGNOSED BLANKS come from FillCellState, one indexed query,
+        each with the tool statuses of the run that wrote it. FILLED
+        travels ONLY when that run had a degraded tool (the value is
+        the renderer's already; the mark beside it is not): a clean
+        filled cell is the absence of an entry. Never-attempted is
+        the absence of a record.
 
         PENDING is DERIVED: a cell is pending when a queued task on a
         live fill covers its column. The fill's target set was frozen
@@ -80,19 +83,19 @@ class FillService:
         if not fill_keys or not rows:
             return {}
         row_ids = [str(r.id) for r in rows]
-        states: dict[str, dict[str, str]] = {}
-        diagnosed = (
-            FillCellState.objects.filter(
-                account_id=self.account_id,
-                list_id=str(target.id),
-                row_id__in=row_ids,
-                column_key__in=fill_keys,
-            )
-            .exclude(state=StoredCellState.FILLED)
-            .values_list("row_id", "column_key", "state")
-        )
-        for row_id, column_key, state in diagnosed:
-            states.setdefault(row_id, {})[column_key] = state
+        states: dict[str, dict[str, CellStateWire]] = {}
+        recorded = FillCellState.objects.filter(
+            account_id=self.account_id,
+            list_id=str(target.id),
+            row_id__in=row_ids,
+            column_key__in=fill_keys,
+        ).values_list("row_id", "column_key", "state", "tools")
+        for row_id, column_key, state, tools in recorded:
+            tools = tools or {}
+            degraded = any(status != ToolStatus.OPEN for status in tools.values())
+            if state == StoredCellState.FILLED and not degraded:
+                continue
+            states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         live = {
             str(fill_id): [key for key in (keys or ()) if key in fill_keys]
             for fill_id, keys in Fill.objects.filter(
@@ -109,7 +112,7 @@ class FillService:
         ).values_list("fill_id", "row_id")
         for fill_id, row_id in queued:
             for column_key in live[fill_id]:
-                states.setdefault(row_id, {})[column_key] = PENDING
+                states.setdefault(row_id, {})[column_key] = CellStateWire(state=PENDING)
         return states
 
     def column_summaries(self, target: List) -> list[ColumnFillSummary]:

@@ -285,7 +285,7 @@ class WorkerTestCase(TransactionTestCase):
         with self._patched(answering_model(lambda prompt: "found")), ThreadPoolExecutor(max_workers=1) as pool:
             state = supervisor._admit(self.fill)
             for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-                state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
+                state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
             self.assertIsNotNone(state.breakers.tripped)
             supervisor._serve(self.fill, pool)
         self.fill.refresh_from_db()
@@ -503,11 +503,12 @@ class WorkerTestCase(TransactionTestCase):
             self.assertEqual(fill.status, FillStatus.RUNNING)
             self.assertEqual(fill.transient, 1)
             self.assertTrue(task.parked)
-            self.assertEqual(task.result["blank_cause"], StoredCellState.SEARCH_THROTTLED)
+            self.assertEqual(task.result["blank_cause"], StoredCellState.TOOL_UNAVAILABLE)
+            self.assertEqual(task.result["tools"], {"web_search": "rate_limited"})
             self.assertEqual(task.result["cells"], {})
             [search] = task.result["searches"]
             self.assertEqual(
-                (search["cause"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
+                (search["status"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
             )
             self.assertEqual(search["attempts"], len(SEARCH_BACKOFF_SECONDS) + 1)
             self.assertFalse(FillCellState.objects.exists())
@@ -518,7 +519,11 @@ class WorkerTestCase(TransactionTestCase):
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
-        self.assertEqual(FillCellState.objects.get().state, StoredCellState.SEARCH_THROTTLED)
+        cell = FillCellState.objects.get()
+        # The cell carries WHICH tool and WHAT its door said beside the
+        # base state: the sheet's word is the state, the sentence is
+        # the tool's status.
+        self.assertEqual((cell.state, cell.tools), (StoredCellState.TOOL_UNAVAILABLE, {"web_search": "rate_limited"}))
         self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
 
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:

@@ -39,6 +39,12 @@ CONFIG = {
 }
 
 
+def words(states: dict) -> dict[str, str]:
+    """The states map's WORDS, for tests that pin which state a cell
+    shows and not the tool statuses beside it."""
+    return {key: value.state for key, value in states.items()}
+
+
 def config_with(output_label: str) -> dict:
     """The same config landing under a different column (the output's
     key derives from its label; the outputs ARE the columns)."""
@@ -257,15 +263,31 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual([item.position for item in page.items], [1, 2])
         # Freshly admitted: every row pends on the AI column, and the
         # user's own company column never appears.
-        self.assertEqual([item.states for item in page.items], [{"answer": "pending"}, {"answer": "pending"}])
+        self.assertEqual([words(item.states) for item in page.items], [{"answer": "pending"}, {"answer": "pending"}])
 
         settle(fill_id, str(rows[0].id), StoredCellState.NO_EVIDENCE)
         settle(fill_id, str(rows[1].id), None)
         page = self._states_page()
         # The diagnosed blank ships its cause; filled is ABSENT (the
         # value in row data is the signal).
-        self.assertEqual(page.items[0].states, {"answer": "no_evidence"})
-        self.assertEqual(page.items[1].states, {})
+        self.assertEqual(words(page.items[0].states), {"answer": "no_evidence"})
+        self.assertEqual(words(page.items[1].states), {})
+
+    def test_a_filled_cell_with_a_degraded_tool_ships_its_mark(self) -> None:
+        # A clean filled cell is an absence; a filled cell whose run
+        # had a degraded tool travels as `filled` WITH the tool
+        # statuses, so the value can carry its mark. A blank cell
+        # carries its statuses the same way.
+        fill_id = self.post_ai().json()["id"]
+        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
+        settle(fill_id, str(rows[0].id), None, tools={"web_search": "rate_limited", "find_contacts": "open"})
+        settle(fill_id, str(rows[1].id), StoredCellState.TOOL_UNAVAILABLE, tools={"web_search": "unreachable"})
+        page = self._states_page()
+        first, second = page.items
+        self.assertEqual(first.states["answer"].state, "filled")
+        self.assertEqual(first.states["answer"].tools, {"web_search": "rate_limited", "find_contacts": "open"})
+        self.assertEqual(second.states["answer"].state, "tool_unavailable")
+        self.assertEqual(second.states["answer"].tools, {"web_search": "unreachable"})
 
     def test_tombstones_survive_a_second_run(self) -> None:
         # A refill omits the rows it settled ON PURPOSE, so the
@@ -282,15 +304,15 @@ class CellStatesTests(FillViewsTestCase):
         page = self._states_page()
         # The settled row keeps its word from the OLD fill; the
         # retryable row shows the NEW fill's pending.
-        self.assertEqual(page.items[0].states, {"answer": "no_answer"})
-        self.assertEqual(page.items[1].states, {"answer": "pending"})
+        self.assertEqual(words(page.items[0].states), {"answer": "no_answer"})
+        self.assertEqual(words(page.items[1].states), {"answer": "pending"})
         # And a newer FILL outranks an older error: the second run
         # fills the retried row, so its old cause must not cover the
         # value (FILLED votes in latest-wins, then drops).
         refill_id = refill.json()["id"]
         settle(refill_id, str(rows[1].id), None)
         page = self._states_page()
-        self.assertEqual(page.items[1].states, {})
+        self.assertEqual(words(page.items[1].states), {})
 
     def test_states_derive_from_each_columns_newest_job(self) -> None:
         # Two fills on two columns: the newest fill overall covers only
@@ -304,8 +326,8 @@ class CellStatesTests(FillViewsTestCase):
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(first["id"], str(rows[0].id), StoredCellState.NO_EVIDENCE)
         page = self._states_page()
-        self.assertEqual(page.items[0].states, {first_key: "no_evidence", second_key: "pending"})
-        self.assertEqual(page.items[1].states, {first_key: "pending", second_key: "pending"})
+        self.assertEqual(words(page.items[0].states), {first_key: "no_evidence", second_key: "pending"})
+        self.assertEqual(words(page.items[1].states), {first_key: "pending", second_key: "pending"})
 
     def test_a_columns_newer_job_supersedes_its_older_ones(self) -> None:
         # Re-running a cancelled column goes through REFILL, not a
@@ -325,8 +347,8 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual(refill.status_code, 201, refill.content)
         fresh = refill.json()
         page = self._states_page()
-        self.assertEqual(page.items[0].states, {"answer": "pending"})
-        self.assertEqual(page.items[1].states, {"answer": "pending"})
+        self.assertEqual(words(page.items[0].states), {"answer": "pending"})
+        self.assertEqual(words(page.items[1].states), {"answer": "pending"})
         self.assertEqual(fresh["column_keys"], stale["column_keys"])
 
     def test_pages_on_the_rows_position_keyset(self) -> None:
@@ -350,12 +372,12 @@ class CellStatesTests(FillViewsTestCase):
         cancel = self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": fill_id}))
         self.assertEqual(cancel.status_code, 200)
         page = self._states_page()
-        self.assertEqual(page.items[0].states, {"answer": "no_evidence"})
-        self.assertEqual(page.items[1].states, {})
+        self.assertEqual(words(page.items[0].states), {"answer": "no_evidence"})
+        self.assertEqual(words(page.items[1].states), {})
 
     def test_a_sheet_with_no_fills_ships_empty_states(self) -> None:
         page = self._states_page()
-        self.assertEqual([item.states for item in page.items], [{}, {}])
+        self.assertEqual([words(item.states) for item in page.items], [{}, {}])
 
     def test_a_cancelled_refills_untouched_rows_revert_to_their_old_truth(self) -> None:
         # A refill re-targets a retryable row (dot -> shimmer); if that
@@ -369,11 +391,11 @@ class CellStatesTests(FillViewsTestCase):
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": first["id"]}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
         self.assertEqual(refill.status_code, 201, refill.content)
-        self.assertEqual(self._states_page().items[0].states, {"answer": "pending"})
+        self.assertEqual(words(self._states_page().items[0].states), {"answer": "pending"})
         self.client.post(
             reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": refill.json()["id"]})
         )
-        self.assertEqual(self._states_page().items[0].states, {"answer": "model_error"})
+        self.assertEqual(words(self._states_page().items[0].states), {"answer": "model_error"})
 
 
 class ListDeleteTests(FillViewsTestCase):

@@ -130,7 +130,7 @@ class CatalogTests(TestCase):
             triples.index(("openai_compatible", "openai", "gpt-6")),
             triples.index(("openai_compatible", "openai", "gpt-5.2")),
         )
-        self.assertTrue(body["search_available"])
+        self.assertEqual(body["doors"]["web_search"], "open")
 
     def test_keyless_local_source_is_open_with_embed_hygiene(self):
         # A local Ollama through the spec door: keyless works because
@@ -341,8 +341,7 @@ class SearchAvailabilityTests(TestCase):
         # contact search still requires the DataForSEO setup.
         with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
             body = self.client.get(reverse("agents_catalog")).json()
-        self.assertTrue(body["search_available"])
-        self.assertFalse(body["contacts_available"])
+        self.assertEqual(body["doors"], {"web_search": "open", "find_contacts": "not_configured"})
 
     def test_an_explicit_paid_door_without_credentials_is_unavailable(self):
         # No source override: an open source here would fire a REAL
@@ -353,7 +352,7 @@ class SearchAvailabilityTests(TestCase):
             DATAFORSEO_PASSWORD="",
         ):
             body = self.client.get(reverse("agents_catalog")).json()
-        self.assertFalse(body["search_available"])
+        self.assertEqual(body["doors"]["web_search"], "not_configured")
 
     def test_duckduckgo_hits_map_and_failures_are_diagnosed(self):
         from agents.search import SearchHit, _DuckduckgoPage, search
@@ -363,9 +362,9 @@ class SearchAvailabilityTests(TestCase):
             patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(200, [hit])),
             self.settings(SEARCH_PROVIDER="duckduckgo"),
         ):
-            outcome = search("acme")
-        self.assertFalse(outcome.failed)
-        self.assertEqual(outcome.hits[0].url, "https://x.test/jane")
+            answer = search("acme")
+        self.assertEqual(answer.status, "open")
+        self.assertEqual(answer.hits[0].url, "https://x.test/jane")
 
         # A status the door does not classify as a refusal is a
         # per-query error, reported once.
@@ -373,10 +372,8 @@ class SearchAvailabilityTests(TestCase):
             patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(500, [])),
             self.settings(SEARCH_PROVIDER="duckduckgo"),
         ):
-            outcome = search("acme")
-        self.assertTrue(outcome.failed)
-        self.assertEqual(outcome.cause, "error")
-        self.assertEqual(outcome.attempts, 1)
+            answer = search("acme")
+        self.assertEqual((answer.status, answer.attempts), ("error", 1))
 
     def test_the_free_door_parses_the_engines_own_page_shape(self):
         # The library's parser is the one used (its xpaths are the
@@ -409,19 +406,18 @@ class SearchAvailabilityTests(TestCase):
     def test_credentialed_provider_is_available(self):
         with self.settings(**{**_TEST_SETTINGS, "OPENAI_COMPATIBLE_SOURCES": {}}):
             body = self.client.get(reverse("agents_catalog")).json()
-        self.assertTrue(body["search_available"])
-        self.assertTrue(body["contacts_available"])
+        self.assertEqual(body["doors"], {"web_search": "open", "find_contacts": "open"})
 
     def test_contacts_pin_their_own_door_regardless_of_the_switch(self):
         # Web search on the free door + dataforseo credentials keeps
         # contacts fully available; the switch never gates them.
         with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"):
             body = self.client.get(reverse("agents_catalog")).json()
-        self.assertTrue(body["search_available"])
-        self.assertTrue(body["contacts_available"])
+        self.assertEqual(body["doors"], {"web_search": "open", "find_contacts": "open"})
 
     def test_a_gated_tool_is_never_offered_to_the_model(self):
-        from agents.runtime.tools import build_tools
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps, build_tools, door_status_for_tool
         from openbower_schema.agents import AgentConfig
 
         config = AgentConfig(
@@ -431,20 +427,22 @@ class SearchAvailabilityTests(TestCase):
                 "outputs": [{"key": "person", "label": "Person", "type": "text"}],
             }
         )
+        deps = CellDeps()
         with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
-            offered = [t.name for t in build_tools(config)]
+            deps.doors = {tool: door_status_for_tool(tool) for tool in AgentTool}
+            offered = [t.name for t in build_tools(config, deps)]
         self.assertEqual(offered, ["web_search"])
+        self.assertEqual(deps.doors[AgentTool.FIND_CONTACTS], SearchStatus.NOT_CONFIGURED)
 
-    def test_an_unusable_provider_reaching_the_seam_raises(self):
-        # Availability gates keep the runtime away from here, so
-        # arriving anyway is a CONFIG error, never a quiet skip.
-        from agents.search import SearchMisconfigured, search
+    def test_an_unconfigured_door_reaching_the_seam_answers_not_configured(self):
+        # The runtime's gates keep an unconfigured door from being
+        # asked; a call that arrives anyway is REPORTED as a status,
+        # never raised, and never makes a live call.
+        from agents.search import search
 
-        with (
-            self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""),
-            self.assertRaises(SearchMisconfigured),
-        ):
-            search("anything")
+        with self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
+            answer = search("anything")
+        self.assertEqual((answer.status, answer.hits, answer.attempts), ("not_configured", [], 0))
 
 
 def _serp_response(url, **kwargs):
@@ -505,7 +503,7 @@ class SearchBackoffTests(TestCase):
             [_DuckduckgoPage(202, []), _DuckduckgoPage(429, []), _DuckduckgoPage(200, [hit])]
         )
         outcome = search("acme")
-        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.status, "open")
         self.assertEqual(outcome.attempts, 3)
         self.assertEqual(outcome.provider, "duckduckgo")
         self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS[:2]))
@@ -517,8 +515,7 @@ class SearchBackoffTests(TestCase):
 
         sleeps, _ = self._free_door([_DuckduckgoPage(202, [])])
         outcome = search("acme")
-        self.assertTrue(outcome.failed)
-        self.assertEqual(outcome.cause, "rate_limited")
+        self.assertEqual(outcome.status, "rate_limited")
         self.assertEqual(outcome.attempts, len(SEARCH_BACKOFF_SECONDS) + 1)
         self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS))
 
@@ -527,20 +524,23 @@ class SearchBackoffTests(TestCase):
 
         sleeps, calls = self._free_door([_DuckduckgoPage(200, [])])
         outcome = search("acme")
-        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.status, "open")
         self.assertEqual(outcome.hits, [])
         self.assertEqual(outcome.attempts, 1)
         self.assertEqual((sleeps, calls), ([], ["acme"]))
 
-    def test_a_free_door_timeout_is_reported_once(self):
-        from agents.search import search
+    def test_an_unreachable_free_door_is_reported_once(self):
+        # A timeout and a dropped connection both read as unreachable
+        # (the library wraps both in its own exceptions), once, no
+        # retry: the next query may get through.
+        from agents.search import SearchUnreachable, search
 
-        sleeps, calls = self._free_door([DDGSTimeout("timed out")])
-        outcome = search("acme")
-        self.assertTrue(outcome.failed)
-        self.assertEqual(outcome.cause, "timeout")
-        self.assertEqual(outcome.attempts, 1)
-        self.assertEqual((sleeps, calls), ([], ["acme"]))
+        for exc in (DDGSTimeout("timed out"), SearchUnreachable("Server disconnected")):
+            with self.subTest(exc=type(exc).__name__):
+                sleeps, calls = self._free_door([exc])
+                outcome = search("acme")
+                self.assertEqual((outcome.status, outcome.attempts), ("unreachable", 1))
+                self.assertEqual((sleeps, calls), ([], ["acme"]))
 
     def _paid_door(self, responses: list) -> tuple[list[float], list[str]]:
         sleeps: list[float] = []
@@ -567,7 +567,7 @@ class SearchBackoffTests(TestCase):
             ]
         )
         outcome = search("acme")
-        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.status, "open")
         self.assertEqual(outcome.attempts, 3)
         self.assertEqual(outcome.provider, "dataforseo")
         self.assertEqual(sleeps, [3, max(SEARCH_BACKOFF_SECONDS)])
@@ -583,7 +583,7 @@ class SearchBackoffTests(TestCase):
             ]
         )
         outcome = search("acme")
-        self.assertFalse(outcome.failed)
+        self.assertEqual(outcome.status, "open")
         self.assertEqual(outcome.attempts, 2)
         self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
 
@@ -594,10 +594,20 @@ class SearchBackoffTests(TestCase):
             [FakeResponse(200, {"tasks": [{"status_code": 40201, "status_message": "insufficient balance"}]})]
         )
         outcome = search("acme")
-        self.assertTrue(outcome.failed)
-        self.assertEqual(outcome.cause, "error")
+        self.assertEqual(outcome.status, "error")
         self.assertEqual(sleeps, [])
         self.assertEqual(len(keywords), 1)
+
+    def test_a_paid_door_transport_failure_is_unreachable(self):
+        from agents.search import search
+
+        def post(url, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        self.enterContext(patch("agents.search.httpx.post", side_effect=post))
+        self.enterContext(self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"))
+        outcome = search("acme")
+        self.assertEqual((outcome.status, outcome.attempts), ("unreachable", 1))
 
 
 def _tool_returned(messages) -> bool:
@@ -715,20 +725,21 @@ class RuntimeTests(TestCase):
         # The drought is DIAGNOSED: queries ran, zero hits, no failures
         # (the provider answered honestly; nothing matched).
         self.assertTrue(body["searches"])
-        self.assertTrue(all(s["hits"] == 0 and not s["failed"] for s in body["searches"]))
+        self.assertTrue(all(s["hits"] == 0 and s["status"] == "open" for s in body["searches"]))
 
     def test_provider_errors_are_diagnosed_as_failures(self):
         # A throttled/down provider must not read as a bad agent: the
         # cells stay blank, and the searches say WHY.
         def throttled(url, **kwargs):
             if "dataforseo" in url:
-                return FakeResponse(429, {})
+                return _HeaderedResponse(429, {}, {})
             return FakeResponse(404, {})
 
-        body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=throttled)
+        with patch("agents.search._sleep"):
+            body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=throttled)
         self.assertEqual(body["cells"], {})
         self.assertTrue(body["searches"])
-        self.assertTrue(all(s["failed"] for s in body["searches"]))
+        self.assertTrue(all(s["status"] == "rate_limited" for s in body["searches"]))
 
     def test_the_instruction_tail_switches_on_tool_presence(self):
         # One call site, two conducts: the tooled run is told to gather
@@ -803,7 +814,7 @@ class RuntimeTests(TestCase):
         body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=broke)
         self.assertEqual(body["cells"], {})
         self.assertTrue(body["searches"])
-        self.assertTrue(all(s["failed"] for s in body["searches"]))
+        self.assertTrue(all(s["status"] == "error" for s in body["searches"]))
 
     def test_cells_carry_the_outputs_own_keys(self):
         # The runtime speaks config-local names; mapping onto a sheet's
@@ -846,7 +857,13 @@ class AgenticLoopTests(TestCase):
             self.settings(**(settings or _TEST_SETTINGS)),
         ):
             run = run_cell(AgentConfig(**(config or self._TYPED_CONFIG)), row or {"name": "Acme"})
-        return {"cells": run.cells, "evidence": run.evidence, "searches": run.searches, "blank_cause": run.blank_cause}
+        return {
+            "cells": run.cells,
+            "evidence": run.evidence,
+            "searches": run.searches,
+            "blank_cause": run.blank_cause,
+            "tools": run.tools,
+        }
 
     def test_model_drives_the_contacts_tool_with_the_scope_injected(self):
         # The model supplies query TERMS; the tool strips its site:
@@ -1062,13 +1079,14 @@ class AgenticLoopTests(TestCase):
                 self.assertEqual(body["cells"], {})
                 self.assertEqual(body["blank_cause"], "transient")
 
-    def test_a_row_whose_every_search_failed_is_never_none_found(self):
+    def test_a_door_that_only_ever_failed_settles_as_unavailable_not_none_found(self):
         # A refusing door also drops connections, which the seam reads
-        # as timeouts, and a single timeout never closes the door. A
-        # run that ends with NO evidence and EVERY search failed was
-        # never answered by the door, so it parks under the tool's
-        # state instead of settling as no_evidence; a run with even one
-        # answered search keeps its honest diagnosis.
+        # as unreachable, and a single one never closes the door
+        # mid-run. A door that was asked, never answered, and
+        # contributed nothing takes its last status at the end of the
+        # run: the row parks under tool_unavailable with the status on
+        # the task, never "none found". A door that answered even once
+        # (an honest empty) keeps the honest diagnosis.
         from agents.search import _DuckduckgoPage
 
         calls = {"n": 0}
@@ -1085,8 +1103,9 @@ class AgenticLoopTests(TestCase):
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
                 settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
             )
-        self.assertEqual([s.cause for s in body["searches"]], ["timeout", "timeout"])
-        self.assertEqual(body["blank_cause"], "search_throttled")
+        self.assertEqual([s.status for s in body["searches"]], ["unreachable", "unreachable"])
+        self.assertEqual(body["blank_cause"], "tool_unavailable")
+        self.assertEqual(body["tools"], {"web_search": "unreachable"})
 
         calls["n"] = 0
         pages = iter([DDGSTimeout("timed out"), _DuckduckgoPage(200, [])])
@@ -1096,14 +1115,15 @@ class AgenticLoopTests(TestCase):
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
                 settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
             )
-        self.assertEqual([s.cause for s in body["searches"]], ["timeout", ""])
+        self.assertEqual([s.status for s in body["searches"]], ["unreachable", "open"])
         self.assertEqual(body["blank_cause"], "no_evidence")
+        self.assertEqual(body["tools"], {"web_search": "open"})
 
-    def test_a_closed_search_door_discards_the_answer_and_names_the_tool(self):
+    def test_a_closed_door_with_nothing_gathered_parks_the_row_by_base_code(self):
         # The model answers confidently from the residue of a throttled
-        # run: the answer is discarded, the row's cause is the retry
-        # state the TOOL owns, and the stored searches show the one
-        # exhausted query.
+        # run that pooled NOTHING: there is no evidence to ground on,
+        # the row parks under tool_unavailable, and the task records
+        # which tool and what its door said.
         def behavior(kind, messages, info):
             if not _tool_returned(messages):
                 return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
@@ -1115,30 +1135,75 @@ class AgenticLoopTests(TestCase):
         with patch("agents.search._sleep"):
             body = self._run(behavior, serp=serp)
         self.assertEqual(body["cells"], {})
-        self.assertEqual(body["blank_cause"], "contacts_throttled")
+        self.assertEqual(body["blank_cause"], "tool_unavailable")
+        self.assertEqual(body["tools"], {"find_contacts": "rate_limited"})
         self.assertEqual(len(body["searches"]), 1)
-        self.assertEqual(body["searches"][0].cause, "rate_limited")
+        self.assertEqual(body["searches"][0].status, "rate_limited")
 
-        def web_behavior(kind, messages, info):
-            if not _tool_returned(messages):
-                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
-            return _final(info, person="Jane Doe", profile="", person_bwr_confidence=0.95)
-
+    def test_a_degraded_tool_never_discards_an_answer_the_other_tool_grounded(self):
+        # web_search is rate limited; find_contacts answers; the model
+        # grounds a confident answer on the contacts record. The cell
+        # FILLS, and the run's tool statuses say web_search was
+        # degraded: the user sees both the value and the mark.
         from agents.search import _DuckduckgoPage
+
+        def behavior(kind, messages, info):
+            returned = [part for m in messages for part in getattr(m, "parts", []) if isinstance(part, ToolReturnPart)]
+            if not returned:
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
+            if len(returned) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(
+                info,
+                person="Jane Doe",
+                profile="https://www.linkedin.com/in/janedoe",
+                person_bwr_confidence=0.95,
+                profile_bwr_confidence=0.95,
+            )
 
         challenged, _ = _scripted_free_door([_DuckduckgoPage(202, [])])
         with patch("agents.search._duckduckgo_fetch", side_effect=challenged), patch("agents.search._sleep"):
             body = self._run(
-                web_behavior,
-                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
                 settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
             )
-        self.assertEqual(body["cells"], {})
-        self.assertEqual(body["blank_cause"], "search_throttled")
+        self.assertEqual(body["cells"]["person"], "Jane Doe")
+        self.assertEqual(body["blank_cause"], "")
+        self.assertEqual(body["tools"], {"web_search": "rate_limited", "find_contacts": "open"})
+        self.assertEqual([s.tool for s in body["searches"]], ["web_search", "find_contacts"])
 
-    def test_a_gated_toggle_never_spends(self):
-        # Tools toggled with every door closed is a DECIDABLE blank: no
-        # completion is bought on the way to it.
+    def test_two_closed_doors_name_the_first_toggled_tool(self):
+        # Blank cell, both doors closed: the config's first tool names
+        # it (the toggle order the user sees); both statuses ride the
+        # task.
+        def behavior(kind, messages, info):
+            returned = [part for m in messages for part in getattr(m, "parts", []) if isinstance(part, ToolReturnPart)]
+            if not returned:
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
+            if len(returned) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
+            return _final(info, person="", profile="")
+
+        def serp(url, **kwargs):
+            return _HeaderedResponse(429, {}, {})
+
+        with (
+            patch("agents.search._duckduckgo_fetch", side_effect=DDGSTimeout("timed out")),
+            patch("agents.search._sleep"),
+        ):
+            body = self._run(
+                behavior,
+                serp=serp,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual(body["blank_cause"], "tool_unavailable")
+        self.assertEqual(body["tools"], {"web_search": "unreachable", "find_contacts": "rate_limited"})
+
+    def test_a_not_configured_tool_is_the_cell_state_without_a_spend(self):
+        # Tools toggled with every door not configured: no completion
+        # is bought, and the cell says which tool is not set up.
         def behavior(kind, messages, info):
             raise AssertionError("the model must never be called")
 
@@ -1149,6 +1214,8 @@ class AgenticLoopTests(TestCase):
         )
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["searches"], [])
+        self.assertEqual(body["blank_cause"], "tool_not_configured")
+        self.assertEqual(body["tools"], {"web_search": "not_configured"})
 
     def test_a_url_embedded_in_prose_grounds_or_goes(self):
         # Prose is not a fabrication loophole: the fabricated URL is

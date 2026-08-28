@@ -87,13 +87,15 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     rowsRef.current = rows;
   }, [rows]);
 
-  // A rate-limited web-search cell composes the deployment's search
-  // door into its popover (the paid-door nudge belongs only to the
-  // free door), fetched once and only when such a cell is on screen:
-  // a sheet with none never pays for the catalog. Absence degrades
-  // to the bare sentence.
+  // A cell whose run had a degraded web search composes the
+  // deployment's search door into its popover (the paid-door nudge
+  // belongs only to the free door), fetched once and only when such a
+  // cell is on screen: a sheet with none never pays for the catalog.
+  // Absence degrades to the bare sentence.
   const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
-  const needsSearchDoor = rows.some((row) => Object.values(row.states ?? {}).includes("search_throttled"));
+  const needsSearchDoor = rows.some((row) =>
+    Object.values(row.states ?? {}).some((entry) => (entry.tools.web_search ?? "open") !== "open"),
+  );
   useEffect(() => {
     if (!needsSearchDoor || searchDoor !== null) return;
     let superseded = false;

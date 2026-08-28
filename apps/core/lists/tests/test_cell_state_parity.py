@@ -5,9 +5,10 @@ There are two on purpose. StoredCellState is what a fill WROTE about a
 cell; WireCellState is what a client renders. They differ in both
 directions and one serializer projection stands between them:
 
-  filled  is stored and never travels. A value on the row plus no
-          state IS the filled signal, so shipping the word would be
-          something the renderer already knows.
+  filled  is stored, and travels ONLY when the run that filled the
+          cell had a degraded tool (the value is the renderer's
+          already; the mark beside it is not). A value plus no entry
+          IS the clean filled signal.
   pending is on the wire and never stored. It is DERIVED from queued
           tasks on live fills, which is what lets admission write
           nothing to the sheet and a stopped fill need no sweep.
@@ -31,7 +32,9 @@ from openbower_schema.lists import WireCellState
 
 from ..constants import CELL_STATE_MAX_LENGTH, StoredCellState
 
-STORED_ONLY = {"filled"}
+# `filled` travels only for a cell whose run had a degraded tool (the
+# mark beside the value); a clean filled cell is still an absence.
+STORED_ONLY: set[str] = set()
 WIRE_ONLY = {"pending"}
 
 
@@ -61,17 +64,40 @@ class CellStateParityTests(SimpleTestCase):
         # filled is not a blank cause; pending is not terminal.
         self.assertFalse(set(SETTLED_CELL_STATES) & (STORED_ONLY | WIRE_ONLY))
 
-    def test_every_tool_has_a_throttled_state_and_every_retry_cause_re_runs(self):
-        # A closed door lands as the state its TOOL owns; a tool added
-        # without one would KeyError mid-run. And a retry cause that
-        # was also settled would park a row and then never re-run it.
-        from agents.constants import AgentTool
+    def test_every_base_status_has_a_cell_state_and_every_retry_cause_re_runs(self):
+        # A closed door lands as the cell state its BASE code maps to;
+        # a base code added without one would KeyError mid-run. Not
+        # configured is written at once (nothing to retry); every other
+        # closed door parks. And a retry cause that was also settled
+        # would park a row and then never re-run it.
+        from agents.constants import ToolStatus
 
-        from ..constants import RETRY_CAUSES, THROTTLED_STATE_BY_TOOL
+        from ..constants import CELL_STATE_BY_STATUS, RETRY_CAUSES
 
-        self.assertEqual(set(THROTTLED_STATE_BY_TOOL), set(AgentTool))
-        for state in THROTTLED_STATE_BY_TOOL.values():
-            self.assertIn(state, RETRY_CAUSES)
+        self.assertEqual(set(CELL_STATE_BY_STATUS), set(ToolStatus) - {ToolStatus.OPEN})
+        self.assertEqual(CELL_STATE_BY_STATUS[ToolStatus.NOT_CONFIGURED], StoredCellState.TOOL_NOT_CONFIGURED)
+        for status, state in CELL_STATE_BY_STATUS.items():
+            if status is not ToolStatus.NOT_CONFIGURED:
+                self.assertIn(state, RETRY_CAUSES)
+        self.assertNotIn(StoredCellState.TOOL_NOT_CONFIGURED, RETRY_CAUSES)
         self.assertFalse(set(RETRY_CAUSES) & set(SETTLED_CELL_STATES))
+        self.assertNotIn(StoredCellState.TOOL_NOT_CONFIGURED, SETTLED_CELL_STATES)
         for state in StoredCellState:
             self.assertLessEqual(len(state.value), CELL_STATE_MAX_LENGTH)
+
+    def test_every_tools_status_vocabulary_contains_the_base_and_ships(self):
+        # StrEnums cannot extend one another, so each tool's enum
+        # restates the base; this is what makes that a rule. And the
+        # wire's per-tool lists (the client's copy-table types) are the
+        # same enums, so a code added server-side reaches the client.
+        from agents.constants import AgentTool, SearchStatus, ToolStatus
+        from openbower_schema.agents import TOOL_STATUSES, ToolStatusWire
+
+        self.assertLessEqual({s.value for s in ToolStatus}, {s.value for s in SearchStatus})
+        self.assertEqual(set(get_args(ToolStatusWire)), {s.value for s in ToolStatus})
+        self.assertEqual(set(TOOL_STATUSES), {t.value for t in AgentTool})
+        for tool, statuses in TOOL_STATUSES.items():
+            with self.subTest(tool=tool):
+                self.assertEqual(set(statuses), {s.value for s in SearchStatus})
+        for member in SearchStatus:
+            self.assertIsInstance(member.base, ToolStatus)

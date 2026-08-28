@@ -19,7 +19,7 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, FillTrackerCell, type SearchDoor } from "./fill";
+import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
  * together: the exposed jobs and the management verbs the popover's
@@ -211,11 +211,14 @@ export function SheetTable({
               // A state dresses only AI cells; without one, a value
               // is the plain filled cell and no value is
               // not-attempted, undecorated by design.
-              // A REAL VALUE always outranks a state. Both come off
-              // THIS row object, so they are one encoding rather than
-              // two reads that can disagree.
+              // A REAL VALUE always outranks a state: it renders as
+              // the value, with a mark beside it when the run that
+              // filled it had a degraded tool. Both come off THIS row
+              // object, so they are one encoding rather than two
+              // reads that can disagree.
               const value = row.data[column.key] ?? "";
-              const state = column.fill && !value ? row.states?.[column.key] : undefined;
+              const entry = column.fill ? row.states?.[column.key] : undefined;
+              const state = !value ? entry : undefined;
               return (
                 <td
                   key={column.key}
@@ -225,10 +228,13 @@ export function SheetTable({
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's
                     // overflow-hidden would clip the focus tooltip.
-                    <AiCellState state={state} searchDoor={searchDoor} />
+                    <AiCellState entry={state} searchDoor={searchDoor} />
                   ) : (
-                    <div className="max-w-64 truncate">
-                      <Cell column={column} value={value} />
+                    <div className="flex items-center gap-2">
+                      <div className="max-w-64 truncate">
+                        <Cell column={column} value={value} />
+                      </div>
+                      {isDegradedFill(entry) && <DegradedToolMark tools={entry.tools} searchDoor={searchDoor} />}
                     </div>
                   )}
                 </td>

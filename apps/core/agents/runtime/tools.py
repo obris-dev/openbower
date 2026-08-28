@@ -1,13 +1,20 @@
 """The NATIVE tools the model drives, on the framework's DEPENDENCY
-CHANNEL: per-run state (the evidence pool, URL dedupe, and query
-diagnoses) rides a CellDeps carried by RunContext, so every write is
-visible in a signature, never a captured side effect. `build_tools` is
-the factory deciding which tools the model is offered (toggles AND
-door availability). The model decides when to call and with what
-query; the SCOPE is never its to control: find_contacts strips any
-model-supplied site: operator, injects the people site, and pins the
-DataForSEO door (the requirement is about where those queries run, not
-which door the operator picked for the rest)."""
+CHANNEL: per-run state (the evidence pool, URL dedupe, each tool's
+door status, and every call's outcome) rides a CellDeps carried by
+RunContext, so every write is visible in a signature, never a captured
+side effect. `build_tools` is the factory deciding which tools the
+model is offered (toggles AND door status). The model decides when to
+call and with what query; the SCOPE is never its to control:
+find_contacts strips any model-supplied site: operator, injects the
+people site, and pins the DataForSEO door (the requirement is about
+where those queries run, not which door the operator picked for the
+rest).
+
+A door's status is PER TOOL within the run: web_search refusing never
+refuses find_contacts, and never discards an answer the other tool
+grounded. What each door said rides out of the run as data (the
+outcomes and the final status per tool) for the fill operation to
+record on the task and the cell."""
 
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from django.conf import settings
 from pydantic_ai import RunContext, Tool
 
 from openbower_schema.agents import AgentConfig
@@ -27,37 +35,58 @@ from ..constants import (
     EVIDENCE_MAX_LINES,
     QUERY_MAX_LENGTH,
     AgentTool,
-    SearchFailure,
     SearchProvider,
+    SearchStatus,
+    ToolStatus,
 )
-from ..search import SearchOutcome, contacts_available, search, search_available
+from ..search import DoorAnswer, door_status, search
 from .grounding import canonical_url
+from .outcomes import SearchOutcome
 
 logger = logging.getLogger(__name__)
 
 # The tool notes are ONE small vocabulary, so the model never reads
 # prose that varies. Each one says what the records list cannot: why
-# it is empty, and what to do about it. Only the closed-door note tells
-# the model to stop; the others say the pool is what it has for THIS
-# query, which leaves the next query its own decision.
+# it is empty, and what to do about it. Only a closed door tells the
+# model to stop calling THAT tool; the others say the pool is what it
+# has for THIS query, which leaves the next query its own decision.
 NOTE_EMPTY_QUERY = "empty query"
 NOTE_REPEATED = "already searched that exact query; answer from the records already gathered"
 NOTE_FAILED = "search failed (provider error); the records already gathered are all you have for this query"
 # Never "answer from the records already gathered": with a closed
-# door that sentence is an instruction to guess. The runtime discards
-# the run either way (cell.py); this note just saves the completions a
-# well-behaved model would otherwise spend on rephrases.
+# door that sentence is an instruction to guess. The runtime judges
+# the run from its evidence either way (cell.py); this note saves the
+# completions a well-behaved model would otherwise spend on rephrases,
+# and keeps the OTHER tool open to it.
 NOTE_DOOR_CLOSED = (
-    "search is unavailable right now (rate limited); stop searching and leave every output empty;"
-    " this row will be retried later"
+    "{tool} is unavailable for the rest of this task ({status}); do not call it again."
+    " Use the records already gathered and any other tool you have, or leave outputs empty."
 )
 
+# The record label the model reads and the stored evidence line
+# carries, per tool: "web" and "contacts" rather than the enum's
+# snake_case, because these are prose the model and a human read.
+RECORD_LABEL: dict[AgentTool, str] = {AgentTool.WEB_SEARCH: "web", AgentTool.FIND_CONTACTS: "contacts"}
 
-def _live_web_search(query: str) -> SearchOutcome:
+
+# The door each tool runs through: web search takes the configured
+# door, contacts pin the paid one (the LinkedIn x-rays need
+# Google-grade SERPs).
+def door_for(tool: AgentTool) -> str:
+    return SearchProvider.DATAFORSEO if tool is AgentTool.FIND_CONTACTS else settings.SEARCH_PROVIDER
+
+
+def door_status_for_tool(tool: AgentTool) -> SearchStatus:
+    """A tool's door status BEFORE a run: what the catalog ships and
+    what seeds the run's per-tool statuses."""
+    return door_status(door_for(tool))
+
+
+def _live_web_search(query: str) -> DoorAnswer:
     return search(query)
 
 
-def _live_contacts_search(query: str) -> SearchOutcome:
+def _live_contacts_search(query: str) -> DoorAnswer:
     return search(query, provider=SearchProvider.DATAFORSEO)
 
 
@@ -70,10 +99,10 @@ class EvidenceRecord(NamedTuple):
     anywhere, and checking it deeper means matching against the
     answer, which is judgment.
 
-    `tool` is which tool fetched the hit, so a reader can tell a
-    general web result from a people result. NOT "door", which is this
-    repo's word for a PROVIDER entry point; these are the runtime's
-    own tools."""
+    `tool` is which tool fetched the hit (RECORD_LABEL), so a reader
+    can tell a general web result from a people result. NOT "door",
+    which is this repo's word for a PROVIDER entry point; these are
+    the runtime's own tools."""
 
     position: int
     tool: str
@@ -111,9 +140,10 @@ class CellDeps:
     """One cell walk's shared state: `evidence` is what grounding
     fences the answer to (together with URLs in the RENDERED prompt:
     row-fed URLs are the user's own ground truth), `outcomes` what the
-    bench renders as per-query diagnoses. The tools fill evidence and
-    outcomes DURING the framework run; the output validator and
-    run_cell read them after."""
+    bench renders as per-query diagnoses, `doors` each toggled tool's
+    status. The tools fill evidence, outcomes, and doors DURING the
+    framework run; the output validator and run_cell read them
+    after."""
 
     prompt: str = ""
     evidence: list[str] = field(default_factory=list)
@@ -140,19 +170,24 @@ class CellDeps:
     # reads it (the retry causes park the row, the rest are terminal).
     # The bench ignores it; its searches diagnosis already tells.
     blank_cause: str = ""
-    # WHICH tool's door closed for this run (an AgentTool value, ""
-    # while open): set when a search exhausts its backoff, read by every
-    # later tool call (refused without touching the provider) and by
-    # the runtime's verdict. Sibling tool calls of one model turn run
-    # on parallel threads, so two can each burn one backoff before
-    # either sets this; like `seen`, the cost is a little extra waiting,
-    # never a wrong answer, so no lock guards it.
-    door_closed: str = ""
+    # Each TOGGLED tool's door status for this run: seeded before the
+    # run from the doors' configuration (run_cell), moved by the pool
+    # when a door closes mid-run (a rate limit, after the seam's own
+    # retries), and finalized after the run for the doors that only
+    # ever failed. Per tool on purpose: one door refusing says nothing
+    # about the other. Sibling tool calls of one model turn run on
+    # parallel threads, so two calls of one tool can each burn one
+    # backoff before either records the closure; like `seen`, the cost
+    # is a little extra waiting, never a wrong answer, so no lock.
+    doors: dict[AgentTool, SearchStatus] = field(default_factory=dict)
     # The search DOOR rides the dependency channel like every per-run
     # fact; the fill worker wraps these to time the search share of a
     # row without the runtime knowing it is being measured.
-    web_search_fn: Callable[[str], SearchOutcome] = _live_web_search
-    contacts_search_fn: Callable[[str], SearchOutcome] = _live_contacts_search
+    web_search_fn: Callable[[str], DoorAnswer] = _live_web_search
+    contacts_search_fn: Callable[[str], DoorAnswer] = _live_contacts_search
+
+    def tool_open(self, tool: AgentTool) -> bool:
+        return self.doors.get(tool, SearchStatus.OPEN) is SearchStatus.OPEN
 
 
 def web_search(ctx: RunContext[CellDeps], query: str) -> str:
@@ -164,7 +199,7 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
         return _result([], NOTE_EMPTY_QUERY)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, ctx.deps.web_search_fn, query, tool="web", door=AgentTool.WEB_SEARCH)
+    return _pool(ctx.deps, ctx.deps.web_search_fn, query, tool=AgentTool.WEB_SEARCH)
 
 
 def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
@@ -178,18 +213,24 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     query = _clamp_query(f"site:{DEFAULT_PEOPLE_SITE} {query}", tool=AgentTool.FIND_CONTACTS)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, ctx.deps.contacts_search_fn, query, tool="contacts", door=AgentTool.FIND_CONTACTS)
+    return _pool(ctx.deps, ctx.deps.contacts_search_fn, query, tool=AgentTool.FIND_CONTACTS)
 
 
-def build_tools(config: AgentConfig) -> list[Tool]:
+_TOOL_FUNCTIONS = {AgentTool.WEB_SEARCH: web_search, AgentTool.FIND_CONTACTS: find_contacts}
+
+
+def toggled_tools(config: AgentConfig) -> list[AgentTool]:
+    """The tools this config asks for, in the order the config lists
+    them (which is the order a user sees the toggles, and the order a
+    blank cell's cause is named in)."""
+    return [tool for tool in AgentTool if getattr(config.tools, tool.value)]
+
+
+def build_tools(config: AgentConfig, deps: CellDeps) -> list[Tool]:
     """What THIS config on THIS deploy may call: a toggled tool whose
-    search door is closed is simply not offered."""
-    tools: list[Tool] = []
-    if config.searches_web and search_available():
-        tools.append(Tool(web_search))
-    if config.finds_contacts and contacts_available():
-        tools.append(Tool(find_contacts))
-    return tools
+    door is not open (per `deps.doors`, seeded by run_cell) is simply
+    not offered; its status already says why."""
+    return [Tool(_TOOL_FUNCTIONS[tool]) for tool in toggled_tools(config) if deps.tool_open(tool)]
 
 
 def _clamp_query(query: str, *, tool: AgentTool) -> str:
@@ -218,22 +259,38 @@ def _result(records: list[dict], note: str = "") -> str:
     return json.dumps({"records": records, "note": note} if note else {"records": records}, ensure_ascii=False)
 
 
-def _pool(deps: CellDeps, search_fn: Callable[[str], SearchOutcome], query: str, *, tool: str, door: AgentTool) -> str:
-    """Spend one search and pool what it returned. A closed door is
-    refused BEFORE the spend and appends no outcome, so the stored
-    searches record only what actually hit the wire (a door that just
-    said slow down must not get five more queries in the next
-    second). Any door closing closes the run: once the verdict is a
-    retry, a paid contacts search on this row is money spent on an
-    answer that will be discarded."""
-    if deps.door_closed:
-        return _result([], NOTE_DOOR_CLOSED)
-    outcome = search_fn(query)._replace(tool=door)
+def _closed_note(tool: AgentTool, status: SearchStatus) -> str:
+    return _result(
+        [], NOTE_DOOR_CLOSED.format(tool=tool.value.replace("_", " "), status=status.value.replace("_", " "))
+    )
+
+
+def _pool(deps: CellDeps, search_fn: Callable[[str], DoorAnswer], query: str, *, tool: AgentTool) -> str:
+    """Spend one search through THIS tool's door and pool what it
+    returned. A closed door is refused BEFORE the spend and appends no
+    outcome, so the stored searches record only what actually hit the
+    wire (a door that just said slow down must not get five more
+    queries in the next second). Only this tool's door: the other
+    tool keeps its own status. A rate limit (already retried by the
+    seam) closes the door for the run; unreachable and error are told
+    to the model and leave it open, since the next query may get
+    through (run_cell settles a door that only ever failed)."""
+    if not deps.tool_open(tool):
+        return _closed_note(tool, deps.doors[tool])
+    answer = search_fn(query)
+    outcome = SearchOutcome(
+        tool=tool,
+        status=answer.status,
+        provider=answer.provider,
+        attempts=answer.attempts,
+        query=query,
+        hits=answer.hits,
+    )
     deps.outcomes.append(outcome)
+    if outcome.base in (ToolStatus.RATE_LIMITED, ToolStatus.NOT_CONFIGURED):
+        deps.doors[tool] = outcome.status
+        return _closed_note(tool, outcome.status)
     if outcome.failed:
-        if outcome.cause == SearchFailure.RATE_LIMITED:
-            deps.door_closed = door
-            return _result([], NOTE_DOOR_CLOSED)
         return _result([], NOTE_FAILED)
     pooled = []
     for hit in outcome.hits:
@@ -252,7 +309,7 @@ def _pool(deps: CellDeps, search_fn: Callable[[str], SearchOutcome], query: str,
         # model, the validator, and the stored evidence all share.
         record = EvidenceRecord(
             position=len(deps.records) + 1,
-            tool=tool,
+            tool=RECORD_LABEL[tool],
             title=hit.title,
             url=hit.url,
             snippet=hit.snippet,

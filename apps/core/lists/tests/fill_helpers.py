@@ -41,12 +41,19 @@ def _claim(fill: Fill, row_id: str) -> FillTask:
     return task
 
 
-def settle(fill_id: str, row_id: str, cause: StoredCellState | None = None, causes: dict | None = None) -> None:
+def settle(
+    fill_id: str,
+    row_id: str,
+    cause: StoredCellState | None = None,
+    causes: dict | None = None,
+    tools: dict[str, str] | None = None,
+) -> None:
     """One row's terminal write, seam-shaped.
 
     `cause` None means the run answered every column the fill owns (a
     value lands in each). `causes` is the per-column truth a partially
     answered run produces; omitted, `cause` speaks for every column.
+    `tools` is the run's per-tool door statuses (empty by default).
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
     fill = Fill.objects.get(id=fill_id)
@@ -62,7 +69,7 @@ def settle(fill_id: str, row_id: str, cause: StoredCellState | None = None, caus
         ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
             fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
         )
-    landed = queue.complete_task(fill, task, states=states, result={})
+    landed = queue.complete_task(fill, task, states=states, result={"tools": tools or {}})
     assert landed, f"seam write missed for {fill_id}/{row_id}"
 
 

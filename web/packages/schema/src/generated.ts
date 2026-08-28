@@ -15,6 +15,9 @@ export type AuthUser = z.infer<typeof AuthUserSchema>;
 export const CatalogModelSchema = z.object({ "model": z.string(), "provider": z.enum(["openai_compatible","anthropic_compatible"]), "source": z.string() }).describe("One runnable model on this deploy.");
 export type CatalogModel = z.infer<typeof CatalogModelSchema>;
 
+export const CellStateWireSchema = z.object({ "state": z.enum(["pending","filled","no_evidence","no_answer","unverified","unparseable","type_mismatch","model_error","transient","tool_not_configured","tool_unavailable"]), "tools": z.record(z.string(), z.string()).optional() }).describe("One AI cell's state and the tool statuses of the run that wrote\nit: `tools` is tool -> status code (a base ToolStatus code or the\ntool's own; \"open\" for a tool that served), empty for a pending\ncell or a run before tools reported statuses. The client resolves\ncopy by (tool, code) and tolerates a code it has not heard of.");
+export type CellStateWire = z.infer<typeof CellStateWireSchema>;
+
 export const ColumnFillSchema = z.object({ "agent_id": z.string(), "current_fill_id": z.string().describe("The fill that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.").default("") }).describe("A column's fill linkage: present exactly on AI columns (the\nagent that fills it; the ephemeral-vs-roster custody rides the\nagent, not the column).");
 export type ColumnFill = z.infer<typeof ColumnFillSchema>;
 
@@ -42,7 +45,7 @@ export type FoldersList = z.infer<typeof FoldersListSchema>;
 export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
 export type ListColumn = z.infer<typeof ListColumnSchema>;
 
-export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order."), "states": z.record(z.string(), z.enum(["pending","no_evidence","no_answer","unverified","no_tools_door","unparseable","type_mismatch","model_error","transient","search_throttled","contacts_throttled"])).describe("AI cell states keyed by column key, for the cells that have no value: a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled, and never-attempted is likewise an absence.").default({}) });
+export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order."), "states": z.record(z.string(), z.lazy(() => CellStateWireSchema)).describe("AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.").default({}) });
 export type ListRowWire = z.infer<typeof ListRowWireSchema>;
 
 export const ListRowsPageSchema = z.object({ "items": z.array(z.lazy(() => ListRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last position when more rows exist.").default(null) });
@@ -66,10 +69,10 @@ export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
 export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
-export const TestSearchSchema = z.object({ "attempts": z.number().int().default(1), "cause": z.string().default(""), "failed": z.boolean(), "hits": z.number().int(), "provider": z.string().default(""), "query": z.string(), "tool": z.string().default("") }).describe("One search query's diagnosis: failed means the provider errored,\ndistinct from an honest zero-hit answer, and `cause` says why\n(rate_limited | timeout | error; \"\" when clean). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts as failed), and `tool` which tool asked (web_search |\nfind_contacts), so a reader can tell whose door refused.");
+export const TestSearchSchema = z.object({ "attempts": z.number().int(), "hits": z.number().int(), "provider": z.string(), "query": z.string(), "status": z.string(), "tool": z.string() }).describe("One search query's outcome: `status` is what the door said (a\nSearchStatus code: open, and hits, possibly zero, is the honest\nanswer; any other code is why there are none). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts), and `tool` which tool asked (web_search | find_contacts),\nso a reader can tell whose door refused.");
 export type TestSearch = z.infer<typeof TestSearchSchema>;
 
-export const AgentCatalogSchema = z.object({ "contacts_available": z.boolean(), "models": z.array(z.lazy(() => CatalogModelSchema)), "search_available": z.boolean(), "search_provider": z.union([z.enum(["duckduckgo","dataforseo"]), z.null()]).describe("Which door serves web search on this deployment (the server's SearchProvider, pinned by a parity test), or null where none is configured. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it."), "support_followup": z.string().describe("The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify."), "truncated": z.boolean().describe("True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.") }).describe("What THIS deploy can run; search_available gates the tools.");
+export const AgentCatalogSchema = z.object({ "doors": z.record(z.string(), z.string()).describe("Each tool's door status BEFORE a run, keyed by AgentTool (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells)."), "models": z.array(z.lazy(() => CatalogModelSchema)), "search_provider": z.union([z.enum(["duckduckgo","dataforseo"]), z.null()]).describe("Which door serves web search on this deployment (the server's SearchProvider, pinned by a parity test), or null where none is configured. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it."), "support_followup": z.string().describe("The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify."), "truncated": z.boolean().describe("True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.") }).describe("What THIS deploy can run; `doors` gates the tools.");
 export type AgentCatalog = z.infer<typeof AgentCatalogSchema>;
 
 export const AgentConfigSchema = z.object({ "model": z.string(), "outputs": z.array(z.lazy(() => AgentOutputSchema)).min(1).max(8), "prompt": z.string().max(262144), "provider": z.enum(["openai_compatible","anthropic_compatible"]), "source": z.string().describe("Which server of that spec (the env-named source)."), "tools": z.lazy(() => AgentToolsSchema) }).describe("The runtime's interchange unit, shared by both custodies (a\nsaved agent, a column's quick prompt) and the test bench.");
@@ -184,5 +187,21 @@ export const WIRE_CONSTANTS = {
     "unparseable",
     "type_mismatch"
   ],
-  "TEST_ROW_MAX_KEYS": 16
+  "TEST_ROW_MAX_KEYS": 16,
+  "TOOL_STATUSES": {
+    "find_contacts": [
+      "open",
+      "not_configured",
+      "rate_limited",
+      "unreachable",
+      "error"
+    ],
+    "web_search": [
+      "open",
+      "not_configured",
+      "rate_limited",
+      "unreachable",
+      "error"
+    ]
+  }
 } as const;

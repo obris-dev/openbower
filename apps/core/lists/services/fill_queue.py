@@ -193,7 +193,9 @@ class FillQueueService:
                 leased_by="",
             )
             if landed == 1:
-                cell_truth.write(fill, row_id=task.row_id, states=states)
+                # The run's per-tool door statuses ride the stored
+                # result (CellRunResult.tools) onto the cell record.
+                cell_truth.write(fill, row_id=task.row_id, states=states, tools=result.get("tools", {}))
         return landed == 1
 
     def mark_row_missing(self, task: FillTask) -> bool:

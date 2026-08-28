@@ -201,10 +201,23 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   t.after(() => {
     globalThis.fetch = realFetch;
   });
+  // Three shapes on one page: the object the server ships now (with
+  // the tool statuses beside the word), an unknown word inside it,
+  // and the bare string a server from before tool statuses shipped,
+  // which reads as that word with no tool facts.
   globalThis.fetch = (async () =>
     new Response(
       JSON.stringify({
-        items: [{ id: "01R", position: 1, data: {}, states: { answer: "a_cause_from_the_future" } }],
+        items: [
+          { id: "01R", position: 1, data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
+          {
+            id: "01S",
+            position: 2,
+            data: { answer: "x" },
+            states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
+          },
+          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
+        ],
         next_cursor: null,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -213,7 +226,10 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   const res = await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
-  assert.equal(res.data.items[0]!.states.answer, UNKNOWN_CELL_STATE);
+  const [future, degraded, bare] = res.data.items;
+  assert.deepEqual(future!.states.answer, { state: UNKNOWN_CELL_STATE, tools: {} });
+  assert.deepEqual(degraded!.states.answer, { state: "filled", tools: { web_search: "rate_limited" } });
+  assert.deepEqual(bare!.states.answer, { state: "no_evidence", tools: {} });
   assert.ok(!(CELL_STATES as readonly string[]).includes(UNKNOWN_CELL_STATE));
 });
 

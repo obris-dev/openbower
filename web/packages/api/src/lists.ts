@@ -3,6 +3,7 @@
 // decides what each means for the UI.
 
 import {
+  CellStateWireSchema,
   ListRowWireSchema,
   type ListRowWire,
   ColumnPromptWireSchema,
@@ -52,7 +53,16 @@ export type { FillError, ListColumn, ListRowWire } from "@bower/schema";
  * `pending` is the in-flight shimmer, the rest are terminal blank
  * causes. Filled and not-attempted never travel (a value with no
  * state is filled; no state and no value is not attempted). */
-export type CellState = ListRowWire["states"][string];
+export type CellStateWire = ListRowWire["states"][string];
+export type CellState = CellStateWire["state"];
+/** Tool -> the status code its door reported for the run that wrote
+ * a cell ("open" for a tool that served). The vocabularies per tool
+ * come off the contract (TOOL_STATUSES): base codes every tool shares
+ * plus a tool's own; an unknown code renders the generic line. */
+export type ToolStatuses = Record<string, string>;
+export const TOOL_STATUSES = WIRE_CONSTANTS.TOOL_STATUSES;
+export type ToolKey = keyof typeof TOOL_STATUSES;
+export type ToolStatus = (typeof TOOL_STATUSES)[ToolKey][number];
 
 // Fill facts off the contract document (never hand-copied): the
 // heartbeat-staleness threshold the progress chip judges against, and
@@ -70,7 +80,7 @@ export const ROW_LEASE_STALE_SECONDS = WIRE_CONSTANTS.ROW_LEASE_STALE_SECONDS;
 // shape: reaching into internals returns undefined on a minor
 // bump rather than failing, and every cause would silently map
 // to unknown.
-export const CELL_STATES = ListRowWireSchema.shape.states.unwrap().valueType.options;
+export const CELL_STATES = CellStateWireSchema.shape.state.options;
 export const SETTLED_CELL_STATES = WIRE_CONSTANTS.SETTLED_CELL_STATES;
 export type SettledCellState = (typeof SETTLED_CELL_STATES)[number];
 
@@ -175,16 +185,26 @@ function knownStatus(status: string): FillWire["status"] {
  * honest half: an unrecognised cause has not been shown to settle. */
 export const UNKNOWN_CELL_STATE = "unknown_cause" as const;
 export type RenderableCellState = CellState | typeof UNKNOWN_CELL_STATE;
+/** One cell's state as the CLIENT holds it: the word (admitting the
+ * unknown member) plus the tool statuses of the run that wrote it. */
+export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolStatuses };
 /** A row as the CLIENT holds it: the states record admits the unknown
  * member the tolerant read produces, which the wire type cannot. */
-export type RenderableListRow = Omit<ListRowWire, "states"> & { states: Record<string, RenderableCellState> };
+export type RenderableListRow = Omit<ListRowWire, "states"> & { states: Record<string, RenderableCellStateWire> };
 export type RenderableListRowsPage = Omit<ListRowsPage, "items"> & { items: RenderableListRow[] };
 // Rows parse states TOLERANTLY: strict-parsing an unknown cause would
 // fail the whole page, and a sheet that will not render is a worse
-// answer than a cell whose dot is cautious.
+// answer than a cell whose dot is cautious. A bare string is the
+// shape a server from before tool statuses shipped; it reads as that
+// state with no tool facts.
+const TolerantCellStateSchema = z.union([
+  z.string(),
+  z.object({ state: z.string(), tools: z.record(z.string(), z.string()).default({}) }),
+]);
 export const TolerantListRowsPageSchema = ListRowsPageSchema.extend({
-  items: z.array(ListRowWireSchema.extend({ states: z.record(z.string(), z.string()).default({}) })),
+  items: z.array(ListRowWireSchema.extend({ states: z.record(z.string(), TolerantCellStateSchema).default({}) })),
 });
+type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
 
 export async function fetchListRows(
   id: string,
@@ -203,18 +223,18 @@ export async function fetchListRows(
  * this bundle can render. Exported because the SERVER fetch parses
  * the same endpoint, where a strict enum would fail the whole page
  * render rather than one poll. */
-export function renderablePage(page: { items: { states: Record<string, string> }[] }): RenderableListRowsPage {
+export function renderablePage(page: { items: { states: Record<string, TolerantCellState> }[] }): RenderableListRowsPage {
   const known = new Set<string>(CELL_STATES);
+  const narrow = (entry: TolerantCellState): RenderableCellStateWire => {
+    const state = typeof entry === "string" ? entry : entry.state;
+    const tools = typeof entry === "string" ? {} : entry.tools;
+    return { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
+  };
   return {
-    ...(page as RenderableListRowsPage),
+    ...(page as unknown as RenderableListRowsPage),
     items: page.items.map((item) => ({
-      ...(item as RenderableListRow),
-      states: Object.fromEntries(
-        Object.entries(item.states).map(([key, state]) => [
-          key,
-          (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState,
-        ]),
-      ),
+      ...(item as unknown as RenderableListRow),
+      states: Object.fromEntries(Object.entries(item.states).map(([key, entry]) => [key, narrow(entry)])),
     })),
   };
 }

@@ -153,8 +153,20 @@ class CatalogModel(BaseModel):
     model: str
 
 
+# The BASE tool status codes (the server's ToolStatus, pinned): what a
+# tool's door did. Each tool's own vocabulary contains these and may
+# add its own; the client resolves copy by (tool, code) and tolerates
+# a code it has not heard of.
+ToolStatusWire = Literal["open", "not_configured", "rate_limited", "unreachable", "error"]
+# Each tool's FULL vocabulary (the base codes plus the tool's own),
+# shipped as an x-constant so the client types its copy table per tool.
+# Mirrors the server enums (agents.constants.SearchStatus), pinned.
+SEARCH_STATUSES: tuple[str, ...] = ("open", "not_configured", "rate_limited", "unreachable", "error")
+TOOL_STATUSES: dict[str, tuple[str, ...]] = {"web_search": SEARCH_STATUSES, "find_contacts": SEARCH_STATUSES}
+
+
 class AgentCatalog(BaseModel):
-    """What THIS deploy can run; search_available gates the tools."""
+    """What THIS deploy can run; `doors` gates the tools."""
 
     models: list[CatalogModel]
     support_followup: str = Field(
@@ -166,8 +178,11 @@ class AgentCatalog(BaseModel):
         description="True when the catalog cap cut the list: an address past the cap "
         "may still RUN (model_for validates against the full roster), it just is not shown."
     )
-    search_available: bool
-    contacts_available: bool
+    doors: dict[str, str] = Field(
+        description="Each tool's door status BEFORE a run, keyed by AgentTool (web_search, "
+        "find_contacts): 'open' gates the toggle on; any other code is the reason it is off "
+        "(today only 'not_configured' can appear here; the run-time codes ride the cells)."
+    )
     search_provider: SearchProviderWire | None = Field(
         description="Which door serves web search on this deployment (the server's SearchProvider, "
         "pinned by a parity test), or null where none is configured. Client copy composes it: a "
@@ -180,21 +195,20 @@ SearchProviderWire = Literal["duckduckgo", "dataforseo"]
 
 
 class TestSearch(BaseModel):
-    """One search query's diagnosis: failed means the provider errored,
-    distinct from an honest zero-hit answer, and `cause` says why
-    (rate_limited | timeout | error; "" when clean). `provider` is the
+    """One search query's outcome: `status` is what the door said (a
+    SearchStatus code: open, and hits, possibly zero, is the honest
+    answer; any other code is why there are none). `provider` is the
     door that served it, `attempts` how many tries the seam made for
     this one query (a rate limit is retried, same query, before it
-    counts as failed), and `tool` which tool asked (web_search |
-    find_contacts), so a reader can tell whose door refused."""
+    counts), and `tool` which tool asked (web_search | find_contacts),
+    so a reader can tell whose door refused."""
 
     query: str
     hits: int
-    failed: bool
-    cause: str = ""
-    provider: str = ""
-    attempts: int = 1
-    tool: str = ""
+    status: str
+    provider: str
+    attempts: int
+    tool: str
 
 
 TestRunStatus = Literal["pending", "complete", "failed"]

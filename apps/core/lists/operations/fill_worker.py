@@ -18,7 +18,7 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import DatabaseError, close_old_connections, connections, transaction
 
-from agents.constants import SearchProvider
+from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
 from agents.runtime.tools import CellDeps
@@ -101,9 +101,10 @@ class _Breakers:
         self._search_provider = search_provider
         self.tripped: tuple[str, str] | None = None
 
-    def row_finished(self, *, retry_cause: str) -> None:
+    def row_finished(self, *, retry_cause: str, tools: dict[str, str]) -> None:
         """`retry_cause` is the RETRY_CAUSES value that parked the row,
-        "" for a row that finished terminally."""
+        "" for a row that finished terminally; `tools` the run's
+        per-tool door statuses (what a tool_unavailable cause names)."""
         with self._lock:
             if self.tripped is not None:
                 # First trip wins: the failed fill's error must name
@@ -111,33 +112,38 @@ class _Breakers:
                 return
             self._transients = self._transients + 1 if retry_cause else 0
             if self._transients >= CONSECUTIVE_TRANSIENT_LIMIT:
-                self.tripped = self._attribute(retry_cause)
+                self.tripped = self._attribute(retry_cause, tools)
 
-    def _attribute(self, retry_cause: str) -> tuple[str, str]:
+    def _attribute(self, retry_cause: str, tools: dict[str, str]) -> tuple[str, str]:
         """The failed fill's error, tier 1 (server-authored, rendered
-        verbatim): which tool, which door, and the remedy where one
-        exists. Named from the cause that tripped the streak: a mixed
-        streak reports its latest evidence."""
-        if retry_cause == StoredCellState.CONTACTS_THROTTLED:
-            return (
-                FillFailureCode.SEARCH_THROTTLED,
-                f"Finding contacts is being rate-limited or refused by DataForSEO; {_STOPPED}",
-            )
-        if retry_cause == StoredCellState.SEARCH_THROTTLED:
-            if self._search_provider == SearchProvider.DATAFORSEO:
-                return (
-                    FillFailureCode.SEARCH_THROTTLED,
-                    f"Web search is being rate-limited or refused by DataForSEO; {_STOPPED}",
-                )
-            return (
-                FillFailureCode.SEARCH_THROTTLED,
-                f"Web search is being rate-limited or refused by the free search provider; {_STOPPED}"
-                " Connect DataForSEO for metered search.",
-            )
+        verbatim): which tool, what its door said, which door, and the
+        remedy where one exists. Named from the cause that tripped the
+        streak: a mixed streak reports its latest evidence."""
+        if retry_cause == StoredCellState.TOOL_UNAVAILABLE:
+            for tool in AgentTool:
+                status = tools.get(tool.value, ToolStatus.OPEN)
+                if status != ToolStatus.OPEN:
+                    return FillFailureCode.SEARCH_THROTTLED, self._tool_message(tool, status)
         return (
             FillFailureCode.PROVIDER_THROTTLED,
             f"The model provider is throttling this fill; {_STOPPED}",
         )
+
+    def _tool_message(self, tool: AgentTool, status: str) -> str:
+        name = "Web search" if tool is AgentTool.WEB_SEARCH else "Finding contacts"
+        said = _STATUS_PHRASE.get(status, "is failing on")
+        free = tool is AgentTool.WEB_SEARCH and self._search_provider != SearchProvider.DATAFORSEO
+        door = "the free search provider" if free else "DataForSEO"
+        remedy = " Connect DataForSEO for metered search." if free else ""
+        return f"{name} {said} {door}; {_STOPPED}{remedy}"
+
+
+# What a door's status reads as in the breaker's sentence.
+_STATUS_PHRASE = {
+    ToolStatus.RATE_LIMITED: "is being rate-limited by",
+    ToolStatus.UNREACHABLE: "cannot reach",
+    ToolStatus.ERROR: "is failing on",
+}
 
 
 class _FillState:
@@ -575,6 +581,7 @@ class FillWorkerOperation:
             assessments=dict(run.assessments),
             blank_cause=run.blank_cause,
             declined_cause=run.declined_cause,
+            tools=dict(run.tools),
         )
         if run.blank_cause in RETRY_CAUSES:
             # A park diagnoses NOTHING on the sheet: nothing terminal
@@ -592,7 +599,7 @@ class FillWorkerOperation:
             if parked and not was_parked:
                 self.queue.bump(str(fill.id), transient=1)
             controller.record_throttle(generation)
-            breakers.row_finished(retry_cause=run.blank_cause)
+            breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
             return
         # Per COLUMN, not per row: a run answers outputs independently,
         # so a column the run never answered carries the declined cause
@@ -666,4 +673,4 @@ class FillWorkerOperation:
             controller.record_throttle(generation)
         else:
             controller.record_success(generation)
-        breakers.row_finished(retry_cause="")
+        breakers.row_finished(retry_cause="", tools=run.tools)

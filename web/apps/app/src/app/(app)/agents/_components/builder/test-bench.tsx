@@ -17,10 +17,11 @@ import { outputKey } from "../../../_components/agent-config";
 function describeSearch(search: AgentTestResult["searches"][number]): string {
   const tool = search.tool === "find_contacts" ? "contacts" : "web";
   const door = search.provider ? ` via ${search.provider}` : "";
-  if (!search.failed) return `${search.hits} hits (${tool}${door})`;
-  if (search.cause === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
-  if (search.cause === "timeout") return `timed out (${tool}${door})`;
-  return `failed (${tool}${door})`;
+  if (search.status === "open") return `${search.hits} hits (${tool}${door})`;
+  if (search.status === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
+  if (search.status === "unreachable") return `unreachable (${tool}${door})`;
+  if (search.status === "not_configured") return `not set up (${tool})`;
+  return `${search.status.replace(/_/g, " ")} (${tool}${door})`;
 }
 
 /** The test bench's INPUTS AND RESULTS: hand-fed values for the
@@ -91,8 +92,8 @@ export function TestBench({
   // Normalized once: a localStorage DRAFT can hold a result from before
   // this field existed, so absence must degrade, never crash.
   const searches = result?.searches ?? [];
-  const failedSearches = searches.filter((s) => s.failed).length;
-  const rateLimited = searches.filter((s) => s.cause === "rate_limited").length;
+  const failedSearches = searches.filter((s) => s.status !== "open").length;
+  const rateLimited = searches.filter((s) => s.status === "rate_limited").length;
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
   const emptyCells = result !== null && Object.keys(result.cells).length === 0;
   // Rendering follows the DECLARED type through the SAME cell-link
@@ -225,7 +226,7 @@ export function TestBench({
             // than answer from what got through.
             <p className="mt-2 text-xs text-warning">
               {rateLimited} of {searches.length} searches were rate-limited even after retrying. In a fill, this row
-              would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.cause === "rate_limited") ? "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}
+              would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.status === "rate_limited") ? "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}
             </p>
           )}
           {failedSearches > rateLimited && (

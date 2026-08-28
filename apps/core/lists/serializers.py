@@ -13,6 +13,7 @@ from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import FillCounters, FillError
 from openbower_schema.fills import FillWire as WireFill
+from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
@@ -196,7 +197,7 @@ def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
     ).model_dump()
 
 
-def row_wire(row: ListRow, states: dict[str, str] | None = None) -> dict[str, Any]:
+def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> dict[str, Any]:
     """A sheet row with its AI cell states beside its values. ONE
     shape rather than two paged reads walking in lockstep, which was a
     client-side join carried over the network."""

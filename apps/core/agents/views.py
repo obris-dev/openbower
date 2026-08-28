@@ -20,10 +20,10 @@ from lists.constants import FillErrorCode
 from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, CatalogModel
 from openbower_schema.fills import CellRunResult
 
-from .constants import TEST_RUN_MAX_CONCURRENT
+from .constants import TEST_RUN_MAX_CONCURRENT, AgentTool
 from .models import Agent
 from .providers import ModelUnavailable, catalog_entries, model_for
-from .search import SearchMisconfigured, contacts_available, search_available
+from .runtime.tools import door_status_for_tool
 from .serializers import (
     AgentCreateRequest,
     AgentPatchRequest,
@@ -105,8 +105,7 @@ class AgentCatalogView(_ScopedView):
             models=models,
             support_followup=settings.SUPPORT_FOLLOWUP,
             truncated=truncated,
-            search_available=search_available(),
-            contacts_available=contacts_available(),
+            doors={tool.value: door_status_for_tool(tool).value for tool in AgentTool},
             # The test profile pins every door shut with an empty
             # setting; the wire says "none" as null, never as "".
             search_provider=settings.SEARCH_PROVIDER or None,
@@ -164,7 +163,7 @@ def _execute_test(
             complete_run(run_id, result.model_dump())
         finally:
             _TEST_SLOTS.release()
-    except (ModelUnavailable, SearchMisconfigured) as e:
+    except ModelUnavailable as e:
         # Config-tier refusals carry their own user-facing why.
         logger.exception("test run %s failed", run_id)
         fail_run(run_id, str(e))

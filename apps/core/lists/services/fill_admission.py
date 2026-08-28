@@ -1222,5 +1222,5 @@ class FillAdmissionService:
             status=FillTaskStatus.DONE,
             result=result.model_dump(),
         )
-        cell_truth.write(fill, row_id=run.row_id, states=states)
+        cell_truth.write(fill, row_id=run.row_id, states=states, tools=result.tools)
         return {"attempted": 1, ("filled" if answered else "blank"): 1}

@@ -17,6 +17,8 @@ from openbower_kernel.adaptive import CLIMB_STREAK, AdaptiveConcurrency
 from ..constants import CONSECUTIVE_TRANSIENT_LIMIT, FillFailureCode, StoredCellState
 from ..operations.fill_worker import _Breakers
 
+WEB_LIMITED = {"web_search": "rate_limited"}
+
 
 class TransientBreakerTests(SimpleTestCase):
     """The one breaker: consecutive rows parked for retry, whichever
@@ -27,15 +29,15 @@ class TransientBreakerTests(SimpleTestCase):
     def test_consecutive_transients_trip_at_any_width(self):
         breakers = _Breakers(search_provider="duckduckgo")
         for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
+            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
         self.assertEqual(breakers.tripped[0], FillFailureCode.PROVIDER_THROTTLED)
 
     def test_one_good_row_forfeits_the_streak(self):
         breakers = _Breakers(search_provider="duckduckgo")
         for _ in range(CONSECUTIVE_TRANSIENT_LIMIT - 1):
-            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
-        breakers.row_finished(retry_cause="")
-        breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
+            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
+        breakers.row_finished(retry_cause="", tools={})
+        breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
         self.assertIsNone(breakers.tripped)
 
     def test_the_first_trip_wins(self):
@@ -43,37 +45,50 @@ class TransientBreakerTests(SimpleTestCase):
         # stopped the spend.
         breakers = _Breakers(search_provider="duckduckgo")
         for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
+            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
         self.assertEqual(breakers.tripped[0], FillFailureCode.PROVIDER_THROTTLED)
         for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-            breakers.row_finished(retry_cause=StoredCellState.SEARCH_THROTTLED)
+            breakers.row_finished(retry_cause=StoredCellState.TOOL_UNAVAILABLE, tools=WEB_LIMITED)
         self.assertEqual(breakers.tripped[0], FillFailureCode.PROVIDER_THROTTLED)
 
-    def test_a_search_door_streak_names_the_tool_and_the_door(self):
-        # Tier-1 copy: the tool the user toggled, the door that refused,
-        # and the remedy only where one exists (the paid door is not a
-        # remedy for someone already on it).
+    def test_a_tool_streak_names_the_tool_its_status_and_the_door(self):
+        # Tier-1 copy: the tool the user toggled, what its door said,
+        # which door, and the remedy only where one exists (the paid
+        # door is not a remedy for someone already on it).
         cases = [
-            (StoredCellState.SEARCH_THROTTLED, "duckduckgo", "Web search", "free search provider", True),
-            (StoredCellState.SEARCH_THROTTLED, "dataforseo", "Web search", "DataForSEO", False),
-            (StoredCellState.CONTACTS_THROTTLED, "duckduckgo", "Finding contacts", "DataForSEO", False),
+            (WEB_LIMITED, "duckduckgo", "Web search is being rate-limited by the free search provider", True),
+            (WEB_LIMITED, "dataforseo", "Web search is being rate-limited by DataForSEO", False),
+            ({"web_search": "unreachable"}, "duckduckgo", "Web search cannot reach the free search provider", True),
+            ({"web_search": "error"}, "duckduckgo", "Web search is failing on the free search provider", True),
+            (
+                {"find_contacts": "rate_limited"},
+                "duckduckgo",
+                "Finding contacts is being rate-limited by DataForSEO",
+                False,
+            ),
+            # Both tools closed: the first toggled tool names the fill.
+            (
+                {"web_search": "unreachable", "find_contacts": "rate_limited"},
+                "duckduckgo",
+                "Web search cannot reach",
+                True,
+            ),
         ]
-        for cause, provider, tool, door, remedy in cases:
-            with self.subTest(cause=cause, provider=provider):
+        for tools, provider, opening, remedy in cases:
+            with self.subTest(tools=tools, provider=provider):
                 breakers = _Breakers(search_provider=provider)
                 for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-                    breakers.row_finished(retry_cause=cause)
+                    breakers.row_finished(retry_cause=StoredCellState.TOOL_UNAVAILABLE, tools=tools)
                 code, message = breakers.tripped
                 self.assertEqual(code, FillFailureCode.SEARCH_THROTTLED)
-                self.assertTrue(message.startswith(tool), message)
-                self.assertIn(door, message)
+                self.assertTrue(message.startswith(opening), message)
                 self.assertEqual("Connect DataForSEO" in message, remedy, message)
 
     def test_a_mixed_streak_reports_its_latest_evidence(self):
         breakers = _Breakers(search_provider="duckduckgo")
         for _ in range(CONSECUTIVE_TRANSIENT_LIMIT - 1):
-            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT)
-        breakers.row_finished(retry_cause=StoredCellState.SEARCH_THROTTLED)
+            breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
+        breakers.row_finished(retry_cause=StoredCellState.TOOL_UNAVAILABLE, tools=WEB_LIMITED)
         self.assertEqual(breakers.tripped[0], FillFailureCode.SEARCH_THROTTLED)
 
 

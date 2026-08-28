@@ -186,14 +186,42 @@ class SearchProvider(StrEnum):
     DATAFORSEO = "dataforseo"
 
 
-class SearchFailure(StrEnum):
-    """WHY a search failed, as the seam classifies it: only a rate
-    limit is retried (it is the one failure that asks for a retry),
-    and only a rate limit closes the run's door."""
+class ToolStatus(StrEnum):
+    """The BASE status codes every tool can report for one call: what
+    its door did. Each outcome type carries its own enum that restates
+    these (StrEnums cannot extend one another; a parity test pins the
+    containment) and may add modes of its own, so a tool-specific
+    failure never lands here and never touches another tool. The
+    sheet's cell vocabulary keys on the base code alone (lists:
+    CELL_STATE_BY_STATUS); the tool's own code rides the task and the
+    cell record beside it."""
 
+    OPEN = "open"
+    NOT_CONFIGURED = "not_configured"
     RATE_LIMITED = "rate_limited"
-    TIMEOUT = "timeout"
+    UNREACHABLE = "unreachable"
     ERROR = "error"
+
+
+class SearchStatus(StrEnum):
+    """The search door's vocabulary: the base codes, plus any mode only
+    a search door has (none yet). `base` maps each member to the base
+    code the sheet reasons about."""
+
+    OPEN = "open"
+    NOT_CONFIGURED = "not_configured"
+    RATE_LIMITED = "rate_limited"
+    UNREACHABLE = "unreachable"
+    ERROR = "error"
+
+    @property
+    def base(self) -> ToolStatus:
+        return _SEARCH_STATUS_BASE[self]
+
+
+# Every member's base code, complete by construction here and pinned by
+# a parity test; a search-only mode added above declares its base here.
+_SEARCH_STATUS_BASE: dict[SearchStatus, ToolStatus] = {member: ToolStatus(member.value) for member in SearchStatus}
 
 
 class AgentTool(StrEnum):

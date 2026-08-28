@@ -44,7 +44,7 @@ from openbower_schema import (
     LookalikeListResponse,
     RowsAdded,
 )
-from openbower_schema.agents import MAX_TOOL_CALLS, RESERVED_OUTPUT_MARKER, TEST_ROW_MAX_KEYS
+from openbower_schema.agents import MAX_TOOL_CALLS, RESERVED_OUTPUT_MARKER, TEST_ROW_MAX_KEYS, TOOL_STATUSES
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS,
     FREE_SEARCH_FILL_BUDGET,
@@ -113,6 +113,10 @@ def build_schema() -> dict[str, Any]:
             "RESERVED_OUTPUT_MARKER": RESERVED_OUTPUT_MARKER,
             "ROW_LEASE_STALE_SECONDS": ROW_LEASE_STALE_SECONDS,
             "SETTLED_CELL_STATES": list(SETTLED_CELL_STATES),
+            # Each tool's status vocabulary (its own enum, containing
+            # the base codes), so the client's copy table is typed per
+            # tool and an unknown code degrades instead of crashing.
+            "TOOL_STATUSES": {tool: list(statuses) for tool, statuses in TOOL_STATUSES.items()},
             "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
         },
     }

@@ -1,11 +1,15 @@
 {
   "$defs": {
     "AgentCatalog": {
-      "description": "What THIS deploy can run; search_available gates the tools.",
+      "description": "What THIS deploy can run; `doors` gates the tools.",
       "properties": {
-        "contacts_available": {
-          "title": "Contacts Available",
-          "type": "boolean"
+        "doors": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Each tool's door status BEFORE a run, keyed by AgentTool (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells).",
+          "title": "Doors",
+          "type": "object"
         },
         "models": {
           "items": {
@@ -13,10 +17,6 @@
           },
           "title": "Models",
           "type": "array"
-        },
-        "search_available": {
-          "title": "Search Available",
-          "type": "boolean"
         },
         "search_provider": {
           "anyOf": [
@@ -49,8 +49,7 @@
         "models",
         "support_followup",
         "truncated",
-        "search_available",
-        "contacts_available",
+        "doors",
         "search_provider"
       ],
       "title": "AgentCatalog",
@@ -399,6 +398,40 @@
         "model"
       ],
       "title": "CatalogModel",
+      "type": "object"
+    },
+    "CellStateWire": {
+      "description": "One AI cell's state and the tool statuses of the run that wrote\nit: `tools` is tool -> status code (a base ToolStatus code or the\ntool's own; \"open\" for a tool that served), empty for a pending\ncell or a run before tools reported statuses. The client resolves\ncopy by (tool, code) and tolerates a code it has not heard of.",
+      "properties": {
+        "state": {
+          "enum": [
+            "pending",
+            "filled",
+            "no_evidence",
+            "no_answer",
+            "unverified",
+            "unparseable",
+            "type_mismatch",
+            "model_error",
+            "transient",
+            "tool_not_configured",
+            "tool_unavailable"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "CellStateWire",
       "type": "object"
     },
     "ColumnFill": {
@@ -919,23 +952,10 @@
         },
         "states": {
           "additionalProperties": {
-            "enum": [
-              "pending",
-              "no_evidence",
-              "no_answer",
-              "unverified",
-              "no_tools_door",
-              "unparseable",
-              "type_mismatch",
-              "model_error",
-              "transient",
-              "search_throttled",
-              "contacts_throttled"
-            ],
-            "type": "string"
+            "$ref": "#/$defs/CellStateWire"
           },
           "default": {},
-          "description": "AI cell states keyed by column key, for the cells that have no value: a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled, and never-attempted is likewise an absence.",
+          "description": "AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.",
           "title": "States",
           "type": "object"
         }
@@ -1284,28 +1304,17 @@
       "type": "object"
     },
     "TestSearch": {
-      "description": "One search query's diagnosis: failed means the provider errored,\ndistinct from an honest zero-hit answer, and `cause` says why\n(rate_limited | timeout | error; \"\" when clean). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts as failed), and `tool` which tool asked (web_search |\nfind_contacts), so a reader can tell whose door refused.",
+      "description": "One search query's outcome: `status` is what the door said (a\nSearchStatus code: open, and hits, possibly zero, is the honest\nanswer; any other code is why there are none). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts), and `tool` which tool asked (web_search | find_contacts),\nso a reader can tell whose door refused.",
       "properties": {
         "attempts": {
-          "default": 1,
           "title": "Attempts",
           "type": "integer"
-        },
-        "cause": {
-          "default": "",
-          "title": "Cause",
-          "type": "string"
-        },
-        "failed": {
-          "title": "Failed",
-          "type": "boolean"
         },
         "hits": {
           "title": "Hits",
           "type": "integer"
         },
         "provider": {
-          "default": "",
           "title": "Provider",
           "type": "string"
         },
@@ -1313,8 +1322,11 @@
           "title": "Query",
           "type": "string"
         },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
         "tool": {
-          "default": "",
           "title": "Tool",
           "type": "string"
         }
@@ -1322,7 +1334,10 @@
       "required": [
         "query",
         "hits",
-        "failed"
+        "status",
+        "provider",
+        "attempts",
+        "tool"
       ],
       "title": "TestSearch",
       "type": "object"
@@ -1343,7 +1358,23 @@
       "unparseable",
       "type_mismatch"
     ],
-    "TEST_ROW_MAX_KEYS": 16
+    "TEST_ROW_MAX_KEYS": 16,
+    "TOOL_STATUSES": {
+      "find_contacts": [
+        "open",
+        "not_configured",
+        "rate_limited",
+        "unreachable",
+        "error"
+      ],
+      "web_search": [
+        "open",
+        "not_configured",
+        "rate_limited",
+        "unreachable",
+        "error"
+      ]
+    }
   },
   "x-reserved-output-keys": [
     "construct",

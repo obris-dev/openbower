@@ -43,7 +43,6 @@ from ..constants import (
     MODEL_RETRIES,
 )
 from ..providers import MODEL_TIMEOUT_EXCEPTIONS, ModelUnavailable
-from ..search import SearchMisconfigured
 from .grounding import allowed_urls, ground_value, has_url
 from .prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS
 from .tools import CellDeps
@@ -289,11 +288,6 @@ class CellAnswerer:
             logger.info("cell: request/tool budget exhausted with no records to answer from")
             deps.blank_cause = StoredCellState.NO_ANSWER
             return None
-        except SearchMisconfigured:
-            # Config tier: build_tools' availability gates make this
-            # unreachable, but if a gate ever regresses the error must
-            # surface loudly, not blank one cell quietly.
-            raise
         except ModelHTTPError as e:
             if e.status_code in (401, 403, 404):
                 raise ModelUnavailable(f"the model endpoint refused the address ({e.status_code})") from e
