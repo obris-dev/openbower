@@ -1,5 +1,16 @@
 import { Popover, PopoverButton, PopoverPanel, Skeleton } from "@bower/ui";
-import { SETTLED_CELL_STATES, UNKNOWN_CELL_STATE, type CellState, type RenderableCellState, type SettledCellState } from "@bower/api";
+import {
+  SETTLED_CELL_STATES,
+  UNKNOWN_CELL_STATE,
+  type AgentCatalog,
+  type CellState,
+  type RenderableCellState,
+  type SettledCellState,
+} from "@bower/api";
+
+/** The deployment's web-search door, when the sheet has fetched it
+ * (a server fact the rate-limited cell composes; null until known). */
+export type SearchDoor = AgentCatalog["search_provider"] | null;
 
 // The blank causes in user words (the server ships the structured
 // cause, this surface phrases it). The settled-vs-retryable PARTITION
@@ -24,13 +35,29 @@ const SETTLED_FACT = "Won't re-run on Continue; edit the prompt to try again.";
 const RETRYABLE_CAUSES: Record<RetryableCause, string> = {
   no_tools_door: "No search provider is connected",
   model_error: "The model errored",
-  transient: "The provider was unavailable; retries exhausted",
+  transient: "The model provider was unavailable; retries exhausted",
+  // Keyed by TOOL on the wire, because a user reads "finding
+  // contacts" and "web search" as different things even though one
+  // seam serves both.
+  search_throttled: "Web search kept rate-limiting this row; retries exhausted",
+  contacts_throttled: "Finding contacts kept rate-limiting this row; retries exhausted",
   // A cause this build has never heard of. It claims nothing about
   // WHY, because it cannot know: the server named a reason this
   // bundle predates.
   [UNKNOWN_CELL_STATE]: "This page is older than the reason given",
 };
 const RETRY_FACT = "Runs again on Continue.";
+// The paid-door nudge is a tier-2 composition: the server ships WHICH
+// door serves web search, and the sentence renders only where the
+// paid door is a remedy (the free door refused). A contacts refusal
+// already came from the paid door, and an unknown door claims
+// nothing.
+const PAID_DOOR_NUDGE = "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput.";
+
+function retryFact(state: RetryableCause, searchDoor: SearchDoor): string {
+  if (state === "search_throttled" && searchDoor === "duckduckgo") return `${RETRY_FACT} ${PAID_DOOR_NUDGE}`;
+  return RETRY_FACT;
+}
 // The retryable FACT is a promise, and an unrecognised cause cannot
 // make it: if the cause the server added is a settled one, Continue
 // will not re-run this cell. The dot is still the honest mark (it has
@@ -74,8 +101,11 @@ function CauseMark({ cause, fact, children }: { cause: string; fact: string; chi
  * on tap, click, focus, and to screen readers (the row drawer will
  * carry the full diagnosis). Filled cells and not-attempted rows never
  * reach here: both are the ABSENCE of a state, rendered as the plain
- * value or nothing. */
-export function AiCellState({ state }: { state: RenderableCellState }) {
+ * value or nothing. `searchDoor` is the deployment's web-search door
+ * when the sheet has it (fetched only once a rate-limited cell is on
+ * screen); the rate-limited popover composes the paid-door nudge off
+ * it. */
+export function AiCellState({ state, searchDoor = null }: { state: RenderableCellState; searchDoor?: SearchDoor }) {
   if (state === "pending") {
     return (
       <span className="flex h-5 items-center">
@@ -97,7 +127,7 @@ export function AiCellState({ state }: { state: RenderableCellState }) {
   return (
     <CauseMark
       cause={RETRYABLE_CAUSES[state as RetryableCause]}
-      fact={state === UNKNOWN_CELL_STATE ? UNKNOWN_FACT : RETRY_FACT}
+      fact={state === UNKNOWN_CELL_STATE ? UNKNOWN_FACT : retryFact(state as RetryableCause, searchDoor)}
     >
       <span aria-hidden className="h-2 w-2 rounded-full bg-warning-edge" />
     </CauseMark>

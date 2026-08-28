@@ -14,6 +14,7 @@ import {
 import { ChevronDown, MoreHorizontal, Pencil } from "lucide-react";
 import {
   deleteList,
+  fetchAgentCatalog,
   fetchList,
   fetchListRows,
   GENERIC_FAILURE,
@@ -42,7 +43,7 @@ import { ensureOk } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsTray, useFill } from "./fill";
+import { FillsTray, useFill, type SearchDoor } from "./fill";
 import { SheetTable } from "./sheet-table";
 
 // How far below the viewport the scroll sentinel arms (binary): far
@@ -85,6 +86,26 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
+
+  // A rate-limited web-search cell composes the deployment's search
+  // door into its popover (the paid-door nudge belongs only to the
+  // free door), fetched once and only when such a cell is on screen:
+  // a sheet with none never pays for the catalog. Absence degrades
+  // to the bare sentence.
+  const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
+  const needsSearchDoor = rows.some((row) => Object.values(row.states ?? {}).includes("search_throttled"));
+  useEffect(() => {
+    if (!needsSearchDoor || searchDoor !== null) return;
+    let superseded = false;
+    async function load() {
+      const res = await fetchAgentCatalog();
+      if (!superseded && res.status === "ok") setSearchDoor(res.data.search_provider);
+    }
+    void load();
+    return () => {
+      superseded = true;
+    };
+  }, [needsSearchDoor, searchDoor]);
 
   // Reorder is OPTIMISTIC, because a drag that waits for a round trip
   // reads as a failed drag. The server's echo replaces the guess
@@ -572,6 +593,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         <SheetTable
           columns={detail.columns}
           rows={rows}
+          searchDoor={searchDoor}
           fills={{ listId: detail.id, jobs: fill.jobs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
           onAddColumn={openAddColumn}
           onReorder={reorderColumnsTo}

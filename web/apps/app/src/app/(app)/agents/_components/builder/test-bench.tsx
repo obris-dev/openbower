@@ -11,6 +11,18 @@ import { CompactSelect } from "../../../_components/compact-select";
 import { sheetsTruncatedNote } from "../../../_components/agent-config/copy";
 import { outputKey } from "../../../_components/agent-config";
 
+/** One search's diagnosis line: what it returned or why it did not,
+ * how many tries the seam made, the door that served it, and which
+ * tool asked (a reader must be able to tell whose door refused). */
+function describeSearch(search: AgentTestResult["searches"][number]): string {
+  const tool = search.tool === "find_contacts" ? "contacts" : "web";
+  const door = search.provider ? ` via ${search.provider}` : "";
+  if (!search.failed) return `${search.hits} hits (${tool}${door})`;
+  if (search.cause === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
+  if (search.cause === "timeout") return `timed out (${tool}${door})`;
+  return `failed (${tool}${door})`;
+}
+
 /** The test bench's INPUTS AND RESULTS: hand-fed values for the
  * prompt's {{tokens}}, every one removable (removal strips the token,
  * the chip-toggle semantics), the cells a run would write, the
@@ -80,6 +92,7 @@ export function TestBench({
   // this field existed, so absence must degrade, never crash.
   const searches = result?.searches ?? [];
   const failedSearches = searches.filter((s) => s.failed).length;
+  const rateLimited = searches.filter((s) => s.cause === "rate_limited").length;
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
   const emptyCells = result !== null && Object.keys(result.cells).length === 0;
   // Rendering follows the DECLARED type through the SAME cell-link
@@ -205,10 +218,20 @@ export function TestBench({
               up on this deployment (see Tools).
             </p>
           )}
-          {failedSearches > 0 && (
+          {rateLimited > 0 && (
+            // A rate limit is retried, same query, before it counts
+            // as failed; one exhausting its retries closes the run:
+            // in a fill, this row would park and retry later rather
+            // than answer from what got through.
             <p className="mt-2 text-xs text-warning">
-              {failedSearches} of {searches.length} searches failed: the search provider errored (rate limit,
-              outage, bad credentials, or a drained DataForSEO balance)
+              {rateLimited} of {searches.length} searches were rate-limited even after retrying. In a fill, this row
+              would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.cause === "rate_limited") ? "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}
+            </p>
+          )}
+          {failedSearches > rateLimited && (
+            <p className="mt-2 text-xs text-warning">
+              {failedSearches - rateLimited} of {searches.length} searches failed: the search provider errored
+              (timeout, outage, bad credentials, or a drained DataForSEO balance)
               {/* The follow-up clause renders only when the fact
                   arrived; a hedged fallback would re-ship exactly
                   what this field ends. */}
@@ -230,7 +253,7 @@ export function TestBench({
               <ul className="mt-1.5 space-y-1">
                 {searches.map((search, index) => (
                   <li key={index} className="truncate text-xs text-muted" title={search.query}>
-                    {search.failed ? "failed" : `${search.hits} hits`} | {search.query}
+                    {describeSearch(search)} | {search.query}
                   </li>
                 ))}
               </ul>

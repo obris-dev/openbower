@@ -19,7 +19,7 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, FillTrackerCell } from "./fill";
+import { AiCellState, FillTrackerCell, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
  * together: the exposed jobs and the management verbs the popover's
@@ -73,9 +73,13 @@ export function SheetTable({
   onDeleteColumn,
   pendingColumn,
   onNamePending,
+  searchDoor = null,
 }: {
   columns: ListColumn[];
   rows: RenderableListRow[];
+  /** The deployment's web-search door once the sheet has fetched it
+   * (a rate-limited cell's popover composes the paid-door nudge). */
+  searchDoor?: SearchDoor;
   /** Absent on a sheet that cannot be reordered; its presence is what
    * arms both the drag and the header menu. */
   onReorder?: (keys: string[]) => void;
@@ -221,7 +225,7 @@ export function SheetTable({
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's
                     // overflow-hidden would clip the focus tooltip.
-                    <AiCellState state={state} />
+                    <AiCellState state={state} searchDoor={searchDoor} />
                   ) : (
                     <div className="max-w-64 truncate">
                       <Cell column={column} value={value} />
