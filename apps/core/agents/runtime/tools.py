@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -39,7 +40,7 @@ from ..constants import (
     SearchStatus,
     ToolStatus,
 )
-from ..search import DoorAnswer, door_status, search
+from ..search import SearchHit, door_status, search
 from .grounding import canonical_url
 from .outcomes import SearchOutcome
 
@@ -80,14 +81,6 @@ def door_status_for_tool(tool: AgentTool) -> SearchStatus:
     """A tool's door status BEFORE a run: what the catalog ships and
     what seeds the run's per-tool statuses."""
     return door_status(door_for(tool))
-
-
-def _live_web_search(query: str) -> DoorAnswer:
-    return search(query)
-
-
-def _live_contacts_search(query: str) -> DoorAnswer:
-    return search(query, provider=SearchProvider.DATAFORSEO)
 
 
 class EvidenceRecord(NamedTuple):
@@ -180,14 +173,20 @@ class CellDeps:
     # backoff before either records the closure; like `seen`, the cost
     # is a little extra waiting, never a wrong answer, so no lock.
     doors: dict[AgentTool, SearchStatus] = field(default_factory=dict)
-    # The search DOOR rides the dependency channel like every per-run
-    # fact; the fill worker wraps these to time the search share of a
-    # row without the runtime knowing it is being measured.
-    web_search_fn: Callable[[str], DoorAnswer] = _live_web_search
-    contacts_search_fn: Callable[[str], DoorAnswer] = _live_contacts_search
+    # Seconds this run spent waiting on its search doors, summed over
+    # every call of every tool (the seam's own backoff included): the
+    # fill worker's pace figure, so the sheet can say WHAT was slow.
+    # Added under a lock: tool calls of one model turn run on parallel
+    # threads, and a lost update here would quietly undercount.
+    search_seconds: float = 0.0
+    _timing: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def tool_open(self, tool: AgentTool) -> bool:
         return self.doors.get(tool, SearchStatus.OPEN) is SearchStatus.OPEN
+
+    def add_search_seconds(self, seconds: float) -> None:
+        with self._timing:
+            self.search_seconds += seconds
 
 
 def web_search(ctx: RunContext[CellDeps], query: str) -> str:
@@ -199,7 +198,7 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
         return _result([], NOTE_EMPTY_QUERY)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, ctx.deps.web_search_fn, query, tool=AgentTool.WEB_SEARCH)
+    return _pool(ctx.deps, query, tool=AgentTool.WEB_SEARCH)
 
 
 def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
@@ -213,7 +212,7 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     query = _clamp_query(f"site:{DEFAULT_PEOPLE_SITE} {query}", tool=AgentTool.FIND_CONTACTS)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, ctx.deps.contacts_search_fn, query, tool=AgentTool.FIND_CONTACTS)
+    return _pool(ctx.deps, query, tool=AgentTool.FIND_CONTACTS)
 
 
 _TOOL_FUNCTIONS = {AgentTool.WEB_SEARCH: web_search, AgentTool.FIND_CONTACTS: find_contacts}
@@ -265,19 +264,38 @@ def _closed_note(tool: AgentTool, status: SearchStatus) -> str:
     )
 
 
-def _pool(deps: CellDeps, search_fn: Callable[[str], DoorAnswer], query: str, *, tool: AgentTool) -> str:
-    """Spend one search through THIS tool's door and pool what it
-    returned. A closed door is refused BEFORE the spend and appends no
-    outcome, so the stored searches record only what actually hit the
-    wire (a door that just said slow down must not get five more
-    queries in the next second). Only this tool's door: the other
-    tool keeps its own status. A rate limit (already retried by the
-    seam) closes the door for the run; unreachable and error are told
-    to the model and leave it open, since the next query may get
-    through (run_cell settles a door that only ever failed)."""
+def _pool(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
+    """ONE tool call, end to end. Three steps, and the model sees only
+    the last: refuse a closed door before any spend; ask THIS tool's
+    door and record what it said on deps (the outcome, the door's
+    status, the time it took); pool the hits as numbered records and
+    hand the model its JSON. A closed door is refused without an
+    outcome, so the stored searches record only what hit the wire (a
+    door that just said slow down must not get five more queries in
+    the next second). Only this tool's door: the other tool keeps its
+    own status."""
     if not deps.tool_open(tool):
         return _closed_note(tool, deps.doors[tool])
-    answer = search_fn(query)
+    outcome = _ask_door(deps, query, tool=tool)
+    if outcome.base in (ToolStatus.RATE_LIMITED, ToolStatus.NOT_CONFIGURED):
+        return _closed_note(tool, outcome.status)
+    if outcome.failed:
+        return _result([], NOTE_FAILED)
+    return _result(_pool_hits(deps, outcome.hits, tool=tool))
+
+
+def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
+    """The spend: the seam call through the tool's door, timed, and
+    everything it said recorded on deps. A rate limit (already retried
+    by the seam) or a door found unconfigured closes THIS tool's door
+    for the run; unreachable and error leave it open, since the next
+    query may get through (run_cell settles a door that only ever
+    failed)."""
+    started = time.monotonic()
+    try:
+        answer = search(query, provider=door_for(tool))
+    finally:
+        deps.add_search_seconds(time.monotonic() - started)
     outcome = SearchOutcome(
         tool=tool,
         status=answer.status,
@@ -289,11 +307,14 @@ def _pool(deps: CellDeps, search_fn: Callable[[str], DoorAnswer], query: str, *,
     deps.outcomes.append(outcome)
     if outcome.base in (ToolStatus.RATE_LIMITED, ToolStatus.NOT_CONFIGURED):
         deps.doors[tool] = outcome.status
-        return _closed_note(tool, outcome.status)
-    if outcome.failed:
-        return _result([], NOTE_FAILED)
+    return outcome
+
+
+def _pool_hits(deps: CellDeps, hits: list[SearchHit], *, tool: AgentTool) -> list[dict]:
+    """The evidence pool: each new hit becomes a numbered record the
+    model, the validator, and the stored evidence all share."""
     pooled = []
-    for hit in outcome.hits:
+    for hit in hits:
         # Canonical dedupe: www./regional variants of one page pool
         # once (grounding compares canonically too).
         key = canonical_url(hit.url)
@@ -317,4 +338,4 @@ def _pool(deps: CellDeps, search_fn: Callable[[str], DoorAnswer], query: str, *,
         deps.records.append(record)
         deps.evidence.append(record.line)
         pooled.append(record.as_json())
-    return _result(pooled)
+    return pooled
