@@ -134,7 +134,7 @@ def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str
     if answered.cause:
         return answered.cause
     for tool in toggled_tools(config):
-        status = deps.doors.get(tool, SearchStatus.OPEN)
+        status = deps.tool_status.get(tool, SearchStatus.OPEN)
         if status is not SearchStatus.OPEN:
             return CELL_STATE_BY_STATUS[status]
     return StoredCellState.UNVERIFIED if answered.judgement.verification_dropped else StoredCellState.NO_EVIDENCE
@@ -163,13 +163,13 @@ def run_cell(
     # door statuses are seeded here either way, one construction path.
     deps = deps if deps is not None else CellDeps()
     for tool in toggled_tools(config):
-        deps.doors[tool] = door_status_for_tool(tool)
+        deps.tool_status[tool] = door_status_for_tool(tool)
     answered = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
     cells = _cells(config, answered)
     declined = _blank_cause(config, deps, answered)
     cause = "" if cells else declined
-    tools = {tool.value: status.value for tool, status in deps.doors.items()}
-    logger.info("cell: %d evidence hits -> outputs %s | doors %s", len(deps.evidence), sorted(cells), tools)
+    tools = {tool.value: status.value for tool, status in deps.tool_status.items()}
+    logger.info("cell: %d evidence hits -> outputs %s | tools %s", len(deps.evidence), sorted(cells), tools)
     return CellRun(
         cells,
         deps.evidence,

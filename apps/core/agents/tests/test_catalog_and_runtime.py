@@ -429,10 +429,10 @@ class SearchAvailabilityTests(TestCase):
         )
         deps = CellDeps()
         with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
-            deps.doors = {tool: door_status_for_tool(tool) for tool in AgentTool}
+            deps.tool_status = {tool: door_status_for_tool(tool) for tool in AgentTool}
             offered = [t.name for t in build_tools(config, deps)]
         self.assertEqual(offered, ["web_search"])
-        self.assertEqual(deps.doors[AgentTool.FIND_CONTACTS], SearchStatus.NOT_CONFIGURED)
+        self.assertEqual(deps.tool_status[AgentTool.FIND_CONTACTS], SearchStatus.NOT_CONFIGURED)
 
     def test_an_unconfigured_door_reaching_the_seam_answers_not_configured(self):
         # The runtime's gates keep an unconfigured door from being

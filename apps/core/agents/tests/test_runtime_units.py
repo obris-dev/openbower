@@ -160,7 +160,7 @@ class ToolPoolTests(SimpleTestCase):
             first = json.loads(web_search(self._Ctx(deps), "acme"))
         self.assertIn("web search is unavailable", first["note"])
         self.assertNotIn("answer from", first["note"])
-        self.assertEqual(deps.doors, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
+        self.assertEqual(deps.tool_status, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
         self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)
         with patch("agents.runtime.tools.search", return_value=self._answer("open", provider="dataforseo")) as searched:
             second = json.loads(web_search(self._Ctx(deps), "acme inc"))
@@ -188,7 +188,7 @@ class ToolPoolTests(SimpleTestCase):
                 self.assertTrue(deps.tool_open(AgentTool.WEB_SEARCH))
                 # Provisional: the door wears its last failure while it
                 # has not served, so a run that ends here records it.
-                self.assertEqual(deps.doors[AgentTool.WEB_SEARCH], status)
+                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], status)
         self.assertEqual([o.status for o in deps.outcomes], ["unreachable", "error"])
 
     def test_a_door_that_served_keeps_open_through_a_later_failure(self):
@@ -207,7 +207,7 @@ class ToolPoolTests(SimpleTestCase):
                 for status in order:
                     with patch("agents.runtime.tools.search", return_value=self._answer(status, hit)):
                         web_search(self._Ctx(deps), "q " + status)
-                self.assertEqual(deps.doors[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
+                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
                 self.assertIn(AgentTool.WEB_SEARCH, deps.served)
 
     def test_an_outcome_refuses_a_bare_string_status(self):

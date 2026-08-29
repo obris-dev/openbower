@@ -154,13 +154,13 @@ class CellDeps:
     seen: set[str] = field(default_factory=set)
     # Each TOGGLED tool's door status for this run: seeded before the
     # run from the doors' configuration (run_cell), then folded from
-    # each answer as it arrives (record_door), so it is final the
+    # each answer as it arrives (record_tool_status), so it is final the
     # moment the run ends. Per tool on purpose: one door refusing says nothing
     # about the other. Sibling tool calls of one model turn run on
     # parallel threads, so two calls of one tool can each burn one
     # backoff before either records the closure; like `seen`, the cost
     # is a little extra waiting, never a wrong answer, so no lock.
-    doors: dict[AgentTool, SearchStatus] = field(default_factory=dict)
+    tool_status: dict[AgentTool, SearchStatus] = field(default_factory=dict)
     # Seconds this run spent waiting on its search doors, summed over
     # every call of every tool (the seam's own backoff included): the
     # fill worker's pace figure, so the sheet can say WHAT was slow.
@@ -193,18 +193,18 @@ class CellDeps:
         door mid-run. A door wearing a provisional failure (unreachable,
         error, never served yet) is still asked, since the next query
         may get through."""
-        return self.doors.get(tool, SearchStatus.OPEN) not in SEARCH_DOOR_CLOSERS
+        return self.tool_status.get(tool, SearchStatus.OPEN) not in SEARCH_DOOR_CLOSERS
 
-    def record_door(self, tool: AgentTool, status: SearchStatus) -> None:
+    def record_tool_status(self, tool: AgentTool, status: SearchStatus) -> None:
         """One door's word, folded into the tool's status for the run:
         open marks the door served (and clears a provisional failure);
         a closer closes it; any other failure is provisional, kept
         only while the door has not served."""
         if status is SearchStatus.OPEN:
             self.served.add(tool)
-            self.doors[tool] = SearchStatus.OPEN
+            self.tool_status[tool] = SearchStatus.OPEN
         elif status in SEARCH_DOOR_CLOSERS or tool not in self.served:
-            self.doors[tool] = status
+            self.tool_status[tool] = status
 
     def add_search_seconds(self, seconds: float) -> None:
         with self._timing:
@@ -245,7 +245,7 @@ def toggled_tools(config: AgentConfig) -> list[AgentTool]:
 
 def build_tools(config: AgentConfig, deps: CellDeps) -> list[Tool]:
     """What THIS config on THIS deploy may call: a toggled tool whose
-    door is not open (per `deps.doors`, seeded by run_cell) is simply
+    door is not open (per `deps.tool_status`, seeded by run_cell) is simply
     not offered; its status already says why."""
     return [Tool(_TOOL_FUNCTIONS[tool]) for tool in toggled_tools(config) if deps.tool_open(tool)]
 
@@ -288,7 +288,7 @@ def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
     the next second). Only this tool's door: the other tool keeps its
     own status."""
     if not deps.tool_open(tool):
-        return _closed_note(tool, deps.doors[tool])
+        return _closed_note(tool, deps.tool_status[tool])
     outcome = _ask_door(deps, query, tool=tool)
     if outcome.status in SEARCH_DOOR_CLOSERS:
         return _closed_note(tool, outcome.status)
@@ -300,7 +300,7 @@ def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
 def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
     """The spend: the seam call through the tool's door, timed, and
     everything it said recorded on deps (the outcome for the audit,
-    the door's status for the run: see CellDeps.record_door)."""
+    the door's status for the run: see CellDeps.record_tool_status)."""
     started = time.monotonic()
     try:
         answer = search(query, provider=door_for(tool))
@@ -315,7 +315,7 @@ def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
         hits=answer.hits,
     )
     deps.outcomes.append(outcome)
-    deps.record_door(tool, outcome.status)
+    deps.record_tool_status(tool, outcome.status)
     return outcome
 
 
