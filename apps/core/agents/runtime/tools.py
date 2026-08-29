@@ -42,6 +42,7 @@ from ..constants import (
 )
 from ..search import SearchHit, door_status, search
 from .grounding import canonical_url
+from .judgement import AnswerJudgement
 from .outcomes import SearchOutcome
 
 logger = logging.getLogger(__name__)
@@ -130,39 +131,29 @@ class EvidenceRecord(NamedTuple):
 
 @dataclass
 class CellDeps:
-    """One cell walk's shared state: `evidence` is what grounding
-    fences the answer to (together with URLs in the RENDERED prompt:
-    row-fed URLs are the user's own ground truth), `outcomes` what the
-    bench renders as per-query diagnoses, `doors` each toggled tool's
-    status. The tools fill evidence, outcomes, and doors DURING the
-    framework run; the output validator and run_cell read them
-    after."""
+    """One cell walk's TOOL state, the object the framework hands every
+    tool call and validator (RunContext.deps) and run_cell reads after
+    the run: the evidence pool (what grounding fences the answer to,
+    together with URLs in the RENDERED prompt: row-fed URLs are the
+    user's own ground truth), every call's outcome (what the bench
+    renders as per-query diagnoses), each toggled tool's door status,
+    and the time the doors took. The one thing on it that is not tool
+    state is `judgement`: the answerer's slot, because a validator can
+    write nowhere else; the answerer hands it back and no tool reads
+    it. The model never sees any of this; it sees the tool's docstring
+    and what the tool returns."""
 
     prompt: str = ""
-    evidence: list[str] = field(default_factory=list)
-    # The same pool STRUCTURED and numbered for the drawer
-    # (evidence[i] is records[i].line; one pool, two views).
+    # The evidence POOL: every hit the tools returned, deduped by
+    # canonical URL, numbered once across the whole run. What every
+    # completion re-reads, what grounding fences to, what the run
+    # stores. `evidence` and `urls` are views of it.
     records: list[EvidenceRecord] = field(default_factory=list)
-    # Structured hit URLs for the grounding pool (never re-parsed from
-    # the display-formatted evidence lines).
-    urls: list[str] = field(default_factory=list)
-    # key -> each surviving cell's confidence and the reason given for
-    # it, written by the output validator; the worker persists them
-    # with the row.
-    assessments: dict = field(default_factory=dict)
-    # Whether verification dropped any answered field: an all-blank row
-    # with drops diagnoses UNVERIFIED, never a bare no-evidence.
-    verification_dropped: bool = False
     outcomes: list[SearchOutcome] = field(default_factory=list)
     # Parallel tool calls can interleave seen's check-then-add; the
     # cost is a duplicated evidence line, never a wrong answer, so no
     # lock guards it.
     seen: set[str] = field(default_factory=set)
-    # WHY a blank row is blank (a StoredCellState value, "" while unset):
-    # the answerer and the doctrine guards write it, the fill worker
-    # reads it (the retry causes park the row, the rest are terminal).
-    # The bench ignores it; its searches diagnosis already tells.
-    blank_cause: str = ""
     # Each TOGGLED tool's door status for this run: seeded before the
     # run from the doors' configuration (run_cell), moved by the pool
     # when a door closes mid-run (a rate limit, after the seam's own
@@ -180,6 +171,19 @@ class CellDeps:
     # threads, and a lost update here would quietly undercount.
     search_seconds: float = 0.0
     _timing: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # The answerer's slot (see the class docstring).
+    judgement: AnswerJudgement = field(default_factory=AnswerJudgement)
+
+    @property
+    def evidence(self) -> list[str]:
+        """The pool as the STORED lines (never sent to the model)."""
+        return [record.line for record in self.records]
+
+    @property
+    def urls(self) -> list[str]:
+        """The pool's hit URLs, structured, for grounding (never
+        re-parsed from the display-formatted lines)."""
+        return [record.url for record in self.records]
 
     def tool_open(self, tool: AgentTool) -> bool:
         return self.doors.get(tool, SearchStatus.OPEN) is SearchStatus.OPEN
@@ -322,12 +326,11 @@ def _pool_hits(deps: CellDeps, hits: list[SearchHit], *, tool: AgentTool) -> lis
         key = canonical_url(hit.url)
         if key in deps.seen:
             continue
-        if len(deps.evidence) >= EVIDENCE_MAX_LINES:
+        if len(deps.records) >= EVIDENCE_MAX_LINES:
             # A NAMED ceiling instead of an implicit one: the pool is
             # what every completion re-reads, so its size is a cost.
             break
         deps.seen.add(key)
-        deps.urls.append(hit.url)
         # Numbered ACROSS calls: the number is the citation key the
         # model, the validator, and the stored evidence all share.
         record = EvidenceRecord(
@@ -338,6 +341,5 @@ def _pool_hits(deps: CellDeps, hits: list[SearchHit], *, tool: AgentTool) -> lis
             snippet=hit.snippet,
         )
         deps.records.append(record)
-        deps.evidence.append(record.line)
         pooled.append(record.as_json())
     return pooled

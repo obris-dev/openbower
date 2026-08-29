@@ -28,7 +28,7 @@ from openbower_schema.agents import AgentConfig
 
 from ..constants import AgentTool, SearchStatus
 from ..providers import model_for
-from .answer import CellAnswerer
+from .answer import Answered, CellAnswerer
 from .outcomes import SearchOutcome
 from .prompts import render_prompt
 from .tools import CellDeps, build_tools, door_status_for_tool, toggled_tools
@@ -69,27 +69,27 @@ class CellRun(NamedTuple):
     tools: dict[str, str] = {}
 
 
-def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: CellDeps):
-    """The validated answer, or None for blank cells: ONE call (tools
-    are a parameter; the run fills deps through RunContext as the model
-    calls them), then the doctrine guards. No salvage anywhere: no
-    validated answer is SIGNAL. And no SPEND on a decidable blank:
-    tools toggled with every door closed can never produce evidence,
-    so that guard fires BEFORE a completion is bought."""
+def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: CellDeps) -> Answered:
+    """The answer call and the doctrine guards around it: ONE call
+    (tools are a parameter; the run fills deps through RunContext as
+    the model calls them). No salvage anywhere: no validated answer is
+    SIGNAL. And no SPEND on a decidable blank: tools toggled with every
+    door closed can never produce evidence, so that guard fires BEFORE
+    a completion is bought."""
     tools = build_tools(config, deps)
     if config.uses_tools and not tools:
         logger.info("cell: tools toggled but no door open; writing nothing without spending")
-        return None
-    answer = answerer.answer(prompt, tools, deps)
-    if config.uses_tools and not deps.evidence:
+        return Answered(None, "", deps.judgement)
+    answered = answerer.answer(prompt, tools, deps)
+    if config.uses_tools and not deps.records:
         # Tools meant to ground the answer produced no evidence:
         # writing from model memory is exactly the fabrication path,
         # so even a validated answer is discarded. The why is settled
         # by _settle_doors: a door that never answered is a retry, a
         # door that answered nothing is a diagnosis.
         logger.info("cell: tools enabled but no evidence; writing nothing")
-        return None
-    return answer
+        return Answered(None, answered.cause, answered.judgement)
+    return answered
 
 
 def _settle_doors(config: AgentConfig, deps: CellDeps) -> None:
@@ -108,20 +108,20 @@ def _settle_doors(config: AgentConfig, deps: CellDeps) -> None:
             deps.doors[tool] = asked[-1].status
 
 
-def _blank_cause(config: AgentConfig, deps: CellDeps) -> str:
+def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str:
     """WHY a run with no cells is blank, in rank order: the answerer's
     own cause (a model transient, a validation miss) outranks the
     doctrine's; then the first toggled tool whose door is not open
-    names the cell (the sheet keys on the BASE code, the tool and its
-    own code ride the record beside it); then verification drops read
+    names the cell (the sheet keys on the status code, the tool and
+    its code ride the record beside it); then verification drops read
     UNVERIFIED (an answer arrived; nothing confirmed it); otherwise the
     model honestly declined, which reads NO_EVIDENCE."""
-    if deps.blank_cause:
-        return deps.blank_cause
+    if answered.cause:
+        return answered.cause
     for tool in toggled_tools(config):
         if not deps.tool_open(tool):
             return CELL_STATE_BY_STATUS[deps.doors[tool]]
-    return StoredCellState.UNVERIFIED if deps.verification_dropped else StoredCellState.NO_EVIDENCE
+    return StoredCellState.UNVERIFIED if answered.judgement.verification_dropped else StoredCellState.NO_EVIDENCE
 
 
 def run_cell(
@@ -151,15 +151,15 @@ def run_cell(
     deps.prompt = prompt
     for tool in toggled_tools(config):
         deps.doors[tool] = door_status_for_tool(tool)
-    answer = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
+    answered = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
     _settle_doors(config, deps)
     # Validation, stripping, clamping, grounding, and provenance
     # verification all happened inside the framework run; what's left
     # is keeping non-blank OUTPUT values (the companion confidence
-    # fields travel via deps.assessments, never as cells).
-    dump = answer.model_dump() if answer is not None else {}
+    # fields travel on the judgement, never as cells).
+    dump = answered.output.model_dump() if answered.output is not None else {}
     cells = {output.key: dump[output.key] for output in config.outputs if dump.get(output.key)}
-    declined = _blank_cause(config, deps)
+    declined = _blank_cause(config, deps, answered)
     cause = "" if cells else declined
     tools = {tool.value: status.value for tool, status in deps.doors.items()}
     logger.info("cell: %d evidence hits -> outputs %s | doors %s", len(deps.evidence), sorted(cells), tools)
@@ -171,7 +171,7 @@ def run_cell(
         declined,
         # NOT filtered to the landed cells: a dropped answer is the
         # case an audit trail exists for.
-        deps.assessments,
+        answered.judgement.assessments,
         tools,
     )
 
