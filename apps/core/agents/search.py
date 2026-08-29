@@ -113,16 +113,19 @@ def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> 
         logger.warning("search asked of an unconfigured door (%r)", provider)
         return DoorAnswer(SearchStatus.NOT_CONFIGURED, [], provider, attempts=0)
     door = _DOORS[provider]
-    # One more try than there are pauses: the schedule is the waits
-    # BETWEEN tries.
-    for attempt, pause in enumerate((*SEARCH_BACKOFF_SECONDS, None), start=1):
+    # The schedule is the waits BETWEEN tries, so there is one more
+    # try than there are waits: the first try, then one retry after
+    # each wait. A rate limit on the last try has no wait left and is
+    # the answer.
+    last_try = len(SEARCH_BACKOFF_SECONDS) + 1
+    for attempt in range(1, last_try + 1):
         try:
             hits = door.run(query, count)
         except SearchRateLimited as e:
-            if pause is None:
+            if attempt == last_try:
                 logger.warning("search rate limited after %d tries (%s): %s", attempt, provider, e)
                 return DoorAnswer(SearchStatus.RATE_LIMITED, [], provider, attempts=attempt)
-            wait = min(e.retry_after, max(SEARCH_BACKOFF_SECONDS)) if e.retry_after is not None else pause
+            wait = _wait_before_retry(attempt, retry_after=e.retry_after)
             logger.info("search rate limited (%s); retrying the same query in %ss", provider, wait)
             _sleep(wait)
             continue
@@ -138,7 +141,18 @@ def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> 
             return DoorAnswer(SearchStatus.ERROR, [], provider, attempts=attempt)
         logger.info("search %r -> %d hits (%s, %d tries)", query[:120], len(hits), provider, attempt)
         return DoorAnswer(SearchStatus.OPEN, hits, provider, attempts=attempt)
-    raise AssertionError("unreachable: the last schedule step returns")
+    raise AssertionError("unreachable: the last try returns")
+
+
+def _wait_before_retry(attempt: int, *, retry_after: float | None) -> float:
+    """The wait after try `attempt` (1-based): the schedule's step for
+    it, unless the door asked for a specific delay, which wins,
+    clamped to the schedule's longest step so a door cannot park a row
+    for as long as it likes."""
+    scheduled = SEARCH_BACKOFF_SECONDS[attempt - 1]
+    if retry_after is None:
+        return scheduled
+    return min(retry_after, max(SEARCH_BACKOFF_SECONDS))
 
 
 # The free door is DuckDuckGo's OWN engine, called through the ddgs
