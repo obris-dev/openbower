@@ -143,12 +143,9 @@ def run_cell(
     # gate) passes its model instead of resolving twice.
     if model is None:
         model = model_for(config.provider, config.source, config.model)
-    # A caller-built deps carries the caller's doors and callbacks (the
-    # fill worker's Standard search client and lease renewal); the
-    # prompt and the door statuses are stamped here either way, one
-    # construction path.
+    # A caller-built deps is the caller's to read after the run; the
+    # door statuses are seeded here either way, one construction path.
     deps = deps if deps is not None else CellDeps()
-    deps.prompt = prompt
     for tool in toggled_tools(config):
         deps.doors[tool] = door_status_for_tool(tool)
     answered = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)

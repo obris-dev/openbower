@@ -134,8 +134,8 @@ class CellDeps:
     """One cell walk's TOOL state, the object the framework hands every
     tool call and validator (RunContext.deps) and run_cell reads after
     the run: the evidence pool (what grounding fences the answer to,
-    together with URLs in the RENDERED prompt: row-fed URLs are the
-    user's own ground truth), every call's outcome (what the bench
+    beside the rendered prompt's own URLs, which the answerer holds),
+    every call's outcome (what the bench
     renders as per-query diagnoses), each toggled tool's door status,
     and the time the doors took. The one thing on it that is not tool
     state is `judgement`: the answerer's slot, because a validator can
@@ -143,7 +143,6 @@ class CellDeps:
     it. The model never sees any of this; it sees the tool's docstring
     and what the tool returns."""
 
-    prompt: str = ""
     # The evidence POOL: every hit the tools returned, deduped by
     # canonical URL, numbered once across the whole run. What every
     # completion re-reads, what grounding fences to, what the run

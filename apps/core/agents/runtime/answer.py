@@ -158,13 +158,13 @@ def _verify(ctx: RunContext[CellDeps], output: BaseModel, keys: list[str]) -> Ba
     return output
 
 
-def _ground(ctx: RunContext[CellDeps], output: BaseModel) -> BaseModel:
+def _ground(ctx: RunContext[CellDeps], output: BaseModel, prompt: str) -> BaseModel:
     """URL grounding on the framework's output-validator seam: every
     URL in every string field, EMBEDDED ones included, rewrites to its
     source form or goes (per-field blank-over-garbage, never a
     whole-answer retry). The allowed pool is the tools' evidence plus
     the rendered prompt's own URLs, both on the dependency channel."""
-    allowed = allowed_urls(ctx.deps.urls, ctx.deps.prompt)
+    allowed = allowed_urls(ctx.deps.urls, prompt)
     for name in type(output).model_fields:
         value = getattr(output, name)
         if isinstance(value, str) and has_url(value):
@@ -257,7 +257,7 @@ class CellAnswerer:
         errors are CONFIG tier and re-raise loudly: a revoked key fails
         every row identically and must never read as a quietly bad
         agent."""
-        agent = self._agent(instructions=AGENT_INSTRUCTIONS if tools else DIRECT_INSTRUCTIONS, tools=tools)
+        agent = self._agent(prompt, instructions=AGENT_INSTRUCTIONS if tools else DIRECT_INSTRUCTIONS, tools=tools)
         limits = UsageLimits(request_limit=MAX_TOOL_CALLS + 3, tool_calls_limit=MAX_TOOL_CALLS)
 
         async def run():
@@ -281,7 +281,7 @@ class CellAnswerer:
                     logger.info(
                         "cell: tool budget spent mid-search; asking for a verdict from %d records", len(deps.records)
                     )
-                    verdict = self._agent(instructions=CAPPED_INSTRUCTIONS)
+                    verdict = self._agent(prompt, instructions=CAPPED_INSTRUCTIONS)
                     result = await verdict.run(
                         _capped_task(prompt, deps),
                         deps=deps,
@@ -333,9 +333,11 @@ class CellAnswerer:
             logger.warning("cell: answer failed (%s): %s", type(e).__name__, e)
             return blank(StoredCellState.MODEL_ERROR)
 
-    def _agent(self, *, instructions: str, tools: list[Tool] | None = None) -> Agent:
+    def _agent(self, prompt: str, *, instructions: str, tools: list[Tool] | None = None) -> Agent:
         """The ONE constructor both legs share: deps-typed and grounded
-        at construction, never wrapped after."""
+        at construction, never wrapped after. `prompt` is the rendered
+        task, closed over by the validator: its URLs are the user's own
+        ground truth, so grounding allows them beside the tools' hits."""
         agent = Agent(
             self._model,
             deps_type=CellDeps,
@@ -352,7 +354,7 @@ class CellAnswerer:
         keys = self._keys
 
         def validate(ctx: RunContext[CellDeps], output: BaseModel) -> BaseModel:
-            return _ground(ctx, _verify(ctx, output, keys))
+            return _ground(ctx, _verify(ctx, output, keys), prompt)
 
         agent.output_validator(validate)
         return agent
