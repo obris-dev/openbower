@@ -45,6 +45,35 @@ from ..services.lists import ListNotFound, ListService, RowNotFound
 logger = logging.getLogger(__name__)
 
 
+# Connection hygiene, by hand. Django recycles connections at REQUEST
+# boundaries (close_old_connections runs on request_started and
+# request_finished), and this process has no requests: one supervisor
+# thread and a pool of row threads, each given its own thread-local
+# connection the first time it touches the ORM, none of them ever
+# closed unless the code does it. Two distinct needs, two names, so a
+# call site says which one it is:
+#
+# _recover_connection: a DatabaseError reached us, which in a process
+# this long-lived means the connection is dead (a Postgres restart, a
+# stale socket after an idle stretch), not that the query was wrong.
+# Drop it so the next statement opens a fresh one, and go on; the
+# only process draining the queue must never die over a bounce.
+#
+# _release_connection: this thread is about to spend a long time
+# needing no database (a row's model call and searches), or is done
+# with a row for good. Give the session back now, so held connections
+# scale with rows in their write phase, never with the concurrency
+# ceiling or the pool's lifetime.
+
+
+def _recover_connection() -> None:
+    close_old_connections()
+
+
+def _release_connection() -> None:
+    connections.close_all()
+
+
 def paid_search() -> bool:
     """Whether fills run their searches through the METERED door.
     Public: the command narrates it at startup."""
@@ -213,7 +242,7 @@ class FillWorkerOperation:
                 except DatabaseError:
                     # A DB restart mid-pass must idle and retry, never
                     # kill the process (row threads do this per row).
-                    close_old_connections()
+                    _recover_connection()
                     if self.stop.wait(FILL_WORKER_IDLE_SECONDS):
                         break
                     continue
@@ -230,8 +259,9 @@ class FillWorkerOperation:
             try:
                 self.queue.try_finish(fill_id)
             except DatabaseError:
-                close_old_connections()
-        close_old_connections()
+                _recover_connection()
+        # The supervisor's own session, on the way out.
+        _release_connection()
 
     def _one_pass(self, pool: ThreadPoolExecutor) -> bool:
         """Claim, renew, harvest. Returns whether this pass FOUND WORK:
@@ -436,7 +466,7 @@ class FillWorkerOperation:
                 # restarts, which an in-memory death count could not.
                 self.queue.release_lease(task)
             except DatabaseError:
-                close_old_connections()
+                _recover_connection()
 
     def _give_up(self, state: _FillState, task: FillTask) -> None:
         """A task past its attempt cap, closed WITHOUT spending: every
@@ -482,14 +512,14 @@ class FillWorkerOperation:
         try:
             self._run_row_inner(fill, config, task, controller, breakers)
         except DatabaseError:
-            close_old_connections()
+            _recover_connection()
             raise
         finally:
-            # This THREAD's connections, closed every row: Django opens
-            # one per thread implicitly and nothing else ever closes a
-            # pool thread's (the model call dominates a row, so the
-            # reconnect is noise; leaked connections are not).
-            connections.close_all()
+            # This pool THREAD is done with the row: pool threads are
+            # reused, so a session left open here lives as long as the
+            # process (the model call dominates a row, so the reconnect
+            # is noise; leaked connections are not).
+            _release_connection()
 
     def _run_row_inner(
         self,
@@ -528,10 +558,10 @@ class FillWorkerOperation:
         # ephemeral executor threads, where a connection opened is a
         # connection leaked (the supervisor loop renews leases).
         deps = CellDeps()
-        # This THREAD's connection releases before the long IO (the
-        # model call + searches): held connections must not scale with
-        # the concurrency ceiling. The post-run writes reopen lazily.
-        connections.close_all()
+        # Before the long IO (the model call + searches): held
+        # connections must not scale with the concurrency ceiling. The
+        # post-run writes reopen lazily.
+        _release_connection()
         # The pace accumulators: row wall seconds vs seconds parked on
         # search, measured HERE (the one place that sees both), so the
         # UI and the logs can say WHAT is slow instead of a bare ETA.
