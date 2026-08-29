@@ -92,6 +92,37 @@ def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: Cell
     return answered
 
 
+def _cells(config: AgentConfig, answered: Answered) -> dict[str, str]:
+    """The cells this row would write, off the validated answer.
+
+    The answer type carries THREE fields per declared output: the
+    value, the model's reason for its score, and the score, e.g.
+
+        {"person": "Jane Doe",
+         "person_bwr_confidence_reason": "Record 2 is her profile ...",
+         "person_bwr_confidence": 0.95,
+         "profile": "",
+         "profile_bwr_confidence_reason": "No record showed one.",
+         "profile_bwr_confidence": 0.0}
+
+    Only the DECLARED outputs are cells, so the walk is over
+    config.outputs, never over the dump: the companion fields ride
+    the judgement into the stored run as the audit, never a column.
+    And an empty value is the model declining that output (the
+    instructions ask for "" when it found nothing), so it is not a
+    cell either: the column stays unanswered and takes the run's
+    declined cause instead. The example lands {"person": "Jane Doe"}.
+
+    Validation, stripping, clamping, grounding, and the confidence
+    floor all ran inside the framework already: a value that scored
+    under the floor is "" here, kept under `dropped` on its
+    assessment."""
+    if answered.output is None:
+        return {}
+    dump = answered.output.model_dump()
+    return {output.key: dump[output.key] for output in config.outputs if dump.get(output.key)}
+
+
 def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str:
     """WHY a run with no cells is blank, in rank order: the answerer's
     own cause (a model transient, a validation miss) outranks the
@@ -134,12 +165,7 @@ def run_cell(
     for tool in toggled_tools(config):
         deps.doors[tool] = door_status_for_tool(tool)
     answered = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
-    # Validation, stripping, clamping, grounding, and provenance
-    # verification all happened inside the framework run; what's left
-    # is keeping non-blank OUTPUT values (the companion confidence
-    # fields travel on the judgement, never as cells).
-    dump = answered.output.model_dump() if answered.output is not None else {}
-    cells = {output.key: dump[output.key] for output in config.outputs if dump.get(output.key)}
+    cells = _cells(config, answered)
     declined = _blank_cause(config, deps, answered)
     cause = "" if cells else declined
     tools = {tool.value: status.value for tool, status in deps.doors.items()}
