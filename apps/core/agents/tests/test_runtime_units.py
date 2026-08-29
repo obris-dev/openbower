@@ -186,7 +186,29 @@ class ToolPoolTests(SimpleTestCase):
                 note = json.loads(web_search(self._Ctx(deps), "q " + status))["note"]
                 self.assertEqual(note, NOTE_FAILED)
                 self.assertTrue(deps.tool_open(AgentTool.WEB_SEARCH))
+                # Provisional: the door wears its last failure while it
+                # has not served, so a run that ends here records it.
+                self.assertEqual(deps.doors[AgentTool.WEB_SEARCH], status)
         self.assertEqual([o.status for o in deps.outcomes], ["unreachable", "error"])
+
+    def test_a_door_that_served_keeps_open_through_a_later_failure(self):
+        # Folded as answers arrive, in either order: a failure before
+        # the door serves is provisional and clears when it serves; a
+        # failure after it served does not change its status, since
+        # the row has its evidence.
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps, web_search
+        from agents.search import SearchHit
+
+        hit = [SearchHit("A", "https://acme.com/", "s")]
+        for order in (("unreachable", "open"), ("open", "unreachable")):
+            with self.subTest(order=order):
+                deps = CellDeps()
+                for status in order:
+                    with patch("agents.runtime.tools.search", return_value=self._answer(status, hit)):
+                        web_search(self._Ctx(deps), "q " + status)
+                self.assertEqual(deps.doors[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
+                self.assertIn(AgentTool.WEB_SEARCH, deps.served)
 
     def test_an_outcome_refuses_a_bare_string_status(self):
         # The status vocabulary is typed per outcome: the type checker

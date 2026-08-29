@@ -84,28 +84,12 @@ def _answer(config: AgentConfig, prompt: str, answerer: CellAnswerer, deps: Cell
     if config.uses_tools and not deps.records:
         # Tools meant to ground the answer produced no evidence:
         # writing from model memory is exactly the fabrication path,
-        # so even a validated answer is discarded. The why is settled
-        # by _settle_doors: a door that never answered is a retry, a
-        # door that answered nothing is a diagnosis.
+        # so even a validated answer is discarded. The why is on the
+        # doors: a door that never answered is a retry, a door that
+        # answered nothing is a diagnosis.
         logger.info("cell: tools enabled but no evidence; writing nothing")
         return Answered(None, answered.cause, answered.judgement)
     return answered
-
-
-def _settle_doors(config: AgentConfig, deps: CellDeps) -> None:
-    """Each toggled tool's FINAL status for the run. A door the pool
-    closed keeps its status. A door that was asked, never answered
-    (every outcome non-open), and contributed no evidence takes its
-    last outcome's status: a single timeout does not close a door
-    mid-run (the next query may get through), but a door that only
-    ever failed is a door that did not serve this row. A door that
-    served, or was never asked, stays open."""
-    for tool in toggled_tools(config):
-        if not deps.tool_open(tool):
-            continue
-        asked = [outcome for outcome in deps.outcomes if outcome.tool is tool]
-        if asked and all(outcome.failed for outcome in asked):
-            deps.doors[tool] = asked[-1].status
 
 
 def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str:
@@ -119,8 +103,9 @@ def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str
     if answered.cause:
         return answered.cause
     for tool in toggled_tools(config):
-        if not deps.tool_open(tool):
-            return CELL_STATE_BY_STATUS[deps.doors[tool]]
+        status = deps.doors.get(tool, SearchStatus.OPEN)
+        if status is not SearchStatus.OPEN:
+            return CELL_STATE_BY_STATUS[status]
     return StoredCellState.UNVERIFIED if answered.judgement.verification_dropped else StoredCellState.NO_EVIDENCE
 
 
@@ -149,7 +134,6 @@ def run_cell(
     for tool in toggled_tools(config):
         deps.doors[tool] = door_status_for_tool(tool)
     answered = _answer(config, prompt, CellAnswerer(model, config.outputs), deps)
-    _settle_doors(config, deps)
     # Validation, stripping, clamping, grounding, and provenance
     # verification all happened inside the framework run; what's left
     # is keeping non-blank OUTPUT values (the companion confidence

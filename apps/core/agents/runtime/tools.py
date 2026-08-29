@@ -153,10 +153,9 @@ class CellDeps:
     # lock guards it.
     seen: set[str] = field(default_factory=set)
     # Each TOGGLED tool's door status for this run: seeded before the
-    # run from the doors' configuration (run_cell), moved by the pool
-    # when a door closes mid-run (a rate limit, after the seam's own
-    # retries), and finalized after the run for the doors that only
-    # ever failed. Per tool on purpose: one door refusing says nothing
+    # run from the doors' configuration (run_cell), then folded from
+    # each answer as it arrives (record_door), so it is final the
+    # moment the run ends. Per tool on purpose: one door refusing says nothing
     # about the other. Sibling tool calls of one model turn run on
     # parallel threads, so two calls of one tool can each burn one
     # backoff before either records the closure; like `seen`, the cost
@@ -183,8 +182,29 @@ class CellDeps:
         re-parsed from the display-formatted lines)."""
         return [record.url for record in self.records]
 
+    # The tools whose door has answered at least once this run: a
+    # later failure of a door that served does not change its status
+    # (the row has its evidence), while a door that only ever failed
+    # ends the run wearing its last failure.
+    served: set[AgentTool] = field(default_factory=set)
+
     def tool_open(self, tool: AgentTool) -> bool:
-        return self.doors.get(tool, SearchStatus.OPEN) is SearchStatus.OPEN
+        """Whether the tool may still be CALLED: only a closer shuts a
+        door mid-run. A door wearing a provisional failure (unreachable,
+        error, never served yet) is still asked, since the next query
+        may get through."""
+        return self.doors.get(tool, SearchStatus.OPEN) not in SEARCH_DOOR_CLOSERS
+
+    def record_door(self, tool: AgentTool, status: SearchStatus) -> None:
+        """One door's word, folded into the tool's status for the run:
+        open marks the door served (and clears a provisional failure);
+        a closer closes it; any other failure is provisional, kept
+        only while the door has not served."""
+        if status is SearchStatus.OPEN:
+            self.served.add(tool)
+            self.doors[tool] = SearchStatus.OPEN
+        elif status in SEARCH_DOOR_CLOSERS or tool not in self.served:
+            self.doors[tool] = status
 
     def add_search_seconds(self, seconds: float) -> None:
         with self._timing:
@@ -279,11 +299,8 @@ def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
 
 def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
     """The spend: the seam call through the tool's door, timed, and
-    everything it said recorded on deps. A rate limit (already retried
-    by the seam) or a door found unconfigured closes THIS tool's door
-    for the run; unreachable and error leave it open, since the next
-    query may get through (run_cell settles a door that only ever
-    failed)."""
+    everything it said recorded on deps (the outcome for the audit,
+    the door's status for the run: see CellDeps.record_door)."""
     started = time.monotonic()
     try:
         answer = search(query, provider=door_for(tool))
@@ -298,8 +315,7 @@ def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
         hits=answer.hits,
     )
     deps.outcomes.append(outcome)
-    if outcome.status in SEARCH_DOOR_CLOSERS:
-        deps.doors[tool] = outcome.status
+    deps.record_door(tool, outcome.status)
     return outcome
 
 
