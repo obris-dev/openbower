@@ -120,7 +120,7 @@ def _blank_cause(config: AgentConfig, deps: CellDeps) -> str:
         return deps.blank_cause
     for tool in toggled_tools(config):
         if not deps.tool_open(tool):
-            return CELL_STATE_BY_STATUS[deps.doors[tool].base]
+            return CELL_STATE_BY_STATUS[deps.doors[tool]]
     return StoredCellState.UNVERIFIED if deps.verification_dropped else StoredCellState.NO_EVIDENCE
 
 

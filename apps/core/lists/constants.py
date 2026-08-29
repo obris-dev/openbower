@@ -267,9 +267,12 @@ class StoredCellState(StrEnum):
 # The causes that PARK a row for retry instead of settling a cell (the
 # worker's branch); every other cause is terminal for the run.
 RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
-# The cell state a blank cell takes for a tool's BASE status code (a
-# parity test pins that every non-open base code has one).
-CELL_STATE_BY_STATUS: dict[ToolStatus, StoredCellState] = {
+# The cell state a blank cell takes for a tool's status CODE. Keyed by
+# the code string, so every tool's enum looks up here directly (a
+# StrEnum member IS its string) and a tool-specific code adds one row
+# without a projection in between. A parity test pins that every
+# non-open code of every tool has a row.
+CELL_STATE_BY_STATUS: dict[str, StoredCellState] = {
     ToolStatus.NOT_CONFIGURED: StoredCellState.TOOL_NOT_CONFIGURED,
     ToolStatus.RATE_LIMITED: StoredCellState.TOOL_UNAVAILABLE,
     ToolStatus.UNREACHABLE: StoredCellState.TOOL_UNAVAILABLE,

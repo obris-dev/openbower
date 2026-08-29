@@ -41,12 +41,6 @@ class ToolOutcome[StatusT: StrEnum]:
     def failed(self) -> bool:
         return self.status != ToolStatus.OPEN
 
-    @property
-    def base(self) -> ToolStatus:
-        """The base code the sheet reasons about (a tool-specific mode
-        declares its base on its enum)."""
-        return getattr(self.status, "base", ToolStatus(self.status.value))
-
 
 @dataclass(frozen=True, slots=True)
 class SearchOutcome(ToolOutcome[SearchStatus]):

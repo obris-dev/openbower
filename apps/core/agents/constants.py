@@ -192,9 +192,10 @@ class ToolStatus(StrEnum):
     these (StrEnums cannot extend one another; a parity test pins the
     containment) and may add modes of its own, so a tool-specific
     failure never lands here and never touches another tool. The
-    sheet's cell vocabulary keys on the base code alone (lists:
-    CELL_STATE_BY_STATUS); the tool's own code rides the task and the
-    cell record beside it."""
+    sheet's cell vocabulary is a table keyed by code (lists:
+    CELL_STATE_BY_STATUS), so a tool-specific code adds one row there;
+    the tool's own code rides the task and the cell record beside the
+    cell state."""
 
     OPEN = "open"
     NOT_CONFIGURED = "not_configured"
@@ -205,8 +206,7 @@ class ToolStatus(StrEnum):
 
 class SearchStatus(StrEnum):
     """The search door's vocabulary: the base codes, plus any mode only
-    a search door has (none yet). `base` maps each member to the base
-    code the sheet reasons about."""
+    a search door has (none yet)."""
 
     OPEN = "open"
     NOT_CONFIGURED = "not_configured"
@@ -214,14 +214,13 @@ class SearchStatus(StrEnum):
     UNREACHABLE = "unreachable"
     ERROR = "error"
 
-    @property
-    def base(self) -> ToolStatus:
-        return _SEARCH_STATUS_BASE[self]
 
-
-# Every member's base code, complete by construction here and pinned by
-# a parity test; a search-only mode added above declares its base here.
-_SEARCH_STATUS_BASE: dict[SearchStatus, ToolStatus] = {member: ToolStatus(member.value) for member in SearchStatus}
+# The search statuses that CLOSE the tool's door for the rest of the
+# run, the moment they are reported: a rate limit (the seam already
+# retried it) and a door found unconfigured. Unreachable and error do
+# not: the next query may get through, and a door that only ever
+# failed is settled at the end of the run instead.
+SEARCH_DOOR_CLOSERS = frozenset({SearchStatus.RATE_LIMITED, SearchStatus.NOT_CONFIGURED})
 
 
 class AgentTool(StrEnum):

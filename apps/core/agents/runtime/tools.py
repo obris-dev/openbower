@@ -35,10 +35,10 @@ from ..constants import (
     DEFAULT_PEOPLE_SITE,
     EVIDENCE_MAX_LINES,
     QUERY_MAX_LENGTH,
+    SEARCH_DOOR_CLOSERS,
     AgentTool,
     SearchProvider,
     SearchStatus,
-    ToolStatus,
 )
 from ..search import SearchHit, door_status, search
 from .grounding import canonical_url
@@ -279,7 +279,7 @@ def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
     if not deps.tool_open(tool):
         return _closed_note(tool, deps.doors[tool])
     outcome = _ask_door(deps, query, tool=tool)
-    if outcome.base in (ToolStatus.RATE_LIMITED, ToolStatus.NOT_CONFIGURED):
+    if outcome.status in SEARCH_DOOR_CLOSERS:
         return _closed_note(tool, outcome.status)
     if outcome.failed:
         return _result([], NOTE_FAILED)
@@ -307,7 +307,7 @@ def _ask_door(deps: CellDeps, query: str, *, tool: AgentTool) -> SearchOutcome:
         hits=answer.hits,
     )
     deps.outcomes.append(outcome)
-    if outcome.base in (ToolStatus.RATE_LIMITED, ToolStatus.NOT_CONFIGURED):
+    if outcome.status in SEARCH_DOOR_CLOSERS:
         deps.doors[tool] = outcome.status
     return outcome
 

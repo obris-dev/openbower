@@ -65,16 +65,20 @@ class CellStateParityTests(SimpleTestCase):
         self.assertFalse(set(SETTLED_CELL_STATES) & (STORED_ONLY | WIRE_ONLY))
 
     def test_every_base_status_has_a_cell_state_and_every_retry_cause_re_runs(self):
-        # A closed door lands as the cell state its BASE code maps to;
-        # a base code added without one would KeyError mid-run. Not
-        # configured is written at once (nothing to retry); every other
-        # closed door parks. And a retry cause that was also settled
-        # would park a row and then never re-run it.
-        from agents.constants import ToolStatus
+        # A closed door lands as the cell state its code maps to, for
+        # EVERY tool's vocabulary; a code added without a row would
+        # KeyError mid-run. Not configured is written at once (nothing
+        # to retry); every other closed door parks. And a retry cause
+        # that was also settled would park a row and then never re-run
+        # it.
+        from agents.constants import SearchStatus, ToolStatus
 
         from ..constants import CELL_STATE_BY_STATUS, RETRY_CAUSES
 
-        self.assertEqual(set(CELL_STATE_BY_STATUS), set(ToolStatus) - {ToolStatus.OPEN})
+        self.assertEqual(set(CELL_STATE_BY_STATUS), {s.value for s in ToolStatus} - {ToolStatus.OPEN})
+        for status in SearchStatus:
+            if status is not SearchStatus.OPEN:
+                self.assertIn(status, CELL_STATE_BY_STATUS)
         self.assertEqual(CELL_STATE_BY_STATUS[ToolStatus.NOT_CONFIGURED], StoredCellState.TOOL_NOT_CONFIGURED)
         for status, state in CELL_STATE_BY_STATUS.items():
             if status is not ToolStatus.NOT_CONFIGURED:
@@ -99,5 +103,3 @@ class CellStateParityTests(SimpleTestCase):
         for tool, statuses in TOOL_STATUSES.items():
             with self.subTest(tool=tool):
                 self.assertEqual(set(statuses), {s.value for s in SearchStatus})
-        for member in SearchStatus:
-            self.assertIsInstance(member.base, ToolStatus)
