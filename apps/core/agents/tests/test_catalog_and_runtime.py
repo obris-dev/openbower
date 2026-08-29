@@ -993,7 +993,7 @@ class AgenticLoopTests(TestCase):
 
     def _looping(self, serp_calls: list[str]):
         """A model that never stops searching: distinct queries per
-        call (a repeated EXACT query dedupes without spending), so the
+        call, so the
         loop actually spends the budget; and, when asked for a verdict
         with the tools withheld, an answer from the records."""
         calls = {"n": 0}

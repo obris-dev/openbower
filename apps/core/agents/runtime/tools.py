@@ -53,7 +53,6 @@ logger = logging.getLogger(__name__)
 # model to stop calling THAT tool; the others say the pool is what it
 # has for THIS query, which leaves the next query its own decision.
 NOTE_EMPTY_QUERY = "empty query"
-NOTE_REPEATED = "already searched that exact query; answer from the records already gathered"
 NOTE_FAILED = "search failed (provider error); the records already gathered are all you have for this query"
 # Never "answer from the records already gathered": with a closed
 # door that sentence is an instruction to guess. The runtime judges
@@ -199,8 +198,6 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
     query = _clamp_query(query.strip(), tool=AgentTool.WEB_SEARCH)
     if not query:
         return _result([], NOTE_EMPTY_QUERY)
-    if _already_searched(ctx.deps, query):
-        return _result([], NOTE_REPEATED)
     return _search_through(ctx.deps, query, tool=AgentTool.WEB_SEARCH)
 
 
@@ -213,8 +210,6 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     if not query:
         return _result([], NOTE_EMPTY_QUERY)
     query = _clamp_query(f"site:{DEFAULT_PEOPLE_SITE} {query}", tool=AgentTool.FIND_CONTACTS)
-    if _already_searched(ctx.deps, query):
-        return _result([], NOTE_REPEATED)
     return _search_through(ctx.deps, query, tool=AgentTool.FIND_CONTACTS)
 
 
@@ -246,13 +241,6 @@ def _clamp_query(query: str, *, tool: AgentTool) -> str:
         "%s query truncated from %d to %d chars: %r", tool, len(query), QUERY_MAX_LENGTH, query[:QUERY_MAX_LENGTH]
     )
     return query[:QUERY_MAX_LENGTH]
-
-
-def _already_searched(deps: CellDeps, query: str) -> bool:
-    """A repeated exact query is loop behavior, not new intent: answer
-    from what it already returned instead of re-spending the metered
-    call (the budget stays for QUERIES, not repeats)."""
-    return any(outcome.query == query for outcome in deps.outcomes)
 
 
 def _result(records: list[dict], note: str = "") -> str:

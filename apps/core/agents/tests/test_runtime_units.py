@@ -135,18 +135,12 @@ class ToolPoolTests(SimpleTestCase):
             web_search(self._Ctx(deps), "acme")
         self.assertEqual(len(deps.evidence), 1)
 
-    def test_the_non_spending_legs_never_buy_a_search(self):
-        # An empty query and a repeated exact query are loop behavior,
-        # not new intent: the metered budget is for QUERIES, so both
-        # must answer from what the pool already holds.
+    def test_an_empty_query_never_buys_a_search(self):
         from agents.runtime.tools import CellDeps, find_contacts, web_search
 
         deps = CellDeps()
-        with patch("agents.runtime.tools.search", return_value=self._answer("open")):
-            web_search(self._Ctx(deps), "acme ceo")
         with patch("agents.runtime.tools.search") as searched:
             web_search(self._Ctx(deps), "")
-            web_search(self._Ctx(deps), "acme ceo")
             find_contacts(self._Ctx(deps), "")
         searched.assert_not_called()
 
@@ -356,27 +350,6 @@ class CanonicalLitterTests(SimpleTestCase):
         allowed = allowed_urls(["https://vid.test/watch?v=A"])
         self.assertEqual(ground_value("https://vid.test/watch?v=B", allowed), "")
         self.assertEqual(ground_value("https://vid.test/watch?v=A&utm_medium=x", allowed), "https://vid.test/watch?v=A")
-
-
-class QueryDedupeTests(SimpleTestCase):
-    def test_a_repeated_exact_query_never_respends_the_metered_call(self):
-        from unittest.mock import patch as unit_patch
-
-        from agents.constants import SearchStatus
-        from agents.runtime.tools import CellDeps, web_search
-        from agents.search import DoorAnswer, SearchHit
-
-        class _Ctx:
-            def __init__(self, deps):
-                self.deps = deps
-
-        deps = CellDeps()
-        answer = DoorAnswer(SearchStatus.OPEN, [SearchHit(title="t", url="https://a.test/x", snippet="s")], "d", 1)
-        with unit_patch("agents.runtime.tools.search", return_value=answer) as searched:
-            web_search(_Ctx(deps), "acme ceo")
-            note = web_search(_Ctx(deps), "acme ceo")
-        self.assertEqual(searched.call_count, 1)
-        self.assertIn("already searched", note)
 
 
 class PoolPermissivenessTests(SimpleTestCase):
