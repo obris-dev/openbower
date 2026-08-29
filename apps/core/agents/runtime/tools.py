@@ -198,7 +198,7 @@ def web_search(ctx: RunContext[CellDeps], query: str) -> str:
         return _result([], NOTE_EMPTY_QUERY)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, query, tool=AgentTool.WEB_SEARCH)
+    return _search_through(ctx.deps, query, tool=AgentTool.WEB_SEARCH)
 
 
 def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
@@ -212,7 +212,7 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     query = _clamp_query(f"site:{DEFAULT_PEOPLE_SITE} {query}", tool=AgentTool.FIND_CONTACTS)
     if _already_searched(ctx.deps, query):
         return _result([], NOTE_REPEATED)
-    return _pool(ctx.deps, query, tool=AgentTool.FIND_CONTACTS)
+    return _search_through(ctx.deps, query, tool=AgentTool.FIND_CONTACTS)
 
 
 _TOOL_FUNCTIONS = {AgentTool.WEB_SEARCH: web_search, AgentTool.FIND_CONTACTS: find_contacts}
@@ -264,12 +264,14 @@ def _closed_note(tool: AgentTool, status: SearchStatus) -> str:
     )
 
 
-def _pool(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
-    """ONE tool call, end to end. Three steps, and the model sees only
-    the last: refuse a closed door before any spend; ask THIS tool's
-    door and record what it said on deps (the outcome, the door's
-    status, the time it took); pool the hits as numbered records and
-    hand the model its JSON. A closed door is refused without an
+def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:
+    """ONE search through THIS tool's door, end to end. Three steps,
+    and the model sees only the last: refuse a closed door before any
+    spend; ask the door and record what it said on deps (the outcome,
+    the door's status, the time it took); add the hits to the run's
+    EVIDENCE POOL (deps.records, the numbered records every completion
+    re-reads and grounding fences the answer to) and hand the model
+    the ones this call added, as JSON. A closed door is refused without an
     outcome, so the stored searches record only what hit the wire (a
     door that just said slow down must not get five more queries in
     the next second). Only this tool's door: the other tool keeps its
