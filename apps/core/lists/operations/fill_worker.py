@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import NamedTuple
 
@@ -22,6 +23,7 @@ from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
 from agents.runtime.tools import CellDeps
+from agents.search import DoorAnswer
 from openbower_kernel.adaptive import AdaptiveConcurrency
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
@@ -104,6 +106,31 @@ def _concurrency_window(provider: str, source: str, job_override: int) -> _Windo
     if job_override:
         ceiling = min(ceiling, job_override)
     return _Window(start=min(FILL_CONCURRENCY_HOSTED_START, ceiling) if canonical else 1, ceiling=ceiling)
+
+
+class _SearchTimer:
+    """The seconds a row spent parked on its search doors, summed
+    across every call of every tool. Wraps the door callables on
+    deps, so the runtime is timed without knowing it; the sum is a
+    plain attribute read after the run, where the row's wall time is
+    known too. Tool calls of one model turn can run on parallel
+    threads, so the add is under a lock: a lost update here would be
+    a pace figure that quietly undercounts."""
+
+    def __init__(self) -> None:
+        self.seconds = 0.0
+        self._lock = threading.Lock()
+
+    def wrap(self, search_fn: Callable[[str], DoorAnswer]) -> Callable[[str], DoorAnswer]:
+        def call(query: str) -> DoorAnswer:
+            started = time.monotonic()
+            try:
+                return search_fn(query)
+            finally:
+                with self._lock:
+                    self.seconds += time.monotonic() - started
+
+        return call
 
 
 class _ClaimLost(Exception):
@@ -277,7 +304,7 @@ class FillWorkerOperation:
             # A poisoned fill fails ALONE. Unhandled here the process
             # exits, and every other account's fill dies with it.
             try:
-                self._serve(fill, pool)
+                self._process(fill, pool)
             except DatabaseError:
                 raise
             except Exception:
@@ -321,7 +348,7 @@ class FillWorkerOperation:
         in_flight = sum(len(s.in_flight) for s in self._states.values() if s.source == state.source)
         return state.ceiling - in_flight
 
-    def _serve(self, fill: Fill, pool: ThreadPoolExecutor) -> None:
+    def _process(self, fill: Fill, pool: ThreadPoolExecutor) -> None:
         state = self._states.get(str(fill.id)) or self._admit(fill)
         if state is None:
             return
@@ -565,23 +592,11 @@ class FillWorkerOperation:
         # The pace accumulators: row wall seconds vs seconds parked on
         # search, measured HERE (the one place that sees both), so the
         # UI and the logs can say WHAT is slow instead of a bare ETA.
-        search_wait = 0.0
-
-        def timed(search_fn):
-            def call(query: str):
-                nonlocal search_wait
-                started = time.monotonic()
-                try:
-                    return search_fn(query)
-                finally:
-                    search_wait += time.monotonic() - started
-
-            return call
-
         # The wrapper is pace accounting only: it times the search
         # share of a row without the runtime knowing it is measured.
-        deps.web_search_fn = timed(deps.web_search_fn)
-        deps.contacts_search_fn = timed(deps.contacts_search_fn)
+        search_timer = _SearchTimer()
+        deps.web_search_fn = search_timer.wrap(deps.web_search_fn)
+        deps.contacts_search_fn = search_timer.wrap(deps.contacts_search_fn)
         row_started = time.monotonic()
         # Whether a park has already counted this task into the gauge.
         # The wire's `transient` counts rows CURRENTLY parked in retry,
@@ -678,7 +693,7 @@ class FillWorkerOperation:
                 deltas["transient"] = -1
             row_seconds = time.monotonic() - row_started
             deltas["row_seconds"] = round(row_seconds)
-            deltas["search_wait_seconds"] = round(search_wait)
+            deltas["search_wait_seconds"] = round(search_timer.seconds)
             self.queue.bump(str(fill.id), **deltas)
             self.queue.set_concurrency_point(str(fill.id), controller.current())
             # The pace narration: one line per row, the same facts the
@@ -688,7 +703,7 @@ class FillWorkerOperation:
                 task.row_id,
                 "filled" if answered else declined,
                 row_seconds,
-                search_wait,
+                search_timer.seconds,
                 controller.current(),
             )
         # A FAILED search is a RATE signal, not a clean completion, and

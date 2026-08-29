@@ -287,7 +287,7 @@ class WorkerTestCase(TransactionTestCase):
             for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
                 state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
             self.assertIsNotNone(state.breakers.tripped)
-            supervisor._serve(self.fill, pool)
+            supervisor._process(self.fill, pool)
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.error_code, "provider_throttled")
