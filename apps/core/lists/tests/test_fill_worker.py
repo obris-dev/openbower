@@ -35,8 +35,8 @@ from ..constants import (
 )
 from ..models import Fill, FillCellState, FillTask, List, ListRow
 from ..operations.fill_worker import FillWorkerOperation, _FillState
+from ..services import fill_progress
 from ..services.fill_admission import FillAdmissionService
-from ..services.fill_progress import FillProgress
 from ..services.fill_queue import FillQueueService
 from ..services.fills import FillService
 from ..services.lists import ListService
@@ -343,7 +343,7 @@ class WorkerTestCase(TransactionTestCase):
         self.run_worker(throttling_model(), passes=1)
         self.fill.refresh_from_db()
         self.assertGreater(self.fill.transient, 0)
-        FillProgress().fail(str(self.fill.id), code=FillFailureCode.PROVIDER_THROTTLED, message="throttled")
+        fill_progress.fail(str(self.fill.id), code=FillFailureCode.PROVIDER_THROTTLED, message="throttled")
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.transient, 0)
@@ -643,7 +643,7 @@ class FairnessTests(WorkerTestCase):
         # fills, oldest first, so no fill can be reached only after
         # another finishes.
         other_job_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
-        live = [str(fill.id) for fill in FillProgress().live_fills()]
+        live = [str(fill.id) for fill in fill_progress.live_fills()]
         self.assertEqual(live, sorted([str(self.fill.id), other_job_id]))
 
 
@@ -664,7 +664,7 @@ class SourceCeilingTests(WorkerTestCase):
         self.assertEqual(mine.ceiling, 1)
         # A second fill on the SAME (provider, source), with a row of
         # this one already running.
-        theirs = _FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling, mine.progress)
+        theirs = _FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
         supervisor._states["other"] = theirs
         mine.in_flight[object()] = None
         self.assertEqual(supervisor._source_free_slots(theirs), 0)

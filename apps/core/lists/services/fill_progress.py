@@ -6,9 +6,10 @@ machine (complete when no queued task remains; cancelled or failed
 through the ONE terminal transition the user's Stop also takes).
 
 Split from the queue on purpose: the queue is TASK lifecycle (leases,
-claims, closes), this is the fill's. A worker's row thread reports
-here through its fill's in-process state (operations/fill_worker.py),
-never directly.
+claims, closes), this is the fill's. Plain functions, because none of
+this holds state: a fill id in, one UPDATE out. A worker's row thread
+reports here through its fill's in-process state
+(operations/fill_worker.py), never directly.
 
 Not account-scoped: the worker is a trusted process serving every
 account's fills, and the user-facing service resolves its fill
@@ -24,65 +25,62 @@ from ..constants import LIVE_FILL_STATUSES, FillStatus, FillTaskStatus
 from ..models import Fill, FillTask
 
 
-class FillProgress:
-    """The fill-level writes a worker makes as rows resolve, and the
-    fill-level reads its loop needs."""
+def live_fills() -> list[Fill]:
+    """Every live fill, oldest first. A READ, not a claim: the
+    task-level skip_locked claim is what arbitrates between
+    workers, and the supervisor interleaves these rather than
+    working one to completion.
 
-    def live_fills(self) -> list[Fill]:
-        """Every live fill, oldest first. A READ, not a claim: the
-        task-level skip_locked claim is what arbitrates between
-        workers, and the supervisor interleaves these rather than
-        working one to completion.
+    Deliberately unfiltered by claimable work. A fill whose tasks
+    are all leased has nothing claimable but is very much running,
+    and the supervisor needs it in hand to renew those leases;
+    deciding a fill is drained is the supervisor's call, since only
+    it knows what this process still has in flight."""
+    return list(Fill.objects.filter(status__in=LIVE_FILL_STATUSES).order_by("id"))
 
-        Deliberately unfiltered by claimable work. A fill whose tasks
-        are all leased has nothing claimable but is very much running,
-        and the supervisor needs it in hand to renew those leases;
-        deciding a fill is drained is the supervisor's call, since only
-        it knows what this process still has in flight."""
-        return list(Fill.objects.filter(status__in=LIVE_FILL_STATUSES).order_by("id"))
 
-    def is_live(self, fill_id: str) -> bool:
-        """The worker's pre-task liveness check (cancel granularity is
-        between tasks; in-flight spend is sunk cost, stated openly)."""
-        return Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).exists()
+def is_live(fill_id: str) -> bool:
+    """The worker's pre-task liveness check (cancel granularity is
+    between tasks; in-flight spend is sunk cost, stated openly)."""
+    return Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).exists()
 
-    def bump(self, fill_id: str, **deltas: int) -> None:
-        """Per-task progress plus the heartbeat stamp: ONE unlocked
-        UPDATE with F() expressions. Counters are integer columns
-        precisely so 64 threads can increment them without meeting on
-        this row; a JSON dict would need select_for_update and a
-        read-modify-write, which serializes the whole pool on the
-        fill's hottest row.
 
-        Delta keys: attempted, filled, blank, transient, row_seconds,
-        search_wait_seconds."""
-        Fill.objects.filter(id=fill_id).update(
-            heartbeat_at=timezone.now(),
-            updated_at=timezone.now(),
-            **{key: models.F(key) + delta for key, delta in deltas.items()},
-        )
+def bump(fill_id: str, **deltas: int) -> None:
+    """Per-task progress plus the heartbeat stamp: ONE unlocked
+    UPDATE with F() expressions. Counters are integer columns
+    precisely so 64 threads can increment them without meeting on
+    this row; a JSON dict would need select_for_update and a
+    read-modify-write, which serializes the whole pool on the
+    fill's hottest row.
 
-    def set_concurrency_point(self, fill_id: str, point: int) -> None:
-        """The AIMD gauge OVERWRITES (it is the operating point right
-        now, not a sum), so it cannot ride the F() bump above."""
-        Fill.objects.filter(id=fill_id).update(concurrency_point=point, heartbeat_at=timezone.now())
+    Delta keys: attempted, filled, blank, transient, row_seconds,
+    search_wait_seconds."""
+    Fill.objects.filter(id=fill_id).update(
+        heartbeat_at=timezone.now(),
+        updated_at=timezone.now(),
+        **{key: models.F(key) + delta for key, delta in deltas.items()},
+    )
 
-    def try_finish(self, fill_id: str) -> bool:
-        """The worker's leg of the completion rule; see try_finish."""
-        return try_finish(fill_id)
 
-    def cancel(self, fill_id: str) -> bool:
-        """The worker's list-gone resolution: a user deletion reads as
-        CANCELLED, never failed (failed is config-tier and carries an
-        error the UI dresses as a failure story). Same transition as the
-        user cancel; a fill already terminal stays put."""
-        return stop_fill(fill_id, FillStatus.CANCELLED)
+def set_concurrency_point(fill_id: str, point: int) -> None:
+    """The AIMD gauge OVERWRITES (it is the operating point right
+    now, not a sum), so it cannot ride the F() bump above."""
+    Fill.objects.filter(id=fill_id).update(concurrency_point=point, heartbeat_at=timezone.now())
 
-    def fail(self, fill_id: str, *, code: str, message: str) -> bool:
-        """The breaker path (config-tier: a dead or throttling provider
-        fails the whole fill loudly). From live states only; a cancel
-        that already landed stays cancelled."""
-        return stop_fill(fill_id, FillStatus.FAILED, code=code, message=message)
+
+def cancel(fill_id: str) -> bool:
+    """The worker's list-gone resolution: a user deletion reads as
+    CANCELLED, never failed (failed is config-tier and carries an
+    error the UI dresses as a failure story). Same transition as the
+    user cancel; a fill already terminal stays put."""
+    return stop_fill(fill_id, FillStatus.CANCELLED)
+
+
+def fail(fill_id: str, *, code: str, message: str) -> bool:
+    """The breaker path (config-tier: a dead or throttling provider
+    fails the whole fill loudly). From live states only; a cancel
+    that already landed stays cancelled."""
+    return stop_fill(fill_id, FillStatus.FAILED, code=code, message=message)
 
 
 def live_fill_count(account_id: str) -> int:

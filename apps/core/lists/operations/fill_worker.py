@@ -39,7 +39,7 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillTask, List, ListRow
-from ..services.fill_progress import FillProgress
+from ..services import fill_progress
 from ..services.fill_queue import FillQueueService
 from ..services.landing import Landed, land_row
 from ..services.lists import ListNotFound, RowNotFound
@@ -189,14 +189,12 @@ class _FillState:
         controller: ConcurrencyController,
         breakers: _Breakers,
         ceiling: int,
-        progress: FillProgress,
     ) -> None:
         self.fill = fill
         self.config = config
         self.controller = controller
         self.breakers = breakers
         self.ceiling = ceiling
-        self.progress = progress
         self.in_flight: dict[Future, FillTask] = {}
         self.deaths = 0
         self.last_beat = time.monotonic()
@@ -215,7 +213,7 @@ class _FillState:
         holds it), the controller sheds width in this row's epoch, and
         the breaker counts one more consecutive park."""
         if newly_parked:
-            self.progress.bump(str(self.fill.id), transient=1)
+            fill_progress.bump(str(self.fill.id), transient=1)
         self.controller.record_throttle(generation)
         self.breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
 
@@ -238,8 +236,8 @@ class _FillState:
             deltas = landed.deltas(was_parked=was_parked)
             deltas["row_seconds"] = round(row_seconds)
             deltas["search_wait_seconds"] = round(search_seconds)
-            self.progress.bump(str(self.fill.id), **deltas)
-            self.progress.set_concurrency_point(str(self.fill.id), self.controller.current())
+            fill_progress.bump(str(self.fill.id), **deltas)
+            fill_progress.set_concurrency_point(str(self.fill.id), self.controller.current())
             # The pace narration: one line per row, the same facts the
             # wire carries, so `make logs` answers "what is slow".
             logger.info(
@@ -270,13 +268,13 @@ class _FillState:
         `task.parked` is the same flag every terminal writer reads: a
         row whose thread died every pass never parked at all."""
         if landed is not None:
-            self.progress.bump(str(self.fill.id), **landed.deltas(was_parked=task.parked))
+            fill_progress.bump(str(self.fill.id), **landed.deltas(was_parked=task.parked))
 
     def row_missing(self, task: FillTask, closed: bool) -> None:
         """A row that no longer exists: its parked count, if any, is
         released; nothing else moves."""
         if closed and task.parked:
-            self.progress.bump(str(self.fill.id), transient=-1)
+            fill_progress.bump(str(self.fill.id), transient=-1)
 
 
 class FillWorkerOperation:
@@ -299,7 +297,6 @@ class FillWorkerOperation:
         # worker's, built here from its identity rather than handed in.
         self.worker_id = worker_id
         self.queue = FillQueueService(worker_id=worker_id)
-        self.progress = FillProgress()
         self.stop = stop
         self._states: dict[str, _FillState] = {}
         # Whether the pass in progress found anything to do; the loop
@@ -333,7 +330,7 @@ class FillWorkerOperation:
         # claimable. No-ops unless every row is terminal.
         for fill_id in list(self._states):
             try:
-                self.progress.try_finish(fill_id)
+                fill_progress.try_finish(fill_id)
             except DatabaseError:
                 _recover_connection()
         # The supervisor's own session, on the way out.
@@ -347,7 +344,7 @@ class FillWorkerOperation:
         backoff is live and has nothing claimable, so liveness would
         spin this loop against a clock and never let `--once` stop."""
         self._claimed = False
-        fills = self.progress.live_fills()
+        fills = fill_progress.live_fills()
         self._evict({str(fill.id) for fill in fills})
         for fill in self._rotated(fills):
             # A poisoned fill fails ALONE. Unhandled here the process
@@ -358,7 +355,7 @@ class FillWorkerOperation:
                 raise
             except Exception:
                 logger.exception("fill_worker: fill %s failed unhandled", fill.id)
-                self.progress.fail(
+                fill_progress.fail(
                     str(fill.id),
                     code=FillFailureCode.FILL_UNRUNNABLE,
                     message="This fill stopped on an internal error; start a new fill. Filled cells are kept.",
@@ -404,7 +401,7 @@ class FillWorkerOperation:
         state.fill = fill
         if state.breakers.tripped is not None:
             code, message = state.breakers.tripped
-            self.progress.fail(str(fill.id), code=code, message=message)
+            fill_progress.fail(str(fill.id), code=code, message=message)
             return
         if state.deaths:
             # A death means claiming is the wrong move (the likely
@@ -434,7 +431,7 @@ class FillWorkerOperation:
         try:
             model_for(state.config.provider, state.config.source, state.config.model)
         except ModelUnavailable as e:
-            self.progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            fill_progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             self._states.pop(str(fill.id), None)
             return
         share = min(
@@ -463,14 +460,14 @@ class FillWorkerOperation:
             # Nothing claimable and nothing running HERE: complete, or
             # (stale-leased rows still cooling) leave it for a later
             # pass.
-            self.progress.try_finish(str(fill.id))
+            fill_progress.try_finish(str(fill.id))
 
     def _admit(self, fill: Fill) -> _FillState | None:
         config = AgentConfig(**fill.config_snapshot)
         try:
             window = _concurrency_window(config.provider, config.source, fill.concurrency)
         except ModelUnavailable as e:
-            self.progress.fail(str(fill.id), code=FillFailureCode.SOURCE_GONE, message=str(e))
+            fill_progress.fail(str(fill.id), code=FillFailureCode.SOURCE_GONE, message=str(e))
             return None
         # RESUME the climb across restarts: the operating point's last
         # value is stored on the fill, so a bounced worker starts where
@@ -484,7 +481,6 @@ class FillWorkerOperation:
             ConcurrencyController(start=start, ceiling=window.ceiling),
             _Breakers(search_provider=settings.SEARCH_PROVIDER),
             window.ceiling,
-            self.progress,
         )
         self._states[str(fill.id)] = state
         return state
@@ -515,7 +511,7 @@ class FillWorkerOperation:
                 len(self._states),
                 threading.active_count(),
             )
-            self.queue.set_concurrency_point(fill_id, state.controller.current())
+            fill_progress.set_concurrency_point(fill_id, state.controller.current())
             state.last_beat = time.monotonic()
 
     def _harvest(self) -> None:
@@ -588,7 +584,7 @@ class FillWorkerOperation:
         generation = state.controller.generation()
         # Pre-spend liveness: cancellation granularity is between rows
         # (in-flight spend is sunk cost, stated openly).
-        if not self.progress.is_live(str(task.fill_id)):
+        if not fill_progress.is_live(str(task.fill_id)):
             return
         row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
         if row is None:
@@ -598,7 +594,7 @@ class FillWorkerOperation:
                 # ListService.delete purges the fill in its own txn;
                 # this is the racing walker noticing before that
                 # commit lands.
-                self.progress.cancel(str(fill.id))
+                fill_progress.cancel(str(fill.id))
                 return
             # The row alone is gone: this task closes as ROW_MISSING (no
             # cell to diagnose, nothing a resume could owe) and the fill
@@ -633,7 +629,7 @@ class FillWorkerOperation:
         try:
             run = run_cell(state.config, row.data, deps=deps)
         except ModelUnavailable as e:
-            self.progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            fill_progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             return
         # What the run PRODUCED, through the contract model, so this
         # writer and the bench's cannot drift: a seeded row and a run
@@ -669,7 +665,7 @@ class FillWorkerOperation:
         except (ListNotFound, RowNotFound):
             # Same as the missing-row leg above: a user deletion
             # resolves cancelled, never failed.
-            self.progress.cancel(str(fill.id))
+            fill_progress.cancel(str(fill.id))
             return
 
         state.row_landed(
