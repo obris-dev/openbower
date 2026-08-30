@@ -11,21 +11,21 @@ import threading
 
 from django.test import SimpleTestCase
 
-from openbower_kernel.adaptive import CLIMB_STREAK, AdaptiveConcurrency, ConcurrencyBoundsError
+from openbower_kernel.adaptive import CLIMB_STREAK, ConcurrencyBoundsError, ConcurrencyController
 
 
 class ConstructionTests(SimpleTestCase):
     def test_bounds_outside_the_window_refuse_loudly(self):
         with self.assertRaises(ConcurrencyBoundsError):
-            AdaptiveConcurrency(start=0, ceiling=8)
+            ConcurrencyController(start=0, ceiling=8)
         with self.assertRaises(ConcurrencyBoundsError):
-            AdaptiveConcurrency(start=9, ceiling=8)
+            ConcurrencyController(start=9, ceiling=8)
         with self.assertRaises(ConcurrencyBoundsError):
-            AdaptiveConcurrency(start=1, ceiling=0)
+            ConcurrencyController(start=1, ceiling=0)
 
     def test_the_whole_window_is_constructible(self):
-        self.assertEqual(AdaptiveConcurrency(start=1, ceiling=1).current(), 1)
-        self.assertEqual(AdaptiveConcurrency(start=16, ceiling=16).current(), 16)
+        self.assertEqual(ConcurrencyController(start=1, ceiling=1).current(), 1)
+        self.assertEqual(ConcurrencyController(start=16, ceiling=16).current(), 16)
 
 
 class ClimbTests(SimpleTestCase):
@@ -33,7 +33,7 @@ class ClimbTests(SimpleTestCase):
         # CLIMB_STREAK cleans per slot, a CONSTANT step (the per-width
         # round cost made high ceilings unreachable: the triangular
         # sum of every width). The raise resets the streak.
-        ctrl = AdaptiveConcurrency(start=4, ceiling=16)
+        ctrl = ConcurrencyController(start=4, ceiling=16)
         for _ in range(CLIMB_STREAK - 1):
             ctrl.record_success(ctrl.generation())
         self.assertEqual(ctrl.current(), 4)
@@ -46,7 +46,7 @@ class ClimbTests(SimpleTestCase):
         self.assertEqual(ctrl.current(), 6)
 
     def test_the_ceiling_holds_under_any_streak(self):
-        ctrl = AdaptiveConcurrency(start=4, ceiling=5)
+        ctrl = ConcurrencyController(start=4, ceiling=5)
         for _ in range(CLIMB_STREAK):
             ctrl.record_success(ctrl.generation())
         self.assertEqual(ctrl.current(), 5)
@@ -57,7 +57,7 @@ class ClimbTests(SimpleTestCase):
 
 class ThrottleTests(SimpleTestCase):
     def test_a_throttle_halves_and_the_floor_holds(self):
-        ctrl = AdaptiveConcurrency(start=8, ceiling=16)
+        ctrl = ConcurrencyController(start=8, ceiling=16)
         ctrl.record_throttle(ctrl.generation())
         self.assertEqual(ctrl.current(), 4)
         ctrl.record_throttle(ctrl.generation())
@@ -68,7 +68,7 @@ class ThrottleTests(SimpleTestCase):
         self.assertEqual(ctrl.current(), 1)
 
     def test_a_throttle_forfeits_the_streak(self):
-        ctrl = AdaptiveConcurrency(start=4, ceiling=16)
+        ctrl = ConcurrencyController(start=4, ceiling=16)
         for _ in range(3):
             ctrl.record_success(ctrl.generation())
         ctrl.record_throttle(ctrl.generation())
@@ -82,7 +82,7 @@ class ThrottleTests(SimpleTestCase):
         self.assertEqual(ctrl.current(), 3)
 
     def test_mixed_traffic_settles_within_the_window(self):
-        ctrl = AdaptiveConcurrency(start=4, ceiling=8)
+        ctrl = ConcurrencyController(start=4, ceiling=8)
         ctrl.record_success(ctrl.generation())
         ctrl.record_throttle(ctrl.generation())
         self.assertEqual(ctrl.current(), 2)
@@ -100,7 +100,7 @@ class CongestionEpochTests(SimpleTestCase):
     to the floor."""
 
     def test_one_burst_halves_once_however_many_rows_report_it(self):
-        c = AdaptiveConcurrency(start=64, ceiling=64)
+        c = ConcurrencyController(start=64, ceiling=64)
         generation = c.generation()
         # Every row in flight refuses, as a real burst does.
         for _ in range(64):
@@ -110,7 +110,7 @@ class CongestionEpochTests(SimpleTestCase):
     def test_a_later_event_sheds_again(self):
         # The epoch must not freeze the controller: a burst against the
         # NEW width is a new event and sheds from it.
-        c = AdaptiveConcurrency(start=64, ceiling=64)
+        c = ConcurrencyController(start=64, ceiling=64)
         # Each batch captures its epoch ONCE, at row start, the way the
         # worker does; reading it per report would defeat the point.
         first = c.generation()
@@ -125,7 +125,7 @@ class CongestionEpochTests(SimpleTestCase):
     def test_a_stale_throttle_still_forfeits_the_streak(self):
         # It is a refusal, not evidence of headroom: it must not leave
         # a half-built climb standing.
-        c = AdaptiveConcurrency(start=8, ceiling=64)
+        c = ConcurrencyController(start=8, ceiling=64)
         stale = c.generation()
         c.record_throttle(stale)
         for _ in range(CLIMB_STREAK - 1):
@@ -137,7 +137,7 @@ class CongestionEpochTests(SimpleTestCase):
     def test_a_stale_success_does_not_climb_back(self):
         # Rows that started at the refused width finish clean; counting
         # them would re-earn the slot on pre-backoff evidence.
-        c = AdaptiveConcurrency(start=8, ceiling=64)
+        c = ConcurrencyController(start=8, ceiling=64)
         stale = c.generation()
         c.record_throttle(stale)
         for _ in range(CLIMB_STREAK * 2):
@@ -154,7 +154,7 @@ class ConcurrentEpochTests(SimpleTestCase):
         # test asserts (1 <= point <= ceiling) is guaranteed by max()
         # and min() with or without a lock, so it could not have caught
         # a torn read-modify-write here.
-        controller = AdaptiveConcurrency(start=64, ceiling=64)
+        controller = ConcurrencyController(start=64, ceiling=64)
         generation = controller.generation()
         start = threading.Barrier(64)
 
@@ -175,7 +175,7 @@ class ConcurrentEpochTests(SimpleTestCase):
 class ThreadSafetyTests(SimpleTestCase):
     def test_concurrent_reports_hold_the_invariant(self):
         ceiling = 8
-        ctrl = AdaptiveConcurrency(start=4, ceiling=ceiling)
+        ctrl = ConcurrencyController(start=4, ceiling=ceiling)
         observed: list[int] = []
         observed_lock = threading.Lock()
 

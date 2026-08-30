@@ -183,7 +183,7 @@ class WorkerTestCase(TransactionTestCase):
         hand the provider a fresh count every time and never trip
         them."""
         with self._patched(model, source=source), ThreadPoolExecutor(max_workers=4) as pool:
-            supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+            supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
             for pass_number in range(passes):
                 if pass_number:
                     FillTask.objects.filter(not_before__isnull=False).update(not_before=timezone.now())
@@ -281,7 +281,7 @@ class WorkerTestCase(TransactionTestCase):
         # The breaker itself is a pure object (that is why it was split
         # out); what this pins is the SUPERVISOR's response to it, which
         # is the part with a fill and a queue to touch.
-        supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
         with self._patched(answering_model(lambda prompt: "found")), ThreadPoolExecutor(max_workers=1) as pool:
             state = supervisor._admit(self.fill)
             for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
@@ -659,7 +659,7 @@ class SourceCeilingTests(WorkerTestCase):
     happens at a single worker."""
 
     def test_two_fills_on_one_source_share_its_declared_ceiling(self) -> None:
-        supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
         with self._patched(answering_model(lambda prompt: "found")):
             mine = supervisor._admit(self.fill)
         self.assertEqual(mine.ceiling, 1)

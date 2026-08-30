@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from openbower_kernel.adaptive import CLIMB_STREAK, AdaptiveConcurrency
+from openbower_kernel.adaptive import CLIMB_STREAK, ConcurrencyController
 
 from ..constants import CONSECUTIVE_TRANSIENT_LIMIT, FillFailureCode, StoredCellState
 from ..operations.fill_worker import _Breakers
@@ -98,7 +98,7 @@ class ThrottleAsRateSignalTests(SimpleTestCase):
     climbed it into the ban."""
 
     def test_a_throttle_halves_and_a_clean_streak_climbs(self):
-        controller = AdaptiveConcurrency(start=16, ceiling=32)
+        controller = ConcurrencyController(start=16, ceiling=32)
         controller.record_throttle(controller.generation())
         self.assertEqual(controller.current(), 8)
         for _ in range(CLIMB_STREAK):
@@ -108,7 +108,7 @@ class ThrottleAsRateSignalTests(SimpleTestCase):
     def test_repeated_throttles_reach_the_floor_and_stop(self):
         # Backing off has nothing left to give past this; the breaker
         # is what notices a door that never reopens.
-        controller = AdaptiveConcurrency(start=32, ceiling=32)
+        controller = ConcurrencyController(start=32, ceiling=32)
         for _ in range(10):
             controller.record_throttle(controller.generation())
         self.assertEqual(controller.current(), 1)

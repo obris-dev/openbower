@@ -23,7 +23,7 @@ from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
 from agents.runtime.tools import CellDeps
-from openbower_kernel.adaptive import AdaptiveConcurrency
+from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
@@ -185,7 +185,7 @@ class _FillState:
         self,
         fill: Fill,
         config: AgentConfig,
-        controller: AdaptiveConcurrency,
+        controller: ConcurrencyController,
         breakers: _Breakers,
         ceiling: int,
     ) -> None:
@@ -216,8 +216,12 @@ class FillWorkerOperation:
     free; a fill's own AIMD point caps its share of them, and its
     source's declared ceiling caps every fill hitting that source."""
 
-    def __init__(self, *, queue: FillQueueService, stop: threading.Event) -> None:
-        self.queue = queue
+    def __init__(self, *, worker_id: str, stop: threading.Event) -> None:
+        # The claimant's stamp (hostname:pid in production): every lease
+        # CAS the queue makes filters on it, so the queue is THIS
+        # worker's, built here from its identity rather than handed in.
+        self.worker_id = worker_id
+        self.queue = FillQueueService(worker_id=worker_id)
         self.stop = stop
         self._states: dict[str, _FillState] = {}
         # Whether the pass in progress found anything to do; the loop
@@ -399,7 +403,7 @@ class FillWorkerOperation:
         state = _FillState(
             fill,
             config,
-            AdaptiveConcurrency(start=start, ceiling=window.ceiling),
+            ConcurrencyController(start=start, ceiling=window.ceiling),
             _Breakers(search_provider=settings.SEARCH_PROVIDER),
             window.ceiling,
         )
@@ -495,7 +499,7 @@ class FillWorkerOperation:
         fill: Fill,
         config: AgentConfig,
         task: FillTask,
-        controller: AdaptiveConcurrency,
+        controller: ConcurrencyController,
         breakers: _Breakers,
     ) -> None:
         try:
@@ -515,7 +519,7 @@ class FillWorkerOperation:
         fill: Fill,
         config: AgentConfig,
         task: FillTask,
-        controller: AdaptiveConcurrency,
+        controller: ConcurrencyController,
         breakers: _Breakers,
     ) -> None:
         # The congestion epoch this row STARTS in, handed back with its
@@ -612,6 +616,7 @@ class FillWorkerOperation:
             # resolves cancelled, never failed.
             self.queue.cancel_fill(str(fill.id))
             return
+
         if landed is not None:
             deltas = landed.deltas(was_parked=was_parked)
             row_seconds = time.monotonic() - row_started
