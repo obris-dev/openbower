@@ -58,6 +58,22 @@ class Landed(NamedTuple):
         return deltas
 
 
+def _declined_cause(run: CellRunResult) -> StoredCellState:
+    """WHY an output the run did not answer is empty: the run's own
+    cause, or NO_EVIDENCE when it recorded none (a run stored before
+    causes were, a give-up with nothing behind it)."""
+    return StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
+
+
+def _unanswered(fill: Fill, declined: StoredCellState) -> dict[str, StoredCellState]:
+    """The starting state of every column the fill owns: UNANSWERED,
+    carrying the run's declined cause. The sheet write then moves the
+    columns it filled to FILLED and the ones it refused to
+    TYPE_MISMATCH; the rest keep the cause, which is what keeps them
+    targetable by Continue."""
+    return dict.fromkeys(fill.column_keys, declined)
+
+
 def land_row(
     fill: Fill,
     row_id: str,
@@ -80,8 +96,8 @@ def land_row(
     stays targetable instead of reading as answered. Raises the
     ListService's ListNotFound / RowNotFound as they are: a deleted
     sheet is the caller's story to resolve."""
-    declined = StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
-    states = dict.fromkeys(fill.column_keys, declined)
+    declined = _declined_cause(run)
+    states = _unanswered(fill, declined)
     answered: set[str] = set()
     try:
         with transaction.atomic():
