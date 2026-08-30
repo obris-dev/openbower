@@ -23,3 +23,15 @@ export function ensureOk<R extends { status: string }>(
   }
   return true;
 }
+
+/** The auth half of ensureOk alone, for call sites that handle their
+ * refusals themselves (a code they branch on, a drawer that renders
+ * the error in place). True when the page is leaving for login, so
+ * the caller returns without touching state. */
+export function redirectIfUnauthenticated<R extends { status: string }>(
+  res: R,
+): res is Extract<R, { status: "unauthenticated" }> {
+  if (res.status !== "unauthenticated") return false;
+  window.location.href = loginUrl();
+  return true;
+}
