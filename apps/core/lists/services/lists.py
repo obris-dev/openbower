@@ -4,6 +4,7 @@ a missing row, so foreign ids are not an oracle)."""
 
 from __future__ import annotations
 
+import logging
 from typing import NamedTuple
 
 from django.db import transaction
@@ -16,6 +17,8 @@ from ..cell_types import CellTypeMismatch, validate_cell
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, FillTask, Folder, List, ListRow
 from . import cell_truth
+
+logger = logging.getLogger(__name__)
 
 
 class ListsFull(Exception):
@@ -43,6 +46,17 @@ class CellMismatch(NamedTuple):
 
     key: str
     why: str
+
+
+def _clamp_cell(key: str, value: str, *, where: str) -> str:
+    """The cell ceiling, at the writer: authored input CLAMPS, never
+    rejects (a batch must not fail over one long value), and the clamp
+    is LOGGED when it bites, since a cut value is data the user or the
+    model wrote that the sheet no longer holds in full."""
+    if len(value) <= CELL_MAX_LENGTH:
+        return value
+    logger.warning("%s: cell %r clamped from %d to %d chars", where, key, len(value), CELL_MAX_LENGTH)
+    return value[:CELL_MAX_LENGTH]
 
 
 class CellWriteResult(NamedTuple):
@@ -158,7 +172,7 @@ class ListService:
         writer's rules (authored values clamp, never reject)."""
         if not rows:
             return 0
-        rows = [{key: value[:CELL_MAX_LENGTH] for key, value in data.items()} for data in rows]
+        rows = [{key: _clamp_cell(key, value, where="add_rows") for key, value in data.items()} for data in rows]
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
             # appends must serialize on the list row or the second one
@@ -187,7 +201,7 @@ class ListService:
         (authored input clamps, never rejects) and pass the column's
         shape validator before anything writes; a blank value writes
         nothing and reports nothing."""
-        attempted = {key: value[:CELL_MAX_LENGTH] for key, value in cells.items() if value.strip()}
+        attempted = {key: _clamp_cell(key, value, where="write_cells") for key, value in cells.items() if value.strip()}
         if not attempted:
             return CellWriteResult((), (), ())
         with transaction.atomic():
