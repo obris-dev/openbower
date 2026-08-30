@@ -679,13 +679,6 @@
           "title": "Columns",
           "type": "array"
         },
-        "items": {
-          "items": {
-            "$ref": "#/$defs/FillRunWire"
-          },
-          "title": "Items",
-          "type": "array"
-        },
         "next_cursor": {
           "anyOf": [
             {
@@ -698,10 +691,17 @@
           "default": null,
           "description": "The last id when more runs exist.",
           "title": "Next Cursor"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/FillRunWire"
+          },
+          "title": "Runs",
+          "type": "array"
         }
       },
       "required": [
-        "items"
+        "runs"
       ],
       "title": "FillRunPage",
       "type": "object"

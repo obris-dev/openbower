@@ -90,7 +90,7 @@ class _Window(NamedTuple):
     ceiling: int
 
 
-def _concurrency_window(provider: str, source: str, job_override: int) -> _Window:
+def _concurrency_window(provider: str, source: str, run_override: int) -> _Window:
     """The window for the fill's AIMD controller. Canonical vendor
     sources start at FILL_CONCURRENCY_HOSTED_START and may climb to
     the ceiling; self-hosted sources start at 1 and never probe past
@@ -103,8 +103,8 @@ def _concurrency_window(provider: str, source: str, job_override: int) -> _Windo
     config = source_config(provider, source)
     canonical, declared = config["canonical"], config["concurrency"]
     ceiling = min(declared, MAX_FILL_CONCURRENCY) if declared else (MAX_FILL_CONCURRENCY if canonical else 1)
-    if job_override:
-        ceiling = min(ceiling, job_override)
+    if run_override:
+        ceiling = min(ceiling, run_override)
     return _Window(start=min(FILL_CONCURRENCY_HOSTED_START, ceiling) if canonical else 1, ceiling=ceiling)
 
 

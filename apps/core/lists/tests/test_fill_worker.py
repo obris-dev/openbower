@@ -615,7 +615,7 @@ class FairnessTests(WorkerTestCase):
         # completion: the old loop also finished both fills, but only
         # one after the other, so a 25k-row fill held the worker for
         # its entire run. Rows of the two fills must overlap in time.
-        other_job_id = self._second_sheet("01ACCOUNTBBBBBBBBBBBBBBBBB", rows=4)
+        other_run_id = self._second_sheet("01ACCOUNTBBBBBBBBBBBBBBBBB", rows=4)
         seen: list[str] = []
 
         def answer(prompt: str) -> str:
@@ -627,7 +627,7 @@ class FairnessTests(WorkerTestCase):
         self.run_worker(answering_model(answer))
 
         self.fill.refresh_from_db()
-        other = Fill.objects.get(id=other_job_id)
+        other = Fill.objects.get(id=other_run_id)
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(other.status, FillStatus.COMPLETE)
         mine = [i for i, who in enumerate(seen) if who == "mine"]
@@ -639,12 +639,12 @@ class FairnessTests(WorkerTestCase):
         self.assertTrue(max(mine) > min(theirs) and max(theirs) > min(mine), seen)
 
     def test_every_live_fill_is_offered_each_pass(self) -> None:
-        # The interleave itself, at the seam: live_jobs hands back BOTH
+        # The interleave itself, at the seam: live_fills hands back BOTH
         # fills, oldest first, so no fill can be reached only after
         # another finishes.
-        other_job_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
+        other_run_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
         live = [str(fill.id) for fill in fill_progress.live_fills()]
-        self.assertEqual(live, sorted([str(self.fill.id), other_job_id]))
+        self.assertEqual(live, sorted([str(self.fill.id), other_run_id]))
 
 
 class SourceCeilingTests(WorkerTestCase):

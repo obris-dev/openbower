@@ -172,7 +172,7 @@ class ColumnFillSummary(BaseModel):
 
 
 class FillRunPage(BaseModel):
-    items: list[FillRunWire]
+    runs: list[FillRunWire]
     columns: list[ColumnFillSummary] = Field(
         default=[], description="One summary per AI column of the list this page belongs to."
     )

@@ -6,7 +6,7 @@ import { columnProgress, currentRunFor, trackerCell, type TrackerRun } from "./f
 
 function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun & { id: string } {
   return {
-    id: "01JOB",
+    id: "01RUN",
     status: "running",
     confirmed_row_count: 100,
     counters: { filled: 0, attempted: 0 },
@@ -15,7 +15,7 @@ function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun &
 }
 
 function summary(overrides: Partial<ColumnFillSummary> = {}): ColumnFillSummary {
-  return { column_key: "email", current_fill_id: "01JOB", filled: 0, attempted: 0, ...overrides };
+  return { column_key: "email", current_fill_id: "01RUN", filled: 0, attempted: 0, ...overrides };
 }
 
 test("no summary, no named run, or a run off the page is the quiet blank", () => {

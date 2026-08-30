@@ -172,7 +172,7 @@ export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
 const UNKNOWN_FILL_STATUS: FillRunWire["status"] = "running";
 const FILL_STATUSES = new Set<string>(FillRunWireSchema.shape.status.options);
 const TolerantFillRunWireSchema = FillRunWireSchema.extend({ status: z.string() });
-const TolerantFillRunPageSchema = FillRunPageSchema.extend({ items: z.array(TolerantFillRunWireSchema) });
+const TolerantFillRunPageSchema = FillRunPageSchema.extend({ runs: z.array(TolerantFillRunWireSchema) });
 
 function knownStatus(status: string): FillRunWire["status"] {
   return (FILL_STATUSES.has(status) ? status : UNKNOWN_FILL_STATUS) as FillRunWire["status"];
@@ -410,7 +410,7 @@ export async function getFills(id: string, after?: string): Promise<ApiResult<Fi
   if (res.status !== "ok") return res;
   return {
     ...res,
-    data: { ...res.data, items: res.data.items.map((item) => ({ ...item, status: knownStatus(item.status) })) },
+    data: { ...res.data, runs: res.data.runs.map((run) => ({ ...run, status: knownStatus(run.status) })) },
   };
 }
 

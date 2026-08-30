@@ -368,7 +368,7 @@ class ListFillsView(_ScopedView):
         after = request.query_params.get("after", "")
         runs = self.fills.page_for_list(str(target.id), after_id=after, limit=limit)
         page = FillRunPage(
-            items=[fill_run_wire(run) for run in runs],
+            runs=[fill_run_wire(run) for run in runs],
             columns=self.fills.column_summaries(target),
             next_cursor=next_cursor_from(runs, limit=limit),
         )

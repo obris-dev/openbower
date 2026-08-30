@@ -179,10 +179,10 @@ class FillsPageTests(FillViewsTestCase):
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
         page = self.client.get(url, {"limit": 1}).json()
         wire = FillRunPage(**page)
-        self.assertEqual([item.id for item in wire.items], [second])
+        self.assertEqual([run.id for run in wire.runs], [second])
         self.assertEqual(wire.next_cursor, second)
         rest = FillRunPage(**self.client.get(url, {"limit": 2, "after": wire.next_cursor}).json())
-        self.assertEqual([item.id for item in rest.items], [first])
+        self.assertEqual([run.id for run in rest.runs], [first])
         self.assertIsNone(rest.next_cursor)
 
     def test_foreign_list_is_404(self) -> None:
@@ -209,7 +209,7 @@ class StaleSnapshotTests(FillViewsTestCase):
 
         resp = self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)}))
         self.assertEqual(resp.status_code, 200, resp.content)
-        snapshot = resp.json()["items"][0]["config_snapshot"]
+        snapshot = resp.json()["runs"][0]["config_snapshot"]
         # Coerced, not refused: the retired spec renders as the first
         # one and the unknown column type falls to text.
         self.assertEqual(snapshot["provider"], "openai_compatible")
@@ -222,7 +222,7 @@ class StaleSnapshotTests(FillViewsTestCase):
         stored.save(update_fields=["config_snapshot"])
         resp = self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)}))
         self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.json()["items"][0]["config_snapshot"]["outputs"][0]["key"], "unreadable_output")
+        self.assertEqual(resp.json()["runs"][0]["config_snapshot"]["outputs"][0]["key"], "unreadable_output")
 
 
 class FillCancelTests(FillViewsTestCase):

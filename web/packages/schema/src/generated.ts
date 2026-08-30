@@ -99,7 +99,7 @@ export type FillRunWire = z.infer<typeof FillRunWireSchema>;
 export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
 export type ImportResult = z.infer<typeof ImportResultSchema>;
 
-export const FillRunPageSchema = z.object({ "columns": z.array(z.lazy(() => ColumnFillSummarySchema)).describe("One summary per AI column of the list this page belongs to.").default([]), "items": z.array(z.lazy(() => FillRunWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more runs exist.").default(null) });
+export const FillRunPageSchema = z.object({ "columns": z.array(z.lazy(() => ColumnFillSummarySchema)).describe("One summary per AI column of the list this page belongs to.").default([]), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more runs exist.").default(null), "runs": z.array(z.lazy(() => FillRunWireSchema)) });
 export type FillRunPage = z.infer<typeof FillRunPageSchema>;
 
 export const WIRE_BOUNDS = {

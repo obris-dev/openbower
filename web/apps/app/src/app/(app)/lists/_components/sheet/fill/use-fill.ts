@@ -69,9 +69,8 @@ export function useFill(
       // until the next run supersedes it; no dismissal concept exists,
       // so the management surfaces built on these runs can never be
       // hidden by a stored preference).
-      const items = fills.data.items;
       const current = new Set(fills.data.columns.map((summary) => summary.current_fill_id));
-      const next = items.filter((run) => isLive(run) || current.has(run.id));
+      const next = fills.data.runs.filter((run) => isLive(run) || current.has(run.id));
       runsRef.current = next;
       setRuns(next);
       setSummaries(fills.data.columns);
