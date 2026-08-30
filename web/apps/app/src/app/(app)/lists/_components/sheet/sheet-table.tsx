@@ -9,7 +9,7 @@ import {
   isNumericColumn,
   type ColumnFillSummary,
   type ColumnType,
-  type FillWire,
+  type FillRunWire,
   type ListColumn,
   type RenderableListRow,
 } from "@bower/api";
@@ -22,18 +22,18 @@ import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
- * together: the exposed jobs and the management verbs the popover's
+ * together: the exposed runs and the management verbs the popover's
  * chip and scoped continue call. */
 export type SheetFills = {
   // The sheet's own id: the popover's prompt edit calls the
   // column-scoped endpoint.
   listId: string;
-  jobs: FillWire[];
-  // Server truth per column (current job, canonical filled count).
+  runs: FillRunWire[];
+  // Server truth per column (current run, canonical filled count).
   summaries: ColumnFillSummary[];
   rowCount: number;
-  onStop: (jobId: string) => Promise<string | null>;
-  onRefill: (job: FillWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onStop: (runId: string) => Promise<string | null>;
+  onRefill: (run: FillRunWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -191,7 +191,7 @@ export function SheetTable({
                     listId={tracker.listId}
                     column={column}
                     summary={tracker.summaries.find((entry) => entry.column_key === column.key)}
-                    jobs={tracker.jobs}
+                    runs={tracker.runs}
                     rowCount={tracker.rowCount}
                     onStop={tracker.onStop}
                     onRefill={tracker.onRefill}

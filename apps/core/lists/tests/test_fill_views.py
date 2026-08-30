@@ -20,7 +20,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import FillPage, FillWire
+from openbower_schema.fills import FillRunPage, FillRunWire
 from openbower_schema.lists import ListRowsPage
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, FillStatus, StoredCellState
@@ -90,7 +90,7 @@ class AiColumnPostTests(FillViewsTestCase):
         resp = self.post_ai()
         self.assertEqual(resp.status_code, 201, resp.content)
         body = resp.json()
-        wire = FillWire(**body)
+        wire = FillRunWire(**body)
         self.assertEqual(wire.status, "pending")
         self.assertEqual(wire.list_id, str(self.sheet.id))
         self.assertEqual(wire.column_keys, ["answer"])
@@ -178,10 +178,10 @@ class FillsPageTests(FillViewsTestCase):
         second = self.post_ai(config=config_with("Other")).json()["id"]
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
         page = self.client.get(url, {"limit": 1}).json()
-        wire = FillPage(**page)
+        wire = FillRunPage(**page)
         self.assertEqual([item.id for item in wire.items], [second])
         self.assertEqual(wire.next_cursor, second)
-        rest = FillPage(**self.client.get(url, {"limit": 2, "after": wire.next_cursor}).json())
+        rest = FillRunPage(**self.client.get(url, {"limit": 2, "after": wire.next_cursor}).json())
         self.assertEqual([item.id for item in rest.items], [first])
         self.assertIsNone(rest.next_cursor)
 
@@ -230,7 +230,7 @@ class FillCancelTests(FillViewsTestCase):
         fill_id = self.post_ai().json()["id"]
         resp = self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": fill_id}))
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(FillWire(**resp.json()).status, "cancelled")
+        self.assertEqual(FillRunWire(**resp.json()).status, "cancelled")
         self.assertEqual(Fill.objects.get(id=fill_id).status, FillStatus.CANCELLED)
 
     def test_unknown_job_is_404(self) -> None:
@@ -460,7 +460,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
         self.assertEqual(refill.status_code, 201, refill.content)
         # no_evidence is SETTLED under the same config; model_error is
         # infrastructure and re-runs. Exactly one row.
-        self.assertEqual(FillWire(**refill.json()).confirmed_row_count, 1)
+        self.assertEqual(FillRunWire(**refill.json()).confirmed_row_count, 1)
 
     def test_the_fills_page_carries_per_column_coverage(self) -> None:
         # The tracker renders server truth: `filled` counts the cells
@@ -472,7 +472,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
         settle(fill_id, str(rows[0].id), None)
         resp = self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)}))
         self.assertEqual(resp.status_code, 200, resp.content)
-        page = FillPage(**resp.json())
+        page = FillRunPage(**resp.json())
         self.assertEqual(len(page.columns), 1)
         summary = page.columns[0]
         self.assertEqual(summary.column_key, "answer")
@@ -490,7 +490,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(fill_id, str(rows[0].id), None)
         settle(fill_id, str(rows[1].id), StoredCellState.NO_EVIDENCE)
-        page = FillPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
+        page = FillRunPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
         summary = page.columns[0]
         self.assertEqual((summary.filled, summary.attempted), (1, 2))
 
@@ -506,7 +506,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": first}))
 
         def counts():
-            page = FillPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
+            page = FillRunPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
             return (page.columns[0].filled, page.columns[0].attempted)
 
         self.assertEqual(counts(), (0, 2))

@@ -7,8 +7,8 @@ import {
   ListRowWireSchema,
   type ListRowWire,
   ColumnPromptWireSchema,
-  FillPageSchema,
-  FillWireSchema,
+  FillRunPageSchema,
+  FillRunWireSchema,
   FoldersListSchema,
   FolderSummarySchema,
   ImportResultSchema,
@@ -21,8 +21,8 @@ import {
   type AgentConfig,
   type ColumnFillSummary,
   type ColumnPromptWire,
-  type FillPage,
-  type FillWire,
+  type FillRunPage,
+  type FillRunWire,
   type FoldersList,
   type FolderSummary,
   type ImportResult,
@@ -43,7 +43,7 @@ import { apiRoutes } from "./routes.ts";
 export const ROWS_FIRST_PAGE = 50;
 export const ROWS_PAGE_LIMIT = 200;
 
-export type { ColumnFillSummary, ColumnPromptWire, FillPage, FillWire, FoldersList, FolderSummary, ImportResult, ListRowsPage, ListSummary, ListsPage, RowsAdded };
+export type { ColumnFillSummary, ColumnPromptWire, FillRunPage, FillRunWire, FoldersList, FolderSummary, ImportResult, ListRowsPage, ListSummary, ListsPage, RowsAdded };
 // Re-exported so app code never imports @bower/schema directly (the
 // schema package has exactly one consumer: this one).
 export type { FillError, ListColumn, ListRowWire } from "@bower/schema";
@@ -169,13 +169,13 @@ export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
 // reaching it while the fill runs perfectly well. Widen the read and
 // map the unknown member to the value that promises LEAST: RUNNING
 // keeps the loop alive and claims nothing terminal.
-const UNKNOWN_FILL_STATUS: FillWire["status"] = "running";
-const FILL_STATUSES = new Set<string>(FillWireSchema.shape.status.options);
-const TolerantFillWireSchema = FillWireSchema.extend({ status: z.string() });
-const TolerantFillPageSchema = FillPageSchema.extend({ items: z.array(TolerantFillWireSchema) });
+const UNKNOWN_FILL_STATUS: FillRunWire["status"] = "running";
+const FILL_STATUSES = new Set<string>(FillRunWireSchema.shape.status.options);
+const TolerantFillRunWireSchema = FillRunWireSchema.extend({ status: z.string() });
+const TolerantFillRunPageSchema = FillRunPageSchema.extend({ items: z.array(TolerantFillRunWireSchema) });
 
-function knownStatus(status: string): FillWire["status"] {
-  return (FILL_STATUSES.has(status) ? status : UNKNOWN_FILL_STATUS) as FillWire["status"];
+function knownStatus(status: string): FillRunWire["status"] {
+  return (FILL_STATUSES.has(status) ? status : UNKNOWN_FILL_STATUS) as FillRunWire["status"];
 }
 
 /** A cause this bundle has never heard of. A CLIENT member, not one
@@ -337,29 +337,29 @@ export async function deleteColumn(id: string, key: string): Promise<ApiResult<L
 }
 
 /** Add an AI column and admit its fill in one server transaction;
- * returns the job envelope to attach to. Every refusal (row growth,
+ * returns the run envelope to attach to. Every refusal (row growth,
  * same-column active, caps, occupied-key collisions) surfaces through
  * the funnel as its server-written detail plus code. */
-export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<FillWire>> {
-  return fillResult(await http.post(apiRoutes.lists.aiColumn(id), TolerantFillWireSchema, body));
+export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<FillRunWire>> {
+  return fillResult(await http.post(apiRoutes.lists.aiColumn(id), TolerantFillRunWireSchema, body));
 }
 
-/** Refill: the one recovery primitive. Starts a NEW job over the
+/** Refill: the one recovery primitive. Starts a NEW run over the
  * column's rows without an answer (answered rows are excluded
  * server-side, never re-run and never re-billed; appended rows are
  * covered, so resume and fill-remaining are the same gesture). The
  * column names everything and the server takes a fresh config
- * snapshot; the one optional body fact is `rows`, scoping the new job
+ * snapshot; the one optional body fact is `rows`, scoping the new run
  * to the next N unanswered rows (omitted means all of them, and the
  * server owns the true eligible count either way). Refusals
  * (same-column active, caps, empty target) surface through the funnel
- * as the server's verbatim detail plus code; the 201 body is the job
+ * as the server's verbatim detail plus code; the 201 body is the run
  * envelope to attach to. */
 export async function postFillRefill(
   id: string,
   columnKey: string,
   opts: { rows?: number; resumeFill?: string } = {},
-): Promise<ApiResult<FillWire>> {
+): Promise<ApiResult<FillRunWire>> {
   // resumeFill bounds the new fill to THAT stopped fill's own
   // unresolved rows (Continue resumes; the extend gestures widen).
   // The option is named for the wire key it writes: DRF drops a body
@@ -372,7 +372,7 @@ export async function postFillRefill(
   return fillResult(
     await http.post(
       apiRoutes.lists.columnRefill(id, columnKey),
-      TolerantFillWireSchema,
+      TolerantFillRunWireSchema,
       Object.keys(body).length > 0 ? body : undefined,
     ),
   );
@@ -380,8 +380,8 @@ export async function postFillRefill(
 
 /** Edit the prompt of the agent filling a column, FROM the column
  * (ephemeral and roster agents alike; the column is the custody path
- * either way). A live job keeps its frozen snapshot, so the edit
- * reaches the NEXT job: on Continue, rows whose blanks settled under
+ * either way). A live run keeps its frozen snapshot, so the edit
+ * reaches the NEXT run: on Continue, rows whose blanks settled under
  * the old prompt run again. Refusals surface through the funnel as
  * the server's verbatim detail plus code; the 200 body echoes the
  * stored prompt. */
@@ -390,23 +390,23 @@ export async function updateColumnPrompt(id: string, columnKey: string, prompt: 
 }
 
 /** The column's CURRENT fill config (what a refill would run): the
- * prompt-peek surfaces read this, never a job's frozen snapshot. */
+ * prompt-peek surfaces read this, never a run's frozen snapshot. */
 export async function getColumnPrompt(id: string, columnKey: string): Promise<ApiResult<ColumnPromptWire>> {
   return http.get(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema);
 }
 
 
 /** One fill envelope, status narrowed after a tolerant parse. */
-function fillResult(res: ApiResult<z.infer<typeof TolerantFillWireSchema>>): ApiResult<FillWire> {
+function fillResult(res: ApiResult<z.infer<typeof TolerantFillRunWireSchema>>): ApiResult<FillRunWire> {
   if (res.status !== "ok") return res;
   return { ...res, data: { ...res.data, status: knownStatus(res.data.status) } };
 }
 
-/** One keyset page of the list's fill jobs, newest first, ALL states
- * (a failed job is a first-class object carrying its error). */
-export async function getFills(id: string, after?: string): Promise<ApiResult<FillPage>> {
+/** One keyset page of the list's fill runs, newest first, ALL states
+ * (a failed run is a first-class object carrying its error). */
+export async function getFills(id: string, after?: string): Promise<ApiResult<FillRunPage>> {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
-  const res = await http.get(`${apiRoutes.lists.fills(id)}${suffix}`, TolerantFillPageSchema);
+  const res = await http.get(`${apiRoutes.lists.fills(id)}${suffix}`, TolerantFillRunPageSchema);
   if (res.status !== "ok") return res;
   return {
     ...res,
@@ -414,8 +414,8 @@ export async function getFills(id: string, after?: string): Promise<ApiResult<Fi
   };
 }
 
-/** Stop a live fill; an already-terminal job no-ops. Returns the job
+/** Stop a live fill; an already-terminal run no-ops. Returns the run
  * as the server now holds it. */
-export async function postFillCancel(id: string, jobId: string): Promise<ApiResult<FillWire>> {
-  return fillResult(await http.post(apiRoutes.lists.fillCancel(id, jobId), TolerantFillWireSchema));
+export async function postFillCancel(id: string, runId: string): Promise<ApiResult<FillRunWire>> {
+  return fillResult(await http.post(apiRoutes.lists.fillCancel(id, runId), TolerantFillRunWireSchema));
 }

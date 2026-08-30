@@ -1,4 +1,4 @@
-// The fill family: the sheet's attachment to its fill jobs (the poll
+// The fill family: the sheet's attachment to its fill runs (the poll
 // loop; cell states ride the rows themselves), the surfaces that
 // render a fill's
 // progress (the tray, the tracker cell, the per-cell diagnosis), and

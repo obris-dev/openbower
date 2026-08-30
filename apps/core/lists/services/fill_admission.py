@@ -266,7 +266,7 @@ class ProviderRetiredRefusal(FillRefused):
         super().__init__("This agent's provider is no longer supported; open the agent and pick a current model.")
 
 
-class ResumeJobNotFound(FillRefused):
+class ResumeRunNotFound(FillRefused):
     """The named fill is not this SHEET's. Resolving it is what scopes
     the resume: FillTask carries no account of its own (it is
     reached through its fill, which does), so reading rows for an
@@ -651,7 +651,7 @@ class FillAdmissionService:
                 # config it consented to (a changed prompt refuses).
                 source = Fill.objects.filter(id=resume_fill_id, list_id=str(target.id)).first()
                 if source is None:
-                    raise ResumeJobNotFound()
+                    raise ResumeRunNotFound()
                 if source.config_fingerprint != fingerprint:
                     raise ResumeConfigChanged()
             # A RESUME judges owed-ness across the resumed fill's WHOLE

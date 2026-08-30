@@ -1,48 +1,48 @@
-import type { ColumnFillSummary, FillWire } from "@bower/api";
+import type { ColumnFillSummary, FillRunWire } from "@bower/api";
 
 /** Pure decisions for the tracker row (the per-column fill surface
- * pinned under the sheet's header): which job speaks for a column and
- * what its cell says. The SERVER names both facts on the jobs poll
+ * pinned under the sheet's header): which run speaks for a column and
+ * what its cell says. The SERVER names both facts on the runs poll
  * (`summaries[].current_fill_id` and `filled`, computed from the
  * canonical cell records): this module only renders them, never
- * reconstructs them from a page of jobs.
+ * reconstructs them from a page of runs.
  *
  * The cell state table the tracker renders from:
- * | current job for the column | kind   | cell                                     |
+ * | current run for the column | kind   | cell                                     |
  * | none                       | none   | quiet blank                              |
  * | pending or running         | live   | "164 filled | 13% run" + thin progress bar |
  * | failed                     | failed | the counts, danger-tinted                |
  * | complete or cancelled      | done   | the counts, quiet                        |
  */
 
-/** The slice of the job envelope these decisions read (FillWire
+/** The slice of the run envelope these decisions read (FillRunWire
  * satisfies it structurally). */
-export type TrackerJob = Pick<FillWire, "status" | "confirmed_row_count"> & {
-  counters: Pick<FillWire["counters"], "filled" | "attempted">;
+export type TrackerRun = Pick<FillRunWire, "status" | "confirmed_row_count"> & {
+  counters: Pick<FillRunWire["counters"], "filled" | "attempted">;
 };
 
 export type TrackerCell =
   | { kind: "none" }
   | {
       kind: "live" | "done" | "failed";
-      /** "164 filled | 13% run": the current job's filled count beside
+      /** "164 filled | 13% run": the current run's filled count beside
        * its PROCESSED share (attempted over confirmed; progress means
        * processed, not productive, so a blank-heavy walk still reads
        * as moving). */
       text: string;
-      /** The job's walk progress (attempted over confirmed, clamped to
+      /** The run's walk progress (attempted over confirmed, clamped to
        * [0, 1]); the live bar's width, and the percent's source. */
       fraction: number;
     };
 
-/** The job that speaks for a column: the envelope behind the server's
+/** The run that speaks for a column: the envelope behind the server's
  * `current_fill_id` pointer, or null when none is exposed. */
-export function currentJobFor<J extends { id: string }>(
+export function currentRunFor<J extends { id: string }>(
   summary: ColumnFillSummary | undefined,
-  jobs: readonly J[],
+  runs: readonly J[],
 ): J | null {
   if (!summary || !summary.current_fill_id) return null;
-  return jobs.find((job) => job.id === summary.current_fill_id) ?? null;
+  return runs.find((run) => run.id === summary.current_fill_id) ?? null;
 }
 
 function count(n: number): string {
@@ -74,13 +74,13 @@ export function columnProgress(summary: ColumnFillSummary, rowCount: number): st
   return `${count(summary.attempted)} of ${count(rowCount)} rows run`;
 }
 
-export function trackerCell(job: TrackerJob | null): TrackerCell {
-  if (job === null) return { kind: "none" };
-  const confirmed = job.confirmed_row_count;
-  const fraction = confirmed > 0 ? Math.min(Math.max(job.counters.attempted / confirmed, 0), 1) : 0;
+export function trackerCell(run: TrackerRun | null): TrackerCell {
+  if (run === null) return { kind: "none" };
+  const confirmed = run.confirmed_row_count;
+  const fraction = confirmed > 0 ? Math.min(Math.max(run.counters.attempted / confirmed, 0), 1) : 0;
   // The percent derives from the clamped fraction, so the text and the
   // bar can never disagree.
   const pct = Math.round(fraction * 100);
-  const kind = job.status === "pending" || job.status === "running" ? "live" : job.status === "failed" ? "failed" : "done";
-  return { kind, text: `${count(job.counters.filled)} filled | ${pct}% run`, fraction };
+  const kind = run.status === "pending" || run.status === "running" ? "live" : run.status === "failed" ? "failed" : "done";
+  return { kind, text: `${count(run.counters.filled)} filled | ${pct}% run`, fraction };
 }

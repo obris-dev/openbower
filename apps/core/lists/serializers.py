@@ -12,7 +12,7 @@ from agents.serializers import AgentConfigRequest
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import FillCounters, FillError
-from openbower_schema.fills import FillWire as WireFill
+from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -204,11 +204,11 @@ def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> di
     return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
 
 
-def fill_wire(fill: Fill) -> dict[str, Any]:
+def fill_run_wire(fill: Fill) -> dict[str, Any]:
     # Two-tier error: both legs travel together or not at all (a code
     # with no copy would leave the client nothing to render verbatim).
     error = FillError(code=fill.error_code, message=fill.error_message) if fill.error_code else None
-    return WireFill(
+    return WireFillRun(
         id=str(fill.id),
         list_id=fill.list_id,
         agent_id=fill.agent_id,

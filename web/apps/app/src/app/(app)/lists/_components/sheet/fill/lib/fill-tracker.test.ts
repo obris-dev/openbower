@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ColumnFillSummary } from "@bower/api";
 
-import { columnProgress, currentJobFor, trackerCell, type TrackerJob } from "./fill-tracker.ts";
+import { columnProgress, currentRunFor, trackerCell, type TrackerRun } from "./fill-tracker.ts";
 
-function job(overrides: Partial<TrackerJob & { id: string }> = {}): TrackerJob & { id: string } {
+function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun & { id: string } {
   return {
     id: "01JOB",
     status: "running",
@@ -18,45 +18,45 @@ function summary(overrides: Partial<ColumnFillSummary> = {}): ColumnFillSummary 
   return { column_key: "email", current_fill_id: "01JOB", filled: 0, attempted: 0, ...overrides };
 }
 
-test("no summary, no named job, or a job off the page is the quiet blank", () => {
-  assert.equal(currentJobFor(undefined, [job()]), null);
-  assert.equal(currentJobFor(summary({ current_fill_id: "" }), [job()]), null);
-  assert.equal(currentJobFor(summary({ current_fill_id: "01OTHER" }), [job()]), null);
+test("no summary, no named run, or a run off the page is the quiet blank", () => {
+  assert.equal(currentRunFor(undefined, [run()]), null);
+  assert.equal(currentRunFor(summary({ current_fill_id: "" }), [run()]), null);
+  assert.equal(currentRunFor(summary({ current_fill_id: "01OTHER" }), [run()]), null);
   assert.deepEqual(trackerCell(null), { kind: "none" });
 });
 
-test("the column's job is the envelope behind the server's pointer", () => {
-  const jobs = [job({ id: "01NEW" }), job({ id: "01OLD", status: "failed" })];
-  assert.equal(currentJobFor(summary({ current_fill_id: "01OLD" }), jobs), jobs[1]);
+test("the column's run is the envelope behind the server's pointer", () => {
+  const runs = [run({ id: "01NEW" }), run({ id: "01OLD", status: "failed" })];
+  assert.equal(currentRunFor(summary({ current_fill_id: "01OLD" }), runs), runs[1]);
 });
 
 test("a column with nothing left says so, rather than showing a zero", () => {
   assert.equal(columnProgress(summary({ filled: 1499, attempted: 2343 }), 2343), "all 2,343 rows run");
 });
 
-test("a live job speaks its filled count and its PROCESSED percent", () => {
+test("a live run speaks its filled count and its PROCESSED percent", () => {
   // Percent means processed (attempted over confirmed), not
   // productive: 312 of 2343 rows run is 13%, whatever filled says.
-  const cell = trackerCell(job({ confirmed_row_count: 2343, counters: { filled: 164, attempted: 312 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 2343, counters: { filled: 164, attempted: 312 } }));
   assert.deepEqual(cell, { kind: "live", text: "164 filled | 13% run", fraction: 312 / 2343 });
 });
 
 test("counts localize and the fraction (and its percent) clamp to one", () => {
-  const cell = trackerCell(job({ confirmed_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }));
   assert.deepEqual(cell, { kind: "live", text: "1,499 filled | 100% run", fraction: 1 });
 });
 
 test("a zero confirmed count divides to nothing, never NaN", () => {
-  const cell = trackerCell(job({ confirmed_row_count: 0, counters: { filled: 0, attempted: 0 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 0, counters: { filled: 0, attempted: 0 } }));
   assert.deepEqual(cell, { kind: "live", text: "0 filled | 0% run", fraction: 0 });
 });
 
 test("pending is live; failed tints; complete and cancelled are done", () => {
   const base = { counters: { filled: 10, attempted: 20 } };
-  assert.equal(trackerCell(job({ ...base, status: "pending" })).kind, "live");
-  assert.equal(trackerCell(job({ ...base, status: "failed" })).kind, "failed");
-  assert.equal(trackerCell(job({ ...base, status: "complete" })).kind, "done");
-  assert.equal(trackerCell(job({ ...base, status: "cancelled" })).kind, "done");
+  assert.equal(trackerCell(run({ ...base, status: "pending" })).kind, "live");
+  assert.equal(trackerCell(run({ ...base, status: "failed" })).kind, "failed");
+  assert.equal(trackerCell(run({ ...base, status: "complete" })).kind, "done");
+  assert.equal(trackerCell(run({ ...base, status: "cancelled" })).kind, "done");
 });
 
 test("the header answers is there work left, not how well it went", () => {

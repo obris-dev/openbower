@@ -1,7 +1,7 @@
 """Wire contract for column fills (the AI-columns domain).
 
-A fill is a DURABLE background job walking a sheet: one agent run per
-row, cells written where blank, every blank carrying its cause. The
+A fill RUN is a durable background walk of a sheet: one agent run
+per row, cells written where blank, every blank carrying its cause. The
 queue is materialized at admission, one task per consented row, and a
 cell reads PENDING because a queued task on a live fill says so, so
 the wire speaks fill envelopes, per-cell states,
@@ -121,9 +121,9 @@ class FillCounters(BaseModel):
     concurrency_point: int = 0
 
 
-class FillWire(BaseModel):
-    """The fill envelope: what the POST returns and the sheet re-attaches
-    to on load. ALL states are first-class (a failed fill is an API
+class FillRunWire(BaseModel):
+    """The fill run envelope: what the POST returns and the sheet re-attaches
+    to on load. ALL states are first-class (a failed run is an API
     object with its error, not a 4xx)."""
 
     id: str
@@ -162,7 +162,7 @@ class ColumnFillSummary(BaseModel):
     once, on the consent path, where it has to be exact anyway."""
 
     column_key: str
-    current_fill_id: str = Field(description='The newest fill naming this column; "" when none is exposed.')
+    current_fill_id: str = Field(description='The newest fill run naming this column; "" when none is exposed.')
     filled: int = Field(description="Cells in this column that hold a value.")
     attempted: int = Field(
         description="Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted "
@@ -171,12 +171,12 @@ class ColumnFillSummary(BaseModel):
     )
 
 
-class FillPage(BaseModel):
-    items: list[FillWire]
+class FillRunPage(BaseModel):
+    items: list[FillRunWire]
     columns: list[ColumnFillSummary] = Field(
         default=[], description="One summary per AI column of the list this page belongs to."
     )
-    next_cursor: str | None = Field(default=None, description="The last id when more fills exist.")
+    next_cursor: str | None = Field(default=None, description="The last id when more runs exist.")
 
 
 class ColumnPromptWire(BaseModel):

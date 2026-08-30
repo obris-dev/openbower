@@ -2,22 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button, cn, Popover, PopoverButton, PopoverPanel, Spinner } from "@bower/ui";
-import type { FillWire } from "@bower/api";
+import type { FillRunWire } from "@bower/api";
 
 import { etaSeconds, pushSample, type EtaSample } from "./lib/fill-eta";
 import { FillProgress } from "./fill-progress";
 import { anyFailed, anyLive, badgeLabel, isLiveStatus, soonestEta, trayMode } from "./lib/fills-tray-mode";
 
 /** The footer's fills area, condensing instead of wrapping (the footer
- * band stays one line). One job with room (sm and up) renders its chip
- * inline as before; several jobs, or a narrow viewport, collapse to a
- * summary badge (spinner while live, danger-tinted when any job
+ * band stays one line). One run with room (sm and up) renders its chip
+ * inline as before; several runs, or a narrow viewport, collapse to a
+ * summary badge (spinner while live, danger-tinted when any run
  * failed, soonest observed ETA appended) that discloses an upward
- * panel stacking every job's full chip: counters, ETA, Stop, staleness
+ * panel stacking every run's full chip: counters, ETA, Stop, staleness
  * warning, the failed error verbatim. The Popover primitive carries
  * the disclosure floor (aria-expanded, Escape, outside-click, focus
  * return); the breakpoint halves are CSS classes, so JS holds only the
- * open state. The single-job breakpoint swap mounts the chip twice
+ * open state. The single-run breakpoint swap mounts the chip twice
  * (hidden inline + panel), a deliberate trade for a CSS-only swap with
  * no hydration-visible width read. */
 // A tray Continue is FILL-scoped, not column-scoped: it resumes the
@@ -27,64 +27,64 @@ import { anyFailed, anyLive, badgeLabel, isLiveStatus, soonestEta, trayMode } fr
 // simply the stable choice. A fill always declares at least one
 // column, so the fallback is a contract gap and routes to the generic
 // failure rather than guessing.
-function resumeColumn(job: FillWire): string {
-  return job.column_keys[0] ?? "";
+function resumeColumn(run: FillRunWire): string {
+  return run.column_keys[0] ?? "";
 }
 
 export function FillsTray({
-  jobs,
+  runs,
   onStop,
   onContinue,
 }: {
-  jobs: FillWire[];
-  onStop: (jobId: string) => Promise<string | null>;
-  onContinue: (job: FillWire, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  runs: FillRunWire[];
+  onStop: (runId: string) => Promise<string | null>;
+  onContinue: (run: FillRunWire, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
 }) {
-  // The badge's soonest-ETA samples, per job: each chip's own window
+  // The badge's soonest-ETA samples, per run: each chip's own window
   // lives inside its FillProgress and is not reachable here, so the
   // tray keeps its own. A ref the effect pushes (ended or vanished
-  // jobs drop their windows); the soonest ETA crosses into state from
+  // runs drop their windows); the soonest ETA crosses into state from
   // a zero-delay callback (render must stay pure and an effect body
-  // must not set state synchronously), and each poll's new jobs array
+  // must not set state synchronously), and each poll's new runs array
   // re-runs the effect, so no interval is needed.
   const samplesRef = useRef<Map<string, EtaSample[]>>(new Map());
   const [eta, setEta] = useState<number | null>(null);
   useEffect(() => {
     const at = Date.now();
     const next = new Map<string, EtaSample[]>();
-    for (const job of jobs) {
-      if (!isLiveStatus(job.status)) continue;
-      next.set(job.id, pushSample(samplesRef.current.get(job.id) ?? [], at, job.counters.attempted));
+    for (const run of runs) {
+      if (!isLiveStatus(run.status)) continue;
+      next.set(run.id, pushSample(samplesRef.current.get(run.id) ?? [], at, run.counters.attempted));
     }
     samplesRef.current = next;
     const seed = setTimeout(() => {
       setEta(
         soonestEta(
-          jobs.map((job) =>
-            isLiveStatus(job.status)
-              ? etaSeconds(next.get(job.id) ?? [], job.confirmed_row_count - job.counters.attempted)
+          runs.map((run) =>
+            isLiveStatus(run.status)
+              ? etaSeconds(next.get(run.id) ?? [], run.confirmed_row_count - run.counters.attempted)
               : null,
           ),
         ),
       );
     }, 0);
     return () => clearTimeout(seed);
-  }, [jobs]);
+  }, [runs]);
 
-  const mode = trayMode(jobs.length);
+  const mode = trayMode(runs.length);
   if (mode === "empty") return null;
 
   const single = mode === "single";
-  const live = anyLive(jobs);
-  const failed = anyFailed(jobs);
-  const label = badgeLabel(jobs, eta);
+  const live = anyLive(runs);
+  const failed = anyFailed(runs);
+  const label = badgeLabel(runs, eta);
 
   return (
     <div className="flex min-w-0 flex-col items-end">
       {single &&
-        jobs.map((job) => (
-          <div key={job.id} className="hidden min-w-0 sm:block">
-            <FillProgress job={job} onStop={() => onStop(job.id)} onContinue={() => onContinue(job, resumeColumn(job), { resume: true })} />
+        runs.map((run) => (
+          <div key={run.id} className="hidden min-w-0 sm:block">
+            <FillProgress run={run} onStop={() => onStop(run.id)} onContinue={() => onContinue(run, resumeColumn(run), { resume: true })} />
           </div>
         ))}
       <Popover className={cn("min-w-0", single && "sm:hidden")}>
@@ -108,13 +108,13 @@ export function FillsTray({
             breakpoint class rides the panel itself too. */}
         <PopoverPanel anchor="top end" className={cn("motion-reduce:transition-none", single && "sm:hidden")}>
           <div className="flex max-h-[60vh] w-[min(26rem,calc(100vw-2rem))] flex-col gap-3 overflow-y-auto p-3">
-            {jobs.map((job) => (
+            {runs.map((run) => (
               <FillProgress
-                key={job.id}
+                key={run.id}
                 context="panel"
-                job={job}
-                onStop={() => onStop(job.id)}
-                onContinue={() => onContinue(job, resumeColumn(job), { resume: true })}
+                run={run}
+                onStop={() => onStop(run.id)}
+                onContinue={() => onContinue(run, resumeColumn(run), { resume: true })}
               />
             ))}
           </div>

@@ -20,7 +20,7 @@ import {
   postFillRefill,
   type ListColumn,
   webRoutes,
-  type FillWire,
+  type FillRunWire,
   type RenderableListRowsPage,
   type ListSummary,
 } from "@bower/api";
@@ -43,7 +43,7 @@ import { useRows } from "./use-rows";
  * the button kept as fallback), and a sticky status footer (row count
  * left, the fills tray right: status speaks continuously in the status
  * bar without stealing the page, condensing to the tray's badge
- * instead of wrapping when jobs multiply or the viewport narrows).
+ * instead of wrapping when runs multiply or the viewport narrows).
  * Three hooks own the three kinds of state (the summary and its
  * columns, the rows on screen, the fill attachment); this component
  * composes their reactions to each other and renders. */
@@ -89,21 +89,21 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     };
   }, [needsSearchDoor, searchDoor]);
 
-  // Rows re-read when a live job progressed (status or attempted
-  // moved), on first sight of a live job, and once on the
+  // Rows re-read when a live run progressed (status or attempted
+  // moved), on first sight of a live run, and once on the
   // last-live-to-terminal edge (cells written between polls land in
-  // that final read). Jobs already terminal on mount trigger nothing:
+  // that final read). Runs already terminal on mount trigger nothing:
   // the server rendered their rows fresh.
-  const jobsSignature = fill.jobs.map((job) => `${job.id}:${job.status}:${job.counters.attempted}`).join(" ");
-  const anyLive = fill.jobs.some((job) => job.status === "pending" || job.status === "running");
-  const prevJobsRef = useRef<{ signature: string; live: boolean } | null>(null);
+  const runsSignature = fill.runs.map((run) => `${run.id}:${run.status}:${run.counters.attempted}`).join(" ");
+  const anyLive = fill.runs.some((run) => run.status === "pending" || run.status === "running");
+  const prevRunsRef = useRef<{ signature: string; live: boolean } | null>(null);
   useEffect(() => {
-    if (!jobsSignature) return;
-    const prev = prevJobsRef.current;
-    prevJobsRef.current = { signature: jobsSignature, live: anyLive };
-    const progressed = prev === null || prev.signature !== jobsSignature;
+    if (!runsSignature) return;
+    const prev = prevRunsRef.current;
+    prevRunsRef.current = { signature: runsSignature, live: anyLive };
+    const progressed = prev === null || prev.signature !== runsSignature;
     if ((anyLive && progressed) || (prev !== null && prev.live && !anyLive)) void refreshLoaded();
-  }, [jobsSignature, anyLive, refreshLoaded]);
+  }, [runsSignature, anyLive, refreshLoaded]);
 
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
@@ -167,25 +167,25 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     return outcome;
   }
 
-  // Continue IS refill: a NEW job over the column's unanswered rows
+  // Continue IS refill: a NEW run over the column's unanswered rows
   // (all of them, or the next `rows` when the tracker's scoped
   // continue asked). The COLUMN comes from the surface the user
-  // clicked: one job can map several columns, so deriving it from the
-  // job would refill a sibling. A refusal returns as the server's
+  // clicked: one run can map several columns, so deriving it from the
+  // run would refill a sibling. A refusal returns as the server's
   // verbatim detail for the chip's error slot.
   async function continueFill(
-    job: FillWire | null,
+    run: FillRunWire | null,
     columnKey: string,
     opts: { rows?: number; resume?: boolean } = {},
   ): Promise<string | null> {
-    // A widening refill needs no job envelope: only RESUME is bound to
-    // one, and a column whose job has aged off the fetched page can
+    // A widening refill needs no run envelope: only RESUME is bound to
+    // one, and a column whose run has aged off the fetched page can
     // still be filled forward.
-    if (!columnKey || (opts.resume && job === null)) return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resume && job ? job.id : undefined });
+    if (!columnKey || (opts.resume && run === null)) return GENERIC_FAILURE;
+    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resume && run ? run.id : undefined });
     if (redirectIfUnauthenticated(res)) return null;
     if (res.status !== "ok") return res.message;
-    // The new job and its pending outcomes exist only server-side:
+    // The new run and its pending outcomes exist only server-side:
     // re-attach the poll loop (fire-and-forget; its promise settles
     // when the fill ENDS) and re-read the loaded rows.
     void fill.refresh();
@@ -333,7 +333,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           columns={detail.columns}
           rows={rows}
           searchDoor={searchDoor}
-          fills={{ listId: detail.id, jobs: fill.jobs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
+          fills={{ listId: detail.id, runs: fill.runs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
           onAddColumn={openAddColumn}
           onReorder={columns.reorder}
           onRenameColumn={columns.rename}
@@ -362,7 +362,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           <span className="hidden sm:inline">{" rows"}</span>
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
-          <FillsTray jobs={fill.jobs} onStop={fill.stop} onContinue={continueFill} />
+          <FillsTray runs={fill.runs} onStop={fill.stop} onContinue={continueFill} />
           {fill.pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is

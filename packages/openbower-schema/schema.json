@@ -467,7 +467,7 @@
           "type": "string"
         },
         "current_fill_id": {
-          "description": "The newest fill naming this column; \"\" when none is exposed.",
+          "description": "The newest fill run naming this column; \"\" when none is exposed.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -668,7 +668,7 @@
       "title": "FillError",
       "type": "object"
     },
-    "FillPage": {
+    "FillRunPage": {
       "properties": {
         "columns": {
           "default": [],
@@ -681,7 +681,7 @@
         },
         "items": {
           "items": {
-            "$ref": "#/$defs/FillWire"
+            "$ref": "#/$defs/FillRunWire"
           },
           "title": "Items",
           "type": "array"
@@ -696,18 +696,18 @@
             }
           ],
           "default": null,
-          "description": "The last id when more fills exist.",
+          "description": "The last id when more runs exist.",
           "title": "Next Cursor"
         }
       },
       "required": [
         "items"
       ],
-      "title": "FillPage",
+      "title": "FillRunPage",
       "type": "object"
     },
-    "FillWire": {
-      "description": "The fill envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed fill is an API\nobject with its error, not a 4xx).",
+    "FillRunWire": {
+      "description": "The fill run envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed run is an API\nobject with its error, not a 4xx).",
       "properties": {
         "agent_id": {
           "title": "Agent Id",
@@ -803,7 +803,7 @@
         "created_at",
         "updated_at"
       ],
-      "title": "FillWire",
+      "title": "FillRunWire",
       "type": "object"
     },
     "FolderSummary": {

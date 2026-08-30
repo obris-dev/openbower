@@ -17,7 +17,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import FillWire
+from openbower_schema.fills import FillRunWire
 
 from ..constants import FillStatus, StoredCellState
 from ..models import Fill, FillCellState, FillTask
@@ -86,7 +86,7 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.status, "pending")
         self.assertEqual(wire.column_keys, ["answer"])
         # Consent facts: the TARGET count, not the sheet total; the
@@ -105,7 +105,7 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 3)
         self.assertEqual(len(targeted(wire.id)), 3)
 
@@ -139,7 +139,7 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.agent_id, fill["agent_id"])
         self.assertEqual(wire.config_snapshot.prompt, "Reworded ask for {{company}}")
 
@@ -360,14 +360,14 @@ class ScopedRefillTests(RefillTestCase):
         # outcome row at all).
         self.lists.add_rows(self.sheet, [{"company": "initech.com"}, {"company": "umbrella.io"}])
         fill = self.admit(rows=2)
-        first = FillWire(**fill)
+        first = FillRunWire(**fill)
         self.assertEqual(first.confirmed_row_count, 2)
         settle_all(fill["id"], None)
         self.cancel(fill["id"])
 
         resp = self.refill(rows=1)
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 1)
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.assertEqual(targeted_pairs(wire.id), [(str(rows[2].id), 3)])
@@ -384,7 +384,7 @@ class ScopedRefillTests(RefillTestCase):
 
         resp = self.refill(rows=1)
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 1)
         self.assertEqual(targeted_positions(wire.id), [4])
 
@@ -440,7 +440,7 @@ class RefillLifecycleTests(RefillTestCase):
         self.cancel(fill["id"])
         first = self.refill()
         self.assertEqual(first.status_code, 201, first.content)
-        self.assertEqual(FillWire(**first.json()).status, FillStatus.PENDING)
+        self.assertEqual(FillRunWire(**first.json()).status, FillStatus.PENDING)
         second = self.refill()
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"], "fill_active")

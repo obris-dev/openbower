@@ -9,45 +9,45 @@ import {
   updateColumnPrompt,
   type ColumnFillSummary,
   type ColumnPromptWire,
-  type FillWire,
+  type FillRunWire,
   type ListColumn,
 } from "@bower/api";
 
 import { FillProgress } from "./fill-progress";
 import { RefillScope } from "./fill-refill-scope";
-import { columnProgress, currentJobFor, trackerCell } from "./lib/fill-tracker";
+import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
 
 // Below this, the prompt fits the clamp anyway and a toggle would be
 // noise (binary; the clamp is three lines of a 24rem panel).
 const PROMPT_TOGGLE_CHARS = 256;
 
 /** One AI column's cell in the tracker row: the column's fill state
- * compactly ("164 filled | 13% run", the current job's filled count
- * beside its processed share; a live job runs a thin progress bar
+ * compactly ("164 filled | 13% run", the current run's filled count
+ * beside its processed share; a live run draws a thin progress bar
  * under the text, a failed one tints danger), and the click-in
  * management surface behind it. The SERVER names the column's story
  * (the summary's current_fill_id and canonical filled count); this
- * cell renders it. One job per column is the invariant, so the
+ * cell renders it. One run per column is the invariant, so the
  * popover IS that column's management, one padded panel of fixed
  * width in reading order: the progress line, the same FillProgress
  * chip the tray renders (counters, ETA, pace, Stop while live,
- * Continue when stopped), the scoped continue for terminal jobs, and
+ * Continue when stopped), the scoped continue for terminal runs, and
  * the prompt peek with its inline EDIT (reading and writing the
  * column-scoped prompt endpoint, the column's CURRENT config, never a
- * job's frozen snapshot; a live fill disables the affordance, since
- * the running job holds its snapshot and an edit only reaches the
- * NEXT job). The Popover primitive carries the disclosure floor
+ * run's frozen snapshot; a live run disables the affordance, since
+ * the running one holds its snapshot and an edit only reaches the
+ * NEXT run). The Popover primitive carries the disclosure floor
  * (aria-expanded, Escape, outside-click, focus return). A missing
  * summary means only that the first fills poll has not answered (the
  * server ships one for EVERY AI column, zero counts included), so it
  * renders a skeleton, never a blank the header line then shoves
- * aside; a column with no exposed job shows the header line alone,
+ * aside; a column with no exposed run shows the header line alone,
  * naming the work. */
 export function FillTrackerCell({
   listId,
   column,
   summary,
-  jobs,
+  runs,
   rowCount,
   onStop,
   onRefill,
@@ -55,15 +55,15 @@ export function FillTrackerCell({
   listId: string;
   column: ListColumn;
   summary: ColumnFillSummary | undefined;
-  jobs: FillWire[];
+  runs: FillRunWire[];
   rowCount: number;
-  onStop: (jobId: string) => Promise<string | null>;
-  onRefill: (job: FillWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onStop: (runId: string) => Promise<string | null>;
+  onRefill: (run: FillRunWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
 }) {
-  const job = currentJobFor(summary, jobs);
-  const cell = trackerCell(job);
-  // The SUMMARY is what this cell needs; the job envelope only dresses
-  // the chip. A column whose current job has aged off the fetched page
+  const run = currentRunFor(summary, runs);
+  const cell = trackerCell(run);
+  // The SUMMARY is what this cell needs; the run envelope only dresses
+  // the chip. A column whose current run has aged off the fetched page
   // still shows its progress and keeps its management surface, rather
   // than vanishing as though the column had never been filled.
   if (summary === undefined) {
@@ -126,15 +126,15 @@ export function FillTrackerCell({
       <PopoverPanel anchor="bottom start" className="py-0 motion-reduce:transition-none">
         <div className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-4">
           <p className="text-xs text-muted">Column: {progress}</p>
-          {job !== null && (
+          {run !== null && (
             <FillProgress
               context="panel"
-              job={job}
-              onStop={() => onStop(job.id)}
-              onContinue={() => onRefill(job, column.key, { resume: true })}
+              run={run}
+              onStop={() => onStop(run.id)}
+              onContinue={() => onRefill(run, column.key, { resume: true })}
             />
           )}
-          {!live && <RefillScope onRefill={(rows) => onRefill(job, column.key, { rows })} />}
+          {!live && <RefillScope onRefill={(rows) => onRefill(run, column.key, { rows })} />}
           <PromptPeek listId={listId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>
@@ -143,15 +143,15 @@ export function FillTrackerCell({
 }
 
 /** The peek at what fills this column: the column's CURRENT config
- * from the column-scoped prompt endpoint (never a job's frozen
- * snapshot, which is what a PAST job ran), the prompt under a
+ * from the column-scoped prompt endpoint (never a run's frozen
+ * snapshot, which is what a PAST run ran), the prompt under a
  * few-line clamp with an expand toggle, the model address beneath,
  * plus the inline EDIT: a plain bounded textarea with Save/Cancel
  * (the drawer's full editor is overkill here), Save calling the same
  * endpoint, a refusal rendered verbatim (tier 1). While the fill is
- * LIVE the affordance disables: the running job holds its frozen
+ * LIVE the affordance disables: the running one holds its frozen
  * snapshot, so an edit mid-walk would only invite mixed-config
- * confusion; stopping first keeps one job one config. Mounted per
+ * confusion; stopping first keeps one run one config. Mounted per
  * popover open, so each open re-reads the current truth. */
 function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: string; live: boolean }) {
   const [config, setConfig] = useState<ColumnPromptWire | null>(null);

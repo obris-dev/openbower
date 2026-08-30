@@ -17,7 +17,7 @@ from agents.services import AgentNotFound
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
-from openbower_schema.fills import ColumnPromptWire, FillPage
+from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
 
 from .constants import (
@@ -44,7 +44,7 @@ from .serializers import (
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
-    fill_wire,
+    fill_run_wire,
     folder_wire,
     list_wire,
     row_wire,
@@ -255,7 +255,7 @@ class AiColumnView(_ScopedView):
             raise NotFound("no list with that id") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(fill_wire(fill), status=201)
+        return Response(fill_run_wire(fill), status=201)
 
 
 class ColumnDetailView(_ScopedView):
@@ -315,7 +315,7 @@ class ColumnRefillView(_ScopedView):
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(fill_wire(fill), status=201)
+        return Response(fill_run_wire(fill), status=201)
 
 
 class ColumnPromptView(_ScopedView):
@@ -356,8 +356,8 @@ class ColumnPromptView(_ScopedView):
 
 
 class ListFillsView(_ScopedView):
-    """GET /v1/lists/{id}/fills?after=: the list's fills, keyset by -id,
-    ALL states visible (a failed fill is a first-class API object with
+    """GET /v1/lists/{id}/fills?after=: the list's fill RUNS, keyset by
+    -id, ALL states visible (a failed run is a first-class API object with
     its error, not a 4xx), plus the per-column summaries the tracker
     renders (server truth; a client sum over one page of fills silently
     undercounts once history outgrows the page)."""
@@ -366,11 +366,11 @@ class ListFillsView(_ScopedView):
         target = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        fills = self.fills.page_for_list(str(target.id), after_id=after, limit=limit)
-        page = FillPage(
-            items=[fill_wire(j) for j in fills],
+        runs = self.fills.page_for_list(str(target.id), after_id=after, limit=limit)
+        page = FillRunPage(
+            items=[fill_run_wire(run) for run in runs],
             columns=self.fills.column_summaries(target),
-            next_cursor=next_cursor_from(fills, limit=limit),
+            next_cursor=next_cursor_from(runs, limit=limit),
         )
         return Response(page.model_dump())
 
@@ -386,7 +386,7 @@ class FillCancelView(_ScopedView):
         # be addressable through this one's URL.
         if fill.list_id != str(target.id):
             raise NotFound("no fill with that id")
-        return Response(fill_wire(self.fills.cancel(fill_id)))
+        return Response(fill_run_wire(self.fills.cancel(fill_id)))
 
 
 def _column_prompt_wire(config: AgentConfig) -> dict:

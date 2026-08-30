@@ -40,7 +40,7 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { rows: [{ a: "1" }, { a: "2" }] });
 });
 
-// A syntactically valid job envelope (values are fixtures, not
+// A syntactically valid run envelope (values are fixtures, not
 // meaning): the refill test only cares that the 201 parses.
 const JOB_ENVELOPE = {
   agent_id: "01BBBBBBBBBBBBBBBBBBBBBBBB",
