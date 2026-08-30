@@ -45,8 +45,8 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillCellState, FillTask, List, ListRow
-from . import cell_truth
 from .fill_queue import live_fill_count, try_finish
+from .landing import land_row
 from .lists import ListNotFound, ListService
 
 logger = logging.getLogger(__name__)
@@ -1190,37 +1190,29 @@ class FillAdmissionService:
         it reads every other.
 
         A seeded row is a RESOLVED row and has to look like one from
-        every angle, so this makes the same three writes the worker's
-        terminal path makes: the sheet value, the cell truth, and the
-        counters. Writing only the first two would leave the row
-        holding a value that no FillCellState speaks for, and absence
-        means NEVER ATTEMPTED, so the cell would read as untouched work
-        that no refill can reach (its value excludes it from
-        targeting).
+        every angle, so it lands through the same landing the worker's
+        terminal path uses (the sheet value, the cell truth, the task
+        close, one transaction); only the close differs: a task
+        created DONE, never one claimed. Writing the value alone would
+        leave a cell no FillCellState speaks for, and absence means
+        NEVER ATTEMPTED, so the cell would read as untouched work that
+        no refill can reach (its value excludes it from targeting).
 
         Returns the counter deltas rather than bumping, so the caller
         folds them into the one update that also stamps the row count."""
         result = TestRunService.result_for(run) or CellRunResult()
-        keys = set(fill.column_keys)
-        cells = {key: value for key, value in result.cells.items() if key in keys}
-        # Per column, from the bench run's own diagnosis, exactly as the
-        # worker derives it: a column the run never answered carries the
-        # declined cause and stays targetable.
-        declined = StoredCellState(result.declined_cause or StoredCellState.NO_EVIDENCE)
-        states = dict.fromkeys(fill.column_keys, declined)
-        written = self.lists.write_cells(str(target.id), run.row_id, cells)
-        answered = {*written.written, *written.occupied}
-        for key in answered:
-            states[key] = StoredCellState.FILLED
-        for mismatch in written.mismatched:
-            states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-        FillTask.objects.create(
-            account_id=fill.account_id,
-            fill_id=str(fill.id),
-            row_id=run.row_id,
-            position=position,
-            status=FillTaskStatus.DONE,
-            result=result.model_dump(),
-        )
-        cell_truth.write(fill, row_id=run.row_id, states=states, tools=result.tools)
-        return {"attempted": 1, ("filled" if answered else "blank"): 1}
+
+        def create_done(stored: dict) -> bool:
+            FillTask.objects.create(
+                account_id=fill.account_id,
+                fill_id=str(fill.id),
+                row_id=run.row_id,
+                position=position,
+                status=FillTaskStatus.DONE,
+                result=stored,
+            )
+            return True
+
+        landed = land_row(fill, run.row_id, result, close=create_done, lists=self.lists)
+        assert landed is not None, "a created task cannot miss its close"
+        return landed.deltas(was_parked=False)

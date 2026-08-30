@@ -26,10 +26,8 @@ from ..constants import (
     ROW_LEASE_STALE_SECONDS,
     FillStatus,
     FillTaskStatus,
-    StoredCellState,
 )
 from ..models import Fill, FillTask
-from . import cell_truth
 
 
 def live_fill_count(account_id: str) -> int:
@@ -162,27 +160,17 @@ class FillQueueService:
         between tasks; in-flight spend is sunk cost, stated openly)."""
         return Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).exists()
 
-    def complete_task(
-        self,
-        fill: Fill,
-        task: FillTask,
-        *,
-        states: dict[str, StoredCellState],
-        result: dict,
-    ) -> bool:
-        """Close a task and diagnose its cells, in one transaction.
-
-        CAS on the claimant's own lease stamp, so a stale reclaim's
-        original worker misses silently. Returns whether the write
-        landed; a miss is the caller's cue to roll back everything it
-        staged alongside, the sheet value included, so a value and a
-        diagnosis can never come from different attempts.
-
-        `causes` is PER COLUMN (a run answers outputs independently)
-        and covers only the columns that did NOT land a value;
-        `answered` is the ones that did, whose diagnoses are cleared."""
-        with transaction.atomic():
-            landed = FillTask.objects.filter(
+    def complete_task(self, task: FillTask, result: dict) -> bool:
+        """Close a claimed task DONE with its run stored on it. CAS on
+        the claimant's own lease stamp, so a stale reclaim's original
+        worker misses silently. Returns whether the close landed; the
+        landing (services/landing.py) runs this inside its own
+        transaction and rolls the sheet and cell writes back on a miss,
+        so a value and a diagnosis can never come from different
+        attempts. The queue writes nothing to the sheet or the ledger
+        itself."""
+        return (
+            FillTask.objects.filter(
                 id=task.id,
                 leased_by=self.worker_id,
                 status=FillTaskStatus.QUEUED,
@@ -192,11 +180,8 @@ class FillQueueService:
                 leased_at=None,
                 leased_by="",
             )
-            if landed == 1:
-                # The run's per-tool door statuses ride the stored
-                # result (CellRunResult.tools) onto the cell record.
-                cell_truth.write(fill, row_id=task.row_id, states=states, tools=result.get("tools", {}))
-        return landed == 1
+            == 1
+        )
 
     def mark_row_missing(self, task: FillTask) -> bool:
         """Close a task whose row no longer exists: terminal, with no

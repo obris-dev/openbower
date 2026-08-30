@@ -5,10 +5,13 @@ queue is pure ORM)."""
 from __future__ import annotations
 
 import datetime
+from functools import partial
 
 from django.db import models
 from django.test import TestCase
 from django.utils import timezone
+
+from openbower_schema.fills import CellRunResult
 
 from ..constants import (
     FILL_CLAIM_BATCH,
@@ -21,6 +24,8 @@ from ..constants import (
 from ..models import Fill, FillCellState, FillTask
 from ..services.fill_queue import FillQueueService
 from ..services.fills import FillNotFound, FillService
+from ..services.landing import land_row
+from ..services.lists import CellWriteResult
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -132,13 +137,36 @@ class ClaimTests(TestCase):
         self.assertEqual(task.leased_at, old)
 
 
+class _SheetThatTakesEverything:
+    """The sheet writer as these QUEUE tests need it: the fill here
+    names no real list (the fixture is the queue alone), so a FILLED
+    landing is simulated by a writer that reports every key written.
+    The landing's real writer is covered by the worker and view tests."""
+
+    @staticmethod
+    def write_cells(list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+        return CellWriteResult(tuple(cells), (), ())
+
+
+def land(queue, fill, task, *, state=None):
+    """Land a run on the task's row through the landing, the way every
+    terminal writer does: a FILLED state means a value was written."""
+    if state is None or state == StoredCellState.FILLED:
+        run = CellRunResult(cells={"answer": "x"})
+    else:
+        run = CellRunResult(declined_cause=state)
+    return (
+        land_row(fill, task.row_id, run, close=partial(queue.complete_task, task), lists=_SheetThatTakesEverything())
+        is not None
+    )
+
+
 class TerminalWriteTests(TestCase):
     def setUp(self) -> None:
         self.queue = FillQueueService(worker_id="test:1")
 
     def _complete(self, queue, fill, task, *, state=None):
-        states = {"answer": state or StoredCellState.FILLED}
-        return queue.complete_task(fill, task, states=states, result={})
+        return land(queue, fill, task, state=state)
 
     def test_complete_is_cas_on_own_lease(self) -> None:
         fill = make_job(rows=1)
@@ -218,12 +246,12 @@ class CompletionTests(TestCase):
             if not batch.tasks:
                 return
             for task in batch.tasks:
-                self.queue.complete_task(fill, task, states={"answer": StoredCellState.FILLED}, result={})
+                land(self.queue, fill, task)
 
     def test_try_finish_refuses_while_work_remains(self) -> None:
         fill = make_job(rows=2)
         batch = self.queue.claim_batch(fill, free_slots=1)
-        self.queue.complete_task(fill, batch.tasks[0], states={"answer": StoredCellState.FILLED}, result={})
+        land(self.queue, fill, batch.tasks[0])
         self.assertFalse(self.queue.try_finish(str(fill.id)))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.RUNNING)
@@ -243,7 +271,7 @@ class CompletionTests(TestCase):
         # rather than filtering it out for having no claimable work.
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
-        self.queue.complete_task(fill, task, states={"answer": StoredCellState.FILLED}, result={})
+        land(self.queue, fill, task)
         self.assertEqual([j.id for j in self.queue.live_fills()], [fill.id])
         self.assertTrue(self.queue.try_finish(str(fill.id)))
         fill.refresh_from_db()
@@ -283,7 +311,7 @@ class CompletionTests(TestCase):
         # only because a QUEUED task said so.
         fill = make_job(rows=3)
         claimed = self.queue.claim_batch(fill, free_slots=1).tasks[0]
-        self.queue.complete_task(fill, claimed, states={"answer": StoredCellState.FILLED}, result={})
+        land(self.queue, fill, claimed)
         self.assertTrue(self.queue.cancel_fill(str(fill.id)))
         by_status = dict(
             FillTask.objects.filter(fill_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))

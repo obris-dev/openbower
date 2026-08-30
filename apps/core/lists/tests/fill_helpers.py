@@ -14,6 +14,7 @@ no real path produces, and the two are written in one transaction.
 
 from __future__ import annotations
 
+from django.db import transaction
 from django.utils import timezone
 
 from ..constants import FillTaskStatus, StoredCellState
@@ -69,7 +70,9 @@ def settle(
         ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
             fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
         )
-    landed = queue.complete_task(fill, task, states=states, result={"tools": tools or {}})
+    with transaction.atomic():
+        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
+        landed = queue.complete_task(task, result={"tools": tools or {}})
     assert landed, f"seam write missed for {fill_id}/{row_id}"
 
 

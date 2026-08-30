@@ -13,10 +13,11 @@ import logging
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from functools import partial
 from typing import NamedTuple
 
 from django.conf import settings
-from django.db import DatabaseError, close_old_connections, connections, transaction
+from django.db import DatabaseError, close_old_connections, connections
 
 from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
@@ -38,9 +39,9 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillTask, List, ListRow
-from ..services import cell_truth
 from ..services.fill_queue import FillQueueService
-from ..services.lists import ListNotFound, ListService, RowNotFound
+from ..services.landing import land_row
+from ..services.lists import ListNotFound, RowNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +105,6 @@ def _concurrency_window(provider: str, source: str, job_override: int) -> _Windo
     if job_override:
         ceiling = min(ceiling, job_override)
     return _Window(start=min(FILL_CONCURRENCY_HOSTED_START, ceiling) if canonical else 1, ceiling=ceiling)
-
-
-class _ClaimLost(Exception):
-    """The terminal CAS missed (the lease was reclaimed mid-run):
-    raised inside the row's write transaction so everything staged
-    beside the outcome, the value write included, rolls back with
-    it."""
 
 
 _STOPPED = "it stopped rather than blanking the column. Filled cells are kept."
@@ -482,23 +476,18 @@ class FillWorkerOperation:
         parked (its thread died every pass) has no stored cause and
         lands as transient. This is the ONLY writer of the terminal
         retry blanks; the stored run stays as the audit."""
-        cause = task.result.get("blank_cause", "") if isinstance(task.result, dict) else ""
-        landed = self.queue.complete_task(
-            state.fill,
-            task,
-            states=cell_truth.uniform(
-                state.fill, StoredCellState(cause) if cause in RETRY_CAUSES else StoredCellState.TRANSIENT
-            ),
-            result=task.result or {},
-        )
-        if landed:
-            deltas = {"attempted": 1, "blank": 1}
+        run = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
+        if run.declined_cause not in RETRY_CAUSES:
+            run = run.model_copy(
+                update={"blank_cause": StoredCellState.TRANSIENT, "declined_cause": StoredCellState.TRANSIENT}
+            )
+        landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
+        if landed is not None:
             # Same flag the other terminal writer reads. `attempts > 1`
             # could never be false here (this path is reached only past
             # the attempt cap), so it decremented unconditionally, and
             # a row whose thread died every pass never parked at all.
-            if task.parked:
-                deltas["transient"] = -1
+            deltas = landed.deltas(was_parked=task.parked)
             self.queue.bump(str(state.fill.id), **deltas)
 
     def _run_row(
@@ -614,51 +603,17 @@ class FillWorkerOperation:
             controller.record_throttle(generation)
             breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
             return
-        # Per COLUMN, not per row: a run answers outputs independently,
-        # so a column the run never answered carries the declined cause
-        # and stays targetable instead of settling as answered.
-        declined = StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
-        states = dict.fromkeys(fill.column_keys, declined)
-        answered: set[str] = set()
-        # The value write and the terminal CAS share ONE transaction: a
-        # lease reclaimed mid-run must produce NOTHING (rolling the
-        # value back too), never a value from one attempt wearing a
-        # diagnosis from another.
-        landed = False
+        # The three terminal writes (value, cell truth, close) are ONE
+        # landing (services/landing.py); a reclaimed lease lands nothing.
         try:
-            with transaction.atomic():
-                if run.cells:
-                    keys = set(fill.column_keys)
-                    mapped = {key: value for key, value in run.cells.items() if key in keys}
-                    lists = ListService(account_id=fill.account_id, user_id=fill.user_id)
-                    written = lists.write_cells(fill.list_id, str(row.id), mapped)
-                    # Occupied counts answered: the cell holds a user's
-                    # value that write-if-blank protected, so re-running
-                    # it would buy a skip. What the model said about it
-                    # is already in `result`, where a human can compare
-                    # the two.
-                    answered = {*written.written, *written.occupied}
-                    for column_key in answered:
-                        states[column_key] = StoredCellState.FILLED
-                    for mismatch in written.mismatched:
-                        # Parsed, validated, and still the wrong shape
-                        # for the column: its own cause (the user's next
-                        # step differs).
-                        states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-                landed = self.queue.complete_task(fill, task, states=states, result=result.model_dump())
-                if not landed:
-                    raise _ClaimLost()
-        except _ClaimLost:
-            pass
+            landed = land_row(fill, str(row.id), result, close=partial(self.queue.complete_task, task))
         except (ListNotFound, RowNotFound):
             # Same as the missing-row leg above: a user deletion
             # resolves cancelled, never failed.
             self.queue.cancel_fill(str(fill.id))
             return
-        if landed:
-            deltas = {"attempted": 1, ("filled" if answered else "blank"): 1}
-            if was_parked:
-                deltas["transient"] = -1
+        if landed is not None:
+            deltas = landed.deltas(was_parked=was_parked)
             row_seconds = time.monotonic() - row_started
             deltas["row_seconds"] = round(row_seconds)
             deltas["search_wait_seconds"] = round(deps.search_seconds)
@@ -669,7 +624,7 @@ class FillWorkerOperation:
             logger.info(
                 "fill_worker: row %s %s in %.0fs (%.0fs waiting on search) | concurrency %d",
                 task.row_id,
-                "filled" if answered else declined,
+                "filled" if landed.answered else landed.declined,
                 row_seconds,
                 deps.search_seconds,
                 controller.current(),
