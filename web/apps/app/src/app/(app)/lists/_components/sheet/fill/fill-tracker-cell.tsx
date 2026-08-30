@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, cn, Popover, PopoverButton, PopoverPanel, Textarea } from "@bower/ui";
+import { Button, cn, Popover, PopoverButton, PopoverPanel, Skeleton, Textarea } from "@bower/ui";
 import {
   AGENT_PROMPT_MAX_LENGTH,
   getColumnPrompt,
@@ -37,8 +37,12 @@ const PROMPT_TOGGLE_CHARS = 256;
  * job's frozen snapshot; a live fill disables the affordance, since
  * the running job holds its snapshot and an edit only reaches the
  * NEXT job). The Popover primitive carries the disclosure floor
- * (aria-expanded, Escape, outside-click, focus return). A column with
- * no exposed job renders nothing: the quiet blank. */
+ * (aria-expanded, Escape, outside-click, focus return). A missing
+ * summary means only that the first fills poll has not answered (the
+ * server ships one for EVERY AI column, zero counts included), so it
+ * renders a skeleton, never a blank the header line then shoves
+ * aside; a column with no exposed job shows the header line alone,
+ * naming the work. */
 export function FillTrackerCell({
   listId,
   column,
@@ -62,7 +66,17 @@ export function FillTrackerCell({
   // the chip. A column whose current job has aged off the fetched page
   // still shows its progress and keeps its management surface, rather
   // than vanishing as though the column had never been filled.
-  if (summary === undefined) return null;
+  if (summary === undefined) {
+    // Sized like the header line it resolves into. If the poll cannot
+    // answer, the footer's trouble line speaks for the page; this
+    // skeleton keeps loading honestly (the loop never stops).
+    return (
+      <span className="flex h-5 items-center px-1">
+        <Skeleton className="h-3 w-16" />
+        <span className="sr-only">Loading this column&apos;s fill state</span>
+      </span>
+    );
+  }
   const live = cell.kind === "live";
   // Two instruments, one cell: is there WORK LEFT in this column (the
   // header, the question an operator actually has) over how the
