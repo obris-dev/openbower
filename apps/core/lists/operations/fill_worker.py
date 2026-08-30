@@ -39,8 +39,9 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillTask, List, ListRow
+from ..services.fill_progress import FillProgress
 from ..services.fill_queue import FillQueueService
-from ..services.landing import land_row
+from ..services.landing import Landed, land_row
 from ..services.lists import ListNotFound, RowNotFound
 
 logger = logging.getLogger(__name__)
@@ -188,18 +189,94 @@ class _FillState:
         controller: ConcurrencyController,
         breakers: _Breakers,
         ceiling: int,
+        progress: FillProgress,
     ) -> None:
         self.fill = fill
         self.config = config
         self.controller = controller
         self.breakers = breakers
         self.ceiling = ceiling
+        self.progress = progress
         self.in_flight: dict[Future, FillTask] = {}
         self.deaths = 0
         self.last_beat = time.monotonic()
         # The source this fill's rows hit, so the pool can honour a
         # DECLARED per-source ceiling across every fill using it.
         self.source = (config.provider, config.source)
+
+    # The fill's REACTIONS to a finished row: what the progress counters,
+    # the concurrency controller, and the breaker are each told, in
+    # order, for each way a row can end. The row thread reports the
+    # facts; which collaborator hears which fact is the fill's knowledge,
+    # kept here so a row never has to know it.
+
+    def row_parked(self, run: CellRunResult, *, generation: int, newly_parked: bool) -> None:
+        """A row parked for retry: the gauge counts it once (a re-park
+        holds it), the controller sheds width in this row's epoch, and
+        the breaker counts one more consecutive park."""
+        if newly_parked:
+            self.progress.bump(str(self.fill.id), transient=1)
+        self.controller.record_throttle(generation)
+        self.breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
+
+    def row_landed(
+        self,
+        task: FillTask,
+        landed: Landed | None,
+        run: CellRunResult,
+        *,
+        generation: int,
+        was_parked: bool,
+        row_seconds: float,
+        search_seconds: float,
+    ) -> None:
+        """A row ran to a terminal write. `landed` is None when the
+        close missed (a reclaimed lease): nothing was written, so no
+        counters move, but the rate signal still counts, since the
+        door was asked either way."""
+        if landed is not None:
+            deltas = landed.deltas(was_parked=was_parked)
+            deltas["row_seconds"] = round(row_seconds)
+            deltas["search_wait_seconds"] = round(search_seconds)
+            self.progress.bump(str(self.fill.id), **deltas)
+            self.progress.set_concurrency_point(str(self.fill.id), self.controller.current())
+            # The pace narration: one line per row, the same facts the
+            # wire carries, so `make logs` answers "what is slow".
+            logger.info(
+                "fill_worker: row %s %s in %.0fs (%.0fs waiting on search) | concurrency %d",
+                task.row_id,
+                "filled" if landed.answered else landed.declined,
+                row_seconds,
+                search_seconds,
+                self.controller.current(),
+            )
+        # A FAILED search is a RATE signal, not a clean completion, and
+        # so is one that only succeeded after the seam backed off (the
+        # door refused at least once; the seam's retry hides that from
+        # the outcome's flag, not from its attempt count): the door is
+        # saying we are asking too fast, and counting it as clean
+        # climbed the point straight into the ban the breaker then had
+        # to kill the fill over. Backing off is the response; stopping
+        # is what happens when backing off runs out of room.
+        if any(search.status != "open" or search.attempts > 1 for search in run.searches):
+            self.controller.record_throttle(generation)
+        else:
+            self.controller.record_success(generation)
+        self.breakers.row_finished(retry_cause="", tools=run.tools)
+
+    def row_given_up(self, task: FillTask, landed: Landed | None) -> None:
+        """A row closed past its attempt cap without a run: counters
+        only (no door was asked, so no rate signal and no streak).
+        `task.parked` is the same flag every terminal writer reads: a
+        row whose thread died every pass never parked at all."""
+        if landed is not None:
+            self.progress.bump(str(self.fill.id), **landed.deltas(was_parked=task.parked))
+
+    def row_missing(self, task: FillTask, closed: bool) -> None:
+        """A row that no longer exists: its parked count, if any, is
+        released; nothing else moves."""
+        if closed and task.parked:
+            self.progress.bump(str(self.fill.id), transient=-1)
 
 
 class FillWorkerOperation:
@@ -222,6 +299,7 @@ class FillWorkerOperation:
         # worker's, built here from its identity rather than handed in.
         self.worker_id = worker_id
         self.queue = FillQueueService(worker_id=worker_id)
+        self.progress = FillProgress()
         self.stop = stop
         self._states: dict[str, _FillState] = {}
         # Whether the pass in progress found anything to do; the loop
@@ -255,7 +333,7 @@ class FillWorkerOperation:
         # claimable. No-ops unless every row is terminal.
         for fill_id in list(self._states):
             try:
-                self.queue.try_finish(fill_id)
+                self.progress.try_finish(fill_id)
             except DatabaseError:
                 _recover_connection()
         # The supervisor's own session, on the way out.
@@ -269,7 +347,7 @@ class FillWorkerOperation:
         backoff is live and has nothing claimable, so liveness would
         spin this loop against a clock and never let `--once` stop."""
         self._claimed = False
-        fills = self.queue.live_fills()
+        fills = self.progress.live_fills()
         self._evict({str(fill.id) for fill in fills})
         for fill in self._rotated(fills):
             # A poisoned fill fails ALONE. Unhandled here the process
@@ -280,7 +358,7 @@ class FillWorkerOperation:
                 raise
             except Exception:
                 logger.exception("fill_worker: fill %s failed unhandled", fill.id)
-                self.queue.fail_fill(
+                self.progress.fail(
                     str(fill.id),
                     code=FillFailureCode.FILL_UNRUNNABLE,
                     message="This fill stopped on an internal error; start a new fill. Filled cells are kept.",
@@ -326,7 +404,7 @@ class FillWorkerOperation:
         state.fill = fill
         if state.breakers.tripped is not None:
             code, message = state.breakers.tripped
-            self.queue.fail_fill(str(fill.id), code=code, message=message)
+            self.progress.fail(str(fill.id), code=code, message=message)
             return
         if state.deaths:
             # A death means claiming is the wrong move (the likely
@@ -356,7 +434,7 @@ class FillWorkerOperation:
         try:
             model_for(state.config.provider, state.config.source, state.config.model)
         except ModelUnavailable as e:
-            self.queue.fail_fill(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            self.progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             self._states.pop(str(fill.id), None)
             return
         share = min(
@@ -379,20 +457,20 @@ class FillWorkerOperation:
                 self._give_up(state, task)
                 continue
             ran = True
-            future = pool.submit(self._run_row, fill, state.config, task, state.controller, state.breakers)
+            future = pool.submit(self._run_row, fill, state, task)
             state.in_flight[future] = task
         if not ran and not state.in_flight:
             # Nothing claimable and nothing running HERE: complete, or
             # (stale-leased rows still cooling) leave it for a later
             # pass.
-            self.queue.try_finish(str(fill.id))
+            self.progress.try_finish(str(fill.id))
 
     def _admit(self, fill: Fill) -> _FillState | None:
         config = AgentConfig(**fill.config_snapshot)
         try:
             window = _concurrency_window(config.provider, config.source, fill.concurrency)
         except ModelUnavailable as e:
-            self.queue.fail_fill(str(fill.id), code=FillFailureCode.SOURCE_GONE, message=str(e))
+            self.progress.fail(str(fill.id), code=FillFailureCode.SOURCE_GONE, message=str(e))
             return None
         # RESUME the climb across restarts: the operating point's last
         # value is stored on the fill, so a bounced worker starts where
@@ -406,6 +484,7 @@ class FillWorkerOperation:
             ConcurrencyController(start=start, ceiling=window.ceiling),
             _Breakers(search_provider=settings.SEARCH_PROVIDER),
             window.ceiling,
+            self.progress,
         )
         self._states[str(fill.id)] = state
         return state
@@ -486,24 +565,11 @@ class FillWorkerOperation:
                 update={"blank_cause": StoredCellState.TRANSIENT, "declined_cause": StoredCellState.TRANSIENT}
             )
         landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
-        if landed is not None:
-            # Same flag the other terminal writer reads. `attempts > 1`
-            # could never be false here (this path is reached only past
-            # the attempt cap), so it decremented unconditionally, and
-            # a row whose thread died every pass never parked at all.
-            deltas = landed.deltas(was_parked=task.parked)
-            self.queue.bump(str(state.fill.id), **deltas)
+        state.row_given_up(task, landed)
 
-    def _run_row(
-        self,
-        fill: Fill,
-        config: AgentConfig,
-        task: FillTask,
-        controller: ConcurrencyController,
-        breakers: _Breakers,
-    ) -> None:
+    def _run_row(self, fill: Fill, state: _FillState, task: FillTask) -> None:
         try:
-            self._run_row_inner(fill, config, task, controller, breakers)
+            self._run_row_inner(fill, state, task)
         except DatabaseError:
             _recover_connection()
             raise
@@ -514,22 +580,15 @@ class FillWorkerOperation:
             # is noise; leaked connections are not).
             _release_connection()
 
-    def _run_row_inner(
-        self,
-        fill: Fill,
-        config: AgentConfig,
-        task: FillTask,
-        controller: ConcurrencyController,
-        breakers: _Breakers,
-    ) -> None:
+    def _run_row_inner(self, fill: Fill, state: _FillState, task: FillTask) -> None:
         # The congestion epoch this row STARTS in, handed back with its
         # result. A provider burst refuses every row in flight at once,
         # and without this each refusal shed the width again: one event
         # collapsed the point to 1 instead of halving it.
-        generation = controller.generation()
+        generation = state.controller.generation()
         # Pre-spend liveness: cancellation granularity is between rows
         # (in-flight spend is sunk cost, stated openly).
-        if not self.queue.fill_is_live(str(task.fill_id)):
+        if not self.progress.is_live(str(task.fill_id)):
             return
         row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
         if row is None:
@@ -539,13 +598,12 @@ class FillWorkerOperation:
                 # ListService.delete purges the fill in its own txn;
                 # this is the racing walker noticing before that
                 # commit lands.
-                self.queue.cancel_fill(str(fill.id))
+                self.progress.cancel(str(fill.id))
                 return
             # The row alone is gone: this task closes as ROW_MISSING (no
             # cell to diagnose, nothing a resume could owe) and the fill
             # goes on with the rows that still exist.
-            if self.queue.mark_row_missing(task) and task.parked:
-                self.queue.bump(str(fill.id), transient=-1)
+            state.row_missing(task, self.queue.mark_row_missing(task))
             return
         # No DB in deps callbacks: they execute on the framework's
         # ephemeral executor threads, where a connection opened is a
@@ -573,9 +631,9 @@ class FillWorkerOperation:
         # client, so concurrent rows must never share one (the first
         # finisher would kill every sibling's completion).
         try:
-            run = run_cell(config, row.data, deps=deps)
+            run = run_cell(state.config, row.data, deps=deps)
         except ModelUnavailable as e:
-            self.queue.fail_fill(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            self.progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             return
         # What the run PRODUCED, through the contract model, so this
         # writer and the bench's cannot drift: a seeded row and a run
@@ -602,10 +660,7 @@ class FillWorkerOperation:
                 backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts,
                 result=result.model_dump(),
             )
-            if parked and not was_parked:
-                self.queue.bump(str(fill.id), transient=1)
-            controller.record_throttle(generation)
-            breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
+            state.row_parked(result, generation=generation, newly_parked=parked and not was_parked)
             return
         # The three terminal writes (value, cell truth, close) are ONE
         # landing (services/landing.py); a reclaimed lease lands nothing.
@@ -614,36 +669,15 @@ class FillWorkerOperation:
         except (ListNotFound, RowNotFound):
             # Same as the missing-row leg above: a user deletion
             # resolves cancelled, never failed.
-            self.queue.cancel_fill(str(fill.id))
+            self.progress.cancel(str(fill.id))
             return
 
-        if landed is not None:
-            deltas = landed.deltas(was_parked=was_parked)
-            row_seconds = time.monotonic() - row_started
-            deltas["row_seconds"] = round(row_seconds)
-            deltas["search_wait_seconds"] = round(deps.search_seconds)
-            self.queue.bump(str(fill.id), **deltas)
-            self.queue.set_concurrency_point(str(fill.id), controller.current())
-            # The pace narration: one line per row, the same facts the
-            # wire carries, so `make logs` answers "what is slow".
-            logger.info(
-                "fill_worker: row %s %s in %.0fs (%.0fs waiting on search) | concurrency %d",
-                task.row_id,
-                "filled" if landed.answered else landed.declined,
-                row_seconds,
-                deps.search_seconds,
-                controller.current(),
-            )
-        # A FAILED search is a RATE signal, not a clean completion, and
-        # so is one that only succeeded after the seam backed off (the
-        # door refused at least once; the seam's retry hides that from
-        # the outcome's flag, not from its attempt count): the door is
-        # saying we are asking too fast, and counting it as clean
-        # climbed the point straight into the ban the breaker then had
-        # to kill the fill over. Backing off is the response; stopping
-        # is what happens when backing off runs out of room.
-        if any(outcome.failed or outcome.attempts > 1 for outcome in run.searches):
-            controller.record_throttle(generation)
-        else:
-            controller.record_success(generation)
-        breakers.row_finished(retry_cause="", tools=run.tools)
+        state.row_landed(
+            task,
+            landed,
+            result,
+            generation=generation,
+            was_parked=was_parked,
+            row_seconds=time.monotonic() - row_started,
+            search_seconds=deps.search_seconds,
+        )

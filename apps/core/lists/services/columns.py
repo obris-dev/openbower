@@ -19,7 +19,7 @@ from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, Fil
 from ..models import Fill, List, ListRow
 from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
-from .fill_queue import stop_fill
+from .fill_progress import stop_fill
 from .lists import ListNotFound
 
 

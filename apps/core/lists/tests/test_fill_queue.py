@@ -22,6 +22,7 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillCellState, FillTask
+from ..services.fill_progress import FillProgress
 from ..services.fill_queue import FillQueueService
 from ..services.fills import FillNotFound, FillService
 from ..services.landing import land_row
@@ -239,6 +240,7 @@ class TerminalWriteTests(TestCase):
 class CompletionTests(TestCase):
     def setUp(self) -> None:
         self.queue = FillQueueService(worker_id="test:1")
+        self.progress = FillProgress()
 
     def _drain(self, fill: Fill) -> None:
         while True:
@@ -252,14 +254,14 @@ class CompletionTests(TestCase):
         fill = make_job(rows=2)
         batch = self.queue.claim_batch(fill, free_slots=1)
         land(self.queue, fill, batch.tasks[0])
-        self.assertFalse(self.queue.try_finish(str(fill.id)))
+        self.assertFalse(self.progress.try_finish(str(fill.id)))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.RUNNING)
 
     def test_try_finish_completes_a_drained_fill(self) -> None:
         fill = make_job(rows=2)
         self._drain(fill)
-        self.assertTrue(self.queue.try_finish(str(fill.id)))
+        self.assertTrue(self.progress.try_finish(str(fill.id)))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
 
@@ -272,11 +274,11 @@ class CompletionTests(TestCase):
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
         land(self.queue, fill, task)
-        self.assertEqual([j.id for j in self.queue.live_fills()], [fill.id])
-        self.assertTrue(self.queue.try_finish(str(fill.id)))
+        self.assertEqual([j.id for j in self.progress.live_fills()], [fill.id])
+        self.assertTrue(self.progress.try_finish(str(fill.id)))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
-        self.assertEqual(self.queue.live_fills(), [])
+        self.assertEqual(self.progress.live_fills(), [])
 
     def test_a_stale_leased_task_blocks_completion(self) -> None:
         # A crashed claimant never fakes completion: its task is still
@@ -285,7 +287,7 @@ class CompletionTests(TestCase):
         batch = self.queue.claim_batch(fill, free_slots=1)
         stale = timezone.now() - datetime.timedelta(seconds=ROW_LEASE_STALE_SECONDS + 1)
         FillTask.objects.filter(id=batch.tasks[0].id).update(leased_at=stale)
-        self.assertFalse(self.queue.try_finish(str(fill.id)))
+        self.assertFalse(self.progress.try_finish(str(fill.id)))
 
     def test_a_parked_task_blocks_completion(self) -> None:
         # It is still owed, so the fill is not done. Under the old
@@ -294,15 +296,15 @@ class CompletionTests(TestCase):
         fill = make_job(rows=1)
         task = self.queue.claim_batch(fill, free_slots=1).tasks[0]
         self.queue.park_task(task, backoff_seconds=60, result={})
-        self.assertFalse(self.queue.try_finish(str(fill.id)))
+        self.assertFalse(self.progress.try_finish(str(fill.id)))
 
     def test_fail_fill_is_cas_from_live_states(self) -> None:
         fill = make_job(rows=1)
-        self.assertTrue(self.queue.fail_fill(str(fill.id), code="provider_throttled", message="why"))
+        self.assertTrue(self.progress.fail(str(fill.id), code="provider_throttled", message="why"))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.FAILED)
         self.assertEqual(fill.error_code, "provider_throttled")
-        self.assertFalse(self.queue.fail_fill(str(fill.id), code="x", message="y"))
+        self.assertFalse(self.progress.fail(str(fill.id), code="x", message="y"))
 
     def test_stopping_a_fill_abandons_its_queue_and_touches_no_cell(self) -> None:
         # The record of consent granted and NOT spent, which is what a
@@ -312,7 +314,7 @@ class CompletionTests(TestCase):
         fill = make_job(rows=3)
         claimed = self.queue.claim_batch(fill, free_slots=1).tasks[0]
         land(self.queue, fill, claimed)
-        self.assertTrue(self.queue.cancel_fill(str(fill.id)))
+        self.assertTrue(self.progress.cancel(str(fill.id)))
         by_status = dict(
             FillTask.objects.filter(fill_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))
         )
@@ -324,8 +326,8 @@ class CompletionTests(TestCase):
 
     def test_counters_accumulate_and_stamp_heartbeat(self) -> None:
         fill = make_job(rows=2)
-        self.queue.bump(str(fill.id), attempted=1, filled=1)
-        self.queue.bump(str(fill.id), attempted=1, blank=1)
+        self.progress.bump(str(fill.id), attempted=1, filled=1)
+        self.progress.bump(str(fill.id), attempted=1, blank=1)
         fill.refresh_from_db()
         self.assertEqual((fill.attempted, fill.filled, fill.blank), (2, 1, 1))
         self.assertIsNotNone(fill.heartbeat_at)
@@ -343,13 +345,12 @@ class JobControlTests(TestCase):
 
     def test_cancelled_job_stops_the_worker_gate(self) -> None:
         fill = make_job(rows=1)
-        queue = FillQueueService(worker_id="test:1")
-        self.assertTrue(queue.fill_is_live(str(fill.id)))
+        self.assertTrue(FillProgress().is_live(str(fill.id)))
         FillService(account_id=ACCOUNT).cancel(str(fill.id))
-        self.assertFalse(queue.fill_is_live(str(fill.id)))
+        self.assertFalse(FillProgress().is_live(str(fill.id)))
         # And it leaves the live set, so the supervisor evicts its
         # per-fill state instead of serving a cancelled fill.
-        self.assertEqual(queue.live_fills(), [])
+        self.assertEqual(FillProgress().live_fills(), [])
 
     def test_foreign_account_reads_as_not_found(self) -> None:
         fill = make_job(rows=1)

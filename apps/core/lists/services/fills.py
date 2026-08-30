@@ -14,7 +14,7 @@ from openbower_schema.lists import CellStateWire
 
 from ..constants import LIVE_FILL_STATUSES, FillStatus, FillTaskStatus, StoredCellState
 from ..models import Fill, FillCellState, FillTask, List, ListRow
-from .fill_queue import stop_fill
+from .fill_progress import stop_fill
 
 # The wire's one non-terminal state. A STRING here and not a StoredCellState
 # member on purpose: the server never stores it, it derives it from the

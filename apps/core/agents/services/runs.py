@@ -14,7 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from lists.constants import MAX_ACTIVE_FILLS
-from lists.services.fill_queue import live_fill_count
+from lists.services.fill_progress import live_fill_count
 from openbower_kernel.fields import min_ulid_at
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
