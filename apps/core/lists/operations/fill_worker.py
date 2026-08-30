@@ -220,6 +220,9 @@ class FillState:
         breakers: _Breakers,
         ceiling: int,
     ) -> None:
+        # Read for its id and its frozen consent facts (columns, scope,
+        # fingerprint) only; the live row (status, counters) is never
+        # read off it, so the object admit saw is the one kept.
         self.fill = fill
         self.config = config
         self.controller = controller
@@ -457,7 +460,6 @@ class FillWorkerOperation:
         state = self._states.get(str(fill.id)) or self._admit(fill)
         if state is None:
             return
-        state.fill = fill
         if state.breakers.tripped is not None:
             code, message = state.breakers.tripped
             state.fail(code=code, message=message)
