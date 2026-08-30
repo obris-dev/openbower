@@ -170,9 +170,8 @@ _STATUS_PHRASE = {
 }
 
 
-class _FillState:
-    """One live fill as THIS process holds it, across supervisor
-    passes: the fill's lifecycle in one place. Its ENTRY is `admit`
+class FillState:
+    """One live fill's state: its lifecycle in one place. Its ENTRY is `admit`
     (the frozen config, the concurrency window and the controller
     resumed from the stored point, the breakers); its EXITS are
     `try_finish`, `cancel`, and `fail`, the three terminal transitions,
@@ -189,8 +188,8 @@ class _FillState:
     entirely and is certainly a different consent."""
 
     @classmethod
-    def admit(cls, fill: Fill) -> _FillState | None:
-        """The ENTRY: this process takes the fill on. A source gone
+    def admit(cls, fill: Fill) -> FillState | None:
+        """The ENTRY: the worker takes the fill on. A source gone
         since consent is a config-tier refusal that fails the fill
         here, so the caller sees no state for it."""
         config = AgentConfig(**fill.config_snapshot)
@@ -352,7 +351,7 @@ class FillWorkerOperation:
         self.worker_id = worker_id
         self.queue = FillQueueService(worker_id=worker_id)
         self.stop = stop
-        self._states: dict[str, _FillState] = {}
+        self._states: dict[str, FillState] = {}
         # Whether the pass in progress found anything to do; the loop
         # idles and `--once` stops on this rather than on liveness.
         self._claimed = False
@@ -436,7 +435,7 @@ class FillWorkerOperation:
     def _free_slots(self) -> int:
         return MAX_FILL_CONCURRENCY - sum(len(s.in_flight) for s in self._states.values())
 
-    def _source_free_slots(self, state: _FillState) -> int:
+    def _source_free_slots(self, state: FillState) -> int:
         """What this fill may still take WITHOUT breaking its source's
         DECLARED ceiling, counting every fill in this process that hits
         the same source.
@@ -448,8 +447,8 @@ class FillWorkerOperation:
         in_flight = sum(len(s.in_flight) for s in self._states.values() if s.source == state.source)
         return state.ceiling - in_flight
 
-    def _admit(self, fill: Fill) -> _FillState | None:
-        state = _FillState.admit(fill)
+    def _admit(self, fill: Fill) -> FillState | None:
+        state = FillState.admit(fill)
         if state is not None:
             self._states[str(fill.id)] = state
         return state
@@ -577,7 +576,7 @@ class FillWorkerOperation:
             except DatabaseError:
                 _recover_connection()
 
-    def _give_up(self, state: _FillState, task: FillTask) -> None:
+    def _give_up(self, state: FillState, task: FillTask) -> None:
         """A task past its attempt cap, closed WITHOUT spending: every
         column it owed carries the RETRY cause its last park recorded
         (a park stores its run, so the cell can say whose door refused:
@@ -599,7 +598,7 @@ class FillWorkerOperation:
         landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
         state.row_given_up(task, landed)
 
-    def _run_row(self, fill: Fill, state: _FillState, task: FillTask) -> None:
+    def _run_row(self, fill: Fill, state: FillState, task: FillTask) -> None:
         try:
             self._run_row_inner(fill, state, task)
         except DatabaseError:
@@ -612,7 +611,7 @@ class FillWorkerOperation:
             # is noise; leaked connections are not).
             _release_connection()
 
-    def _run_row_inner(self, fill: Fill, state: _FillState, task: FillTask) -> None:
+    def _run_row_inner(self, fill: Fill, state: FillState, task: FillTask) -> None:
         # The congestion epoch this row STARTS in, handed back with its
         # result. A provider burst refuses every row in flight at once,
         # and without this each refusal shed the width again: one event

@@ -34,7 +34,7 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillCellState, FillTask, List, ListRow
-from ..operations.fill_worker import FillWorkerOperation, _FillState
+from ..operations.fill_worker import FillState, FillWorkerOperation
 from ..services import fill_progress
 from ..services.fill_admission import FillAdmissionService
 from ..services.fill_queue import FillQueueService
@@ -664,7 +664,7 @@ class SourceCeilingTests(WorkerTestCase):
         self.assertEqual(mine.ceiling, 1)
         # A second fill on the SAME (provider, source), with a row of
         # this one already running.
-        theirs = _FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
+        theirs = FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
         supervisor._states["other"] = theirs
         mine.in_flight[object()] = None
         self.assertEqual(supervisor._source_free_slots(theirs), 0)

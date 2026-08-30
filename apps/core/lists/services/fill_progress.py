@@ -8,8 +8,8 @@ through the ONE terminal transition the user's Stop also takes).
 Split from the queue on purpose: the queue is TASK lifecycle (leases,
 claims, closes), this is the fill's. Plain functions, because none of
 this holds state: a fill id in, one UPDATE out. A worker's row thread
-reports here through its fill's in-process state
-(operations/fill_worker.py), never directly.
+reports here through its FillState (operations/fill_worker.py), never
+directly.
 
 Not account-scoped: the worker is a trusted process serving every
 account's fills, and the user-facing service resolves its fill
