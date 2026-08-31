@@ -23,7 +23,7 @@ class ConcurrencyBoundsError(Exception):
 CLIMB_STREAK = 8
 
 
-class AdaptiveConcurrency:
+class ConcurrencyController:
     """The AIMD state machine, isolated: an operating point in
     [1, ceiling], adjusted on every reported completion. Thread-safe;
     every method takes the one lock, so reports from concurrent

@@ -17,7 +17,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import FillWire
+from openbower_schema.fills import FillRunWire
 
 from ..constants import FillStatus, StoredCellState
 from ..models import Fill, FillCellState, FillTask
@@ -86,7 +86,7 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.status, "pending")
         self.assertEqual(wire.column_keys, ["answer"])
         # Consent facts: the TARGET count, not the sheet total; the
@@ -105,7 +105,7 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 3)
         self.assertEqual(len(targeted(wire.id)), 3)
 
@@ -124,7 +124,7 @@ class RefillTargetTests(RefillTestCase):
             {"error": "refill_empty", "detail": "Every row of this column already has an answer."},
         )
 
-    def test_same_column_live_job_is_409(self) -> None:
+    def test_same_column_live_run_is_409(self) -> None:
         self.admit()
         resp = self.refill()
         self.assertEqual(resp.status_code, 409)
@@ -139,9 +139,11 @@ class RefillTargetTests(RefillTestCase):
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.agent_id, fill["agent_id"])
-        self.assertEqual(wire.config_snapshot.prompt, "Reworded ask for {{company}}")
+        # The snapshot is stored, not wired: the refill's freshness is
+        # asserted where the worker will read it.
+        self.assertEqual(Fill.objects.get(id=wire.id).config_snapshot["prompt"], "Reworded ask for {{company}}")
 
 
 class SettledBlankTests(RefillTestCase):
@@ -208,7 +210,7 @@ class SettledBlankTests(RefillTestCase):
         self.assertNotIn(str(rows[0].id), owed)
         self.assertIn(str(rows[1].id), owed)
 
-    def test_the_newest_jobs_verdict_outranks_older_ones(self) -> None:
+    def test_the_newest_runs_verdict_outranks_older_ones(self) -> None:
         # Settled in a NEWER fill stays settled even when an older fill
         # errored the same row.
         first = self.admit()
@@ -320,7 +322,7 @@ class MultiColumnResumeTests(RefillTestCase):
 
 
 class ResumeTests(RefillTestCase):
-    def test_continue_finishes_only_the_stopped_jobs_own_rows(self) -> None:
+    def test_continue_finishes_only_the_stopped_runs_own_rows(self) -> None:
         # A scoped fill stopped midway resumes ITS remainder, never the
         # column's whole remainder (extend gestures widen; resume does
         # not).
@@ -360,14 +362,14 @@ class ScopedRefillTests(RefillTestCase):
         # outcome row at all).
         self.lists.add_rows(self.sheet, [{"company": "initech.com"}, {"company": "umbrella.io"}])
         fill = self.admit(rows=2)
-        first = FillWire(**fill)
+        first = FillRunWire(**fill)
         self.assertEqual(first.confirmed_row_count, 2)
         settle_all(fill["id"], None)
         self.cancel(fill["id"])
 
         resp = self.refill(rows=1)
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 1)
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.assertEqual(targeted_pairs(wire.id), [(str(rows[2].id), 3)])
@@ -384,7 +386,7 @@ class ScopedRefillTests(RefillTestCase):
 
         resp = self.refill(rows=1)
         self.assertEqual(resp.status_code, 201, resp.content)
-        wire = FillWire(**resp.json())
+        wire = FillRunWire(**resp.json())
         self.assertEqual(wire.confirmed_row_count, 1)
         self.assertEqual(targeted_positions(wire.id), [4])
 
@@ -440,7 +442,7 @@ class RefillLifecycleTests(RefillTestCase):
         self.cancel(fill["id"])
         first = self.refill()
         self.assertEqual(first.status_code, 201, first.content)
-        self.assertEqual(FillWire(**first.json()).status, FillStatus.PENDING)
+        self.assertEqual(FillRunWire(**first.json()).status, FillStatus.PENDING)
         second = self.refill()
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"], "fill_active")
@@ -458,7 +460,7 @@ class ResumeScopeTests(RefillTestCase):
             content_type="application/json",
         )
 
-    def test_a_resume_job_from_another_account_is_refused(self):
+    def test_a_resume_run_from_another_account_is_refused(self):
         theirs = ListService(account_id="01ACCTOTHERBBBBBBBBBBBBBBB", user_id=TEST_IDENTITY["id"])
         sheet = theirs.create(
             label="Theirs", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
@@ -488,7 +490,7 @@ class ResumeScopeTests(RefillTestCase):
         # caller's own sheet, and it would be a lie.
         self.assertEqual(resp.json()["error"], "resume_not_found")
 
-    def test_an_unknown_resume_job_is_refused_the_same_way(self):
+    def test_an_unknown_resume_run_is_refused_the_same_way(self):
         mine = self.admit()
         settle_all(mine["id"], StoredCellState.NO_EVIDENCE)
         self.cancel(mine["id"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from agents.constants import ToolStatus
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
@@ -87,18 +88,16 @@ FILL_CONCURRENCY_HOSTED_START = 4
 # admission reads this same constant so the two lanes cannot drift;
 # the bench keeps its own per-process semaphore as a backstop.
 MAX_ACTIVE_FILLS = 4
-# Consecutive transient rows that fail the FILL config-tier (binary):
-# per-row attempts are patience for flaky moments, this breaker is
-# across-row detection of a dead or throttling provider.
+# Consecutive rows parked for retry that fail the FILL config-tier
+# (binary): per-row attempts are patience for flaky moments, this
+# breaker is across-row detection of a dead or throttling door, the
+# model's or a tool's search door alike (a search door that keeps
+# refusing parks its rows exactly as a throttling model does).
 CONSECUTIVE_TRANSIENT_LIMIT = 8
-# Consecutive failed FREE-door searches that fail the fill (binary): a
-# scraping door under ban pressure would otherwise blank a whole
-# column silently.
-FREE_SEARCH_FAILURE_BREAK = 8
 
 FILL_STATUS_MAX_LENGTH = 16
 FILL_TASK_STATUS_MAX_LENGTH = 16
-CELL_STATE_MAX_LENGTH = 16
+CELL_STATE_MAX_LENGTH = 32
 # The failed fill's two-tier error: code is the machine leg, message is
 # server-authored copy rendered verbatim (bounded like every authored
 # value).
@@ -183,11 +182,17 @@ class FillTaskStatus(StrEnum):
     ABANDONED is the durable record of consent granted and NOT spent.
     Cancel writes it over the fill's unclaimed tasks in one statement,
     which is what lets a later resume ask what a stopped fill still
-    owed instead of reconstructing it."""
+    owed instead of reconstructing it.
+
+    ROW_MISSING is the one task outcome that has no cell to carry it:
+    the row was gone when the task came up, so there is nothing to
+    diagnose and nothing a resume could owe (unlike ABANDONED, which a
+    resume re-targets). The fill goes on without it."""
 
     QUEUED = "queued"
     DONE = "done"
     ABANDONED = "abandoned"
+    ROW_MISSING = "row_missing"
 
 
 class FillStatus(StrEnum):
@@ -243,11 +248,39 @@ class StoredCellState(StrEnum):
     # SETTLED like NO_ANSWER (the same config re-buys the same
     # unconfirmable answer).
     UNVERIFIED = "unverified"
-    NO_TOOLS_DOOR = "no_tools_door"
     UNPARSEABLE = "unparseable"
     TYPE_MISMATCH = "type_mismatch"
     MODEL_ERROR = "model_error"
     TRANSIENT = "transient"
+    # A tool's door did not serve this row. The SHEET keys on the BASE
+    # status code only, never on a (tool, code) cross product: which
+    # tool, and the tool's own code, ride the cell record's `tools`
+    # map beside the state, so a tool can add a failure mode without
+    # this vocabulary growing. NOT_CONFIGURED is written at once (no
+    # retry changes it) and re-runs on Continue once set up.
+    # UNAVAILABLE (rate limited, unreachable, or erroring) parks and
+    # retries up to the attempt cap ONLY when the whole row blanked; a
+    # row that answered its other columns lands it at once (a park
+    # would hold hostage cells the user can already read), and a later
+    # Continue re-targets it.
+    TOOL_NOT_CONFIGURED = "tool_not_configured"
+    TOOL_UNAVAILABLE = "tool_unavailable"
+
+
+# The causes that PARK a row for retry instead of settling a cell (the
+# worker's branch); every other cause is terminal for the run.
+RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
+# The cell state a blank cell takes for a tool's status CODE. Keyed by
+# the code string, so every tool's enum looks up here directly (a
+# StrEnum member IS its string) and a tool-specific code adds one row
+# without a projection in between. A parity test pins that every
+# non-open code of every tool has a row.
+CELL_STATE_BY_STATUS: dict[str, StoredCellState] = {
+    ToolStatus.NOT_CONFIGURED: StoredCellState.TOOL_NOT_CONFIGURED,
+    ToolStatus.RATE_LIMITED: StoredCellState.TOOL_UNAVAILABLE,
+    ToolStatus.UNREACHABLE: StoredCellState.TOOL_UNAVAILABLE,
+    ToolStatus.ERROR: StoredCellState.TOOL_UNAVAILABLE,
+}
 
 
 # The worker's idle heartbeat (binary): how long it sleeps when no fill

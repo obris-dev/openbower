@@ -15,7 +15,7 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 OPENAI_COMPATIBLE_SOURCES = {}
 ANTHROPIC_COMPATIBLE_SOURCES = {}
 # Deliberately NOT a valid door: any test that reaches the search seam
-# without patching it trips SearchMisconfigured instead of making a
+# without patching it gets a not_configured answer instead of making a
 # live network call. Tests that want a door set one explicitly.
 SEARCH_PROVIDER = ""
 # The dev .env may hold REAL DataForSEO credentials; contacts gate on

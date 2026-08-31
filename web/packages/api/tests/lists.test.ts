@@ -40,19 +40,11 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { rows: [{ a: "1" }, { a: "2" }] });
 });
 
-// A syntactically valid job envelope (values are fixtures, not
+// A syntactically valid run envelope (values are fixtures, not
 // meaning): the refill test only cares that the 201 parses.
-const JOB_ENVELOPE = {
+const RUN_ENVELOPE = {
   agent_id: "01BBBBBBBBBBBBBBBBBBBBBBBB",
   column_keys: ["answer"],
-  config_snapshot: {
-    model: "acme-large",
-    outputs: [{ key: "answer", label: "Answer", type: "text" }],
-    prompt: "What is {{domain}}?",
-    provider: "openai_compatible",
-    source: "main",
-    tools: {},
-  },
   confirmed_row_count: 10,
   counters: {
     attempted: 0,
@@ -79,7 +71,7 @@ test("postFillRefill sends rows only when scoped", async (t) => {
   });
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify(JOB_ENVELOPE), {
+    return new Response(JSON.stringify(RUN_ENVELOPE), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });
@@ -111,7 +103,7 @@ test("postFillRefill names the resume key the server declares", async (t) => {
   });
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify(JOB_ENVELOPE), {
+    return new Response(JSON.stringify(RUN_ENVELOPE), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });
@@ -152,7 +144,7 @@ test("an unknown fill status reads as running, the value that promises least", a
     globalThis.fetch = realFetch;
   });
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ items: [{ ...JOB_ENVELOPE, status: "paused" }], columns: [], next_cursor: null }), {
+    new Response(JSON.stringify({ runs: [{ ...RUN_ENVELOPE, status: "paused" }], columns: [], next_cursor: null }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })) as typeof fetch;
@@ -160,7 +152,7 @@ test("an unknown fill status reads as running, the value that promises least", a
   const res = await getFills("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
-  assert.equal(res.data.items[0]!.status, "running");
+  assert.equal(res.data.runs[0]!.status, "running");
 });
 
 test("a known fill status is passed through untouched", async (t) => {
@@ -173,9 +165,9 @@ test("a known fill status is passed through untouched", async (t) => {
   globalThis.fetch = (async () =>
     new Response(
       JSON.stringify({
-        items: [
-          { ...JOB_ENVELOPE, id: "01A", status: "complete" },
-          { ...JOB_ENVELOPE, id: "01B", status: "cancelled" },
+        runs: [
+          { ...RUN_ENVELOPE, id: "01A", status: "complete" },
+          { ...RUN_ENVELOPE, id: "01B", status: "cancelled" },
         ],
         columns: [],
         next_cursor: null,
@@ -187,9 +179,44 @@ test("a known fill status is passed through untouched", async (t) => {
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
   assert.deepEqual(
-    res.data.items.map((item) => item.status),
+    res.data.runs.map((run) => run.status),
     ["complete", "cancelled"],
   );
+});
+
+test("an unknown summary status claims nothing; known members and the empty string pass", async (t) => {
+  // current_status is the same server-owned enum plus "": a member
+  // this bundle predates must not fail the whole poll, and it maps to
+  // "", the member that CLAIMS nothing (current_status is rendered:
+  // the glance's Filling, the failed word, the recovery verb). A live
+  // run of an unheard-of status still rides the runs page, whose own
+  // tolerance keeps the loop alive.
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const columns = [
+    { column_key: "a", current_fill_id: "01A", current_status: "a_status_from_the_future", last_error: null, filled: 0, attempted: 0 },
+    { column_key: "b", current_fill_id: "", current_status: "", last_error: null, filled: 0, attempted: 0 },
+    { column_key: "c", current_fill_id: "01C", current_status: "failed", last_error: { code: "x", message: "y" }, filled: 1, attempted: 2 },
+    // A server from before the two fields shipped omits them; absence
+    // must read as the never-ran story, never fail the page.
+    { column_key: "d", current_fill_id: "", filled: 0, attempted: 0 },
+  ];
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ runs: [], columns, next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+  const res = await getFills("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual(
+    res.data.columns.map((column) => column.current_status),
+    ["", "", "failed", ""],
+  );
+  assert.equal(res.data.columns[3]!.last_error, null);
 });
 
 test("an unknown cell cause maps to a CLIENT member, not a server state", async (t) => {
@@ -201,10 +228,23 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   t.after(() => {
     globalThis.fetch = realFetch;
   });
+  // Three shapes on one page: the object the server ships now (with
+  // the tool statuses beside the word), an unknown word inside it,
+  // and the bare string a server from before tool statuses shipped,
+  // which reads as that word with no tool facts.
   globalThis.fetch = (async () =>
     new Response(
       JSON.stringify({
-        items: [{ id: "01R", position: 1, data: {}, states: { answer: "a_cause_from_the_future" } }],
+        items: [
+          { id: "01R", position: 1, data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
+          {
+            id: "01S",
+            position: 2,
+            data: { answer: "x" },
+            states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
+          },
+          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
+        ],
         next_cursor: null,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -213,7 +253,10 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   const res = await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
-  assert.equal(res.data.items[0]!.states.answer, UNKNOWN_CELL_STATE);
+  const [future, degraded, bare] = res.data.items;
+  assert.deepEqual(future!.states.answer, { state: UNKNOWN_CELL_STATE, tools: {} });
+  assert.deepEqual(degraded!.states.answer, { state: "filled", tools: { web_search: "rate_limited" } });
+  assert.deepEqual(bare!.states.answer, { state: "no_evidence", tools: {} });
   assert.ok(!(CELL_STATES as readonly string[]).includes(UNKNOWN_CELL_STATE));
 });
 

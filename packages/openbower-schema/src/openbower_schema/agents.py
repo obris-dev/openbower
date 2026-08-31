@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -153,8 +153,29 @@ class CatalogModel(BaseModel):
     model: str
 
 
+# The search seam's doors, mirrored from the server enum (pinned by a
+# parity test). Defined BEFORE AgentCatalog uses it, like every other
+# wire alias.
+SearchProviderWire = Literal["duckduckgo", "dataforseo"]
+# The doors as DATA for the wire document (x-constants): the client's
+# tolerant catalog read maps any door outside this set to null instead
+# of failing the whole parse (a strict enum would brick the model
+# picker for every deployed bundle the day a third door ships).
+SEARCH_DOORS: tuple[str, ...] = get_args(SearchProviderWire)
+# The BASE tool status codes (the server's ToolStatus, pinned): what a
+# tool's door did. Each tool's own vocabulary contains these and may
+# add its own; the client resolves copy by (tool, code) and tolerates
+# a code it has not heard of.
+ToolStatusWire = Literal["open", "not_configured", "rate_limited", "unreachable", "error"]
+# Each tool's FULL vocabulary (the base codes plus the tool's own),
+# shipped as an x-constant so the client types its copy table per tool.
+# Mirrors the server enums (agents.constants.SearchStatus), pinned.
+SEARCH_STATUSES: tuple[str, ...] = ("open", "not_configured", "rate_limited", "unreachable", "error")
+TOOL_STATUSES: dict[str, tuple[str, ...]] = {"web_search": SEARCH_STATUSES, "find_contacts": SEARCH_STATUSES}
+
+
 class AgentCatalog(BaseModel):
-    """What THIS deploy can run; search_available gates the tools."""
+    """What THIS deploy can run; `doors` gates the tools."""
 
     models: list[CatalogModel]
     support_followup: str = Field(
@@ -166,17 +187,42 @@ class AgentCatalog(BaseModel):
         description="True when the catalog cap cut the list: an address past the cap "
         "may still RUN (model_for validates against the full roster), it just is not shown."
     )
-    search_available: bool
-    contacts_available: bool
+    doors: dict[str, str] = Field(
+        description="Each tool's door status BEFORE a run, keyed by AgentTool (web_search, "
+        "find_contacts): 'open' gates the toggle on; any other code is the reason it is off "
+        "(today only 'not_configured' can appear here; the run-time codes ride the cells)."
+    )
+    search_provider: SearchProviderWire | None = Field(
+        description="Which door serves web search on this deployment (the server's SearchProvider, "
+        "pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot "
+        "refuses an unset door, so client copy never needs a no-search-door story. Client copy "
+        "composes it: a rate-limited cell names the paid door only where it is a remedy, never to "
+        "someone already on it."
+    )
 
 
 class TestSearch(BaseModel):
-    """One search query's diagnosis: failed means the provider errored
-    (rate limit, outage), distinct from an honest zero-hit answer."""
+    """One search query's outcome: `status` is what the door said (a
+    SearchStatus code: open, and hits, possibly zero, is the honest
+    answer; any other code is why there are none). `provider` is the
+    door that served it, `attempts` how many tries the seam made for
+    this one query (a rate limit is retried, same query, before it
+    counts), and `tool` which tool asked (web_search | find_contacts),
+    so a reader can tell whose door refused."""
 
+    # Defaults, deliberately, on everything but the query and hits:
+    # this shape rides STORED result blobs (task results, bench runs)
+    # written by earlier versions that carried different fields, and a
+    # stored read is the one place this contract is tolerant (a
+    # required field here bricks the give-up path and the drawer on
+    # rows written before the field existed). Live writers set all of
+    # them.
     query: str
     hits: int
-    failed: bool
+    status: str = ""
+    provider: str = ""
+    attempts: int = 1
+    tool: str = ""
 
 
 TestRunStatus = Literal["pending", "complete", "failed"]
@@ -190,6 +236,10 @@ class AgentTestResult(BaseModel):
     cells: dict[str, str]
     evidence: list[str]
     searches: list[TestSearch]
+    # Tool name to its final door status: what lets the bench render
+    # the same degraded story a sheet cell carries. Defaulted for runs
+    # stored before tools reported statuses.
+    tools: dict[str, str] = {}
 
 
 class AgentTestRun(BaseModel):

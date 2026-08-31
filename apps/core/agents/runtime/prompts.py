@@ -30,21 +30,47 @@ from ..constants import MAX_TOOL_CALLS
 
 _ENGINE = Engine(dirs=[], app_dirs=False, autoescape=False, string_if_invalid="")
 
+
+def _scoring_conduct(*, source: str, url_source: str) -> str:
+    """The scoring conduct every instruction set shares, phrased over
+    its own evidence noun. ONE author on purpose: the confidence pair
+    and the floor's scale are the product's contract, and two
+    hand-kept copies is how an edit lands on one and silently skips
+    the other."""
+    return (
+        f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"
+        f" explain what in {source} supports your answer, and what you could not confirm, inferred"
+        " rather than read, or found ambiguous or out of date. Then state"
+        f" your confidence in its {CONFIDENCE_SUFFIX} field, where 1 is certain and stated outright by"
+        f" {source} and 0 is nothing supporting it at all."
+        f" Use ONLY URLs that appear in {url_source}; never invent one."
+        " EVERY field is required: answer every one, and never omit a field."
+    )
+
+
 AGENT_INSTRUCTIONS = (
     "Use the provided tools to gather evidence before answering."
     f" You have exactly {MAX_TOOL_CALLS} searches; a good answer from records already gathered BEATS"
     " another search, so once results cover the question, stop searching and answer."
+    " If a tool answers that search is unavailable (rate limited), stop searching and leave every"
+    " output empty; the row will be retried later."
     " Tool results are the best matches for your QUERY, not facts about your task: one may"
     " describe a different company, person, or time. Judging which ones concern your task is"
-    " your job."
-    f" For every output you fill, use its {CONFIDENCE_REASON_SUFFIX} field BEFORE you score it:"
-    " explain what in the evidence supports your answer, and what you could not confirm, inferred"
-    " rather than read, or found ambiguous or out of date. Then state"
-    f" your confidence in its {CONFIDENCE_SUFFIX} field, where 1 is certain and stated outright by"
-    " the evidence and 0 is nothing supporting it at all."
-    " Use ONLY URLs that appear in tool results; never invent one."
-    " EVERY field is required: answer every one, and never omit a field. An empty string is for"
+    " your job." + _scoring_conduct(source="the evidence", url_source="tool results") + " An empty string is for"
     " an output you found NOTHING for; anything you did find goes in with the score it earned."
+)
+# The verdict call after a run spent its whole tool budget still
+# searching: no tools, the records it gathered rendered into the task,
+# and the same scoring conduct, so the confidence floor judges what it
+# did find instead of the budget deciding for it.
+CAPPED_INSTRUCTIONS = (
+    "Your search budget is spent. Answer ONLY from the records listed in the task; they are"
+    " everything you gathered. Records are the best matches for your QUERIES, not facts about"
+    " your task: one may describe a different company, person, or time. Judging which ones"
+    " concern your task is your job."
+    + _scoring_conduct(source="the records", url_source="the records")
+    + " An empty string is for"
+    " an output the records say NOTHING about; anything they do say goes in with the score it earned."
 )
 DIRECT_INSTRUCTIONS = (
     "Answer from your own knowledge."

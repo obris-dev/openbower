@@ -19,7 +19,7 @@ from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, Fil
 from ..models import Fill, List, ListRow
 from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
-from .fill_queue import stop_fill
+from .fill_progress import stop_fill
 from .lists import ListNotFound
 
 
@@ -109,19 +109,19 @@ class ColumnService:
             # a concurrent add (or a fill's admission) can append over
             # this read and one write silently drops the other's column.
             try:
-                target = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
+                target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
             except List.DoesNotExist as e:
                 raise ListNotFound(target_list_id) from e
             key = derive_column_key(label)
             if not key or reserved_output_key(key):
                 raise ReservedColumnKey(label=label)
-            if key in {column["key"] for column in target.columns}:
+            if key in {column["key"] for column in target_list.columns}:
                 raise ColumnExists(key=key)
-            if len(target.columns) >= MAX_LIST_COLUMNS:
+            if len(target_list.columns) >= MAX_LIST_COLUMNS:
                 raise ColumnsFull()
-            target.columns = [*target.columns, {"key": key, "label": label, "type": column_type}]
-            target.save(update_fields=["columns", "updated_at"])
-        return target
+            target_list.columns = [*target_list.columns, {"key": key, "label": label, "type": column_type}]
+            target_list.save(update_fields=["columns", "updated_at"])
+        return target_list
 
     def reorder(self, target_list_id: str, *, keys: list[str]) -> List:
         """Rewrite the columns array in the given order and return the
@@ -140,10 +140,10 @@ class ColumnService:
         other's column."""
         with transaction.atomic():
             try:
-                target = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
+                target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
             except List.DoesNotExist as e:
                 raise ListNotFound(target_list_id) from e
-            by_key = {column["key"]: column for column in target.columns}
+            by_key = {column["key"]: column for column in target_list.columns}
             # A repeat is judged FIRST and separately, because it is
             # the request being wrong rather than the sheet having
             # moved, and the two owe the caller different answers.
@@ -154,11 +154,11 @@ class ColumnService:
             # columns somehow held a repeat would let an honest request
             # naming each key once pass both checks and quietly drop
             # one. Reorder adds and drops nothing, including that.
-            if len(keys) != len(target.columns) or set(keys) != set(by_key):
+            if len(keys) != len(target_list.columns) or set(keys) != set(by_key):
                 raise ColumnOrderStale()
-            target.columns = [by_key[key] for key in keys]
-            target.save(update_fields=["columns", "updated_at"])
-        return target
+            target_list.columns = [by_key[key] for key in keys]
+            target_list.save(update_fields=["columns", "updated_at"])
+        return target_list
 
     def _locked(self, target_list_id: str) -> List:
         """The List row every columns writer takes before touching the
@@ -178,17 +178,17 @@ class ColumnService:
         it was born with, which is correct because the key is
         internal and the label is the user's."""
         with transaction.atomic():
-            target = self._locked(target_list_id)
-            columns = list(target.columns)
+            target_list = self._locked(target_list_id)
+            columns = list(target_list.columns)
             for column in columns:
                 if column["key"] == key:
                     column["label"] = label
                     break
             else:
                 raise ColumnNotFound(key)
-            target.columns = columns
-            target.save(update_fields=["columns", "updated_at"])
-        return target
+            target_list.columns = columns
+            target_list.save(update_fields=["columns", "updated_at"])
+        return target_list
 
     def delete(self, target_list_id: str, *, key: str) -> List:
         """Delete one column and everything it holds, in ONE
@@ -208,14 +208,14 @@ class ColumnService:
         mid-row blocks on the row lock and finds its task abandoned
         when it wakes, so it writes the deleted key back to nothing."""
         with transaction.atomic():
-            target = self._locked(target_list_id)
-            doomed = next((column for column in target.columns if column["key"] == key), None)
+            target_list = self._locked(target_list_id)
+            doomed = next((column for column in target_list.columns if column["key"] == key), None)
             if doomed is None:
                 raise ColumnNotFound(key)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
             agent_id = str((doomed.get("fill") or {}).get("agent_id", ""))
-            columns = [column for column in target.columns if column["key"] != key]
+            columns = [column for column in target_list.columns if column["key"] != key]
 
             # ONE UPDATE over the sheet's rows, so an O(rows) write
             # dissolves inside the transaction rather than stranding
@@ -225,7 +225,7 @@ class ColumnService:
             # queries row data (FillCellState exists so counting
             # filled cells never has to). The blob is storage; the
             # structured record is what answers questions about it.
-            ListRow.objects.filter(list_id=str(target.id)).update(data=_JsonbWithoutKey("data", Value(key)))
+            ListRow.objects.filter(list_id=str(target_list.id)).update(data=_JsonbWithoutKey("data", Value(key)))
 
             # Every fill that touched this column stops. A fill can own
             # SEVERAL columns (one multi-output agent makes them
@@ -233,26 +233,26 @@ class ColumnService:
             # left writing into a column that no longer exists; the
             # sibling refills.
             for fill_id in Fill.objects.filter(
-                list_id=str(target.id),
+                list_id=str(target_list.id),
                 status__in=LIVE_FILL_STATUSES,
                 column_keys__contains=[key],
             ).values_list("id", flat=True):
                 stop_fill(str(fill_id), FillStatus.CANCELLED)
 
-            cell_truth.purge_column(str(target.id), key)
-            target.columns = columns
-            target.save(update_fields=["columns", "updated_at"])
+            cell_truth.purge_column(str(target_list.id), key)
+            target_list.columns = columns
+            target_list.save(update_fields=["columns", "updated_at"])
 
             # The ephemeral agent dies with the LAST column that used
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
-            self._retire_ephemeral(target, agent_id=agent_id)
-        return target
+            self._retire_ephemeral(target_list, agent_id=agent_id)
+        return target_list
 
-    def _retire_ephemeral(self, target: List, *, agent_id: str) -> None:
+    def _retire_ephemeral(self, target_list: List, *, agent_id: str) -> None:
         if not agent_id:
             return
-        if any((column.get("fill") or {}).get("agent_id") == agent_id for column in target.columns):
+        if any((column.get("fill") or {}).get("agent_id") == agent_id for column in target_list.columns):
             return
         AgentService(account_id=self.account_id, user_id=self.user_id).delete_ephemeral([agent_id])
 
@@ -286,11 +286,15 @@ class ColumnService:
 
     def _fill_agent(self, target_list_id: str, *, column_key: str, agents: AgentService):
         try:
-            target = List.objects.get(id=target_list_id, account_id=self.account_id)
+            target_list = List.objects.get(id=target_list_id, account_id=self.account_id)
         except List.DoesNotExist as e:
             raise ListNotFound(target_list_id) from e
         fill = next(
-            (column.get("fill") for column in target.columns if column["key"] == column_key and column.get("fill")),
+            (
+                column.get("fill")
+                for column in target_list.columns
+                if column["key"] == column_key and column.get("fill")
+            ),
             None,
         )
         if fill is None:

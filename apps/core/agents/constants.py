@@ -107,6 +107,14 @@ LIST_TIMEOUT_SECONDS = 16
 PROBE_FAILURE_TTL_SECONDS = 16
 SEARCH_TIMEOUT_SECONDS = 16
 DATAFORSEO_TIMEOUT_SECONDS = 64
+# A rate-limited query is retried, SAME query, on this schedule
+# (binary) before the seam gives up on it. Transport, never the
+# model's budget: a retry of one question is not a new one. The
+# schedule's own waits total 15s, but a door's Retry-After ask is
+# honored clamped to the LARGEST step, so the true bound per call is
+# len(schedule) * max(schedule) (SEARCH_ATTEMPT_WORST_CASE_SECONDS
+# carries it into the worst-case derivation).
+SEARCH_BACKOFF_SECONDS = (1, 2, 4, 8)
 # One validation retry per run: the framework re-asks once on an
 # invalid output, then None is signal.
 MODEL_RETRIES = 1
@@ -125,14 +133,29 @@ COMPLETION_TOKENS_PER_OUTPUT = 256
 TEST_VALUE_MAX_LENGTH = 512
 # A failed run's wire diagnosis, clamped like every authored value.
 TEST_RUN_ERROR_MAX_LENGTH = 256
+# One search call's worst case: the door's timeout, plus every wait
+# the backoff schedule allows AT ITS CLAMP. Not sum(schedule): a door
+# answering Retry-After above the schedule is honored clamped to the
+# schedule's largest step on EVERY attempt, so each wait can reach
+# max(schedule), not its own step.
+SEARCH_ATTEMPT_WORST_CASE_SECONDS = DATAFORSEO_TIMEOUT_SECONDS + len(SEARCH_BACKOFF_SECONDS) * max(
+    SEARCH_BACKOFF_SECONDS
+)
+# The capped-verdict fallback is a SECOND agent run with its own
+# request budget (answer.py's UsageLimitExceeded leg): one verdict
+# call plus the framework's validation retries, each a completion at
+# the full timeout.
+CAPPED_VERDICT_REQUESTS = 1 + MODEL_RETRIES
 # The runtime's worst case for ONE run, derived, never invented: every
-# completion the request budget allows at the completion timeout, plus
-# every paid search at its own. The wire's poll_budget_seconds
-# publishes THIS (a hung run must not spin the client for the whole
-# stale window).
+# completion the request budget allows at the completion timeout,
+# including the capped verdict's own budget, plus every paid search at
+# its clamped worst case (the free door's timeout is shorter, so the
+# paid door's bounds both). The wire's poll_budget_seconds publishes
+# THIS (a hung run must not spin the client for the whole stale
+# window), and the worker's compose stop_grace_period must clear it.
 TEST_RUN_WORST_CASE_SECONDS = (
-    MAX_TOOL_CALLS + 3
-) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * DATAFORSEO_TIMEOUT_SECONDS
+    MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS
+) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * SEARCH_ATTEMPT_WORST_CASE_SECONDS
 # A pending run is superseded only after this much SILENCE since its
 # last poll (the poll GET stamps polled_at). Sized ABOVE browser
 # background-tab throttling (a hidden tab's timers drop to about one
@@ -178,6 +201,43 @@ class SearchProvider(StrEnum):
 
     DUCKDUCKGO = "duckduckgo"
     DATAFORSEO = "dataforseo"
+
+
+class ToolStatus(StrEnum):
+    """The BASE status codes every tool can report for one call: what
+    its door did. Each outcome type carries its own enum that restates
+    these (StrEnums cannot extend one another; a parity test pins the
+    containment) and may add modes of its own, so a tool-specific
+    failure never lands here and never touches another tool. The
+    sheet's cell vocabulary is a table keyed by code (lists:
+    CELL_STATE_BY_STATUS), so a tool-specific code adds one row there;
+    the tool's own code rides the task and the cell record beside the
+    cell state."""
+
+    OPEN = "open"
+    NOT_CONFIGURED = "not_configured"
+    RATE_LIMITED = "rate_limited"
+    UNREACHABLE = "unreachable"
+    ERROR = "error"
+
+
+class SearchStatus(StrEnum):
+    """The search door's vocabulary: the base codes, plus any mode only
+    a search door has (none yet)."""
+
+    OPEN = "open"
+    NOT_CONFIGURED = "not_configured"
+    RATE_LIMITED = "rate_limited"
+    UNREACHABLE = "unreachable"
+    ERROR = "error"
+
+
+# The search statuses that CLOSE the tool's door for the rest of the
+# run, the moment they are reported: a rate limit (the seam already
+# retried it) and a door found unconfigured. Unreachable and error do
+# not: the next query may get through, and a door that only ever
+# failed is settled at the end of the run instead.
+SEARCH_DOOR_CLOSERS = frozenset({SearchStatus.RATE_LIMITED, SearchStatus.NOT_CONFIGURED})
 
 
 class AgentTool(StrEnum):

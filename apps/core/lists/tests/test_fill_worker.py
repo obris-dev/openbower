@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from agents.constants import SEARCH_BACKOFF_SECONDS
 from openbower_kernel.provider_config import ProviderSpec, canonical_base, make_source
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
@@ -32,8 +33,9 @@ from ..constants import (
     FillTaskStatus,
     StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask, ListRow
-from ..operations.fill_worker import FillWorkerOperation, _FillState
+from ..models import Fill, FillCellState, FillTask, List, ListRow
+from ..operations.fill_worker import FillState, FillWorkerOperation
+from ..services import fill_progress
 from ..services.fill_admission import FillAdmissionService
 from ..services.fill_queue import FillQueueService
 from ..services.fills import FillService
@@ -182,7 +184,7 @@ class WorkerTestCase(TransactionTestCase):
         hand the provider a fresh count every time and never trip
         them."""
         with self._patched(model, source=source), ThreadPoolExecutor(max_workers=4) as pool:
-            supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+            supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
             for pass_number in range(passes):
                 if pass_number:
                     FillTask.objects.filter(not_before__isnull=False).update(not_before=timezone.now())
@@ -280,13 +282,13 @@ class WorkerTestCase(TransactionTestCase):
         # The breaker itself is a pure object (that is why it was split
         # out); what this pins is the SUPERVISOR's response to it, which
         # is the part with a fill and a queue to touch.
-        supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
         with self._patched(answering_model(lambda prompt: "found")), ThreadPoolExecutor(max_workers=1) as pool:
             state = supervisor._admit(self.fill)
             for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-                state.breakers.row_finished(transient=True, searches=[], at_floor=True)
+                state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
             self.assertIsNotNone(state.breakers.tripped)
-            supervisor._serve(self.fill, pool)
+            supervisor._process(self.fill, pool)
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.error_code, "provider_throttled")
@@ -341,9 +343,7 @@ class WorkerTestCase(TransactionTestCase):
         self.run_worker(throttling_model(), passes=1)
         self.fill.refresh_from_db()
         self.assertGreater(self.fill.transient, 0)
-        FillQueueService(worker_id="probe").fail_fill(
-            str(self.fill.id), code=FillFailureCode.PROVIDER_THROTTLED, message="throttled"
-        )
+        fill_progress.fail(str(self.fill.id), code=FillFailureCode.PROVIDER_THROTTLED, message="throttled")
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.transient, 0)
@@ -465,7 +465,92 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.TRANSIENT)
 
-    def test_a_drained_but_live_job_completes_on_the_next_pass(self) -> None:
+    def test_a_rate_limited_search_door_parks_the_row_and_the_cell_names_the_tool(self) -> None:
+        # The model searches, the free door refuses past its backoff,
+        # and the model answers anyway from nothing: the answer is
+        # discarded, the row parks like a model 429 would (its run
+        # stored, so the refusals are the audit), and once the attempts
+        # are spent the cell lands in the state the TOOL owns, never in
+        # a bare transient and never as "found".
+        from agents.search import _DuckduckgoPage
+
+        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
+        config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
+        with patch("lists.services.fill_admission.model_for"):
+            solo = self.lists.create(
+                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            )
+            self.lists.add_rows(solo, [{"company": "acme.com"}])
+            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
+                list_id=str(solo.id), config=config, confirmed_row_count=1
+            )
+
+        def fn(messages, info: AgentInfo):
+            if any(part.part_kind == "tool-return" for m in messages for part in m.parts):
+                return _answer(info, "found")
+            return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "acme.com"})])
+
+        with (
+            # The engine's bot challenge: a 202 with no results in it.
+            patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(202, [])),
+            patch("agents.search._sleep"),
+            self.settings(SEARCH_PROVIDER="duckduckgo"),
+        ):
+            self.run_worker(FunctionModel(fn), passes=1)
+            fill.refresh_from_db()
+            task = FillTask.objects.get(fill_id=str(fill.id))
+            self.assertEqual(fill.status, FillStatus.RUNNING)
+            self.assertEqual(fill.transient, 1)
+            self.assertTrue(task.parked)
+            self.assertEqual(task.result["blank_cause"], StoredCellState.TOOL_UNAVAILABLE)
+            self.assertEqual(task.result["tools"], {"web_search": "rate_limited"})
+            self.assertEqual(task.result["cells"], {})
+            [search] = task.result["searches"]
+            self.assertEqual(
+                (search["status"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
+            )
+            self.assertEqual(search["attempts"], len(SEARCH_BACKOFF_SECONDS) + 1)
+            self.assertFalse(FillCellState.objects.exists())
+            # The parked task is not yet due, so the first pass here is
+            # idle; the remaining attempts park again, and the claim
+            # past the cap gives up.
+            self.run_worker(FunctionModel(fn), passes=FILL_ROW_ATTEMPTS + 1)
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, FillStatus.COMPLETE)
+        self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
+        cell = FillCellState.objects.get()
+        # The cell carries WHICH tool and WHAT its door said beside the
+        # base state: the sheet's word is the state, the sentence is
+        # the tool's status.
+        self.assertEqual((cell.state, cell.tools), (StoredCellState.TOOL_UNAVAILABLE, {"web_search": "rate_limited"}))
+        self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
+
+    def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
+        # One row gone, the list still here: its task is ROW_MISSING
+        # (nothing to diagnose, nothing a resume could owe), no cell
+        # state is written for it, and the other row fills normally.
+        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
+        ListRow.objects.filter(id=gone.id).delete()
+        self.run_worker(answering_model(lambda prompt: "found"))
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
+        self.assertEqual(counting(self.fill), {"attempted": 1, "filled": 1})
+        statuses = {t.row_id: t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}
+        self.assertEqual(statuses[str(gone.id)], FillTaskStatus.ROW_MISSING)
+        self.assertEqual(set(statuses.values()), {FillTaskStatus.ROW_MISSING, FillTaskStatus.DONE})
+        self.assertFalse(FillCellState.objects.filter(row_id=str(gone.id)).exists())
+
+    def test_a_purged_list_cancels_the_fill(self) -> None:
+        # The whole list gone is a different fact: nothing is owed to
+        # anyone, and a user deletion is never a failure story.
+        ListRow.objects.filter(list_id=str(self.sheet.id)).delete()
+        List.objects.filter(id=self.sheet.id).delete()
+        self.run_worker(answering_model(lambda prompt: "found"))
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.CANCELLED)
+        self.assertFalse(FillCellState.objects.exists())
+
+    def test_a_drained_but_live_run_completes_on_the_next_pass(self) -> None:
         # A worker killed between its last terminal write and
         # try_finish (SIGTERM on the final rows) leaves a live fill
         # with every row terminal: the next pass must flip it
@@ -476,7 +561,7 @@ class WorkerTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
 
-    def test_cancelled_job_stops_without_spending(self) -> None:
+    def test_cancelled_run_stops_without_spending(self) -> None:
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         calls = []
         self.run_worker(answering_model(lambda prompt: calls.append(prompt) or "x"))
@@ -530,7 +615,7 @@ class FairnessTests(WorkerTestCase):
         # completion: the old loop also finished both fills, but only
         # one after the other, so a 25k-row fill held the worker for
         # its entire run. Rows of the two fills must overlap in time.
-        other_job_id = self._second_sheet("01ACCOUNTBBBBBBBBBBBBBBBBB", rows=4)
+        other_run_id = self._second_sheet("01ACCOUNTBBBBBBBBBBBBBBBBB", rows=4)
         seen: list[str] = []
 
         def answer(prompt: str) -> str:
@@ -542,7 +627,7 @@ class FairnessTests(WorkerTestCase):
         self.run_worker(answering_model(answer))
 
         self.fill.refresh_from_db()
-        other = Fill.objects.get(id=other_job_id)
+        other = Fill.objects.get(id=other_run_id)
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(other.status, FillStatus.COMPLETE)
         mine = [i for i, who in enumerate(seen) if who == "mine"]
@@ -554,12 +639,12 @@ class FairnessTests(WorkerTestCase):
         self.assertTrue(max(mine) > min(theirs) and max(theirs) > min(mine), seen)
 
     def test_every_live_fill_is_offered_each_pass(self) -> None:
-        # The interleave itself, at the seam: live_jobs hands back BOTH
+        # The interleave itself, at the seam: live_fills hands back BOTH
         # fills, oldest first, so no fill can be reached only after
         # another finishes.
-        other_job_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
-        live = [str(fill.id) for fill in FillQueueService(worker_id="test:1").live_fills()]
-        self.assertEqual(live, sorted([str(self.fill.id), other_job_id]))
+        other_run_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
+        live = [str(fill.id) for fill in fill_progress.live_fills()]
+        self.assertEqual(live, sorted([str(self.fill.id), other_run_id]))
 
 
 class SourceCeilingTests(WorkerTestCase):
@@ -573,13 +658,13 @@ class SourceCeilingTests(WorkerTestCase):
     happens at a single worker."""
 
     def test_two_fills_on_one_source_share_its_declared_ceiling(self) -> None:
-        supervisor = FillWorkerOperation(queue=FillQueueService(worker_id="test:sup"), stop=threading.Event())
+        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
         with self._patched(answering_model(lambda prompt: "found")):
             mine = supervisor._admit(self.fill)
         self.assertEqual(mine.ceiling, 1)
         # A second fill on the SAME (provider, source), with a row of
         # this one already running.
-        theirs = _FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
+        theirs = FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
         supervisor._states["other"] = theirs
         mine.in_flight[object()] = None
         self.assertEqual(supervisor._source_free_slots(theirs), 0)

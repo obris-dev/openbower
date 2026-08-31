@@ -1,4 +1,4 @@
-import type { FillWire } from "@bower/api";
+import type { FillRunWire } from "@bower/api";
 
 /** The speed breakdown, phrased: derived from the worker's pace
  * accumulators (wall seconds across terminal rows, the summed search
@@ -6,7 +6,7 @@ import type { FillWire } from "@bower/api";
  * Null until a row has landed. Search waits can EXCEED wall time
  * (parallel tool calls sum), so the share claim is qualitative, never
  * a percentage pretending precision. */
-export function paceSummary(counters: FillWire["counters"]): string | null {
+export function paceSummary(counters: FillRunWire["counters"]): string | null {
   const { attempted, row_seconds, search_wait_seconds, concurrency_point } = counters;
   if (attempted <= 0 || row_seconds <= 0) return null;
   const avgRow = Math.round(row_seconds / attempted);

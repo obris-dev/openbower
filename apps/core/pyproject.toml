@@ -19,6 +19,11 @@ dependencies = [
     "python-dotenv>=1.1",
     "ulid>=1.1",
     "pydantic-ai-slim[anthropic,duckduckgo,openai]>=2.32.0",
+    # Reached by PRIVATE paths (the engine class and its exceptions in
+    # agents/search.py), which a minor bump can move: an ImportError
+    # there kills the whole agents app at import time, so the pin is
+    # deliberately tight and bumps are a reviewed change.
+    "ddgs>=9.15,<9.16",
 ]
 
 [dependency-groups]

@@ -48,7 +48,7 @@ class ColumnFill(BaseModel):
     agent_id: str
     current_fill_id: str = Field(
         default="",
-        description="The fill that speaks for this column, stored here when it opens. "
+        description="The fill run that speaks for this column, stored here when it opens. "
         "Blank on a column filled before it was recorded. Clients read it off "
         "ColumnFillSummary, which the fills poll serves; it is declared here because "
         "this model is what the column's own structure is, and an undeclared key is "
@@ -95,13 +95,15 @@ class ListSummary(BaseModel):
 
 # The per-cell state the rows page ships. `pending` is the ONE
 # non-terminal value (it is the queue state, and drives the shimmer);
-# the rest are terminal blank causes. `filled` never travels: a filled
-# cell's value already rides the row data, and absence-of-state plus a
-# value IS the filled signal. Not-attempted is likewise the ABSENCE of
-# any state (rows past the fill's cutoff, or no fill at all), never an
+# the rest are terminal. `filled` travels ONLY when the run that
+# filled the cell had a degraded tool (the `tools` map beside it says
+# which), so the value can carry its mark; a value with no entry at
+# all IS filled and clean. Not-attempted is likewise the ABSENCE of
+# any entry (rows past the fill's cutoff, or no fill at all), never an
 # enum value.
 WireCellState = Literal[
     "pending",
+    "filled",
     "no_evidence",
     # The model spent its request/tool budget without producing an
     # answer: SETTLED (the same config re-buys the same refusal), unlike
@@ -111,24 +113,44 @@ WireCellState = Literal[
     # citations never confirmed it for THIS row): SETTLED, since the
     # same config re-buys the same unconfirmable answer.
     "unverified",
-    "no_tools_door",
     "unparseable",
     "type_mismatch",
     "model_error",
     "transient",
+    # A tool's door did not serve this row. The SHEET keys on the base
+    # code only (which tool, and the tool's own code, ride `tools`):
+    # not configured is written at once and re-runs on Continue once
+    # set up; unavailable (rate limited, unreachable, or erroring past
+    # the row's retries) parks first and lands after the attempt cap.
+    "tool_not_configured",
+    "tool_unavailable",
 ]
+
+
+class CellStateWire(BaseModel):
+    """One AI cell's state and the tool statuses of the run that wrote
+    it: `tools` is tool -> status code (a base ToolStatus code or the
+    tool's own; "open" for a tool that served), empty for a pending
+    cell or a run before tools reported statuses. The client resolves
+    copy by (tool, code) and tolerates a code it has not heard of."""
+
+    state: WireCellState
+    # A literal default, not default_factory: only the literal reaches
+    # the JSON schema, so the generated client parses an entry without
+    # the key instead of refusing it.
+    tools: dict[str, str] = {}
 
 
 class ListRowWire(BaseModel):
     id: str
     position: int = Field(description="1-based dense display/paging order.")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
-    states: dict[str, WireCellState] = Field(
+    states: dict[str, CellStateWire] = Field(
         default={},
-        description="AI cell states keyed by column key, for the cells that have no value: "
-        "a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet "
-        "carries almost nothing here. A value in `data` with no entry here IS filled, and "
-        "never-attempted is likewise an absence.",
+        description="AI cell states keyed by column key: every cell without a value, plus "
+        "filled cells whose run had a degraded tool. Slim on absences by contract, so a "
+        "long-filled sheet carries almost nothing here. A value in `data` with no entry here "
+        "IS filled and clean, and never-attempted is likewise an absence.",
     )
 
 

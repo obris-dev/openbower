@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, cn, Spinner } from "@bower/ui";
-import { fetchAgentCatalog, type FillWire } from "@bower/api";
+import { Button, Spinner } from "@bower/ui";
+import { fetchAgentCatalog } from "@bower/api";
 
 import { etaSeconds, formatEta, pushSample, type EtaSample } from "./lib/fill-eta";
 import { paceSummary } from "./lib/fill-pace";
 import { staleWarning } from "./lib/fill-staleness";
+import type { LiveRun } from "./lib/live-status";
 
 function count(n: number): string {
   return n.toLocaleString("en-US");
@@ -17,42 +18,23 @@ function count(n: number): string {
 // nothing. Render-time Date.now() is impure; the clock is state.
 const STALENESS_TICK_MS = 32_768;
 
-const STATUS_LABEL: Record<FillWire["status"], string> = {
+const STATUS_LABEL: Record<LiveRun["status"], string> = {
   pending: "Starting",
   running: "Filling",
-  complete: "Done",
-  failed: "Fill failed",
-  cancelled: "Stopped",
 };
 
-/** One fill's chip in the sheet's status bar: counters (attempted of
- * the consented row count), Stop while live, heartbeat staleness as
- * warning-role copy judged against the wire's lease window
- * (fill-staleness owns the judgment and the per-status copy; a stale
- * heartbeat is degraded REPORTING, never failure; only terminal states
- * end the story), the failed job's server-written error verbatim, and
- * quiet done/stopped states with the final counters. A stopped or
- * failed job carries its recovery verb in place: Continue starts a
- * NEW job over the unanswered rows (a refusal renders verbatim in
- * the chip's error slot). A terminal chip simply persists until the
- * next job supersedes it: no dismissal exists, so a fill's management
- * surface can never be hidden by mistake. Two contexts, one chip:
- * "inline" right-aligns and truncates against the footer's one line;
- * "panel" fills the tray panel's width, left-aligned, and lets the
- * counters wrap so nothing is lost. */
-export function FillProgress({
-  job,
-  onStop,
-  onContinue,
-  context = "inline",
-}: {
-  job: FillWire;
-  onStop: () => Promise<string | null>;
-  onContinue: () => Promise<string | null>;
-  context?: "inline" | "panel";
-}) {
+/** A LIVE run's chip (the tracker popover's status line): counters
+ * (attempted of the consented row count), Stop, the pace line, and
+ * heartbeat staleness as warning-role copy judged against the wire's
+ * lease window (fill-staleness owns the judgment and the per-status
+ * copy; a stale heartbeat is degraded REPORTING, never failure). The
+ * prop TYPE holds the live-only contract: the poll ships live runs,
+ * use-fill filters what it trusts, and Stop's echo removes the run
+ * outright, so a terminal envelope cannot reach this chip and the
+ * terminal branches do not exist. The tracker cell renders terminal
+ * stories from the column summary instead. */
+export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Promise<string | null> }) {
   const [stopping, setStopping] = useState(false);
-  const [continuing, setContinuing] = useState(false);
   const [actionError, setActionError] = useState("");
   const [now, setNow] = useState(0);
   // Observed-rate samples, a REF the effect below pushes; render never
@@ -64,34 +46,29 @@ export function FillProgress({
   // reflects whatever concurrency the worker's controller found.
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
-  const live = job.status === "pending" || job.status === "running";
-
   useEffect(() => {
-    etaSamples.current = pushSample(etaSamples.current, Date.now(), job.counters.attempted);
+    etaSamples.current = pushSample(etaSamples.current, Date.now(), run.counters.attempted);
     // Seeded from a zero-delay callback (render must stay pure and an
     // effect body must not set state synchronously); the interval then
     // keeps the copy's minutes moving even when polls blip.
     const refresh = () => {
       setNow(Date.now());
-      setRemainingSeconds(
-        live ? etaSeconds(etaSamples.current, job.confirmed_row_count - job.counters.attempted) : null,
-      );
+      setRemainingSeconds(etaSeconds(etaSamples.current, run.confirmed_row_count - run.counters.attempted));
     };
     const seed = setTimeout(refresh, 0);
-    if (!live) return () => clearTimeout(seed);
     const timer = setInterval(refresh, STALENESS_TICK_MS);
     return () => {
       clearTimeout(seed);
       clearInterval(timer);
     };
-  }, [live, job]);
+  }, [run]);
 
   // The not-started warning composes the deployment's support_followup
   // fragment, fetched only once that warning is due (a healthy fill
   // never pays for the catalog here). Absence degrades to the bare
   // sentence: the fragment renders only when the fact arrived.
   const [supportFollowup, setSupportFollowup] = useState<string | null>(null);
-  const needsFollowup = job.status === "pending" && staleWarning(job, now) !== null;
+  const needsFollowup = run.status === "pending" && staleWarning(run, now) !== null;
   useEffect(() => {
     if (!needsFollowup || supportFollowup !== null) return;
     let superseded = false;
@@ -105,10 +82,10 @@ export function FillProgress({
     };
   }, [needsFollowup, supportFollowup]);
 
-  const counters = `${count(job.counters.attempted)} of ${count(job.confirmed_row_count)} | ${count(
-    job.counters.filled,
-  )} filled | ${count(job.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
-  const warning = staleWarning(job, now, supportFollowup ?? undefined);
+  const counters = `${count(run.counters.attempted)} of ${count(run.confirmed_row_count)} | ${count(
+    run.counters.filled,
+  )} filled | ${count(run.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
+  const warning = staleWarning(run, now, supportFollowup ?? undefined);
 
   async function stop() {
     if (stopping) return;
@@ -119,69 +96,23 @@ export function FillProgress({
     if (message) setActionError(message);
   }
 
-  async function continueFill() {
-    if (continuing) return;
-    setContinuing(true);
-    setActionError("");
-    const message = await onContinue();
-    setContinuing(false);
-    if (message) setActionError(message);
-  }
-
-  const inPanel = context === "panel";
-  // The two recovery verbs belong to the stopped and failed stories
-  // only: a complete fill has nothing to continue and its chip
-  // retires on its own once the poll loop ends.
-  const recoverable = job.status === "cancelled" || job.status === "failed";
-
   return (
-    <div className={cn("flex min-w-0 flex-col gap-1", inPanel ? "items-start" : "items-end")}>
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-full border border-hairline bg-wash py-1 pl-3 pr-1 text-xs",
-          inPanel && "w-full",
-        )}
-      >
-        {live && <Spinner className="h-3 w-3 shrink-0" />}
-        <span
-          className={cn(
-            inPanel ? "min-w-0 flex-1" : "truncate",
-            job.status === "failed" ? "text-danger" : "text-muted",
-          )}
-        >
-          {STATUS_LABEL[job.status]} | {counters}
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      <div className="flex w-full items-center gap-2 rounded-full border border-hairline bg-wash py-1 pl-3 pr-1 text-xs">
+        <Spinner className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 flex-1 text-muted">
+          {STATUS_LABEL[run.status]} | {counters}
         </span>
-        {live ? (
-          <Button size="sm" variant="ghost" loading={stopping} onClick={() => void stop()}>
-            Stop
-          </Button>
-        ) : recoverable ? (
-          <span className="flex shrink-0 items-center">
-            <Button size="sm" variant="ghost" loading={continuing} onClick={() => void continueFill()}>
-              Continue
-            </Button>
-          </span>
-        ) : (
-          // Keeps the pill's height stable across the live-to-terminal
-          // edge without a phantom control.
-          <span className="py-1" aria-hidden />
-        )}
+        <Button size="sm" variant="ghost" loading={stopping} onClick={() => void stop()}>
+          Stop
+        </Button>
       </div>
-      {live && paceSummary(job.counters) && (
-        <p className="text-xs text-faint">{paceSummary(job.counters)}</p>
-      )}
+      {paceSummary(run.counters) && <p className="text-xs text-faint">{paceSummary(run.counters)}</p>}
       {warning && <p className="text-xs text-warning">{warning}</p>}
-      {job.status === "failed" && (
-        // Tier 1: the server wrote this copy; render it verbatim. The
-        // no-error fallback stays plain rather than guessing a cause.
-        <p className={cn("max-w-md text-xs text-danger", inPanel ? "text-left" : "text-right")}>
-          {job.error?.message ?? "The fill failed."}
-        </p>
-      )}
       {actionError && (
-        // Tier 1 for Stop's and Continue's refusals alike: the server
-        // wrote the detail, the chip renders it verbatim.
-        <p className={cn("max-w-md text-xs text-danger", inPanel ? "text-left" : "text-right")}>{actionError}</p>
+        // Tier 1 for Stop's refusal: the server wrote the detail, the
+        // chip renders it verbatim.
+        <p className="max-w-md text-left text-xs text-danger">{actionError}</p>
       )}
     </div>
   );
