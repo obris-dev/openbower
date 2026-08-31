@@ -30,8 +30,8 @@ from .fills import (
     ColumnPromptWire,
     FillCounters,
     FillError,
-    FillPage,
-    FillWire,
+    FillRunPage,
+    FillRunWire,
 )
 from .lists import (
     ColumnFill,
@@ -65,8 +65,8 @@ __all__ = [
     "Company",
     "FillCounters",
     "FillError",
-    "FillPage",
-    "FillWire",
+    "FillRunPage",
+    "FillRunWire",
     "FolderSummary",
     "FoldersList",
     "ImportResult",

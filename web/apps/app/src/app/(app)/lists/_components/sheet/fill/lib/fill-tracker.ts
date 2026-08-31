@@ -1,48 +1,51 @@
-import type { ColumnFillSummary, FillWire } from "@bower/api";
+import type { ColumnFillSummary, FillRunWire } from "@bower/api";
 
 /** Pure decisions for the tracker row (the per-column fill surface
- * pinned under the sheet's header): which job speaks for a column and
- * what its cell says. The SERVER names both facts on the jobs poll
- * (`summaries[].current_fill_id` and `filled`, computed from the
- * canonical cell records): this module only renders them, never
- * reconstructs them from a page of jobs.
+ * pinned under the sheet's header): which live run speaks for a column
+ * and what its cell says. The SERVER names every fact on the poll
+ * (`summaries[].current_fill_id`, `current_status`, and the canonical
+ * `filled`/`attempted` totals): this module only renders them, never
+ * reconstructs them from a page of runs.
  *
- * The cell state table the tracker renders from:
- * | current job for the column | kind   | cell                                     |
- * | none                       | none   | quiet blank                              |
- * | pending or running         | live   | "164 filled | 13% run" + thin progress bar |
- * | failed                     | failed | the counts, danger-tinted                |
- * | complete or cancelled      | done   | the counts, quiet                        |
- */
+ * The cell state table the tracker renders from (the page ships LIVE
+ * runs only; a terminal story arrives as the summary's status):
+ * | joined run, else summary   | kind   | cell                                       |
+ * | none, or ended quietly     | none   | the header line alone                      |
+ * | a run joins (it IS live)   | live   | "164 filled | 13% run" + thin progress bar |
+ * | failed                     | failed | "Fill failed"; the popover speaks the error|
+ * A finished run's counters are not replayed: the header's historic
+ * totals are the honest answer once a run has ended. */
 
-/** The slice of the job envelope these decisions read (FillWire
+/** The slice of the run envelope these decisions read (FillRunWire
  * satisfies it structurally). */
-export type TrackerJob = Pick<FillWire, "status" | "confirmed_row_count"> & {
-  counters: Pick<FillWire["counters"], "filled" | "attempted">;
+export type TrackerRun = Pick<FillRunWire, "confirmed_row_count"> & {
+  counters: Pick<FillRunWire["counters"], "filled" | "attempted">;
 };
 
 export type TrackerCell =
   | { kind: "none" }
+  | { kind: "failed"; text: string }
   | {
-      kind: "live" | "done" | "failed";
-      /** "164 filled | 13% run": the current job's filled count beside
+      kind: "live";
+      /** "164 filled | 13% run": the current run's filled count beside
        * its PROCESSED share (attempted over confirmed; progress means
        * processed, not productive, so a blank-heavy walk still reads
        * as moving). */
       text: string;
-      /** The job's walk progress (attempted over confirmed, clamped to
+      /** The run's walk progress (attempted over confirmed, clamped to
        * [0, 1]); the live bar's width, and the percent's source. */
       fraction: number;
     };
 
-/** The job that speaks for a column: the envelope behind the server's
- * `current_fill_id` pointer, or null when none is exposed. */
-export function currentJobFor<J extends { id: string }>(
+/** The live run that speaks for a column: the envelope behind the
+ * server's `current_fill_id` pointer, or null when the newest run is
+ * not on the live page (terminal, or nothing has run). */
+export function currentRunFor<J extends { id: string }>(
   summary: ColumnFillSummary | undefined,
-  jobs: readonly J[],
+  runs: readonly J[],
 ): J | null {
   if (!summary || !summary.current_fill_id) return null;
-  return jobs.find((job) => job.id === summary.current_fill_id) ?? null;
+  return runs.find((run) => run.id === summary.current_fill_id) ?? null;
 }
 
 function count(n: number): string {
@@ -74,13 +77,19 @@ export function columnProgress(summary: ColumnFillSummary, rowCount: number): st
   return `${count(summary.attempted)} of ${count(rowCount)} rows run`;
 }
 
-export function trackerCell(job: TrackerJob | null): TrackerCell {
-  if (job === null) return { kind: "none" };
-  const confirmed = job.confirmed_row_count;
-  const fraction = confirmed > 0 ? Math.min(Math.max(job.counters.attempted / confirmed, 0), 1) : 0;
-  // The percent derives from the clamped fraction, so the text and the
-  // bar can never disagree.
-  const pct = Math.round(fraction * 100);
-  const kind = job.status === "pending" || job.status === "running" ? "live" : job.status === "failed" ? "failed" : "done";
-  return { kind, text: `${count(job.counters.filled)} filled | ${pct}% run`, fraction };
+/** A joined run IS live (the page ships nothing else), so its cell is
+ * the walk; without one, the summary's status decides whether the
+ * cell carries a failure or just the header line. */
+export function trackerCell(run: TrackerRun | null, currentStatus: ColumnFillSummary["current_status"]): TrackerCell {
+  if (run !== null) {
+    const confirmed = run.confirmed_row_count;
+    const fraction = confirmed > 0 ? Math.min(Math.max(run.counters.attempted / confirmed, 0), 1) : 0;
+    // The percent derives from the clamped fraction, so the text and
+    // the bar can never disagree.
+    const pct = Math.round(fraction * 100);
+    return { kind: "live", text: `${count(run.counters.filled)} filled | ${pct}% run`, fraction };
+  }
+  // "Fill failed", not "Run failed": copy a user reads keeps the
+  // feature's word; "run" stays a code and wire noun.
+  return currentStatus === "failed" ? { kind: "failed", text: "Fill failed" } : { kind: "none" };
 }

@@ -7,12 +7,11 @@ from typing import Any
 
 from rest_framework import serializers
 
-from agents.coercion import coerce_config
 from agents.serializers import AgentConfigRequest
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import FillCounters, FillError
-from openbower_schema.fills import FillWire as WireFill
+from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -26,6 +25,7 @@ from .constants import (
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
     ColumnType,
+    FillStatus,
 )
 from .models import Fill, Folder, List, ListRow
 
@@ -204,11 +204,17 @@ def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> di
     return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
 
 
-def fill_wire(fill: Fill) -> dict[str, Any]:
+def fill_run_wire(fill: Fill) -> dict[str, Any]:
     # Two-tier error: both legs travel together or not at all (a code
-    # with no copy would leave the client nothing to render verbatim).
-    error = FillError(code=fill.error_code, message=fill.error_message) if fill.error_code else None
-    return WireFill(
+    # with no copy would leave the client nothing to render verbatim),
+    # gated on the DOCUMENTED predicate exactly as the column summary
+    # gates last_error: one fact, one rule, on every wire.
+    error = (
+        FillError(code=fill.error_code, message=fill.error_message)
+        if fill.status == FillStatus.FAILED and fill.error_code
+        else None
+    )
+    return WireFillRun(
         id=str(fill.id),
         list_id=fill.list_id,
         agent_id=fill.agent_id,
@@ -224,11 +230,6 @@ def fill_wire(fill: Fill) -> dict[str, Any]:
         started_by=fill.user_id,
         heartbeat_at=fill.heartbeat_at.isoformat() if fill.heartbeat_at else None,
         error=error,
-        # The snapshot is FROZEN and nothing rewrites it, while this
-        # page shows all history: read strictly, one row written under
-        # an older contract would 500 this endpoint for that sheet
-        # forever, with no surface able to remove it.
-        config_snapshot=coerce_config(fill.config_snapshot or {}, origin=f"fill {fill.id} snapshot"),
         created_at=fill.created_at.isoformat(),
         updated_at=fill.updated_at.isoformat(),
     ).model_dump()

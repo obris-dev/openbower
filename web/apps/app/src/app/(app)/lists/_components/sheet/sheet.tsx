@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Button,
@@ -15,41 +15,24 @@ import { ChevronDown, MoreHorizontal, Pencil } from "lucide-react";
 import {
   deleteList,
   fetchAgentCatalog,
-  fetchList,
-  fetchListRows,
   GENERIC_FAILURE,
-  ROWS_PAGE_LIMIT,
   loginUrl,
-  postAiColumn,
-  postColumn,
   postFillRefill,
-  reorderColumns,
-  renameColumn,
-  deleteColumn,
   type ListColumn,
-  type ColumnType,
-  updateList,
   webRoutes,
-  type FillWire,
   type RenderableListRowsPage,
-  type RenderableListRow,
   type ListSummary,
-  COLUMN_ORDER_STALE_CODE,
-  ROW_COUNT_CHANGED_CODE,
 } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
-import { ensureOk } from "@/lib/ensure-ok";
+import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsTray, needsSearchDoor, useFill, type SearchDoor } from "./fill";
+import { FillsGlance, needsSearchDoor, useFill, type SearchDoor } from "./fill";
 import { SheetTable } from "./sheet-table";
-
-// How far below the viewport the scroll sentinel arms (binary): far
-// enough that the next page usually lands before the user reaches the
-// last loaded row.
-const SCROLL_PREFETCH_MARGIN = "256px";
+import { useColumns, type ColumnOutcome } from "./use-columns";
+import { useRows } from "./use-rows";
 
 /** The sheet, full-bleed under the shell's chrome in three bands: one
  * slim toolbar (click-to-rename title left; the actions right, column
@@ -57,37 +40,33 @@ const SCROLL_PREFETCH_MARGIN = "256px";
  * menu), the grid as the page's ONE scroll region (sticky header row,
  * an IntersectionObserver sentinel driving the keyset loadMore with
  * the button kept as fallback), and a sticky status footer (row count
- * left, the fills tray right: status speaks continuously in the status
- * bar without stealing the page, condensing to the tray's badge
- * instead of wrapping when jobs multiply or the viewport narrows). */
+ * left, the fills glance right: a passive high-level read so filling
+ * or failed columns cannot hide off a wide sheet's edge; per-column
+ * progress belongs to the tracker row under the header).
+ * Three hooks own the three kinds of state (the summary and its
+ * columns, the rows on screen, the fill attachment); this component
+ * composes their reactions to each other and renders. */
 export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSummary; initialRows: RenderableListRowsPage }) {
   const router = useRouter();
   const toast = useToast();
-  const [detail, setDetail] = useState(initialDetail);
-  const [rows, setRows] = useState<RenderableListRow[]>(initialRows.items);
-  const [nextCursor, setNextCursor] = useState<string | null>(initialRows.next_cursor);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [label, setLabel] = useState(initialDetail.label);
-  const [exporting, setExporting] = useState(false);
-  // null = closed; the KIND arrives with the opening gesture (the
-  // Add column menu), so half-open states are unrepresentable.
-  const [addColumnKind, setAddColumnKind] = useState<ColumnKind | null>(null);
-  // A plain column being named before it exists (see openAddColumn).
-  const [pendingColumn, setPendingColumn] = useState<{ type: ColumnType } | null>(null);
-  const [lookalikesOpen, setLookalikesOpen] = useState(false);
-
+  const columns = useColumns(initialDetail);
+  const { detail } = columns;
+  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef } = useRows(detail.id, initialRows);
   // The fill attachment polls the FILLS alone; cell states ride the
   // rows this component already holds.
   const fill = useFill(detail.id);
 
-  const rowsRef = useRef(rows);
-  useEffect(() => {
-    rowsRef.current = rows;
-  }, [rows]);
+  // The title's draft while renaming; null = not renaming, so a draft
+  // without a form is unrepresentable.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // null = closed; the KIND arrives with the opening gesture (the
+  // Add column menu), so half-open states are unrepresentable.
+  const [addColumnKind, setAddColumnKind] = useState<ColumnKind | null>(null);
+  const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
-  // A cell whose run had a degraded web search composes the
+  // A cell whose row's run had a degraded web search composes the
   // deployment's search door into its popover (the paid-door nudge
   // belongs only to the free door), fetched once and only when such a
   // cell is on screen: a sheet with none never pays for the catalog.
@@ -109,177 +88,27 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     };
   }, [doorNeeded, searchDoor]);
 
-  // Reorder is OPTIMISTIC, because a drag that waits for a round trip
-  // reads as a failed drag. The server's echo replaces the guess
-  // either way: on success it is the same order, and on refusal (a
-  // teammate added or removed a column since this sheet was read) it
-  // is the truth this client did not have.
-  const reorderBusyRef = useRef(false);
-  const reorderColumnsTo = useCallback(
-    async (keys: string[]) => {
-      if (reorderBusyRef.current) return;
-      const previous = detail.columns;
-      const byKey = new Map(previous.map((column) => [column.key, column]));
-      const moved = keys.map((key) => byKey.get(key)).filter((column) => column !== undefined);
-      if (moved.length !== previous.length) return;
-      reorderBusyRef.current = true;
-      // The guard spans the WHOLE exchange, recovery included: a
-      // second gesture starting mid-refetch would carry its own
-      // `previous` and clobber the truth this one just fetched. And
-      // finally, not a trailing line, so a throw cannot pin it true
-      // and kill reordering for the rest of the session.
-      try {
-        setDetail((current) => ({ ...current, columns: moved }));
-        const res = await reorderColumns(detail.id, keys);
-        if (res.status === "unauthenticated") {
-          window.location.href = loginUrl();
-          return;
-        }
-        if (res.status !== "ok") {
-        // The move is put back and the server's reason is spoken: a
-        // reorder is detached from any form the user is looking at, so
-        // it is the toast tier, not a banner.
-          setDetail((current) => ({ ...current, columns: previous }));
-          // Putting the old set back leaves the sheet exactly as stale
-          // as the server just called it, so every later move would
-          // refuse the same way until a manual reload. Re-read
-          // instead, so the server's "try the move again" can succeed
-          // in place.
-          if (res.code === COLUMN_ORDER_STALE_CODE) {
-            const summary = await fetchList(detail.id);
-            if (summary.status === "unauthenticated") {
-              window.location.href = loginUrl();
-              return;
-            }
-            if (summary.status === "ok") {
-              setDetail(summary.data);
-              setLabel(summary.data.label);
-            }
-          }
-          toast.error(res.message, "Columns not reordered");
-          return;
-        }
-        setDetail(res.data);
-        setLabel(res.data.label);
-      } finally {
-        reorderBusyRef.current = false;
-      }
-    },
-    [detail, toast],
-  );
-
-  const renameColumnTo = useCallback(
-    async (key: string, label: string) => {
-      const previous = detail.columns;
-      // Optimistic like the reorder: a rename is direct manipulation,
-      // so the header has to change under the pointer.
-      setDetail((current) => ({
-        ...current,
-        columns: current.columns.map((column) => (column.key === key ? { ...column, label } : column)),
-      }));
-      const res = await renameColumn(detail.id, key, label);
-      if (res.status === "unauthenticated") {
-        window.location.href = loginUrl();
-        return;
-      }
-      if (res.status !== "ok") {
-        setDetail((current) => ({ ...current, columns: previous }));
-        toast.error(res.message, "Column not renamed");
-        return;
-      }
-      setDetail(res.data);
-      setLabel(res.data.label);
-    },
-    [detail, toast],
-  );
-
-  const refreshBusyRef = useRef(false);
-  // Re-reads the pages already on screen. It is the ONLY walk of the
-  // rows now, and it carries their states with them, so a value and
-  // its state can never come from different requests.
-  // Positions are append-only, so a wholesale replacement keeps the
-  // paging coherent. Silent on blips: the poll loop owns trouble
-  // surfacing, and a toast every interval would be noise.
-  const refreshLoadedRows = useCallback(async () => {
-    if (refreshBusyRef.current) return;
-    refreshBusyRef.current = true;
-    try {
-      const target = Math.max(rowsRef.current.length, 1);
-      const items: RenderableListRow[] = [];
-      let after: string | undefined;
-      let cursor: string | null = null;
-      for (;;) {
-        const res = await fetchListRows(detail.id, { after, limit: ROWS_PAGE_LIMIT });
-        if (res.status === "unauthenticated") {
-          window.location.href = loginUrl();
-          return;
-        }
-        if (res.status !== "ok") return;
-        items.push(...res.data.items);
-        cursor = res.data.next_cursor;
-        if (!cursor || items.length >= target) break;
-        after = cursor;
-      }
-      setRows(items);
-      setNextCursor(cursor);
-    } finally {
-      refreshBusyRef.current = false;
-    }
-  }, [detail.id]);
-
-  // Confirmed in the menu panel that asked, so this just does it.
-  const removeColumn = useCallback(
-    async (column: ListColumn) => {
-      const res = await deleteColumn(detail.id, column.key);
-      if (res.status === "unauthenticated") {
-        window.location.href = loginUrl();
-        return;
-      }
-      if (res.status !== "ok") {
-        toast.error(res.message, "Column not deleted");
-        return;
-      }
-      setDetail(res.data);
-      setLabel(res.data.label);
-      // The values left with the column, so the loaded rows still
-      // carry a key the sheet no longer has a header for.
-      await refreshLoadedRows();
-    },
-    [detail.id, toast, refreshLoadedRows],
-  );
-
-  // Rows re-read when a live job progressed (status or attempted
-  // moved), on first sight of a live job, and once on the
-  // last-live-to-terminal edge (cells written between polls land in
-  // that final read). Jobs already terminal on mount trigger nothing:
-  // the server rendered their rows fresh.
-  const jobsSignature = fill.jobs.map((job) => `${job.id}:${job.status}:${job.counters.attempted}`).join(" ");
-  const anyLive = fill.jobs.some((job) => job.status === "pending" || job.status === "running");
-  const prevJobsRef = useRef<{ signature: string; live: boolean } | null>(null);
+  // Rows re-read when a live run progressed (attempted moved), on
+  // first sight of one, and once on the last-live-to-terminal edge:
+  // the poll ships LIVE runs only, so a run finishing IS the live set
+  // shrinking, and cells written between polls land in that final
+  // read. The summaries ride the signature so a status flip with no
+  // counter movement still lands. Terminal history on mount triggers
+  // nothing: the server rendered those rows fresh.
+  const runsSignature = [
+    ...fill.runs.map((run) => `${run.id}:${run.counters.attempted}`),
+    ...fill.summaries.map((summary) => `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}`),
+  ].join(" ");
+  const anyLive = fill.runs.length > 0;
+  const prevRunsRef = useRef<{ signature: string; live: boolean } | null>(null);
   useEffect(() => {
-    if (!jobsSignature) return;
-    const prev = prevJobsRef.current;
-    prevJobsRef.current = { signature: jobsSignature, live: anyLive };
-    const progressed = prev === null || prev.signature !== jobsSignature;
-    if ((anyLive && progressed) || (prev !== null && prev.live && !anyLive)) void refreshLoadedRows();
-  }, [jobsSignature, anyLive, refreshLoadedRows]);
+    if (!runsSignature) return;
+    const prev = prevRunsRef.current;
+    prevRunsRef.current = { signature: runsSignature, live: anyLive };
+    const progressed = prev === null || prev.signature !== runsSignature;
+    if ((anyLive && progressed) || (prev !== null && prev.live && !anyLive)) void refreshLoaded();
+  }, [runsSignature, anyLive, refreshLoaded]);
 
-  const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    const res = await fetchListRows(detail.id, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
-    setLoadingMore(false);
-    if (!ensureOk(res, toast)) return;
-    setRows((prev) => [...prev, ...res.data.items]);
-    setNextCursor(res.data.next_cursor);
-  }, [detail.id, nextCursor, loadingMore, toast]);
-
-  // Infinite scroll: a sentinel inside the grid's own scroll region
-  // drives loadMore as it comes into view (the button below stays as
-  // the fallback for environments without IntersectionObserver
-  // semantics, and loadingMore guards double-fires). The observer is
-  // rebuilt when loadMore's inputs move; a still-visible sentinel then
-  // fires again, which IS the continuous walk.
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
   // full-screen-surface pattern, scoped here rather than globally
@@ -292,63 +121,20 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     };
   }, []);
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const root = scrollRef.current;
-    const sentinel = sentinelRef.current;
-    if (!root || !sentinel || !nextCursor) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
-      },
-      { root, rootMargin: `${SCROLL_PREFETCH_MARGIN} 0px` },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [nextCursor, loadMore]);
-
   // The drawer's invoker (the toolbar primary or the "+" header cell)
   // gets focus back on close: ref focus for an imperative gesture
   // outside a mount, per the house focus rules.
   const addColumnInvokerRef = useRef<HTMLElement | null>(null);
-  // A PLAIN column is a name and a type, which is not a drawer's worth
-  // of decisions: it opens a pending header cell and is named in the
-  // grid. Only the AI kind keeps the drawer, where a prompt, a model,
-  // outputs and tools have to be chosen.
+  // Only the AI kind keeps the drawer, where a prompt, a model,
+  // outputs and tools have to be chosen; a plain column is named in
+  // the grid.
   function openAddColumn(kind: ColumnKind) {
     if (kind !== "ai") {
-      setPendingColumn({ type: kind });
+      columns.startPending(kind);
       return;
     }
     addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setAddColumnKind(kind);
-  }
-
-  async function namePendingColumn(label: string) {
-    const type = pendingColumn?.type;
-    if (type === undefined) return;
-    // Abandoned (Escape, or nothing typed): nothing was created, so
-    // there is nothing to undo.
-    if (!label) {
-      setPendingColumn(null);
-      return;
-    }
-    const res = await postColumn(detail.id, { label, type });
-    if (res.status === "unauthenticated") {
-      window.location.href = loginUrl();
-      return;
-    }
-    if (res.status !== "ok") {
-      // The cell STAYS open on a refusal (a taken name, a reserved
-      // key, the cap): the request is what has to change, and closing
-      // it would throw away what they typed.
-      toast.error(res.message, "Column not added");
-      return;
-    }
-    setPendingColumn(null);
-    setDetail(res.data);
-    setLabel(res.data.label);
   }
   function closeAddColumn() {
     setAddColumnKind(null);
@@ -356,21 +142,66 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     addColumnInvokerRef.current = null;
   }
 
-  async function submitRename() {
-    const next = label.trim();
-    setRenaming(false);
-    if (!next || next === detail.label) {
-      setLabel(detail.label);
-      return;
-    }
-    const res = await updateList(detail.id, { label: next });
-    if (!ensureOk(res, toast)) {
-      setLabel(detail.label);
-      return;
-    }
-    setDetail(res.data);
-    setLabel(res.data.label);
+  async function removeColumn(column: ListColumn) {
+    if (!(await columns.remove(column))) return;
+    // The values left with the column, so the loaded rows still
+    // carry a key the sheet no longer has a header for.
+    await refreshLoaded();
+  }
+
+  async function submitBlankColumn(payload: BlankColumnPayload): Promise<ColumnOutcome> {
+    const outcome = await columns.addBlank(payload);
+    if (!outcome.ok) return outcome;
+    closeAddColumn();
+    toast.success(`Added the ${payload.label} column.`);
     router.refresh();
+    return outcome;
+  }
+
+  async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
+    const outcome = await columns.addAi(payload);
+    if (!outcome.ok) return outcome;
+    // The reconciles below are the SHEET's reactions; holding the
+    // drawer open through a second read would make the Save button
+    // claim work the server has already accepted. The poll loop's
+    // promise settles only when the fill ENDS, so the attach is
+    // fire-and-forget; the summary and the loaded rows are bounded
+    // reads, awaited.
+    closeAddColumn();
+    void fill.refresh();
+    await columns.refreshDetail();
+    await refreshLoaded();
+    router.refresh();
+    return outcome;
+  }
+
+  // Continue IS refill: a NEW run over the column's unanswered rows
+  // (all of them, the next `rows` when the scoped continue asked, or
+  // the stopped run's own remainder when resumeId names it, off the
+  // summary's current_fill_id). The COLUMN comes from the surface the
+  // user clicked: one run can map several columns, so deriving it
+  // from the run would refill a sibling. A refusal returns as the
+  // server's verbatim detail for the caller's error slot.
+  async function continueFill(columnKey: string, opts: { rows?: number; resumeId?: string } = {}): Promise<string | null> {
+    // An EMPTY resume id is a contract gap (the summary names no
+    // run), not a wider ask: refuse rather than widen the spend.
+    if (!columnKey || opts.resumeId === "") return GENERIC_FAILURE;
+    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resumeId });
+    if (redirectIfUnauthenticated(res)) return null;
+    if (res.status !== "ok") return res.message;
+    // The new run and its pending outcomes exist only server-side:
+    // re-attach the poll loop (fire-and-forget; its promise settles
+    // when the fill ENDS) and re-read the loaded rows.
+    void fill.refresh();
+    await refreshLoaded();
+    return null;
+  }
+
+  async function submitRename() {
+    const next = titleDraft?.trim() ?? "";
+    setTitleDraft(null);
+    if (!next || next === detail.label) return;
+    if (await columns.renameList(next)) router.refresh();
   }
 
   async function remove() {
@@ -393,93 +224,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     }
   }
 
-  // The drawer renders refusals itself (field-level where it can), so
-  // the error envelope maps through instead of toasting here: `error`
-  // is the machine code, `detail` the server's verbatim copy.
-  async function submitAiColumn(payload: AiColumnPayload): Promise<{ ok: true } | { ok: false; error: string; detail: string }> {
-    const res = await postAiColumn(detail.id, payload);
-    if (res.status === "unauthenticated") {
-      window.location.href = loginUrl();
-      return { ok: false, error: "", detail: "" };
-    }
-    if (res.status !== "ok") {
-      // A row-count echo refusal means the drawer's numbers are stale:
-      // re-read the summary so the rendered count and the next
-      // attempt's confirmed_row_count echo the sheet's new truth (the
-      // server's "start again" must be able to succeed in place).
-      if (res.code === ROW_COUNT_CHANGED_CODE) {
-        const summary = await fetchList(detail.id);
-        if (summary.status === "ok") {
-          setDetail(summary.data);
-          setLabel(summary.data.label);
-        }
-      }
-      return { ok: false, error: res.code ?? "", detail: res.message };
-    }
-    closeAddColumn();
-    // The new column (and any test-run prewrite cells) exist only
-    // server-side: re-read the summary for the column set, re-attach
-    // to the fresh job, and re-read the loaded rows.
-    const summary = await fetchList(detail.id);
-    if (summary.status === "ok") {
-      setDetail(summary.data);
-      setLabel(summary.data.label);
-    }
-    // The poll loop's promise settles only when the fill ENDS, so the
-    // attach is fire-and-forget (it happens on the loop's first tick);
-    // only the bounded row re-read is awaited.
-    void fill.refresh();
-    await refreshLoadedRows();
-    router.refresh();
-    return { ok: true };
-  }
-
-  // Continue IS refill: a NEW job over the column's unanswered rows
-  // (all of them, or the next `rows` when the tracker's scoped
-  // continue asked). The COLUMN comes from the surface the user
-  // clicked: one job can map several columns, so deriving it from the
-  // job would refill a sibling. A refusal returns as the server's
-  // verbatim detail for the chip's error slot.
-  async function continueFill(
-    job: FillWire | null,
-    columnKey: string,
-    opts: { rows?: number; resume?: boolean } = {},
-  ): Promise<string | null> {
-    // A widening refill needs no job envelope: only RESUME is bound to
-    // one, and a column whose job has aged off the fetched page can
-    // still be filled forward.
-    if (!columnKey || (opts.resume && job === null)) return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resume && job ? job.id : undefined });
-    if (res.status === "unauthenticated") {
-      window.location.href = loginUrl();
-      return null;
-    }
-    if (res.status !== "ok") return res.message;
-    // The new job and its pending outcomes exist only server-side:
-    // re-attach the poll loop (fire-and-forget; its promise settles
-    // when the fill ENDS) and re-read the loaded rows.
-    void fill.refresh();
-    await refreshLoadedRows();
-    return null;
-  }
-
-  // The blank add starts nothing: the 200 body IS the updated summary,
-  // so the new column renders straight from the response.
-  async function submitBlankColumn(payload: BlankColumnPayload): Promise<{ ok: true } | { ok: false; error: string; detail: string }> {
-    const res = await postColumn(detail.id, payload);
-    if (res.status === "unauthenticated") {
-      window.location.href = loginUrl();
-      return { ok: false, error: "", detail: "" };
-    }
-    if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
-    closeAddColumn();
-    setDetail(res.data);
-    setLabel(res.data.label);
-    toast.success(`Added the ${payload.label} column.`);
-    router.refresh();
-    return { ok: true };
-  }
-
   return (
     // FILLS the page's pinned wrapper ([id]/page.tsx owns the
     // viewport calc and clips): three bands split the height; only
@@ -487,7 +231,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-hairline px-4 py-2">
         <div className="min-w-0">
-          {renaming ? (
+          {titleDraft !== null ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -496,16 +240,13 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
             >
               <Input
                 autoFocus
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
                 onBlur={() => void submitRename()}
                 onKeyDown={(e) => {
                   // Escape cancels: unmounting fires no blur, so nothing
                   // commits.
-                  if (e.key === "Escape") {
-                    setLabel(detail.label);
-                    setRenaming(false);
-                  }
+                  if (e.key === "Escape") setTitleDraft(null);
                 }}
                 className="max-w-xs py-1 text-sm font-semibold"
                 aria-label="List name"
@@ -514,7 +255,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           ) : (
             <button
               type="button"
-              onClick={() => setRenaming(true)}
+              onClick={() => setTitleDraft(detail.label)}
               title="Rename"
               className="group flex min-w-0 items-center gap-1.5 rounded text-left text-sm font-semibold text-foreground"
             >
@@ -596,15 +337,23 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           columns={detail.columns}
           rows={rows}
           searchDoor={searchDoor}
-          fills={{ listId: detail.id, jobs: fill.jobs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
+          fills={{
+            listId: detail.id,
+            runs: fill.runs,
+            summaries: fill.summaries,
+            pollTrouble: fill.pollTrouble,
+            rowCount: detail.row_count,
+            onStop: fill.stop,
+            onRefill: continueFill,
+          }}
           onAddColumn={openAddColumn}
-          onReorder={reorderColumnsTo}
-          onRenameColumn={renameColumnTo}
+          onReorder={columns.reorder}
+          onRenameColumn={columns.rename}
           onDeleteColumn={removeColumn}
-          pendingColumn={pendingColumn}
-          onNamePending={(label) => void namePendingColumn(label)}
+          pendingColumn={columns.pendingColumn}
+          onNamePending={(label) => void columns.namePending(label)}
         />
-        {nextCursor && (
+        {hasMore && (
           <>
             <div ref={sentinelRef} aria-hidden />
             <div className="border-t border-hairline p-3 text-center">
@@ -618,19 +367,19 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-1.5">
         {/* The count abbreviates under width pressure (the word drops
-            below sm); the fills area condenses instead, inside the
-            tray, so the band never wraps chips onto a second line. */}
+            below sm); the glance is one short line by design, so the
+            band never wraps. */}
         <p className="shrink-0 whitespace-nowrap text-xs text-muted">
           {detail.row_count.toLocaleString("en-US")}
           <span className="hidden sm:inline">{" rows"}</span>
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
-          <FillsTray jobs={fill.jobs} onStop={fill.stop} onContinue={continueFill} />
+          <FillsGlance summaries={fill.summaries} liveRunIds={fill.runs.map((run) => run.id)} />
           {fill.pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is
-            // the PAGE's trouble, so it renders once (under the band,
-            // never inside the tray's panel, which may be closed).
+            // the PAGE's trouble, so it renders once, under the band
+            // beside the glance (which is passive and cannot carry it).
             <p className="text-xs text-warning">{"Progress updates aren't reaching this page; still retrying."}</p>
           )}
         </div>

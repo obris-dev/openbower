@@ -92,10 +92,9 @@ class AccountFillsFull(FillRefused):
 class RowCountChanged(FillRefused):
     """The consent echo failed: the sheet GREW after the user read the
     numbers, so an unscoped fill would spend past the count the button
-    named. Growth only (RULED, owner, 2026-08-27): the number is a
-    spend CEILING, and a ceiling is violated only upward; a shrunken
-    sheet fills fewer rows than consented, which betrays no one and
-    refusing it was pure friction."""
+    named. Growth only: the number is a spend CEILING, and a ceiling
+    is violated only upward; a shrunken sheet fills fewer rows than
+    consented, which betrays no one."""
 
     code = FillErrorCode.ROW_COUNT_CHANGED
 
@@ -266,7 +265,7 @@ class ProviderRetiredRefusal(FillRefused):
         super().__init__("This agent's provider is no longer supported; open the agent and pick a current model.")
 
 
-class ResumeJobNotFound(FillRefused):
+class ResumeRunNotFound(FillRefused):
     """The named fill is not this SHEET's. Resolving it is what scopes
     the resume: FillTask carries no account of its own (it is
     reached through its fill, which does), so reading rows for an
@@ -367,15 +366,15 @@ class RefillTargets:
 
     def __init__(
         self,
-        target: List,
+        target_list: List,
         *,
         column_keys: list[str],
         fingerprint: str,
         prompt: str,
         owed_by: str = "",
     ) -> None:
-        self.list_id = str(target.id)
-        self.account_id = target.account_id
+        self.list_id = str(target_list.id)
+        self.account_id = target_list.account_id
         # The columns owed-ness is judged across. A widening gesture
         # passes the ONE column the user clicked. A RESUME passes the
         # resumed fill's whole set, because a fill owns every output
@@ -534,7 +533,7 @@ class FillAdmissionService:
         agent, resolved = self._resolve_agent(config=config, agent_id=agent_id)
         self._check_model(resolved)
         with transaction.atomic():
-            target = self._list_or_raise(list_id)
+            target_list = self._list_or_raise(list_id)
             self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
 
             if agent is None:
@@ -546,11 +545,11 @@ class FillAdmissionService:
                 agent = self.agents.create_ephemeral(
                     label=resolved.outputs[0].label[:AGENT_LABEL_MAX_LENGTH], config=resolved
                 )
-            column_keys = self._preview_columns(target, config=resolved)
-            eligible = self._iter_eligible_rows(target, prompt=resolved.prompt)
+            column_keys = self._preview_columns(target_list, config=resolved)
+            eligible = self._iter_eligible_rows(target_list, prompt=resolved.prompt)
             targets = islice(eligible, rows) if rows else eligible
             fill, seed = self._open_fill(
-                target,
+                target_list,
                 agent=agent,
                 resolved=resolved,
                 column_keys=column_keys,
@@ -572,7 +571,7 @@ class FillAdmissionService:
             locked = self._list_or_raise(list_id, lock=True)
             self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
             self._claim_columns(locked, config=resolved, agent_id=str(agent.id), fill_id=str(fill.id))
-            fill = self._settle_fill(fill, locked, seed=seed)
+            fill = self._settle_fill(fill, seed=seed)
         return fill
 
     def refill(
@@ -620,16 +619,16 @@ class FillAdmissionService:
             # Unlocked while the shape is worked out and the queue is
             # built; the List lock comes at the end, over the claim and
             # the settle. Same reasoning as admit.
-            target = self._list_or_raise(list_id)
-            self._require_fill_column(target, column_key)
+            target_list = self._list_or_raise(list_id)
+            self._require_fill_column(target_list, column_key)
             # The stopped fill's shape, re-derived from the CURRENT
             # config (each output's own key is its column key). The
             # config is FRESH on purpose so agent edits apply, which
             # means the output set can differ from the one that built
             # these columns: a new output has to become a real column
             # here or its answers land nowhere a surface can read.
-            owned = self._owned_keys(target, str(agent.id))
-            column_keys = self._preview_columns(target, config=resolved, owned=owned)
+            owned = self._owned_keys(target_list, str(agent.id))
+            column_keys = self._preview_columns(target_list, config=resolved, owned=owned)
             if column_key not in column_keys:
                 # The URL names the column; the CONFIG names what the
                 # new fill will write, and an output removed or renamed
@@ -651,9 +650,9 @@ class FillAdmissionService:
                 # never the column's whole remainder (the extend
                 # gestures widen; resume does not), and under the
                 # config it consented to (a changed prompt refuses).
-                source = Fill.objects.filter(id=resume_fill_id, list_id=str(target.id)).first()
+                source = Fill.objects.filter(id=resume_fill_id, list_id=str(target_list.id)).first()
                 if source is None:
-                    raise ResumeJobNotFound()
+                    raise ResumeRunNotFound()
                 if source.config_fingerprint != fingerprint:
                     raise ResumeConfigChanged()
             # A RESUME judges owed-ness across the resumed fill's WHOLE
@@ -668,7 +667,7 @@ class FillAdmissionService:
             # only ever fire by silently NARROWING the resume.
             walked = source.column_keys if source is not None else [column_key]
             remaining = RefillTargets(
-                target,
+                target_list,
                 column_keys=walked,
                 fingerprint=fingerprint,
                 prompt=resolved.prompt,
@@ -679,7 +678,7 @@ class FillAdmissionService:
             # at its N, and nothing behind it has been fetched.
             targets = islice(remaining, rows) if rows else remaining
             fill, seed = self._open_fill(
-                target, agent=agent, resolved=resolved, column_keys=column_keys, targets=targets
+                target_list, agent=agent, resolved=resolved, column_keys=column_keys, targets=targets
             )
             if not fill.confirmed_row_count:
                 # EMPTY is diagnosed first. A finished column consents
@@ -720,12 +719,12 @@ class FillAdmissionService:
                 owned=self._owned_keys(locked, str(agent.id)),
                 fill_id=str(fill.id),
             )
-            fill = self._settle_fill(fill, locked, seed=seed)
+            fill = self._settle_fill(fill, seed=seed)
         return fill
 
     def _open_fill(
         self,
-        target: List,
+        target_list: List,
         *,
         agent: Agent,
         resolved: AgentConfig,
@@ -762,7 +761,7 @@ class FillAdmissionService:
         fill = Fill.objects.create(
             account_id=self.account_id,
             user_id=self.user_id,
-            list_id=str(target.id),
+            list_id=str(target_list.id),
             agent_id=str(agent.id),
             column_keys=column_keys,
             config_snapshot=resolved.model_dump(),
@@ -824,7 +823,7 @@ class FillAdmissionService:
         return fill, seed
 
     @staticmethod
-    def _iter_eligible_rows(target: List, *, prompt: str) -> Iterator[tuple[str, int]]:
+    def _iter_eligible_rows(target_list: List, *, prompt: str) -> Iterator[tuple[str, int]]:
         """(row id, position) in SHEET ORDER for the rows the prompt can
         ACT on: at least one referenced variable renders non-blank. A
         row whose referenced variables are ALL blank would render an
@@ -843,7 +842,7 @@ class FillAdmissionService:
         after = 0
         while True:
             chunk = list(
-                ListRow.objects.filter(list_id=str(target.id), position__gt=after)
+                ListRow.objects.filter(list_id=str(target_list.id), position__gt=after)
                 .order_by("position")
                 .only("id", "position", "data")[:FILL_SCAN_CHUNK]
             )
@@ -884,7 +883,7 @@ class FillAdmissionService:
 
     def _claim_columns(
         self,
-        target: List,
+        target_list: List,
         *,
         config: AgentConfig,
         agent_id: str,
@@ -916,41 +915,47 @@ class FillAdmissionService:
         # claimed columns record as current. One REQUIRED parameter,
         # because a default here would stamp current_fill_id="" (the
         # contract's "column predates the write") silently.
-        self._check_columns_free(target, column_keys=[output.key for output in config.outputs], opening=fill_id)
-        column_keys = self._resolve_columns(target, config=config, owned=owned)
-        self._check_guards(target, column_keys=column_keys, opening=fill_id)
+        self._check_columns_free(target_list, column_keys=[output.key for output in config.outputs], opening=fill_id)
+        column_keys = self._resolve_columns(target_list, config=config, owned=owned)
+        self._check_guards(target_list, column_keys=column_keys, opening=fill_id)
         # No retype set and no occupancy probe: a column that exists
         # keeps the type it was created with, and resolution above has
         # already refused both an existing key we do not own and an
         # owned one whose output changed shape.
-        self._append_columns(target, column_keys=column_keys, config=config, agent_id=agent_id, fill_id=fill_id)
+        self._append_columns(target_list, column_keys=column_keys, config=config, agent_id=agent_id, fill_id=fill_id)
         return column_keys
 
     @staticmethod
-    def _owned_keys(target: List, agent_id: str) -> frozenset[str]:
+    def _owned_keys(target_list: List, agent_id: str) -> frozenset[str]:
         """The keys this agent already fills on this sheet: what a
         refill may write without the existence rule refusing its own
         columns. ONE derivation, called by the unlocked pass and the
         locked one, because two hand-spelled copies drifting by a typo
         is exactly the failure mode a double-judgment design invites."""
         return frozenset(
-            column["key"] for column in target.columns if (column.get("fill") or {}).get("agent_id") == agent_id
+            column["key"] for column in target_list.columns if (column.get("fill") or {}).get("agent_id") == agent_id
         )
 
     @staticmethod
-    def _require_fill_column(target: List, column_key: str) -> dict:
+    def _require_fill_column(target_list: List, column_key: str) -> dict:
         """The named column's fill member, or the 404-shaped refusal
         (a column the sheet does not have, or a plain one, is not a
         refill target)."""
         fill = next(
-            (column.get("fill") for column in target.columns if column["key"] == column_key and column.get("fill")),
+            (
+                column.get("fill")
+                for column in target_list.columns
+                if column["key"] == column_key and column.get("fill")
+            ),
             None,
         )
         if fill is None:
             raise FillColumnNotFound(column_key)
         return fill
 
-    def _preview_columns(self, target: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
+    def _preview_columns(
+        self, target_list: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()
+    ) -> list[str]:
         """The keys this fill will own, judged WITHOUT taking a lock.
 
         The keys themselves come from the OUTPUTS, never from the
@@ -972,8 +977,8 @@ class FillAdmissionService:
         List-then-Fill order its serialization depends on. The claim,
         under the List lock at the end of admission, is the judgement
         that counts."""
-        self._check_columns_free(target, column_keys=[output.key for output in config.outputs])
-        keys = self._resolve_columns(target, config=config, owned=owned)
+        self._check_columns_free(target_list, column_keys=[output.key for output in config.outputs])
+        keys = self._resolve_columns(target_list, config=config, owned=owned)
         # The cap BEFORE the column arithmetic, mirroring _check_guards:
         # an account at both caps must hear fills_full (a 409, "wait
         # for one to finish") and not columns_full (a 400, "change the
@@ -981,7 +986,7 @@ class FillAdmissionService:
         # second would send them off to delete columns for nothing.
         if live_fill_count(self.account_id) >= MAX_ACTIVE_FILLS:
             raise AccountFillsFull()
-        self._check_column_cap(target, column_keys=keys)
+        self._check_column_cap(target_list, column_keys=keys)
         return keys
 
     def _check_row_count(self, list_id: str, *, rows: int, confirmed_row_count: int) -> None:
@@ -1000,7 +1005,9 @@ class FillAdmissionService:
         if rows == 0 and row_count > confirmed_row_count:
             raise RowCountChanged(row_count)
 
-    def _resolve_columns(self, target: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
+    def _resolve_columns(
+        self, target_list: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()
+    ) -> list[str]:
         """The columns this fill will own. Each output's OWN key IS its
         column key, single and multi alike (the outputs ARE the
         columns), which is why this returns a LIST and not a mapping.
@@ -1017,8 +1024,8 @@ class FillAdmissionService:
                 raise DerivedKeyCollision(first=claimed[key], second=output.label)
             claimed[key] = output.label
             keys.append(key)
-        stored_types = {column["key"]: column.get("type", "") for column in target.columns}
-        filled_keys = {column["key"] for column in target.columns if column.get("fill")}
+        stored_types = {column["key"]: column.get("type", "") for column in target_list.columns}
+        filled_keys = {column["key"] for column in target_list.columns if column.get("fill")}
         outputs_by_key = {output.key: output for output in config.outputs}
         for key in keys:
             # `owned` is what the caller has already established it may
@@ -1033,28 +1040,28 @@ class FillAdmissionService:
                 raise ColumnTypeChanged(key=key, stored=stored_types[key], wanted=wanted)
         return keys
 
-    def _check_guards(self, target: List, *, column_keys: list[str], opening: str = "") -> None:
+    def _check_guards(self, target_list: List, *, column_keys: list[str], opening: str = "") -> None:
         # columns-free is checked by the caller BEFORE resolution, so
         # the live-fill refusal wins over the existence one.
         self._check_account_cap(opening=opening)
-        self._check_column_cap(target, column_keys=column_keys)
+        self._check_column_cap(target_list, column_keys=column_keys)
 
     @staticmethod
-    def _check_column_cap(target: List, *, column_keys: list[str]) -> None:
+    def _check_column_cap(target_list: List, *, column_keys: list[str]) -> None:
         """ONE spelling of the column-cap arithmetic, called by the
         preview and the locked claim: two hand-spelled copies are how
         the passes drift, and this file has the receipts."""
-        new_keys = set(column_keys) - {column["key"] for column in target.columns}
-        if len(target.columns) + len(new_keys) > MAX_LIST_COLUMNS:
+        new_keys = set(column_keys) - {column["key"] for column in target_list.columns}
+        if len(target_list.columns) + len(new_keys) > MAX_LIST_COLUMNS:
             raise ColumnsFull()
 
     @staticmethod
-    def _check_columns_free(target: List, *, column_keys: list[str], opening: str = "") -> None:
+    def _check_columns_free(target_list: List, *, column_keys: list[str], opening: str = "") -> None:
         """`opening` is the fill this admission just created, if the
         claim runs after it. Admission opens the fill BEFORE taking the
         List lock, so without this the guard finds our own live fill on
         our own column and refuses the admission to itself."""
-        live = Fill.objects.filter(list_id=str(target.id), status__in=LIVE_FILL_STATUSES).exclude(id=opening)
+        live = Fill.objects.filter(list_id=str(target_list.id), status__in=LIVE_FILL_STATUSES).exclude(id=opening)
         taken = {key for fill in live for key in fill.column_keys or ()}
         if taken & set(column_keys):
             raise SameColumnFillActive()
@@ -1099,7 +1106,7 @@ class FillAdmissionService:
 
     @staticmethod
     def _append_columns(
-        target: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_id: str
+        target_list: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_id: str
     ) -> None:
         """THE one columns write of an admission: new columns append
         with the fill link and the output's type, an existing one gains
@@ -1119,7 +1126,7 @@ class FillAdmissionService:
         every later one TYPE_MISMATCH. Resolution refuses the case
         rather than choosing which way to be wrong."""
         outputs_by_key = {output.key: output for output in config.outputs}
-        columns = [dict(column) for column in target.columns]
+        columns = [dict(column) for column in target_list.columns]
         existing = {column["key"] for column in columns}
         for column in columns:
             output = outputs_by_key.get(column["key"])
@@ -1141,8 +1148,8 @@ class FillAdmissionService:
                     "fill": {"agent_id": agent_id, "current_fill_id": fill_id},
                 }
             )
-        target.columns = columns
-        target.save(update_fields=["columns", "updated_at"])
+        target_list.columns = columns
+        target_list.save(update_fields=["columns", "updated_at"])
 
     def _borrowed_row(self, *, config: AgentConfig, test_run_id: str) -> AgentTestRun | None:
         """The bench run this fill may seed from, or None. The prewrite
@@ -1167,7 +1174,7 @@ class FillAdmissionService:
                 return None
         return run
 
-    def _settle_fill(self, fill: Fill, target: List, *, seed: tuple[AgentTestRun, int] | None) -> Fill:
+    def _settle_fill(self, fill: Fill, *, seed: tuple[AgentTestRun, int] | None) -> Fill:
         """The locked tail of both admission paths: apply the bench
         seed if the walk found one, then ask whether the fill was born
         drained. Runs AFTER _claim_columns, under the List lock, so the

@@ -9,7 +9,6 @@ import {
   isNumericColumn,
   type ColumnFillSummary,
   type ColumnType,
-  type FillWire,
   type ListColumn,
   type RenderableListRow,
 } from "@bower/api";
@@ -19,21 +18,25 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type SearchDoor } from "./fill";
+import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
- * together: the exposed jobs and the management verbs the popover's
- * chip and scoped continue call. */
+ * together: the LIVE runs and the management verbs the popover's
+ * chip and continues call. */
 export type SheetFills = {
   // The sheet's own id: the popover's prompt edit calls the
   // column-scoped endpoint.
   listId: string;
-  jobs: FillWire[];
-  // Server truth per column (current job, canonical filled count).
+  runs: LiveRun[];
+  // Server truth per column (current run and its status, the newest
+  // failure, canonical totals).
   summaries: ColumnFillSummary[];
+  // The page's poll cannot reach the server (the footer's line): the
+  // loading cells hold still instead of claiming progress.
+  pollTrouble: boolean;
   rowCount: number;
-  onStop: (jobId: string) => Promise<string | null>;
-  onRefill: (job: FillWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onStop: (runId: string) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -59,8 +62,8 @@ function Cell({ column, value }: { column: ListColumn; value: string }) {
  * nearest scrolling ancestor. AI cell states ride the ROW itself
  * (RenderableListRow.states), so a value and its state can never come from
  * different requests and disagree; `fills`
- * adds the tracker row under the header (one cell per AI column, the
- * per-column fill surface; the footer tray stays the sheet-wide one).
+ * adds the tracker row under the header (one cell per AI column, THE
+ * per-column fill surface; the footer keeps only a passive glance).
  * `onAddColumn` puts the spreadsheet-native "+" entry point in the
  * last header cell (header only, never the body rows). */
 export function SheetTable({
@@ -191,7 +194,8 @@ export function SheetTable({
                     listId={tracker.listId}
                     column={column}
                     summary={tracker.summaries.find((entry) => entry.column_key === column.key)}
-                    jobs={tracker.jobs}
+                    pollTrouble={tracker.pollTrouble}
+                    runs={tracker.runs}
                     rowCount={tracker.rowCount}
                     onStop={tracker.onStop}
                     onRefill={tracker.onRefill}
@@ -212,8 +216,8 @@ export function SheetTable({
               // is the plain filled cell and no value is
               // not-attempted, undecorated by design.
               // A REAL VALUE always outranks a state: it renders as
-              // the value, with a mark beside it when the run that
-              // filled it had a degraded tool. Both come off THIS row
+              // the value, with a mark beside it when the row's run
+              // had a degraded tool. Both come off THIS row
               // object, so they are one encoding rather than two
               // reads that can disagree.
               const value = row.data[column.key] ?? "";

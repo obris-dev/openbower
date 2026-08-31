@@ -84,7 +84,7 @@ class AdmissionTestCase(TestCase):
 
 
 class QuickPathTests(AdmissionTestCase):
-    def test_admit_creates_ephemeral_column_job_and_queue(self) -> None:
+    def test_admit_creates_ephemeral_column_run_and_queue(self) -> None:
         fill = self.admit()
         agent = Agent.objects.get(id=fill.agent_id)
         self.assertTrue(agent.ephemeral)
@@ -174,7 +174,7 @@ class QuickPathTests(AdmissionTestCase):
         self.sheet.refresh_from_db()
         self.assertEqual([c["key"] for c in self.sheet.columns], ["company"])
 
-    def test_list_delete_purges_jobs_and_outcomes(self) -> None:
+    def test_list_delete_purges_runs_and_outcomes(self) -> None:
         # No cascades exist: delete() owns the fill custody's cleanup,
         # or a live orphaned fill holds an account fill slot forever
         # with nothing visible to cancel.
@@ -206,7 +206,7 @@ class QuickPathTests(AdmissionTestCase):
 
 
 class GuardTests(AdmissionTestCase):
-    def test_same_column_live_job_refuses(self) -> None:
+    def test_same_column_live_run_refuses(self) -> None:
         self.admit()
         # A second sheet column would collide with the first fill's
         # target key while it is still live.

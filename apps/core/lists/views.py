@@ -17,7 +17,7 @@ from agents.services import AgentNotFound
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
-from openbower_schema.fills import ColumnPromptWire, FillPage
+from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
 
 from .constants import (
@@ -44,7 +44,7 @@ from .serializers import (
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
-    fill_wire,
+    fill_run_wire,
     folder_wire,
     list_wire,
     row_wire,
@@ -127,8 +127,8 @@ class ListsView(_ScopedView):
         serializer = ListCreateRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        target = self.lists.create(label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL)
-        return Response(list_wire(target), status=201)
+        target_list = self.lists.create(label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL)
+        return Response(list_wire(target_list), status=201)
 
 
 class ListDetailView(_ScopedView):
@@ -139,18 +139,18 @@ class ListDetailView(_ScopedView):
         serializer = ListPatchRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        target = self._list_or_404(id)
+        target_list = self._list_or_404(id)
         # One PATCH, one outcome: a bad folder id must not leave a
         # half-applied rename behind.
         with transaction.atomic():
             if "label" in data:
-                target = self.lists.rename(target, label=data["label"])
+                target_list = self.lists.rename(target_list, label=data["label"])
             if "folder_id" in data:
                 try:
-                    target = self.lists.move(target, folder_id=data["folder_id"])
+                    target_list = self.lists.move(target_list, folder_id=data["folder_id"])
                 except FolderNotFound:
                     raise ValidationError("no folder with that id") from None
-        return Response(list_wire(target))
+        return Response(list_wire(target_list))
 
     def delete(self, request: Request, id: str) -> Response:
         self.lists.delete(self._list_or_404(id))
@@ -159,29 +159,29 @@ class ListDetailView(_ScopedView):
 
 class ListRowsView(_ScopedView):
     def get(self, request: Request, id: str) -> Response:
-        target = self._list_or_404(id)
+        target_list = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_ROWS_PAGE, maximum=MAX_ROWS_PAGE)
         raw_after = request.query_params.get("after", "0")
         if not raw_after.isdecimal() or len(raw_after) > 9:
             raise ValidationError("?after= must be a row position")
-        rows = self.lists.rows_page(target, after_position=int(raw_after), limit=limit)
-        states = self.fills.cell_states_for_rows(target, rows)
+        rows = self.lists.rows_page(target_list, after_position=int(raw_after), limit=limit)
+        states = self.fills.cell_states_for_rows(target_list, rows)
         next_cursor = str(rows[-1].position) if len(rows) == limit else None
         page = ListRowsPage(items=[row_wire(r, states.get(str(r.id), {})) for r in rows], next_cursor=next_cursor)
         return Response(page.model_dump())
 
     def post(self, request: Request, id: str) -> Response:
-        target = self._list_or_404(id)
+        target_list = self._list_or_404(id)
         serializer = RowsAddRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            added = self.lists.add_rows(target, serializer.validated_data["rows"])
+            added = self.lists.add_rows(target_list, serializer.validated_data["rows"])
         except ListsFull as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        target.refresh_from_db()
-        return Response(RowsAdded(added=added, row_count=target.row_count).model_dump(), status=201)
+        target_list.refresh_from_db()
+        return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
 
 
 class ColumnsView(_ScopedView):
@@ -197,12 +197,12 @@ class ColumnsView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            target = self.columns.add_column(id, label=data["label"], column_type=data["type"])
+            target_list = self.columns.add_column(id, label=data["label"], column_type=data["type"])
         except ColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        return Response(list_wire(target))
+        return Response(list_wire(target_list))
 
 
 class ColumnOrderView(_ScopedView):
@@ -216,7 +216,7 @@ class ColumnOrderView(_ScopedView):
         serializer = ColumnOrderRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            target = self.columns.reorder(id, keys=serializer.validated_data["keys"])
+            target_list = self.columns.reorder(id, keys=serializer.validated_data["keys"])
         except ColumnRefused as e:
             # Caught at the BASE and classified by code, the same way
             # the sibling column write above does it: a refusal added
@@ -225,7 +225,7 @@ class ColumnOrderView(_ScopedView):
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        return Response(list_wire(target))
+        return Response(list_wire(target_list))
 
 
 class AiColumnView(_ScopedView):
@@ -255,7 +255,7 @@ class AiColumnView(_ScopedView):
             raise NotFound("no list with that id") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(fill_wire(fill), status=201)
+        return Response(fill_run_wire(fill), status=201)
 
 
 class ColumnDetailView(_ScopedView):
@@ -271,21 +271,21 @@ class ColumnDetailView(_ScopedView):
         serializer = ColumnRenameRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            target = self.columns.rename(id, key=key, label=serializer.validated_data["label"])
+            target_list = self.columns.rename(id, key=key, label=serializer.validated_data["label"])
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        return Response(list_wire(target))
+        return Response(list_wire(target_list))
 
     def delete(self, request: Request, id: str, key: str) -> Response:
         try:
-            target = self.columns.delete(id, key=key)
+            target_list = self.columns.delete(id, key=key)
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        return Response(list_wire(target))
+        return Response(list_wire(target_list))
 
 
 class ColumnRefillView(_ScopedView):
@@ -315,7 +315,7 @@ class ColumnRefillView(_ScopedView):
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(fill_wire(fill), status=201)
+        return Response(fill_run_wire(fill), status=201)
 
 
 class ColumnPromptView(_ScopedView):
@@ -356,37 +356,37 @@ class ColumnPromptView(_ScopedView):
 
 
 class ListFillsView(_ScopedView):
-    """GET /v1/lists/{id}/fills?after=: the list's fills, keyset by -id,
-    ALL states visible (a failed fill is a first-class API object with
-    its error, not a 4xx), plus the per-column summaries the tracker
-    renders (server truth; a client sum over one page of fills silently
-    undercounts once history outgrows the page)."""
+    """GET /v1/lists/{id}/fills?after=: the list's LIVE fill runs,
+    keyset by -id, plus the per-column summaries the tracker renders
+    (server truth: the totals, the newest run's status, and its error
+    when it failed, never a 4xx; a client sum over one page of runs
+    silently undercounts once history outgrows the page)."""
 
     def get(self, request: Request, id: str) -> Response:
-        target = self._list_or_404(id)
+        target_list = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        fills = self.fills.page_for_list(str(target.id), after_id=after, limit=limit)
-        page = FillPage(
-            items=[fill_wire(j) for j in fills],
-            columns=self.fills.column_summaries(target),
-            next_cursor=next_cursor_from(fills, limit=limit),
+        runs = self.fills.page_for_list(str(target_list.id), after_id=after, limit=limit)
+        page = FillRunPage(
+            runs=[fill_run_wire(run) for run in runs],
+            columns=self.fills.column_summaries(target_list),
+            next_cursor=next_cursor_from(runs, limit=limit),
         )
         return Response(page.model_dump())
 
 
 class FillCancelView(_ScopedView):
     def post(self, request: Request, id: str, fill_id: str) -> Response:
-        target = self._list_or_404(id)
+        target_list = self._list_or_404(id)
         try:
             fill = self.fills.get(fill_id)
         except FillNotFound as e:
             raise NotFound("no fill with that id") from e
         # The route nests under a list; a fill of another sheet must not
         # be addressable through this one's URL.
-        if fill.list_id != str(target.id):
+        if fill.list_id != str(target_list.id):
             raise NotFound("no fill with that id")
-        return Response(fill_wire(self.fills.cancel(fill_id)))
+        return Response(fill_run_wire(self.fills.cancel(fill_id)))
 
 
 def _column_prompt_wire(config: AgentConfig) -> dict:

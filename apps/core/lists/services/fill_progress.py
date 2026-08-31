@@ -1,5 +1,5 @@
 """Fill progress and lifecycle: what happens to the FILL row as its
-rows resolve. The counters the tray polls and the stored concurrency
+rows resolve. The counters the fills poll reads and the stored concurrency
 point (per-row deltas, written with F() expressions so 64 threads can
 report without meeting on the fill's hottest row), and the status
 machine (complete when no queued task remains; cancelled or failed
