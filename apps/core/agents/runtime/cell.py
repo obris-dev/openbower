@@ -126,14 +126,27 @@ def _cells(config: AgentConfig, answered: Answered) -> dict[str, str]:
 def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str:
     """WHY a run with no cells is blank, in rank order: the answerer's
     own cause (a model transient, a validation miss) outranks the
-    doctrine's; then the first toggled tool whose door is not open
-    names the cell (the sheet keys on the status code, the tool and
-    its code ride the record beside it); then verification drops read
-    UNVERIFIED (an answer arrived; nothing confirmed it); otherwise the
-    model honestly declined, which reads NO_EVIDENCE."""
+    doctrine's; then the first toggled tool whose door is not open AND
+    never served names the cell (the sheet keys on the status code,
+    the tool and its code ride the record beside it); then
+    verification drops read UNVERIFIED (an answer arrived; nothing
+    confirmed it); otherwise the model honestly declined, which reads
+    NO_EVIDENCE.
+
+    A door that SERVED cannot name the blank: it gave the model real
+    evidence, so a decline over that evidence is the model's verdict,
+    not the door's fault, and diagnosing the door would park the row
+    to re-buy the same verdict. A toggled door that was never even
+    offered (not configured) DOES name it, deliberately: the missing
+    tool may be exactly why the output is empty, the state is written
+    at once, and Continue re-runs it once the door is set up (door
+    credentials live in deployment settings, outside the config
+    fingerprint, so no settled state could re-open on setup)."""
     if answered.cause:
         return answered.cause
     for tool in toggled_tools(config):
+        if tool in deps.served:
+            continue
         status = deps.tool_status.get(tool, SearchStatus.OPEN)
         if status is not SearchStatus.OPEN:
             return CELL_STATE_BY_STATUS[status]

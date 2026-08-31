@@ -1217,6 +1217,69 @@ class AgenticLoopTests(TestCase):
         self.assertEqual(body["blank_cause"], "tool_not_configured")
         self.assertEqual(body["tools"], {"web_search": "not_configured"})
 
+    def test_a_door_that_served_cannot_name_the_blank(self):
+        # web_search serves a real record, a later query rate-limits
+        # (the closer overwrites the door's status; `served` remembers),
+        # and the model reads its evidence and declines every output.
+        # The decline is the model's verdict on evidence it HAD, so the
+        # blank settles NO_EVIDENCE; blaming the door would park the
+        # row to re-buy the same verdict four times. The degradation
+        # still rides the tools map. FAILS without the served skip in
+        # _blank_cause (the old read was tool_unavailable, a retry).
+        from agents.search import SearchHit, _DuckduckgoPage
+
+        def behavior(kind, messages, info):
+            returned = [part for m in messages for part in getattr(m, "parts", []) if isinstance(part, ToolReturnPart)]
+            if len(returned) < 2:
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": f"q{len(returned)}"})])
+            return _final(info, person="", profile="")
+
+        hit = SearchHit("Acme", "https://acme.com", "Acme.")
+        fetch, _ = _scripted_free_door([_DuckduckgoPage(200, [hit]), _DuckduckgoPage(403, [])])
+        with patch("agents.search._duckduckgo_fetch", side_effect=fetch), patch("agents.search._sleep"):
+            body = self._run(
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "no_evidence")
+        self.assertEqual(body["tools"], {"web_search": "rate_limited"})
+        self.assertEqual([s.status for s in body["searches"]], ["open", "rate_limited"])
+
+    def test_an_unconfigured_sibling_still_names_a_declined_output(self):
+        # DELIBERATE: web_search serves and the model declines, but a
+        # toggled find_contacts was never offered (its door is not
+        # configured), and the missing tool may be exactly why the
+        # output is empty. The cell reads tool_not_configured, which
+        # re-runs on Continue once the door is set up; door credentials
+        # live in deployment settings, outside the config fingerprint,
+        # so no settled state could re-open on setup. The price is a
+        # consent-gated re-buy per Continue until then.
+        from agents.search import SearchHit, _DuckduckgoPage
+
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
+            return _final(info, person="", profile="")
+
+        hit = SearchHit("Acme", "https://acme.com", "Acme.")
+        fetch, _ = _scripted_free_door([_DuckduckgoPage(200, [hit])])
+        with patch("agents.search._duckduckgo_fetch", side_effect=fetch):
+            body = self._run(
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
+                settings={
+                    **_TEST_SETTINGS,
+                    "SEARCH_PROVIDER": "duckduckgo",
+                    "DATAFORSEO_LOGIN": "",
+                    "DATAFORSEO_PASSWORD": "",
+                },
+            )
+        self.assertEqual(body["cells"], {})
+        self.assertEqual(body["blank_cause"], "tool_not_configured")
+        self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "not_configured"})
+
     def test_a_url_embedded_in_prose_grounds_or_goes(self):
         # Prose is not a fabrication loophole: the fabricated URL is
         # excised from the text field; the mutated one rewrites to the
