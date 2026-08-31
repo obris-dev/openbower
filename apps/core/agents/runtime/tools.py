@@ -23,7 +23,9 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import NamedTuple
 
 from django.conf import settings
@@ -39,6 +41,7 @@ from ..constants import (
     AgentTool,
     SearchProvider,
     SearchStatus,
+    ToolStatus,
 )
 from ..search import SearchHit, door_status, search
 from .grounding import canonical_url
@@ -64,17 +67,13 @@ NOTE_DOOR_CLOSED = (
     " Use the records already gathered and any other tool you have, or leave outputs empty."
 )
 
-# The record label the model reads and the stored evidence line
-# carries, per tool: "web" and "contacts" rather than the enum's
-# snake_case, because these are prose the model and a human read.
-RECORD_LABEL: dict[AgentTool, str] = {AgentTool.WEB_SEARCH: "web", AgentTool.FIND_CONTACTS: "contacts"}
-
 
 # The door each tool runs through: web search takes the configured
 # door, contacts pin the paid one (the LinkedIn x-rays need
-# Google-grade SERPs).
+# Google-grade SERPs). Reads the registry at call time, because the
+# configured provider is a setting, not a constant.
 def door_for(tool: AgentTool) -> str:
-    return SearchProvider.DATAFORSEO if tool is AgentTool.FIND_CONTACTS else settings.SEARCH_PROVIDER
+    return TOOL_REGISTRY[tool].pinned_door or settings.SEARCH_PROVIDER
 
 
 def door_status_for_tool(tool: AgentTool) -> SearchStatus:
@@ -183,9 +182,10 @@ class CellDeps:
         return [record.url for record in self.records]
 
     # The tools whose door has answered at least once this run: a
-    # later failure of a door that served does not change its status
-    # (the row has its evidence), while a door that only ever failed
-    # ends the run wearing its last failure.
+    # later NON-CLOSING failure of a served door does not change its
+    # status (the row has its evidence); a CLOSER overwrites even a
+    # served door, and then sticks. A door that only ever failed ends
+    # the run wearing its last failure.
     served: set[AgentTool] = field(default_factory=set)
 
     def tool_open(self, tool: AgentTool) -> bool:
@@ -198,11 +198,22 @@ class CellDeps:
     def record_tool_status(self, tool: AgentTool, status: SearchStatus) -> None:
         """One door's word, folded into the tool's status for the run:
         open marks the door served (and clears a provisional failure);
-        a closer closes it; any other failure is provisional, kept
-        only while the door has not served."""
-        if status is SearchStatus.OPEN:
+        a closer closes it AND STICKS; any other failure is
+        provisional, kept only while the door has not served.
+
+        Closers are sticky because sibling tool calls run on parallel
+        threads and land in any order: a slow success arriving after
+        the closer must not reopen the door (the model would re-buy a
+        full backoff) or ship "open" on the task and cell for a door
+        that refused. The success still marks the door SERVED, which
+        is a historical fact the blank-cause skip reads."""
+        if status == ToolStatus.OPEN:
             self.served.add(tool)
+            if self.tool_status.get(tool) in SEARCH_DOOR_CLOSERS:
+                return
             self.tool_status[tool] = SearchStatus.OPEN
+        elif self.tool_status.get(tool) in SEARCH_DOOR_CLOSERS:
+            return
         elif status in SEARCH_DOOR_CLOSERS or tool not in self.served:
             self.tool_status[tool] = status
 
@@ -233,7 +244,34 @@ def find_contacts(ctx: RunContext[CellDeps], query: str) -> str:
     return _search_through(ctx.deps, query, tool=AgentTool.FIND_CONTACTS)
 
 
-_TOOL_FUNCTIONS = {AgentTool.WEB_SEARCH: web_search, AgentTool.FIND_CONTACTS: find_contacts}
+class ToolSpec(NamedTuple):
+    """Everything the runtime and its surfaces need to know about ONE
+    tool, in one place: adding a tool is adding a row here (the parity
+    test pins that this registry covers AgentTool exactly), never
+    finding a second hand-written map."""
+
+    function: Callable[..., str]
+    # The label the model reads and the stored evidence line carries:
+    # prose ("web", "contacts"), never the enum's snake_case.
+    record_label: str
+    # The tier-1 display name a user reads (the breaker's fill
+    # failure message).
+    display_name: str
+    # The door the tool runs through: "" = the deployment's configured
+    # search provider; a named door is pinned.
+    pinned_door: str
+    # The tool's status vocabulary: restates the base, may add modes
+    # of its own (the parity test pins containment, the cell-state
+    # table's coverage, and the wire's TOOL_STATUSES equality).
+    statuses: type[StrEnum]
+
+
+TOOL_REGISTRY: dict[AgentTool, ToolSpec] = {
+    AgentTool.WEB_SEARCH: ToolSpec(web_search, "web", "Web search", "", SearchStatus),
+    AgentTool.FIND_CONTACTS: ToolSpec(
+        find_contacts, "contacts", "Finding contacts", SearchProvider.DATAFORSEO, SearchStatus
+    ),
+}
 
 
 def toggled_tools(config: AgentConfig) -> list[AgentTool]:
@@ -247,7 +285,7 @@ def build_tools(config: AgentConfig, deps: CellDeps) -> list[Tool]:
     """What THIS config on THIS deploy may call: a toggled tool whose
     door is not open (per `deps.tool_status`, seeded by run_cell) is simply
     not offered; its status already says why."""
-    return [Tool(_TOOL_FUNCTIONS[tool]) for tool in toggled_tools(config) if deps.tool_open(tool)]
+    return [Tool(TOOL_REGISTRY[tool].function) for tool in toggled_tools(config) if deps.tool_open(tool)]
 
 
 def _clamp_query(query: str, *, tool: AgentTool) -> str:
@@ -338,7 +376,7 @@ def _pool_hits(deps: CellDeps, hits: list[SearchHit], *, tool: AgentTool) -> lis
         # model, the validator, and the stored evidence all share.
         record = EvidenceRecord(
             position=len(deps.records) + 1,
-            tool=RECORD_LABEL[tool],
+            tool=TOOL_REGISTRY[tool].record_label,
             title=hit.title,
             url=hit.url,
             snippet=hit.snippet,

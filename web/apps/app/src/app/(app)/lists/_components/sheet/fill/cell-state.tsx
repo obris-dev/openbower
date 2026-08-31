@@ -62,19 +62,24 @@ const UNKNOWN_FACT = "This page is too old to say whether Continue will retry it
 // server-side before this table learns it). `subject` is the tool as
 // a user names it; `fix` renders only where it is the user's to do.
 const TOOL_SUBJECT: Record<ToolKey, string> = { web_search: "Web search", find_contacts: "Finding contacts" };
-const BASE_COPY: Record<string, { said: string; fix?: string }> = {
+// `rowScoped` marks the fragments that describe THIS ROW's weather;
+// a deployment fact (not configured) or an unknowable one gets no
+// "on this row", because the scope would assert what the code knows
+// to be column-wide or cannot know at all.
+type ToolCopy = { said: string; fix?: string; rowScoped?: boolean };
+const BASE_COPY: Record<string, ToolCopy> = {
   not_configured: { said: "isn't set up on this deployment", fix: "Set it up under the agent's Tools." },
-  rate_limited: { said: "was rate-limited past its retries" },
-  unreachable: { said: "couldn't be reached" },
-  error: { said: "kept failing" },
+  rate_limited: { said: "was rate-limited past its retries", rowScoped: true },
+  unreachable: { said: "couldn't be reached", rowScoped: true },
+  error: { said: "kept failing", rowScoped: true },
 };
-const TOOL_COPY: Record<ToolKey, Record<string, { said: string; fix?: string }>> = {
+const TOOL_COPY: Record<ToolKey, Record<string, ToolCopy>> = {
   web_search: {},
   find_contacts: {
     not_configured: { said: "isn't set up: it needs DataForSEO", fix: "Set it up under the agent's Tools." },
   },
 };
-const UNKNOWN_TOOL_COPY: { said: string; fix?: string } = { said: "reported a problem this page can't name" };
+const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't name" };
 // The paid-door nudge is a tier-2 composition: the server ships WHICH
 // door serves web search, and the sentence renders only where the
 // paid door is a remedy (the free door refused). A contacts refusal
@@ -94,8 +99,17 @@ function degraded(tools: ToolStatuses): [ToolKey, string][] {
  * on this row", plus the fix and the paid-door nudge where they apply. */
 function toolSentence(tool: ToolKey, code: string, searchDoor: SearchDoor): { cause: string; fix: string } {
   const copy = TOOL_COPY[tool][code] ?? BASE_COPY[code] ?? UNKNOWN_TOOL_COPY;
-  const nudge = tool === "web_search" && searchDoor === "duckduckgo" && code !== "not_configured" ? PAID_DOOR_NUDGE : "";
-  return { cause: `${TOOL_SUBJECT[tool]} ${copy.said} on this row`, fix: [copy.fix ?? "", nudge].filter(Boolean).join(" ") };
+  // The nudge is a THROUGHPUT remedy, so it renders only where
+  // throughput is the problem (the free door refusing or timing
+  // out), never on a door that is erroring or was never set up.
+  const nudge =
+    tool === "web_search" && searchDoor === "duckduckgo" && (code === "rate_limited" || code === "unreachable")
+      ? PAID_DOOR_NUDGE
+      : "";
+  return {
+    cause: `${TOOL_SUBJECT[tool]} ${copy.said}${copy.rowScoped ? " on this row" : ""}`,
+    fix: [copy.fix ?? "", nudge].filter(Boolean).join(" "),
+  };
 }
 
 /** Every pointer's path to a cell's why: the mark (word or dot) is a
@@ -188,7 +202,11 @@ export function AiCellState({ entry, searchDoor = null }: { entry: RenderableCel
     const sentence = first
       ? toolSentence(first[0], first[1], searchDoor)
       : { cause: "A tool did not serve this row", fix: "" };
-    const fact = state === "tool_not_configured" ? NOT_CONFIGURED_FACT : RETRY_FACT;
+    // `filled` takes the SETTLED fact: the server settles a filled
+    // cell unconditionally (no fingerprint gate), so Continue will
+    // never re-target it and promising a retry would be false.
+    const fact =
+      state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? SETTLED_FACT : RETRY_FACT;
     return (
       <CauseMark cause={sentence.cause} fact={[fact, sentence.fix].filter(Boolean).join(" ")}>
         <WarningDot />

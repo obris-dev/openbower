@@ -249,6 +249,14 @@
           },
           "title": "Searches",
           "type": "array"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Tools",
+          "type": "object"
         }
       },
       "required": [
@@ -1307,6 +1315,7 @@
       "description": "One search query's outcome: `status` is what the door said (a\nSearchStatus code: open, and hits, possibly zero, is the honest\nanswer; any other code is why there are none). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts), and `tool` which tool asked (web_search | find_contacts),\nso a reader can tell whose door refused.",
       "properties": {
         "attempts": {
+          "default": 1,
           "title": "Attempts",
           "type": "integer"
         },
@@ -1315,6 +1324,7 @@
           "type": "integer"
         },
         "provider": {
+          "default": "",
           "title": "Provider",
           "type": "string"
         },
@@ -1323,21 +1333,19 @@
           "type": "string"
         },
         "status": {
+          "default": "",
           "title": "Status",
           "type": "string"
         },
         "tool": {
+          "default": "",
           "title": "Tool",
           "type": "string"
         }
       },
       "required": [
         "query",
-        "hits",
-        "status",
-        "provider",
-        "attempts",
-        "tool"
+        "hits"
       ],
       "title": "TestSearch",
       "type": "object"

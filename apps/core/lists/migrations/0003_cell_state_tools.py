@@ -3,22 +3,55 @@
 import lists.constants
 from django.db import migrations, models
 
+# The retired cell-state words, remapped to the vocabulary that
+# replaced them: rows written under 0002 must keep reading (the wire
+# Literal refuses a retired word, and one stale row would 500 the
+# whole rows page for its sheet, with no surface able to remove it).
+_RETIRED = {
+    "no_tools_door": "tool_not_configured",
+    "search_throttled": "tool_unavailable",
+    "contacts_throttled": "tool_unavailable",
+}
+
+
+def _remap_retired_states(apps, schema_editor):
+    FillCellState = apps.get_model("lists", "FillCellState")
+    for old, new in _RETIRED.items():
+        FillCellState.objects.filter(state=old).update(state=new)
+    # The same words ride stored task results as blank_cause and
+    # declined_cause (the give-up path and the row drawer read them
+    # back); bounded by tasks that carry a result at all.
+    FillTask = apps.get_model("lists", "FillTask")
+    for task in FillTask.objects.exclude(result={}).exclude(result__isnull=True).iterator():
+        changed = False
+        for key in ("blank_cause", "declined_cause"):
+            value = task.result.get(key)
+            if value in _RETIRED:
+                task.result[key] = _RETIRED[value]
+                changed = True
+        if changed:
+            task.save(update_fields=["result"])
+
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('lists', '0002_fill_fillcellstate_filltask'),
+        ("lists", "0002_fill_fillcellstate_filltask"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='fillcellstate',
-            name='tools',
-            field=models.JSONField(blank=True, default=dict, verbose_name='tool statuses'),
+            model_name="fillcellstate",
+            name="tools",
+            field=models.JSONField(blank=True, default=dict, verbose_name="tool statuses"),
         ),
         migrations.AlterField(
-            model_name='fillcellstate',
-            name='state',
-            field=models.CharField(default=lists.constants.StoredCellState['NO_EVIDENCE'], max_length=32, verbose_name='state'),
+            model_name="fillcellstate",
+            name="state",
+            field=models.CharField(
+                default=lists.constants.StoredCellState["NO_EVIDENCE"], max_length=32, verbose_name="state"
+            ),
         ),
+        # Reverse is a no-op: the old words carry strictly less than
+        # the new ones, and un-remapping would re-break the read path.
+        migrations.RunPython(_remap_retired_states, migrations.RunPython.noop),
     ]

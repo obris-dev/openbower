@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 from lists.constants import CELL_STATE_BY_STATUS, StoredCellState
 from openbower_schema.agents import AgentConfig
 
-from ..constants import AgentTool, SearchStatus
+from ..constants import AgentTool, SearchStatus, ToolStatus
 from ..providers import model_for
 from .answer import Answered, CellAnswerer
 from .outcomes import SearchOutcome
@@ -147,8 +147,11 @@ def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str
     for tool in toggled_tools(config):
         if tool in deps.served:
             continue
+        # Value compare against the BASE, never identity against one
+        # tool's enum: a second tool's own OPEN member must read as
+        # open here, not fall into the table as a KeyError.
         status = deps.tool_status.get(tool, SearchStatus.OPEN)
-        if status is not SearchStatus.OPEN:
+        if status != ToolStatus.OPEN:
             return CELL_STATE_BY_STATUS[status]
     return StoredCellState.UNVERIFIED if answered.judgement.verification_dropped else StoredCellState.NO_EVIDENCE
 

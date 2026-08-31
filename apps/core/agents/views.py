@@ -159,6 +159,11 @@ def _execute_test(
                 blank_cause=run.blank_cause,
                 declined_cause=run.declined_cause,
                 assessments=run.assessments,
+                # ONE shape for both writers: a borrowed bench row
+                # lands through the same landing as a worker row, and
+                # without the tool statuses its cell would lose the
+                # degraded mark (and a blank its tool's name).
+                tools=dict(run.tools),
             )
             complete_run(run_id, result.model_dump())
         finally:

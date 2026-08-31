@@ -740,6 +740,11 @@ class RuntimeTests(TestCase):
         self.assertEqual(body["cells"], {})
         self.assertTrue(body["searches"])
         self.assertTrue(all(s["status"] == "rate_limited" for s in body["searches"]))
+        # The tool statuses ride the STORED bench result too: a
+        # borrowed bench row lands through the same landing as a
+        # worker row, and without the map its cell would lose the
+        # degraded mark. FAILS if the view's result drops tools=.
+        self.assertEqual(body["tools"], {"find_contacts": "rate_limited"})
 
     def test_the_instruction_tail_switches_on_tool_presence(self):
         # One call site, two conducts: the tooled run is told to gather
@@ -993,9 +998,9 @@ class AgenticLoopTests(TestCase):
 
     def _looping(self, serp_calls: list[str]):
         """A model that never stops searching: distinct queries per
-        call, so the
-        loop actually spends the budget; and, when asked for a verdict
-        with the tools withheld, an answer from the records."""
+        call, so the loop actually spends the budget; and, when asked
+        for a verdict with the tools withheld, an answer from the
+        records."""
         calls = {"n": 0}
 
         def serp(url, **kwargs):
@@ -1279,6 +1284,32 @@ class AgenticLoopTests(TestCase):
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["blank_cause"], "tool_not_configured")
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "not_configured"})
+
+    def test_a_model_transient_outranks_a_closed_door(self):
+        # The RANK, pinned: the answerer's own cause wins over the
+        # doctrine's. A completion that 5xxs while the door is
+        # rate-limited parks as TRANSIENT, the more specific fact; the
+        # accepted edge of the same rank is that a TERMINAL answerer
+        # cause (no_answer, unparseable) also settles a run whose door
+        # closed. FAILS if the two blocks in _blank_cause swap.
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        from agents.search import _DuckduckgoPage
+
+        def behavior(kind, messages, info):
+            if not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
+            raise ModelHTTPError(status_code=503, model_name="scripted", body=None)
+
+        fetch, _ = _scripted_free_door([_DuckduckgoPage(403, [])])
+        with patch("agents.search._duckduckgo_fetch", side_effect=fetch), patch("agents.search._sleep"):
+            body = self._run(
+                behavior,
+                config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
+                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+            )
+        self.assertEqual(body["blank_cause"], "transient")
+        self.assertEqual(body["tools"], {"web_search": "rate_limited"})
 
     def test_a_url_embedded_in_prose_grounds_or_goes(self):
         # Prose is not a fabrication loophole: the fabricated URL is

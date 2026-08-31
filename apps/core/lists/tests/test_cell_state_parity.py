@@ -89,17 +89,39 @@ class CellStateParityTests(SimpleTestCase):
         for state in StoredCellState:
             self.assertLessEqual(len(state.value), CELL_STATE_MAX_LENGTH)
 
+    def test_a_search_stored_before_the_status_fields_still_reads(self):
+        # TestSearch's defaults exist FOR the stored read: task
+        # results and bench runs written before the door-status fields
+        # carry only query/hits (plus retired keys). A required field
+        # there bricks the drawer on every old row; this fails if one
+        # of the four fields loses its default.
+        from openbower_schema.agents import TestSearch
+
+        search = TestSearch.model_validate({"query": "acme", "hits": 3, "failed": True, "cause": "timeout"})
+        self.assertEqual((search.status, search.provider, search.attempts, search.tool), ("", "", 1, ""))
+
     def test_every_tools_status_vocabulary_contains_the_base_and_ships(self):
         # StrEnums cannot extend one another, so each tool's enum
-        # restates the base; this is what makes that a rule. And the
-        # wire's per-tool lists (the client's copy-table types) are the
-        # same enums, so a code added server-side reaches the client.
-        from agents.constants import AgentTool, SearchStatus, ToolStatus
+        # restates the base; this is what makes that a rule. The
+        # REGISTRY is the add-a-tool pin: a new AgentTool member with
+        # no spec fails here, before a missing function, label, door,
+        # or cell-state row could surface as a KeyError mid-run. And
+        # the wire's per-tool lists (the client's copy-table types)
+        # are the registry's own enums, so a code added server-side
+        # reaches the client.
+        from agents.constants import AgentTool, ToolStatus
+        from agents.runtime.tools import TOOL_REGISTRY
         from openbower_schema.agents import TOOL_STATUSES, ToolStatusWire
 
-        self.assertLessEqual({s.value for s in ToolStatus}, {s.value for s in SearchStatus})
+        from ..constants import CELL_STATE_BY_STATUS
+
+        self.assertEqual(set(TOOL_REGISTRY), set(AgentTool))
         self.assertEqual(set(get_args(ToolStatusWire)), {s.value for s in ToolStatus})
         self.assertEqual(set(TOOL_STATUSES), {t.value for t in AgentTool})
-        for tool, statuses in TOOL_STATUSES.items():
-            with self.subTest(tool=tool):
-                self.assertEqual(set(statuses), {s.value for s in SearchStatus})
+        for tool, spec in TOOL_REGISTRY.items():
+            with self.subTest(tool=tool.value):
+                self.assertLessEqual({s.value for s in ToolStatus}, {s.value for s in spec.statuses})
+                self.assertEqual(set(TOOL_STATUSES[tool.value]), {s.value for s in spec.statuses})
+                for status in spec.statuses:
+                    if status.value != ToolStatus.OPEN:
+                        self.assertIn(status.value, CELL_STATE_BY_STATUS)

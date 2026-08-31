@@ -22,7 +22,7 @@ from django.db import DatabaseError, close_old_connections, connections
 from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
-from agents.runtime.tools import CellDeps
+from agents.runtime.tools import TOOL_REGISTRY, CellDeps
 from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
@@ -154,7 +154,7 @@ class _Breakers:
         )
 
     def _tool_message(self, tool: AgentTool, status: str) -> str:
-        name = "Web search" if tool is AgentTool.WEB_SEARCH else "Finding contacts"
+        name = TOOL_REGISTRY[tool].display_name
         said = _STATUS_PHRASE.get(status, "is failing on")
         free = tool is AgentTool.WEB_SEARCH and self._search_provider != SearchProvider.DATAFORSEO
         door = "the free search provider" if free else "DataForSEO"
@@ -312,7 +312,7 @@ class FillState:
         # climbed the point straight into the ban the breaker then had
         # to kill the fill over. Backing off is the response; stopping
         # is what happens when backing off runs out of room.
-        if any(search.status != "open" or search.attempts > 1 for search in run.searches):
+        if any(search.status != ToolStatus.OPEN or search.attempts > 1 for search in run.searches):
             self.controller.record_throttle(generation)
         else:
             self.controller.record_success(generation)
