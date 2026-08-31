@@ -135,7 +135,10 @@ class CellStateWire(BaseModel):
     copy by (tool, code) and tolerates a code it has not heard of."""
 
     state: WireCellState
-    tools: dict[str, str] = Field(default_factory=dict)
+    # A literal default, not default_factory: only the literal reaches
+    # the JSON schema, so the generated client parses an entry without
+    # the key instead of refusing it.
+    tools: dict[str, str] = {}
 
 
 class ListRowWire(BaseModel):

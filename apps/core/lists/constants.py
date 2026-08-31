@@ -257,9 +257,12 @@ class StoredCellState(StrEnum):
     # tool, and the tool's own code, ride the cell record's `tools`
     # map beside the state, so a tool can add a failure mode without
     # this vocabulary growing. NOT_CONFIGURED is written at once (no
-    # retry changes it) and re-runs on Continue once set up;
-    # UNAVAILABLE (rate limited, unreachable, or erroring past the
-    # row's retries) parks first and lands after the attempt cap.
+    # retry changes it) and re-runs on Continue once set up.
+    # UNAVAILABLE (rate limited, unreachable, or erroring) parks and
+    # retries up to the attempt cap ONLY when the whole row blanked; a
+    # row that answered its other columns lands it at once (a park
+    # would hold hostage cells the user can already read), and a later
+    # Continue re-targets it.
     TOOL_NOT_CONFIGURED = "tool_not_configured"
     TOOL_UNAVAILABLE = "tool_unavailable"
 

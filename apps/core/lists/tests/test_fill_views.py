@@ -379,6 +379,19 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual(second.states["answer"].state, "tool_unavailable")
         self.assertEqual(second.states["answer"].tools, {"web_search": "unreachable"})
 
+    def test_a_filled_cell_with_a_clean_tool_map_stays_an_absence(self) -> None:
+        # The live writer's most common shape: filled with every door
+        # OPEN ({"web_search": "open"}), which must suppress exactly
+        # like a pre-tools filled row (empty map). FAILS if the
+        # degraded test decays to bool(tools), which would put a mark
+        # beside every value on every tool-using sheet.
+        fill_id = self.post_ai().json()["id"]
+        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
+        settle(fill_id, str(rows[0].id), None, tools={"web_search": "open", "find_contacts": "open"})
+        settle(fill_id, str(rows[1].id), None)
+        page = self._states_page()
+        self.assertEqual([dict(item.states) for item in page.items], [{}, {}])
+
     def test_tombstones_survive_a_second_run(self) -> None:
         # A refill omits the rows it settled ON PURPOSE, so the
         # sidecar must read each row's latest outcome ACROSS the

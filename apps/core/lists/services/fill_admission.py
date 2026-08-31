@@ -344,9 +344,11 @@ class RefillTargets:
     without an answer, unparseable, wrong shape) holds only while
     `fingerprint` matches the one stamped on the cell at diagnosis
     time; a prompt edit changes the ask, so those rows re-target on the
-    next refill. A filled cell is excluded by (c), since it holds a
-    value. Infrastructure-tier cells (model_error, transient) and
-    never-attempted rows always re-run.
+    next refill. A FILLED cell settles UNCONDITIONALLY (its own
+    disjunct: no fingerprint gate, no value test): the fill answered
+    it once, and only deleting the column, which purges the record,
+    buys it again. Infrastructure-tier cells (model_error, transient)
+    and never-attempted rows always re-run.
 
     MEMORY IS BOUNDED BY ONE PAGE, and that is the point of the shape.
     The rows, the settled ids among them, and the owed ids among them
@@ -1161,6 +1163,15 @@ class FillAdmissionService:
         ).first()
         if run is None or not run.row_id or run.config_fingerprint != config_fingerprint(config):
             return None
+        # A run stored under a retired cause vocabulary is one more
+        # MISS, never an error: the row simply runs fresh under the
+        # current words, and the one writer of cell truth stays
+        # strict.
+        known = {state.value for state in StoredCellState}
+        for key in ("blank_cause", "declined_cause"):
+            value = (run.result or {}).get(key, "")
+            if value and value not in known:
+                return None
         return run
 
     def _settle_fill(self, fill: Fill, *, seed: tuple[AgentTestRun, int] | None) -> Fill:
@@ -1221,5 +1232,6 @@ class FillAdmissionService:
             return True
 
         landed = land_row(fill, run.row_id, result, close=create_done, lists=self.lists)
-        assert landed is not None, "a created task cannot miss its close"
+        if landed is None:
+            raise RuntimeError("a created task cannot miss its close")
         return landed.deltas(was_parked=False)

@@ -30,7 +30,6 @@ from typing import NamedTuple
 import httpx
 from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import DDGSException
-from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.conf import settings
 
 from .constants import (
@@ -129,7 +128,7 @@ def search(query: str, *, count: int = SEARCH_HIT_COUNT, provider: str = "") -> 
             logger.info("search rate limited (%s); retrying the same query in %ss", provider, wait)
             _sleep(wait)
             continue
-        except (SearchUnreachable, httpx.TimeoutException, httpx.TransportError) as e:
+        except (SearchUnreachable, httpx.TransportError) as e:
             logger.warning("search door unreachable (%s: %s): %s", provider, type(e).__name__, e)
             return DoorAnswer(SearchStatus.UNREACHABLE, [], provider, attempts=attempt)
         except Exception as e:
@@ -203,7 +202,7 @@ def _duckduckgo_fetch(query: str) -> _DuckduckgoPage:
 def _duckduckgo(query: str, count: int) -> list[SearchHit]:
     try:
         page = _duckduckgo_fetch(query)
-    except (DDGSTimeout, DDGSException) as e:
+    except DDGSException as e:
         raise SearchUnreachable(str(e)) from e
     if page.status_code in _DUCKDUCKGO_REFUSALS:
         raise SearchRateLimited(f"duckduckgo returned {page.status_code}")
@@ -236,9 +235,15 @@ def _retry_after(response: httpx.Response) -> float | None:
     rare enough on this door that it takes the schedule's step."""
     value = response.headers.get("Retry-After", "")
     try:
-        return float(value) if value else None
+        parsed = float(value) if value else None
     except ValueError:
         return None
+    # A negative, NaN, or infinite delay is a hostile or broken
+    # header, not a schedule: NaN would poison min() and a negative
+    # wait raises out of sleep as a settled model error.
+    if parsed is None or not 0 <= parsed < float("inf"):
+        return None
+    return parsed
 
 
 def _dataforseo(query: str, count: int) -> list[SearchHit]:

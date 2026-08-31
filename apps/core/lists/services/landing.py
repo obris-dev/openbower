@@ -111,9 +111,15 @@ def land_row(
                     states[column_key] = StoredCellState.FILLED
                 for mismatch in written.mismatched:
                     states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-            cell_truth.write(fill, row_id=row_id, states=states, tools=run.tools)
+            # Close BEFORE the ledger: the terminal order is ListRow,
+            # FillTask, FillCellState, the same order both delete
+            # paths take (the reverse is an ABBA deadlock against a
+            # mid-fill delete, and a blank landing holds no ListRow
+            # lock to serialize on), and a reclaimed lease bows out
+            # before any ledger write.
             if not close(run.model_dump()):
                 raise ClaimLost()
+            cell_truth.write(fill, row_id=row_id, states=states, tools=run.tools)
     except ClaimLost:
         return None
     return Landed(frozenset(answered), declined)

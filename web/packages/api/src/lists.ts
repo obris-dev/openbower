@@ -53,8 +53,9 @@ export type { FillError, ListColumn, ListRowWire } from "@bower/schema";
 /** One cell's wire state, derived from the sidecar's own record so a
  * cause added server-side reaches every consumer through the regen:
  * `pending` is the in-flight shimmer, the rest are terminal blank
- * causes. Filled and not-attempted never travel (a value with no
- * state is filled; no state and no value is not attempted). */
+ * causes. `filled` travels only when the run that filled the cell
+ * had a degraded tool (the mark beside the value); a value with no
+ * entry IS filled and clean, and never-attempted is an absence. */
 export type CellStateWire = ListRowWire["states"][string];
 export type CellState = CellStateWire["state"];
 /** Tool -> the status code its door reported for the run that wrote

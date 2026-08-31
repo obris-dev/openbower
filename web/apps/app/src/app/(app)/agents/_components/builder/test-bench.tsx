@@ -10,18 +10,26 @@ import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
 import { CompactSelect } from "../../../_components/compact-select";
 import { sheetsTruncatedNote } from "../../../_components/agent-config/copy";
 import { outputKey } from "../../../_components/agent-config";
+import { AGENT_TOOLS } from "../../../_components/agent-config/tools-meta";
 
 /** One search's diagnosis line: what it returned or why it did not,
  * how many tries the seam made, the door that served it, and which
  * tool asked (a reader must be able to tell whose door refused). */
 function describeSearch(search: AgentTestResult["searches"][number]): string {
-  const tool = search.tool === "find_contacts" ? "contacts" : "web";
+  // An unknown tool renders its own wire key, never a guessed label.
+  const tool = search.tool === "find_contacts" ? "contacts" : search.tool === "web_search" ? "web" : search.tool;
   const door = search.provider ? ` via ${search.provider}` : "";
+  // A result stored before searches reported a status parses with the
+  // defaults ("" everywhere): absence of a diagnosis is not a failure,
+  // and the tool/door labels would be guesses.
+  if (!search.status) return `${search.hits} hits, no diagnosis recorded`;
   if (search.status === "open") return `${search.hits} hits (${tool}${door})`;
   if (search.status === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
   if (search.status === "unreachable") return `unreachable (${tool}${door})`;
   if (search.status === "not_configured") return `not set up (${tool})`;
-  return `${search.status.replace(/_/g, " ")} (${tool}${door})`;
+  // The sheet's unknown-code policy, restated: a raw server code is
+  // not user copy.
+  return `reported a problem this page can't name (${tool}${door})`;
 }
 
 /** The test bench's INPUTS AND RESULTS: hand-fed values for the
@@ -92,8 +100,12 @@ export function TestBench({
   // Normalized once: a localStorage DRAFT can hold a result from before
   // this field existed, so absence must degrade, never crash.
   const searches = result?.searches ?? [];
-  const failedSearches = searches.filter((s) => s.status !== "open").length;
+  const failedSearches = searches.filter((s) => s.status && s.status !== "open").length;
   const rateLimited = searches.filter((s) => s.status === "rate_limited").length;
+  // The run's own tool statuses answer what zero searches cannot: a
+  // door that never opened issues no query, so only this map can say
+  // WHICH story an empty run is.
+  const notConfigured = AGENT_TOOLS.filter((t) => result?.tools?.[t.key] === "not_configured").map((t) => t.label);
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
   const emptyCells = result !== null && Object.keys(result.cells).length === 0;
   // Rendering follows the DECLARED type through the SAME cell-link
@@ -214,16 +226,24 @@ export function TestBench({
           {/* A broken provider must not read as a bad agent: failures
               get strong guidance, an all-empty pass a soft one. */}
           {emptyCells && toolsOn && searches.length === 0 && (
-            <p className="mt-2 text-xs text-warning">
-              No searches ran: the model never used its tools (try a more capable model), or search isn&rsquo;t set
-              up on this deployment (see Tools).
-            </p>
+            notConfigured.length > 0 ? (
+              <p className="mt-2 text-xs text-warning">
+                Not set up on this deployment: {notConfigured.join(" | ")} (see Tools). The model could not search.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-warning">
+                No searches ran: the model never used its tools (try a more capable model), or search isn&rsquo;t set
+                up on this deployment (see Tools).
+              </p>
+            )
           )}
-          {rateLimited > 0 && (
+          {emptyCells && rateLimited > 0 && (
             // A rate limit is retried, same query, before it counts
-            // as failed; one exhausting its retries closes the run:
-            // in a fill, this row would park and retry later rather
-            // than answer from what got through.
+            // as failed; one exhausting its retries closes the door.
+            // The park prediction holds only when the run BLANKED: a
+            // run that still answered lands its cells in a fill and
+            // carries the degraded mark instead, so this renders
+            // beside empty cells alone.
             <p className="mt-2 text-xs text-warning">
               {rateLimited} of {searches.length} searches were rate-limited even after retrying. In a fill, this row
               would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.status === "rate_limited") ? "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}

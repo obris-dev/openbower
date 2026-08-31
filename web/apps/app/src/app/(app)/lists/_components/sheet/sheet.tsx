@@ -29,7 +29,7 @@ import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsGlance, useFill, type SearchDoor } from "./fill";
+import { FillsGlance, needsSearchDoor, useFill, type SearchDoor } from "./fill";
 import { SheetTable } from "./sheet-table";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
@@ -72,11 +72,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // cell is on screen: a sheet with none never pays for the catalog.
   // Absence degrades to the bare sentence.
   const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
-  const needsSearchDoor = rows.some((row) =>
-    Object.values(row.states ?? {}).some((entry) => (entry.tools.web_search ?? "open") !== "open"),
-  );
+  // The predicate lives with the nudge copy it serves (cell-state):
+  // one spelling for the fetch gate and the renderer.
+  const doorNeeded = rows.some((row) => Object.values(row.states ?? {}).some((entry) => needsSearchDoor(entry.tools)));
   useEffect(() => {
-    if (!needsSearchDoor || searchDoor !== null) return;
+    if (!doorNeeded || searchDoor !== null) return;
     let superseded = false;
     async function load() {
       const res = await fetchAgentCatalog();
@@ -86,7 +86,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     return () => {
       superseded = true;
     };
-  }, [needsSearchDoor, searchDoor]);
+  }, [doorNeeded, searchDoor]);
 
   // Rows re-read when a live run progressed (attempted moved), on
   // first sight of one, and once on the last-live-to-terminal edge:

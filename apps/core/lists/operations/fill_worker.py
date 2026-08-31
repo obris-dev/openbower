@@ -22,7 +22,7 @@ from django.db import DatabaseError, close_old_connections, connections
 from agents.constants import AgentTool, SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
-from agents.runtime.tools import CellDeps
+from agents.runtime.tools import TOOL_REGISTRY, CellDeps
 from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
@@ -154,7 +154,7 @@ class _Breakers:
         )
 
     def _tool_message(self, tool: AgentTool, status: str) -> str:
-        name = "Web search" if tool is AgentTool.WEB_SEARCH else "Finding contacts"
+        name = TOOL_REGISTRY[tool].display_name
         said = _STATUS_PHRASE.get(status, "is failing on")
         free = tool is AgentTool.WEB_SEARCH and self._search_provider != SearchProvider.DATAFORSEO
         door = "the free search provider" if free else "DataForSEO"
@@ -164,6 +164,7 @@ class _Breakers:
 
 # What a door's status reads as in the breaker's sentence.
 _STATUS_PHRASE = {
+    ToolStatus.NOT_CONFIGURED: "isn't set up on",
     ToolStatus.RATE_LIMITED: "is being rate-limited by",
     ToolStatus.UNREACHABLE: "cannot reach",
     ToolStatus.ERROR: "is failing on",
@@ -171,8 +172,8 @@ _STATUS_PHRASE = {
 
 
 class FillState:
-    """One live fill's state: its lifecycle in one place. Its ENTRY is `admit`
-    (the frozen config, the concurrency window and the controller
+    """One live fill's state: its lifecycle in one place. Its ENTRY
+    is `admit` (the frozen config, the concurrency window and the controller
     resumed from the stored point, the breakers); its EXITS are
     `try_finish`, `cancel`, and `fail`, the three terminal transitions,
     each one line over fill_progress; between them, the per-row
@@ -312,7 +313,7 @@ class FillState:
         # climbed the point straight into the ban the breaker then had
         # to kill the fill over. Backing off is the response; stopping
         # is what happens when backing off runs out of room.
-        if any(search.status != "open" or search.attempts > 1 for search in run.searches):
+        if any(search.status != ToolStatus.OPEN or search.attempts > 1 for search in run.searches):
             self.controller.record_throttle(generation)
         else:
             self.controller.record_success(generation)
@@ -591,7 +592,9 @@ class FillWorkerOperation:
         refusing, not that the model answered badly. A task that never
         parked (its thread died every pass) has no stored cause and
         lands as transient. This is the ONLY writer of the terminal
-        retry blanks; the stored run stays as the audit."""
+        retry blanks; the give-up stamps its terminal cause over the
+        park's, and the searches and evidence ride through in the
+        contract's shape."""
         run = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
         if run.declined_cause not in RETRY_CAUSES:
             run = run.model_copy(

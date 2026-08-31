@@ -203,12 +203,19 @@ class TestSearch(BaseModel):
     counts), and `tool` which tool asked (web_search | find_contacts),
     so a reader can tell whose door refused."""
 
+    # Defaults, deliberately, on everything but the query and hits:
+    # this shape rides STORED result blobs (task results, bench runs)
+    # written by earlier versions that carried different fields, and a
+    # stored read is the one place this contract is tolerant (a
+    # required field here bricks the give-up path and the drawer on
+    # rows written before the field existed). Live writers set all of
+    # them.
     query: str
     hits: int
-    status: str
-    provider: str
-    attempts: int
-    tool: str
+    status: str = ""
+    provider: str = ""
+    attempts: int = 1
+    tool: str = ""
 
 
 TestRunStatus = Literal["pending", "complete", "failed"]
@@ -222,6 +229,10 @@ class AgentTestResult(BaseModel):
     cells: dict[str, str]
     evidence: list[str]
     searches: list[TestSearch]
+    # Tool name to its final door status: what lets the bench render
+    # the same degraded story a sheet cell carries. Defaulted for runs
+    # stored before tools reported statuses.
+    tools: dict[str, str] = {}
 
 
 class AgentTestRun(BaseModel):

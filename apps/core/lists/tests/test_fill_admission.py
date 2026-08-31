@@ -368,6 +368,24 @@ class BenchSeedTests(AdmissionTestCase):
         self.assertEqual(len(targeted(str(fill.id))), 2)
         self.assertEqual(queued_row_ids(str(fill.id)), [str(rows_other.id)])
 
+    def test_a_run_stored_under_retired_causes_is_a_miss_not_a_500(self) -> None:
+        # A bench run written before the cell-state vocabulary changed
+        # can carry a retired cause word, and borrowing it would hand
+        # that word to the landing's strict StoredCellState(). The
+        # economy's own rule covers it (one more miss, the row runs
+        # fresh); FAILS with a ValueError inside admit without the
+        # vocabulary check in _borrowed_row.
+        config = quick_config()
+        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
+        run = self._run_for(config, row_id=str(row.id), cells={})
+        run.result = {**run.result, "blank_cause": "search_throttled", "declined_cause": "search_throttled"}
+        run.save(update_fields=["result"])
+        fill = self.admit(config=config, test_run_id=str(run.id))
+        row.refresh_from_db()
+        self.assertNotIn("answer", row.data)
+        task = FillTask.objects.get(fill_id=str(fill.id), row_id=str(row.id))
+        self.assertEqual(task.status, FillTaskStatus.QUEUED)
+
     def test_a_seeded_cell_passes_the_new_columns_type_validator(self) -> None:
         # The seed used to write before the column was claimed, so
         # write_cells found no type for the key and stored the value

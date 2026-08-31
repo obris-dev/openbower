@@ -234,7 +234,10 @@ export function SheetTable({
                     // overflow-hidden would clip the focus tooltip.
                     <AiCellState entry={state} searchDoor={searchDoor} />
                   ) : (
-                    <div className="flex items-center gap-2">
+                    // justify-end mirrors the td's text-right: the
+                    // flex wrapper makes the value a shrink-to-content
+                    // item, so the td's alignment no longer reaches it.
+                    <div className={`flex items-center gap-2 ${isNumericColumn(column) ? "justify-end" : ""}`}>
                       <div className="max-w-64 truncate">
                         <Cell column={column} value={value} />
                       </div>

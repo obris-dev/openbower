@@ -158,7 +158,9 @@ class ToolPoolTests(SimpleTestCase):
         deps = CellDeps()
         with patch("agents.runtime.tools.search", return_value=self._answer("rate_limited", attempts=5)):
             first = json.loads(web_search(self._Ctx(deps), "acme"))
-        self.assertIn("web search is unavailable", first["note"])
+        # The note names the CALLABLE ("do not call it again"), so the
+        # token is the tool's own name, not a prose rendering.
+        self.assertIn("web_search is unavailable", first["note"])
         self.assertNotIn("answer from", first["note"])
         self.assertEqual(deps.tool_status, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
         self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)
@@ -209,6 +211,36 @@ class ToolPoolTests(SimpleTestCase):
                         web_search(self._Ctx(deps), "q " + status)
                 self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
                 self.assertIn(AgentTool.WEB_SEARCH, deps.served)
+
+    def test_a_closer_sticks_whichever_order_the_answers_land(self):
+        # Sibling calls run on parallel threads, so a slow success can
+        # land AFTER the closer that ended the door: it must not
+        # reopen the status (the model would re-buy a full backoff and
+        # the cell would ship "open" for a door that refused), though
+        # it still marks the door served, the historical fact the
+        # blank-cause skip reads. Folded directly: the threaded path
+        # cannot script this order, since a closed door is not called
+        # again. FAILS if record_tool_status stops checking the
+        # standing status before writing.
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps
+
+        for order in (
+            (SearchStatus.RATE_LIMITED, SearchStatus.OPEN),
+            (SearchStatus.OPEN, SearchStatus.RATE_LIMITED),
+            (SearchStatus.NOT_CONFIGURED, SearchStatus.UNREACHABLE),
+        ):
+            with self.subTest(order=[s.value for s in order]):
+                deps = CellDeps()
+                for status in order:
+                    deps.record_tool_status(AgentTool.WEB_SEARCH, status)
+                self.assertEqual(
+                    deps.tool_status[AgentTool.WEB_SEARCH], order[0] if order[0] != SearchStatus.OPEN else order[1]
+                )
+        deps = CellDeps()
+        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.RATE_LIMITED)
+        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.OPEN)
+        self.assertIn(AgentTool.WEB_SEARCH, deps.served)
 
     def test_an_outcome_refuses_a_bare_string_status(self):
         # The status vocabulary is typed per outcome: the type checker
