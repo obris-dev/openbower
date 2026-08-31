@@ -34,6 +34,10 @@ const SETTLED_CAUSES: Record<SettledCause, { word: string; cause: string }> = {
   type_mismatch: { word: "wrong type", cause: "The answer did not fit this column's type" },
 };
 const SETTLED_FACT = "Won't re-run on Continue; edit the prompt to try again.";
+// Filled settles WITHOUT the fingerprint gate, so the prompt-edit
+// remedy above would be a dead end here: refilling a filled cell goes
+// through clearing it, not through Continue.
+const FILLED_FACT = "Won't re-run on Continue; clear the cell to fill it again.";
 
 // The retryable causes that are NOT a tool's doing carry one sentence
 // each; the two tool_* states carry none of their own, because the
@@ -65,10 +69,11 @@ const TOOL_SUBJECT: Record<ToolKey, string> = { web_search: "Web search", find_c
 // `rowScoped` marks the fragments that describe THIS ROW's weather;
 // a deployment fact (not configured) or an unknowable one gets no
 // "on this row", because the scope would assert what the code knows
-// to be column-wide or cannot know at all.
-type ToolCopy = { said: string; fix?: string; rowScoped?: boolean };
+// to be column-wide or cannot know at all. Required, not optional, so
+// a code added later must state its scope to compile.
+type ToolCopy = { said: string; fix?: string; rowScoped: boolean };
 const BASE_COPY: Record<string, ToolCopy> = {
-  not_configured: { said: "isn't set up on this deployment", fix: "Set it up under the agent's Tools." },
+  not_configured: { said: "isn't set up on this deployment", fix: "Set it up under the agent's Tools.", rowScoped: false },
   rate_limited: { said: "was rate-limited past its retries", rowScoped: true },
   unreachable: { said: "couldn't be reached", rowScoped: true },
   error: { said: "kept failing", rowScoped: true },
@@ -76,10 +81,14 @@ const BASE_COPY: Record<string, ToolCopy> = {
 const TOOL_COPY: Record<ToolKey, Record<string, ToolCopy>> = {
   web_search: {},
   find_contacts: {
-    not_configured: { said: "isn't set up: it needs DataForSEO", fix: "Set it up under the agent's Tools." },
+    not_configured: {
+      said: "isn't set up: it needs DataForSEO",
+      fix: "Set it up under the agent's Tools.",
+      rowScoped: false,
+    },
   },
 };
-const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't name" };
+const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't name", rowScoped: false };
 // The paid-door nudge is a tier-2 composition: the server ships WHICH
 // door serves web search, and the sentence renders only where the
 // paid door is a remedy (the free door refused). A contacts refusal
@@ -202,11 +211,8 @@ export function AiCellState({ entry, searchDoor = null }: { entry: RenderableCel
     const sentence = first
       ? toolSentence(first[0], first[1], searchDoor)
       : { cause: "A tool did not serve this row", fix: "" };
-    // `filled` takes the SETTLED fact: the server settles a filled
-    // cell unconditionally (no fingerprint gate), so Continue will
-    // never re-target it and promising a retry would be false.
     const fact =
-      state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? SETTLED_FACT : RETRY_FACT;
+      state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? FILLED_FACT : RETRY_FACT;
     return (
       <CauseMark cause={sentence.cause} fact={[fact, sentence.fix].filter(Boolean).join(" ")}>
         <WarningDot />

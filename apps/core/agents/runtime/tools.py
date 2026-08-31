@@ -91,8 +91,9 @@ class EvidenceRecord(NamedTuple):
     anywhere, and checking it deeper means matching against the
     answer, which is judgment.
 
-    `tool` is which tool fetched the hit (RECORD_LABEL), so a reader
-    can tell a general web result from a people result. NOT "door",
+    `tool` is which tool fetched the hit (the registry's record
+    label), so a reader can tell a general web result from a people
+    result. NOT "door",
     which is this repo's word for a PROVIDER entry point; these are
     the runtime's own tools."""
 
@@ -185,7 +186,8 @@ class CellDeps:
     # later NON-CLOSING failure of a served door does not change its
     # status (the row has its evidence); a CLOSER overwrites even a
     # served door, and then sticks. A door that only ever failed ends
-    # the run wearing its last failure.
+    # the run wearing its last non-closing failure, or the first
+    # closer if one landed.
     served: set[AgentTool] = field(default_factory=set)
 
     def tool_open(self, tool: AgentTool) -> bool:

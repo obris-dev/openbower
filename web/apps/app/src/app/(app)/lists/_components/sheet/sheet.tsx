@@ -93,8 +93,14 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // cell is on screen: a sheet with none never pays for the catalog.
   // Absence degrades to the bare sentence.
   const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
+  // Only the throughput codes render the paid-door nudge, so only
+  // they warrant the fetch; an error or not-configured mark shows the
+  // same copy with or without the door's name.
   const needsSearchDoor = rows.some((row) =>
-    Object.values(row.states ?? {}).some((entry) => (entry.tools.web_search ?? "open") !== "open"),
+    Object.values(row.states ?? {}).some((entry) => {
+      const status = entry.tools.web_search ?? "open";
+      return status === "rate_limited" || status === "unreachable";
+    }),
   );
   useEffect(() => {
     if (!needsSearchDoor || searchDoor !== null) return;

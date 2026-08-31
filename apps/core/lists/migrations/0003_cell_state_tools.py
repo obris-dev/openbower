@@ -20,17 +20,20 @@ def _remap_retired_states(apps, schema_editor):
         FillCellState.objects.filter(state=old).update(state=new)
     # The same words ride stored task results as blank_cause and
     # declined_cause (the give-up path and the row drawer read them
-    # back); bounded by tasks that carry a result at all.
+    # back). The match runs in SQL: results carry whole evidence
+    # blobs, and deserializing every row ever run to touch two scalar
+    # keys would hold the migration transaction open on the table.
     FillTask = apps.get_model("lists", "FillTask")
-    for task in FillTask.objects.exclude(result={}).exclude(result__isnull=True).iterator():
-        changed = False
+    retired = list(_RETIRED)
+    stale = FillTask.objects.filter(
+        models.Q(result__blank_cause__in=retired) | models.Q(result__declined_cause__in=retired)
+    )
+    for task in stale.iterator():
         for key in ("blank_cause", "declined_cause"):
             value = task.result.get(key)
             if value in _RETIRED:
                 task.result[key] = _RETIRED[value]
-                changed = True
-        if changed:
-            task.save(update_fields=["result"])
+        task.save(update_fields=["result"])
 
 
 class Migration(migrations.Migration):

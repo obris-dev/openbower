@@ -17,6 +17,10 @@ import { outputKey } from "../../../_components/agent-config";
 function describeSearch(search: AgentTestResult["searches"][number]): string {
   const tool = search.tool === "find_contacts" ? "contacts" : "web";
   const door = search.provider ? ` via ${search.provider}` : "";
+  // A result stored before searches reported a status parses with the
+  // defaults ("" everywhere): absence of a diagnosis is not a failure,
+  // and the tool/door labels would be guesses.
+  if (!search.status) return `${search.hits} hits, no diagnosis recorded`;
   if (search.status === "open") return `${search.hits} hits (${tool}${door})`;
   if (search.status === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
   if (search.status === "unreachable") return `unreachable (${tool}${door})`;
@@ -92,7 +96,7 @@ export function TestBench({
   // Normalized once: a localStorage DRAFT can hold a result from before
   // this field existed, so absence must degrade, never crash.
   const searches = result?.searches ?? [];
-  const failedSearches = searches.filter((s) => s.status !== "open").length;
+  const failedSearches = searches.filter((s) => s.status && s.status !== "open").length;
   const rateLimited = searches.filter((s) => s.status === "rate_limited").length;
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
   const emptyCells = result !== null && Object.keys(result.cells).length === 0;

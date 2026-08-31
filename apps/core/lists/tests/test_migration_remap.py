@@ -74,15 +74,26 @@ class RetiredStateRemapTests(TestCase):
             position=2,
             result={"blank_cause": "no_evidence"},
         )
-        bare = FillTask.objects.create(account_id=account, fill_id=str(fill.id), row_id="01ROW" + "2" * 21, position=3)
-
         _migration._remap_retired_states(live_apps, None)
 
         stale.refresh_from_db()
         clean.refresh_from_db()
-        bare.refresh_from_db()
         self.assertEqual(stale.result["blank_cause"], StoredCellState.TOOL_UNAVAILABLE)
         self.assertEqual(stale.result["declined_cause"], StoredCellState.TOOL_NOT_CONFIGURED)
         self.assertEqual(stale.result["cells"], {})
         self.assertEqual(clean.result["blank_cause"], "no_evidence")
-        self.assertEqual(bare.result, {})
+
+    def test_the_remap_rides_the_migration_after_the_column_widened(self):
+        # The function tests above prove the body; this pins the
+        # WIRING they cannot see. The order matters: 0002 declared
+        # state as varchar(16) and tool_not_configured is 19 chars, so
+        # the remap must run after the AlterField widens the column or
+        # the UPDATE raises against the old width.
+        from django.db import migrations as dj_migrations
+
+        kinds = [type(op).__name__ for op in _migration.Migration.operations]
+        self.assertIn("RunPython", kinds)
+        self.assertGreater(kinds.index("RunPython"), kinds.index("AlterField"))
+        run_python = _migration.Migration.operations[kinds.index("RunPython")]
+        self.assertIs(run_python.code, _migration._remap_retired_states)
+        self.assertIsInstance(run_python, dj_migrations.RunPython)
