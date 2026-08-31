@@ -54,12 +54,12 @@ violation shipped once and got caught).
   `.then` is `dynamic(() => import(...).then(...))`.
 - Poll loops carry a generation counter checked after EVERY await
   (including the first) and a hard binary budget when the BROWSER is
-  the run's supervisor (the bench); a DURABLE, worker-supervised job
+  the run's supervisor (the bench); a DURABLE, worker-supervised run
   (a fill) polls open-ended against the worker's heartbeat instead,
   each poll a short bounded request, staleness rendered as a warning
   and never as failure; a superseded loop
   returns silently. Such a loop NEVER stops on transport failures: the
-  job runs server-side whatever this page can reach, so repeated
+  fill runs server-side whatever this page can reach, so repeated
   failures back off toward a ceiling and surface the trouble, and a
   loop that quit while its copy promised updates would be the lie.
 - A read whose enum the SERVER owns is tolerant on the client: the

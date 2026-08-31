@@ -471,15 +471,48 @@
           "title": "Current Fill Id",
           "type": "string"
         },
+        "current_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "pending",
+                "running",
+                "complete",
+                "failed",
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "",
+              "type": "string"
+            }
+          ],
+          "description": "The status of the run current_fill_id names; \"\" when the column has never run. The page's runs list is LIVE runs only, so this is where a terminal story lands.",
+          "title": "Current Status"
+        },
         "filled": {
           "description": "Cells in this column that hold a value.",
           "title": "Filled",
           "type": "integer"
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FillError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The newest run's error, both legs (tier 1: the message renders verbatim); None unless that run FAILED, so a newer clean run clears it and a stopped run carries none."
         }
       },
       "required": [
         "column_key",
         "current_fill_id",
+        "current_status",
+        "last_error",
         "filled",
         "attempted"
       ],
@@ -669,6 +702,7 @@
       "type": "object"
     },
     "FillRunPage": {
+      "description": "LIVE runs plus the per-column summaries. Terminal runs do not\nride the poll: a finished run's story (its status, its error) lands\non the column summary the moment it leaves this list, so the page\ncarries the in-flight work and the summaries carry everything a\ncolumn needs to say about its past.",
       "properties": {
         "columns": {
           "default": [],
@@ -707,7 +741,7 @@
       "type": "object"
     },
     "FillRunWire": {
-      "description": "The fill run envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed run is an API\nobject with its error, not a 4xx).",
+      "description": "The fill run envelope. The POST and cancel ECHOES carry every\nstate (a failed run is an API object with its error, not a 4xx);\nthe fills LIST the sheet re-attaches to carries live runs only\n(see FillRunPage).",
       "properties": {
         "agent_id": {
           "title": "Agent Id",
@@ -720,10 +754,6 @@
           },
           "title": "Column Keys",
           "type": "array"
-        },
-        "config_snapshot": {
-          "$ref": "#/$defs/AgentConfig",
-          "description": "The FULL resolved config frozen at admission; results render with the config that produced them."
         },
         "confirmed_row_count": {
           "description": "Rows this fill TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
@@ -746,7 +776,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "This run's error, both legs (tier 1: the message renders verbatim); None unless the run FAILED, the same predicate ColumnFillSummary.last_error states."
         },
         "heartbeat_at": {
           "anyOf": [
@@ -799,7 +830,6 @@
         "counters",
         "confirmed_row_count",
         "started_by",
-        "config_snapshot",
         "created_at",
         "updated_at"
       ],

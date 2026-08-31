@@ -7,6 +7,8 @@ import {
   ListRowWireSchema,
   type ListRowWire,
   ColumnPromptWireSchema,
+  ColumnFillSummarySchema,
+  FillErrorSchema,
   FillRunPageSchema,
   FillRunWireSchema,
   FoldersListSchema,
@@ -172,10 +174,41 @@ export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
 const UNKNOWN_FILL_STATUS: FillRunWire["status"] = "running";
 const FILL_STATUSES = new Set<string>(FillRunWireSchema.shape.status.options);
 const TolerantFillRunWireSchema = FillRunWireSchema.extend({ status: z.string() });
-const TolerantFillRunPageSchema = FillRunPageSchema.extend({ runs: z.array(TolerantFillRunWireSchema) });
+// The summary's current_status is the same server-owned enum plus "";
+// it gets the same tolerance for the same reason (one added member
+// must not fail the whole poll for every open sheet).
+const TolerantFillRunPageSchema = FillRunPageSchema.extend({
+  runs: z.array(TolerantFillRunWireSchema),
+  // Both new fields default here, NOT just widen: a server from
+  // before they shipped omits them entirely, and a required key
+  // would fail the whole poll for exactly the bundle-newer-than-
+  // server case this tolerance exists for.
+  columns: z
+    .array(
+      ColumnFillSummarySchema.extend({
+        current_status: z.string().default(""),
+        last_error: FillErrorSchema.nullable().default(null),
+      }),
+    )
+    .default([]),
+});
 
 function knownStatus(status: string): FillRunWire["status"] {
   return (FILL_STATUSES.has(status) ? status : UNKNOWN_FILL_STATUS) as FillRunWire["status"];
+}
+
+// A summary status this bundle has never heard of maps to "", the
+// member that CLAIMS nothing: unlike a run's status (where membership
+// on the live page already carries liveness and the value only feeds
+// the loop), current_status is rendered as a claim (the glance's
+// "Filling", the cell's failed word, the recovery verb), and mapping
+// an unknown onto a real member asserts a fact this bundle cannot
+// know. Liveness is not lost: a live run of any unheard-of status
+// still rides the runs page, whose own tolerance keeps the loop
+// alive.
+function knownSummaryStatus(status: string): ColumnFillSummary["current_status"] {
+  if (status === "" || FILL_STATUSES.has(status)) return status as ColumnFillSummary["current_status"];
+  return "";
 }
 
 /** A cause this bundle has never heard of. A CLIENT member, not one
@@ -402,15 +435,21 @@ function fillResult(res: ApiResult<z.infer<typeof TolerantFillRunWireSchema>>): 
   return { ...res, data: { ...res.data, status: knownStatus(res.data.status) } };
 }
 
-/** One keyset page of the list's fill runs, newest first, ALL states
- * (a failed run is a first-class object carrying its error). */
+/** One keyset page of the list's LIVE fill runs, newest first, plus
+ * the per-column summaries (totals, the newest run's status, and its
+ * error when it failed: the terminal story lives there, not on the
+ * runs list). */
 export async function getFills(id: string, after?: string): Promise<ApiResult<FillRunPage>> {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
   const res = await http.get(`${apiRoutes.lists.fills(id)}${suffix}`, TolerantFillRunPageSchema);
   if (res.status !== "ok") return res;
   return {
     ...res,
-    data: { ...res.data, runs: res.data.runs.map((run) => ({ ...run, status: knownStatus(run.status) })) },
+    data: {
+      ...res.data,
+      runs: res.data.runs.map((run) => ({ ...run, status: knownStatus(run.status) })),
+      columns: res.data.columns.map((column) => ({ ...column, current_status: knownSummaryStatus(column.current_status) })),
+    },
   };
 }
 

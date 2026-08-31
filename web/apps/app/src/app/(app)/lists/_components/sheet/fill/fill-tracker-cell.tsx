@@ -9,13 +9,13 @@ import {
   updateColumnPrompt,
   type ColumnFillSummary,
   type ColumnPromptWire,
-  type FillRunWire,
   type ListColumn,
 } from "@bower/api";
 
 import { FillProgress } from "./fill-progress";
 import { RefillScope } from "./fill-refill-scope";
 import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
+import type { LiveRun } from "./lib/live-status";
 
 // Below this, the prompt fits the clamp anyway and a toggle would be
 // noise (binary; the clamp is three lines of a 24rem panel).
@@ -29,9 +29,11 @@ const PROMPT_TOGGLE_CHARS = 256;
  * (the summary's current_fill_id and canonical filled count); this
  * cell renders it. One run per column is the invariant, so the
  * popover IS that column's management, one padded panel of fixed
- * width in reading order: the progress line, the same FillProgress
- * chip the tray renders (counters, ETA, pace, Stop while live,
- * Continue when stopped), the scoped continue for terminal runs, and
+ * width in reading order: the progress line, the FillProgress chip
+ * while live (counters, ETA, pace, Stop), the failed run's error
+ * verbatim with its resume verb when the newest run ended early
+ * (Retry for a failed run, Continue for one the user stopped), the
+ * scoped continue for terminal runs, and
  * the prompt peek with its inline EDIT (reading and writing the
  * column-scoped prompt endpoint, the column's CURRENT config, never a
  * run's frozen snapshot; a live run disables the affordance, since
@@ -55,13 +57,12 @@ export function FillTrackerCell({
   listId: string;
   column: ListColumn;
   summary: ColumnFillSummary | undefined;
-  runs: FillRunWire[];
+  runs: LiveRun[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (run: FillRunWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 }) {
   const run = currentRunFor(summary, runs);
-  const cell = trackerCell(run);
   // The SUMMARY is what this cell needs; the run envelope only dresses
   // the chip. A column whose current run has aged off the fetched page
   // still shows its progress and keeps its management surface, rather
@@ -77,6 +78,7 @@ export function FillTrackerCell({
       </span>
     );
   }
+  const cell = trackerCell(run, summary.current_status);
   const live = cell.kind === "live";
   // Two instruments, one cell: is there WORK LEFT in this column (the
   // header, the question an operator actually has) over how the
@@ -100,15 +102,15 @@ export function FillTrackerCell({
         >
           {progress}
         </span>
-        {cell.kind !== "none" && (
-          <span
-            className={cn(
-              "block truncate font-medium tabular-nums",
-              cell.kind === "failed" ? "text-danger" : "text-muted",
-            )}
-          >
-            {cell.text}
-          </span>
+        {cell.kind === "live" && (
+          <span className="block truncate font-medium tabular-nums text-muted">{cell.text}</span>
+        )}
+        {cell.kind === "failed" && (
+          // The word alone (authored beside its table in fill-tracker):
+          // the popover carries the server's verbatim error, and a dead
+          // run's counters are not replayed (the header's totals are
+          // the honest answer).
+          <span className="block truncate font-medium text-danger">{cell.text}</span>
         )}
         {live && (
           <span aria-hidden className="mt-1 block h-0.5 w-full overflow-hidden rounded-full bg-wash-strong">
@@ -126,19 +128,61 @@ export function FillTrackerCell({
       <PopoverPanel anchor="bottom start" className="py-0 motion-reduce:transition-none">
         <div className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-4">
           <p className="text-xs text-muted">Column: {progress}</p>
-          {run !== null && (
-            <FillProgress
-              context="panel"
-              run={run}
-              onStop={() => onStop(run.id)}
-              onContinue={() => onRefill(run, column.key, { resume: true })}
+          {run !== null && <FillProgress run={run} onStop={() => onStop(run.id)} />}
+          {!live && summary.current_status === "failed" && (
+            // Tier 1: the server wrote the failed run's copy; render
+            // it verbatim. The no-error fallback stays plain rather
+            // than guessing a cause.
+            <p className="text-xs text-danger">{summary.last_error?.message ?? "The fill failed."}</p>
+          )}
+          {!live && (summary.current_status === "failed" || summary.current_status === "cancelled") && (
+            <ResumeContinue
+              // The VERB tracks who ended the run: the user stopped a
+              // cancelled one (picking it back up is Continue), the
+              // system killed a failed one (Retry, beside the error
+              // that says why). Same resume either way, and never a
+              // "Rerun": the gesture finishes the remainder, it does
+              // not re-run rows that answered.
+              verb={summary.current_status === "failed" ? "Retry" : "Continue"}
+              onContinue={() => onRefill(column.key, { resumeId: summary.current_fill_id })}
             />
           )}
-          {!live && <RefillScope onRefill={(rows) => onRefill(run, column.key, { rows })} />}
+          {!live && <RefillScope onRefill={(rows) => onRefill(column.key, { rows })} />}
           <PromptPeek listId={listId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>
     </Popover>
+  );
+}
+
+/** The resume verb for a stopped or failed newest run: resumes the
+ * run the column names (the server judges what that run still owes
+ * across every column it maps). A refusal renders verbatim beside the
+ * verb (tier 1). */
+function ResumeContinue({ verb, onContinue }: { verb: "Retry" | "Continue"; onContinue: () => Promise<string | null> }) {
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState("");
+  async function go() {
+    if (busy) return;
+    setBusy(true);
+    setRefusal("");
+    const message = await onContinue();
+    // Success stays BUSY: the summary this button reads is stale
+    // until the next poll lands (the branch then re-renders without
+    // it), and re-arming now invites a second click that resends the
+    // old resume id and buys a fill_active 409. Only a refusal
+    // re-arms, with its verbatim why beside the verb.
+    if (message === null) return;
+    setBusy(false);
+    setRefusal(message);
+  }
+  return (
+    <div>
+      <Button size="sm" variant="ghost" loading={busy} onClick={() => void go()}>
+        {verb}
+      </Button>
+      {refusal && <p className="mt-1 text-xs text-danger">{refusal}</p>}
+    </div>
   );
 }
 

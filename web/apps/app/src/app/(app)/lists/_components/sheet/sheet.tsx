@@ -20,7 +20,6 @@ import {
   postFillRefill,
   type ListColumn,
   webRoutes,
-  type FillRunWire,
   type RenderableListRowsPage,
   type ListSummary,
 } from "@bower/api";
@@ -30,7 +29,7 @@ import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsTray, useFill, type SearchDoor } from "./fill";
+import { FillsGlance, useFill, type SearchDoor } from "./fill";
 import { SheetTable } from "./sheet-table";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
@@ -41,9 +40,9 @@ import { useRows } from "./use-rows";
  * menu), the grid as the page's ONE scroll region (sticky header row,
  * an IntersectionObserver sentinel driving the keyset loadMore with
  * the button kept as fallback), and a sticky status footer (row count
- * left, the fills tray right: status speaks continuously in the status
- * bar without stealing the page, condensing to the tray's badge
- * instead of wrapping when runs multiply or the viewport narrows).
+ * left, the fills glance right: a passive high-level read so filling
+ * or failed columns cannot hide off a wide sheet's edge; per-column
+ * progress belongs to the tracker row under the header).
  * Three hooks own the three kinds of state (the summary and its
  * columns, the rows on screen, the fill attachment); this component
  * composes their reactions to each other and renders. */
@@ -89,13 +88,18 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     };
   }, [needsSearchDoor, searchDoor]);
 
-  // Rows re-read when a live run progressed (status or attempted
-  // moved), on first sight of a live run, and once on the
-  // last-live-to-terminal edge (cells written between polls land in
-  // that final read). Runs already terminal on mount trigger nothing:
-  // the server rendered their rows fresh.
-  const runsSignature = fill.runs.map((run) => `${run.id}:${run.status}:${run.counters.attempted}`).join(" ");
-  const anyLive = fill.runs.some((run) => run.status === "pending" || run.status === "running");
+  // Rows re-read when a live run progressed (attempted moved), on
+  // first sight of one, and once on the last-live-to-terminal edge:
+  // the poll ships LIVE runs only, so a run finishing IS the live set
+  // shrinking, and cells written between polls land in that final
+  // read. The summaries ride the signature so a status flip with no
+  // counter movement still lands. Terminal history on mount triggers
+  // nothing: the server rendered those rows fresh.
+  const runsSignature = [
+    ...fill.runs.map((run) => `${run.id}:${run.counters.attempted}`),
+    ...fill.summaries.map((summary) => `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}`),
+  ].join(" ");
+  const anyLive = fill.runs.length > 0;
   const prevRunsRef = useRef<{ signature: string; live: boolean } | null>(null);
   useEffect(() => {
     if (!runsSignature) return;
@@ -168,21 +172,17 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   }
 
   // Continue IS refill: a NEW run over the column's unanswered rows
-  // (all of them, or the next `rows` when the tracker's scoped
-  // continue asked). The COLUMN comes from the surface the user
-  // clicked: one run can map several columns, so deriving it from the
-  // run would refill a sibling. A refusal returns as the server's
-  // verbatim detail for the chip's error slot.
-  async function continueFill(
-    run: FillRunWire | null,
-    columnKey: string,
-    opts: { rows?: number; resume?: boolean } = {},
-  ): Promise<string | null> {
-    // A widening refill needs no run envelope: only RESUME is bound to
-    // one, and a column whose run has aged off the fetched page can
-    // still be filled forward.
-    if (!columnKey || (opts.resume && run === null)) return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resume && run ? run.id : undefined });
+  // (all of them, the next `rows` when the scoped continue asked, or
+  // the stopped run's own remainder when resumeId names it, off the
+  // summary's current_fill_id). The COLUMN comes from the surface the
+  // user clicked: one run can map several columns, so deriving it
+  // from the run would refill a sibling. A refusal returns as the
+  // server's verbatim detail for the caller's error slot.
+  async function continueFill(columnKey: string, opts: { rows?: number; resumeId?: string } = {}): Promise<string | null> {
+    // An EMPTY resume id is a contract gap (the summary names no
+    // run), not a wider ask: refuse rather than widen the spend.
+    if (!columnKey || opts.resumeId === "") return GENERIC_FAILURE;
+    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resumeId });
     if (redirectIfUnauthenticated(res)) return null;
     if (res.status !== "ok") return res.message;
     // The new run and its pending outcomes exist only server-side:
@@ -355,19 +355,19 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-1.5">
         {/* The count abbreviates under width pressure (the word drops
-            below sm); the fills area condenses instead, inside the
-            tray, so the band never wraps chips onto a second line. */}
+            below sm); the glance is one short line by design, so the
+            band never wraps. */}
         <p className="shrink-0 whitespace-nowrap text-xs text-muted">
           {detail.row_count.toLocaleString("en-US")}
           <span className="hidden sm:inline">{" rows"}</span>
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
-          <FillsTray runs={fill.runs} onStop={fill.stop} onContinue={continueFill} />
+          <FillsGlance summaries={fill.summaries} liveRunIds={fill.runs.map((run) => run.id)} />
           {fill.pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is
-            // the PAGE's trouble, so it renders once (under the band,
-            // never inside the tray's panel, which may be closed).
+            // the PAGE's trouble, so it renders once, under the band
+            // beside the glance (which is passive and cannot carry it).
             <p className="text-xs text-warning">{"Progress updates aren't reaching this page; still retrying."}</p>
           )}
         </div>

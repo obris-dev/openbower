@@ -550,7 +550,7 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
         self.assertFalse(FillCellState.objects.exists())
 
-    def test_a_drained_but_live_job_completes_on_the_next_pass(self) -> None:
+    def test_a_drained_but_live_run_completes_on_the_next_pass(self) -> None:
         # A worker killed between its last terminal write and
         # try_finish (SIGTERM on the final rows) leaves a live fill
         # with every row terminal: the next pass must flip it
@@ -561,7 +561,7 @@ class WorkerTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
 
-    def test_cancelled_job_stops_without_spending(self) -> None:
+    def test_cancelled_run_stops_without_spending(self) -> None:
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         calls = []
         self.run_worker(answering_model(lambda prompt: calls.append(prompt) or "x"))

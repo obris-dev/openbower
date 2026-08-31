@@ -1,5 +1,7 @@
 import { ROW_LEASE_STALE_SECONDS, type FillRunWire } from "@bower/api";
 
+import { isLiveStatus } from "./live-status.ts";
+
 /** The staleness warning for a live fill, or null while reporting is
  * fresh (or the clock has not ticked). Judged against the wire's lease
  * window only; a stale heartbeat is degraded REPORTING, never failure.
@@ -15,7 +17,7 @@ export function staleWarning(
   nowMs: number,
   supportFollowup?: string,
 ): string | null {
-  if (run.status !== "pending" && run.status !== "running") return null;
+  if (!isLiveStatus(run.status)) return null;
   const reportedAt = Date.parse(run.heartbeat_at ?? run.created_at);
   if (nowMs === 0 || Number.isNaN(reportedAt)) return null;
   const silentSeconds = (nowMs - reportedAt) / 1_000;

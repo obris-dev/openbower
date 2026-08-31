@@ -45,14 +45,6 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
 const RUN_ENVELOPE = {
   agent_id: "01BBBBBBBBBBBBBBBBBBBBBBBB",
   column_keys: ["answer"],
-  config_snapshot: {
-    model: "acme-large",
-    outputs: [{ key: "answer", label: "Answer", type: "text" }],
-    prompt: "What is {{domain}}?",
-    provider: "openai_compatible",
-    source: "main",
-    tools: {},
-  },
   confirmed_row_count: 10,
   counters: {
     attempted: 0,
@@ -190,6 +182,41 @@ test("a known fill status is passed through untouched", async (t) => {
     res.data.runs.map((run) => run.status),
     ["complete", "cancelled"],
   );
+});
+
+test("an unknown summary status claims nothing; known members and the empty string pass", async (t) => {
+  // current_status is the same server-owned enum plus "": a member
+  // this bundle predates must not fail the whole poll, and it maps to
+  // "", the member that CLAIMS nothing (current_status is rendered:
+  // the glance's Filling, the failed word, the recovery verb). A live
+  // run of an unheard-of status still rides the runs page, whose own
+  // tolerance keeps the loop alive.
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const columns = [
+    { column_key: "a", current_fill_id: "01A", current_status: "a_status_from_the_future", last_error: null, filled: 0, attempted: 0 },
+    { column_key: "b", current_fill_id: "", current_status: "", last_error: null, filled: 0, attempted: 0 },
+    { column_key: "c", current_fill_id: "01C", current_status: "failed", last_error: { code: "x", message: "y" }, filled: 1, attempted: 2 },
+    // A server from before the two fields shipped omits them; absence
+    // must read as the never-ran story, never fail the page.
+    { column_key: "d", current_fill_id: "", filled: 0, attempted: 0 },
+  ];
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ runs: [], columns, next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+  const res = await getFills("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual(
+    res.data.columns.map((column) => column.current_status),
+    ["", "", "failed", ""],
+  );
+  assert.equal(res.data.columns[3]!.last_error, null);
 });
 
 test("an unknown cell cause maps to a CLIENT member, not a server state", async (t) => {
