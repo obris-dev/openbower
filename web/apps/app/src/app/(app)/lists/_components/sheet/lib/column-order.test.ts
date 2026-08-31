@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { canMove, moveColumn, nudgeColumn } from "./column-order.ts";
+import { canMove, columnsInKeyOrder, moveColumn, nudgeColumn } from "./column-order.ts";
 
 const columns = [
   { key: "a", label: "A", type: "text" as const, fill: null },
@@ -49,4 +49,22 @@ test("every result is a permutation: the endpoint refuses anything else", () => 
   for (const [from, to] of [[0, 2], [2, 0], [1, 0], [0, 1]] as const) {
     assert.deepEqual([...moveColumn(columns, from, to)].sort(), before);
   }
+});
+
+test("columnsInKeyOrder maps a full key order onto the records", () => {
+  const keys = [columns[2]!.key, columns[0]!.key, columns[1]!.key];
+  const moved = columnsInKeyOrder(columns, keys);
+  assert.deepEqual(
+    moved?.map((column) => column.key),
+    keys,
+  );
+});
+
+test("a set that is not exactly the sheet's refuses rather than guessing", () => {
+  // A stale render's keys: missing one, naming a stranger, or
+  // repeating one. Each would show an optimistic sheet the server is
+  // about to refuse.
+  assert.equal(columnsInKeyOrder(columns, columns.slice(1).map((column) => column.key)), null);
+  assert.equal(columnsInKeyOrder(columns, [columns[0]!.key, columns[1]!.key, "stranger"]), null);
+  assert.equal(columnsInKeyOrder(columns, [columns[0]!.key, columns[0]!.key, columns[1]!.key]), null);
 });

@@ -14,6 +14,7 @@ no real path produces, and the two are written in one transaction.
 
 from __future__ import annotations
 
+from django.db import transaction
 from django.utils import timezone
 
 from ..constants import FillTaskStatus, StoredCellState
@@ -41,29 +42,41 @@ def _claim(fill: Fill, row_id: str) -> FillTask:
     return task
 
 
-def settle(fill_id: str, row_id: str, cause: StoredCellState | None = None, causes: dict | None = None) -> None:
+def settle(
+    fill_id: str,
+    row_id: str,
+    cause: StoredCellState | None = None,
+    causes: dict | None = None,
+    tools: dict[str, str] | None = None,
+) -> None:
     """One row's terminal write, seam-shaped.
 
     `cause` None means the run answered every column the fill owns (a
     value lands in each). `causes` is the per-column truth a partially
     answered run produces; omitted, `cause` speaks for every column.
+    `tools` is the run's per-tool door statuses (empty by default).
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
     fill = Fill.objects.get(id=fill_id)
     queue = FillQueueService(worker_id=WORKER_ID)
     task = _claim(fill, row_id)
     if cause == StoredCellState.TRANSIENT:
-        assert queue.park_task(task, backoff_seconds=0), f"park missed for {fill_id}/{row_id}"
+        assert queue.park_task(task, backoff_seconds=0, result={}), f"park missed for {fill_id}/{row_id}"
         return
     per_column = causes if causes is not None else ({} if cause is None else cell_truth.uniform(fill, cause))
     states = {key: per_column.get(key, StoredCellState.FILLED) for key in fill.column_keys}
     answered = [key for key, value in states.items() if value == StoredCellState.FILLED]
-    if answered:
-        ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
-            fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
-        )
-    landed = queue.complete_task(fill, task, states=states, result={})
-    assert landed, f"seam write missed for {fill_id}/{row_id}"
+    # A deliberate restatement of land_row (the per-column `causes`
+    # it cannot express), in land_row's own lock order: ListRow,
+    # FillTask, FillCellState, one transaction.
+    with transaction.atomic():
+        if answered:
+            ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
+                fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
+            )
+        landed = queue.complete_task(task, result={"tools": tools or {}})
+        assert landed, f"seam write missed for {fill_id}/{row_id}"
+        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
 
 
 def settle_all(fill_id: str, cause: StoredCellState | None = None) -> None:

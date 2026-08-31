@@ -38,10 +38,13 @@ test("a well-shaped draft survives whole", () => {
     testToolsOn: true,
   };
   // tools parse through the generated AgentTools schema, so a key a
-  // past version never wrote fills with its wire default.
+  // past version never wrote fills with its wire default; the same
+  // holds for the result's tool statuses, defaulted for results a
+  // past version stored without them.
   assert.deepEqual(parseDraft(JSON.stringify(stored)), {
     ...stored,
     tools: { web_search: true, find_contacts: false },
+    testResult: { ...stored.testResult, tools: {} },
   });
 });
 

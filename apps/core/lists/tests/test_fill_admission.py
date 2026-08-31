@@ -84,7 +84,7 @@ class AdmissionTestCase(TestCase):
 
 
 class QuickPathTests(AdmissionTestCase):
-    def test_admit_creates_ephemeral_column_job_and_queue(self) -> None:
+    def test_admit_creates_ephemeral_column_run_and_queue(self) -> None:
         fill = self.admit()
         agent = Agent.objects.get(id=fill.agent_id)
         self.assertTrue(agent.ephemeral)
@@ -174,7 +174,7 @@ class QuickPathTests(AdmissionTestCase):
         self.sheet.refresh_from_db()
         self.assertEqual([c["key"] for c in self.sheet.columns], ["company"])
 
-    def test_list_delete_purges_jobs_and_outcomes(self) -> None:
+    def test_list_delete_purges_runs_and_outcomes(self) -> None:
         # No cascades exist: delete() owns the fill custody's cleanup,
         # or a live orphaned fill holds an account fill slot forever
         # with nothing visible to cancel.
@@ -206,7 +206,7 @@ class QuickPathTests(AdmissionTestCase):
 
 
 class GuardTests(AdmissionTestCase):
-    def test_same_column_live_job_refuses(self) -> None:
+    def test_same_column_live_run_refuses(self) -> None:
         self.admit()
         # A second sheet column would collide with the first fill's
         # target key while it is still live.
@@ -367,6 +367,24 @@ class BenchSeedTests(AdmissionTestCase):
         # the drawer reads it where it reads every other run.
         self.assertEqual(len(targeted(str(fill.id))), 2)
         self.assertEqual(queued_row_ids(str(fill.id)), [str(rows_other.id)])
+
+    def test_a_run_stored_under_retired_causes_is_a_miss_not_a_500(self) -> None:
+        # A bench run written before the cell-state vocabulary changed
+        # can carry a retired cause word, and borrowing it would hand
+        # that word to the landing's strict StoredCellState(). The
+        # economy's own rule covers it (one more miss, the row runs
+        # fresh); FAILS with a ValueError inside admit without the
+        # vocabulary check in _borrowed_row.
+        config = quick_config()
+        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
+        run = self._run_for(config, row_id=str(row.id), cells={})
+        run.result = {**run.result, "blank_cause": "search_throttled", "declined_cause": "search_throttled"}
+        run.save(update_fields=["result"])
+        fill = self.admit(config=config, test_run_id=str(run.id))
+        row.refresh_from_db()
+        self.assertNotIn("answer", row.data)
+        task = FillTask.objects.get(fill_id=str(fill.id), row_id=str(row.id))
+        self.assertEqual(task.status, FillTaskStatus.QUEUED)
 
     def test_a_seeded_cell_passes_the_new_columns_type_validator(self) -> None:
         # The seed used to write before the column was claimed, so

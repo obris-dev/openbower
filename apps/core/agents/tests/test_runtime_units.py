@@ -115,52 +115,165 @@ class ToolPoolTests(SimpleTestCase):
         def __init__(self, deps):
             self.deps = deps
 
+    @staticmethod
+    def _answer(status, hits=(), provider="duckduckgo", attempts=1):
+        from agents.constants import SearchStatus
+        from agents.search import DoorAnswer
+
+        return DoorAnswer(SearchStatus(status), list(hits), provider, attempts)
+
     def test_hits_dedupe_by_canonical_url_across_calls(self):
         from agents.runtime.tools import CellDeps, web_search
-        from agents.search import SearchHit, SearchOutcome
+        from agents.search import SearchHit
 
         deps = CellDeps()
         hits = [
             SearchHit("A", "https://www.acme.com/x", "s"),
             SearchHit("B", "https://acme.com/x/", "s"),
         ]
-        with patch(
-            "agents.runtime.tools.search",
-            return_value=SearchOutcome("q", hits, failed=False),
-        ):
+        with patch("agents.runtime.tools.search", return_value=self._answer("open", hits)):
             web_search(self._Ctx(deps), "acme")
         self.assertEqual(len(deps.evidence), 1)
 
-    def test_the_non_spending_legs_never_buy_a_search(self):
-        # An empty query and a repeated exact query are loop behavior,
-        # not new intent: the metered budget is for QUERIES, so both
-        # must answer from what the pool already holds.
+    def test_an_empty_query_never_buys_a_search(self):
         from agents.runtime.tools import CellDeps, find_contacts, web_search
-        from agents.search import SearchOutcome
 
         deps = CellDeps()
-        with patch("agents.runtime.tools.search", return_value=SearchOutcome("acme ceo", [], failed=False)):
-            web_search(self._Ctx(deps), "acme ceo")
         with patch("agents.runtime.tools.search") as searched:
             web_search(self._Ctx(deps), "")
-            web_search(self._Ctx(deps), "acme ceo")
             find_contacts(self._Ctx(deps), "")
         searched.assert_not_called()
+
+    def test_a_rate_limit_closes_that_tools_door_and_only_that_one(self):
+        # The closed note never says "answer from the records already
+        # gathered"; later calls of THAT tool are refused BEFORE the
+        # spend and leave no outcome, so the stored searches show only
+        # what hit the wire. The other tool's door is its own: it
+        # still runs.
+        import json
+
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps, find_contacts, web_search
+
+        deps = CellDeps()
+        with patch("agents.runtime.tools.search", return_value=self._answer("rate_limited", attempts=5)):
+            first = json.loads(web_search(self._Ctx(deps), "acme"))
+        # The note names the CALLABLE ("do not call it again"), so the
+        # token is the tool's own name, not a prose rendering.
+        self.assertIn("web_search is unavailable", first["note"])
+        self.assertNotIn("answer from", first["note"])
+        self.assertEqual(deps.tool_status, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
+        self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)
+        with patch("agents.runtime.tools.search", return_value=self._answer("open", provider="dataforseo")) as searched:
+            second = json.loads(web_search(self._Ctx(deps), "acme inc"))
+            third = json.loads(find_contacts(self._Ctx(deps), "VP Sales Acme"))
+        self.assertIn("do not call it again", second["note"])
+        self.assertEqual(third, {"records": []})
+        self.assertEqual(searched.call_count, 1)
+        self.assertEqual([o.tool for o in deps.outcomes], [AgentTool.WEB_SEARCH, AgentTool.FIND_CONTACTS])
+        self.assertTrue(deps.tool_open(AgentTool.FIND_CONTACTS))
+
+    def test_unreachable_and_error_leave_the_door_open(self):
+        import json
+
+        from agents.constants import AgentTool
+        from agents.runtime.tools import NOTE_FAILED, CellDeps, web_search
+
+        deps = CellDeps()
+        for status in ("unreachable", "error"):
+            with (
+                self.subTest(status=status),
+                patch("agents.runtime.tools.search", return_value=self._answer(status)),
+            ):
+                note = json.loads(web_search(self._Ctx(deps), "q " + status))["note"]
+                self.assertEqual(note, NOTE_FAILED)
+                self.assertTrue(deps.tool_open(AgentTool.WEB_SEARCH))
+                # Provisional: the door wears its last failure while it
+                # has not served, so a run that ends here records it.
+                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], status)
+        self.assertEqual([o.status for o in deps.outcomes], ["unreachable", "error"])
+
+    def test_a_door_that_served_keeps_open_through_a_later_failure(self):
+        # Folded as answers arrive, in either order: a failure before
+        # the door serves is provisional and clears when it serves; a
+        # failure after it served does not change its status, since
+        # the row has its evidence.
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps, web_search
+        from agents.search import SearchHit
+
+        hit = [SearchHit("A", "https://acme.com/", "s")]
+        for order in (("unreachable", "open"), ("open", "unreachable")):
+            with self.subTest(order=order):
+                deps = CellDeps()
+                for status in order:
+                    with patch("agents.runtime.tools.search", return_value=self._answer(status, hit)):
+                        web_search(self._Ctx(deps), "q " + status)
+                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
+                self.assertIn(AgentTool.WEB_SEARCH, deps.served)
+
+    def test_a_closer_sticks_whichever_order_the_answers_land(self):
+        # Sibling calls run on parallel threads, so a slow success can
+        # land AFTER the closer that ended the door: it must not
+        # reopen the status (the model would re-buy a full backoff and
+        # the cell would ship "open" for a door that refused), though
+        # it still marks the door served, the historical fact the
+        # blank-cause skip reads. Folded directly: the threaded path
+        # cannot script this order, since a closed door is not called
+        # again. FAILS if record_tool_status stops checking the
+        # standing status before writing.
+        from agents.constants import AgentTool, SearchStatus
+        from agents.runtime.tools import CellDeps
+
+        for order in (
+            (SearchStatus.RATE_LIMITED, SearchStatus.OPEN),
+            (SearchStatus.OPEN, SearchStatus.RATE_LIMITED),
+            (SearchStatus.NOT_CONFIGURED, SearchStatus.UNREACHABLE),
+        ):
+            with self.subTest(order=[s.value for s in order]):
+                deps = CellDeps()
+                for status in order:
+                    deps.record_tool_status(AgentTool.WEB_SEARCH, status)
+                self.assertEqual(
+                    deps.tool_status[AgentTool.WEB_SEARCH], order[0] if order[0] != SearchStatus.OPEN else order[1]
+                )
+        deps = CellDeps()
+        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.RATE_LIMITED)
+        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.OPEN)
+        self.assertIn(AgentTool.WEB_SEARCH, deps.served)
+
+    def test_an_outcome_refuses_a_bare_string_status(self):
+        # The status vocabulary is typed per outcome: the type checker
+        # holds it at the call site, and the dataclass holds it at
+        # runtime, so a string never rides where an enum belongs.
+        from agents.constants import AgentTool
+        from agents.runtime.outcomes import SearchOutcome
+
+        with self.assertRaises(TypeError):
+            SearchOutcome(tool=AgentTool.WEB_SEARCH, status="open", provider="p", attempts=1, query="q", hits=[])
 
     def test_model_authored_queries_clamp(self):
         from agents.constants import QUERY_MAX_LENGTH
         from agents.runtime.tools import CellDeps, web_search
-        from agents.search import SearchOutcome
 
         seen: list[str] = []
 
         def fake_search(query, **kwargs):
             seen.append(query)
-            return SearchOutcome(query, [], failed=False)
+            return self._answer("open")
 
-        with patch("agents.runtime.tools.search", side_effect=fake_search):
+        # The clamp is LOGGED: a cut query is a different question than
+        # the model asked, and silence would hide a model that keeps
+        # overrunning the bound.
+        with (
+            patch("agents.runtime.tools.search", side_effect=fake_search),
+            self.assertLogs("agents.runtime.tools", level="WARNING") as logs,
+        ):
             web_search(self._Ctx(CellDeps()), "q" * (QUERY_MAX_LENGTH + 64))
         self.assertEqual(len(seen[0]), QUERY_MAX_LENGTH)
+        self.assertIn(f"web_search query truncated from {QUERY_MAX_LENGTH + 64} to {QUERY_MAX_LENGTH}", logs.output[0])
+        with patch("agents.runtime.tools.search", side_effect=fake_search), self.assertNoLogs("agents.runtime.tools"):
+            web_search(self._Ctx(CellDeps()), "q" * QUERY_MAX_LENGTH)
 
 
 class RenderPromptTests(SimpleTestCase):
@@ -291,26 +404,6 @@ class CanonicalLitterTests(SimpleTestCase):
         allowed = allowed_urls(["https://vid.test/watch?v=A"])
         self.assertEqual(ground_value("https://vid.test/watch?v=B", allowed), "")
         self.assertEqual(ground_value("https://vid.test/watch?v=A&utm_medium=x", allowed), "https://vid.test/watch?v=A")
-
-
-class QueryDedupeTests(SimpleTestCase):
-    def test_a_repeated_exact_query_never_respends_the_metered_call(self):
-        from unittest.mock import patch as unit_patch
-
-        from agents.runtime.tools import CellDeps, web_search
-        from agents.search import SearchHit, SearchOutcome
-
-        class _Ctx:
-            def __init__(self, deps):
-                self.deps = deps
-
-        deps = CellDeps()
-        outcome = SearchOutcome("acme ceo", [SearchHit(title="t", url="https://a.test/x", snippet="s")], failed=False)
-        with unit_patch("agents.runtime.tools.search", return_value=outcome) as searched:
-            web_search(_Ctx(deps), "acme ceo")
-            note = web_search(_Ctx(deps), "acme ceo")
-        self.assertEqual(searched.call_count, 1)
-        self.assertIn("already searched", note)
 
 
 class PoolPermissivenessTests(SimpleTestCase):

@@ -3,14 +3,20 @@ CellAnswerer is built from the config-derived facts (the model, the
 declared outputs), so the OUTPUT TYPE and the schema-derived token cap
 are constructed once at __init__. There is ONE answer method; tools
 are a parameter, and no validated answer is SIGNAL (blank cells with
-the diagnosis), never something to salvage with a second completion.
+the diagnosis). The one second completion is the capped run's verdict
+call: the tool budget caps the SPEND, not the verdict, so a model
+still searching when the cap lands is asked once, tools withheld, to
+judge the records it pooled, under the same floor and grounding.
 Validation, whitespace stripping, the cell-ceiling clamp, and URL
 grounding all run INSIDE the framework (the schema and the
-output-validator seam); callers get a validated answer or None."""
+output-validator seam); callers get an Answered: the validated output
+or None, the cause when it is None, and the validator's judgement.
+Tool state stays on deps; the answerer's verdict never does."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Annotated, NamedTuple
 
@@ -39,10 +45,20 @@ from ..constants import (
     MODEL_RETRIES,
 )
 from ..providers import MODEL_TIMEOUT_EXCEPTIONS, ModelUnavailable
-from ..search import SearchMisconfigured
 from .grounding import allowed_urls, ground_value, has_url
-from .prompts import AGENT_INSTRUCTIONS, DIRECT_INSTRUCTIONS
+from .judgement import AnswerJudgement
+from .prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS
 from .tools import CellDeps
+
+
+def _capped_task(prompt: str, deps: CellDeps) -> str:
+    """The verdict call's task: the original ask plus the pooled
+    records, as JSON so each record's own text is data inside a
+    string, never structure (the same shape the tools return them
+    in, so the model reads what it already read)."""
+    records = json.dumps([record.as_json() for record in deps.records], ensure_ascii=False)
+    return f"Task:\n{prompt}\n\nRecords gathered (your search budget is spent):\n{records}"
+
 
 logger = logging.getLogger(__name__)
 
@@ -136,19 +152,19 @@ def _verify(ctx: RunContext[CellDeps], output: BaseModel, keys: list[str]) -> Ba
             # model said X at 0.62, because Y" than by silence.
             assessment["dropped"] = value
             setattr(output, key, "")
-            deps.verification_dropped = True
-        deps.assessments[key] = assessment
+            deps.judgement.verification_dropped = True
+        deps.judgement.assessments[key] = assessment
         logger.info("cell: %r at %.2f%s", key, confidence, " DROPPED" if "dropped" in assessment else "")
     return output
 
 
-def _ground(ctx: RunContext[CellDeps], output: BaseModel) -> BaseModel:
+def _ground(ctx: RunContext[CellDeps], output: BaseModel, prompt: str) -> BaseModel:
     """URL grounding on the framework's output-validator seam: every
     URL in every string field, EMBEDDED ones included, rewrites to its
     source form or goes (per-field blank-over-garbage, never a
     whole-answer retry). The allowed pool is the tools' evidence plus
     the rendered prompt's own URLs, both on the dependency channel."""
-    allowed = allowed_urls(ctx.deps.urls, ctx.deps.prompt)
+    allowed = allowed_urls(ctx.deps.urls, prompt)
     for name in type(output).model_fields:
         value = getattr(output, name)
         if isinstance(value, str) and has_url(value):
@@ -160,6 +176,18 @@ def _ground(ctx: RunContext[CellDeps], output: BaseModel) -> BaseModel:
             # own strings or "", already stripped and within bounds.
             setattr(output, name, grounded)
     return output
+
+
+class Answered(NamedTuple):
+    """What one answer call decided: the validated output (None for a
+    blank), WHY it is blank when it is (a StoredCellState value, ""
+    otherwise: the retry causes park the row, the rest are terminal),
+    and the validator's judgement of what the model said. Handed back
+    to the caller; nothing on deps carries the answerer's verdict."""
+
+    output: BaseModel | None
+    cause: str
+    judgement: AnswerJudgement
 
 
 class CellAnswerer:
@@ -219,16 +247,17 @@ class CellAnswerer:
         )
         self._max_tokens = COMPLETION_TOKENS_BASE + COMPLETION_TOKENS_PER_OUTPUT * len(fields)
 
-    def answer(self, prompt: str, tools: list[Tool], deps: CellDeps) -> BaseModel | None:
+    def answer(self, prompt: str, tools: list[Tool], deps: CellDeps) -> Answered:
         """THE answer call, tools or not (a parameter, never a second
         call site): the model drives its tools inside the budget and
-        replies in the output type. None means no validated answer,
-        which is SIGNAL (bad model fit, budget too tight for the ask),
-        surfaced as blank cells plus the searches diagnosis. Auth and
-        unknown-model errors are CONFIG tier and re-raise loudly: a
-        revoked key fails every row identically and must never read as
-        a quietly bad agent."""
-        agent = self._agent(instructions=AGENT_INSTRUCTIONS if tools else DIRECT_INSTRUCTIONS, tools=tools)
+        replies in the output type. An Answered with no output is no
+        validated answer, which is SIGNAL (bad model fit, budget too
+        tight for the ask), surfaced as blank cells plus the searches
+        diagnosis, and its `cause` says which. Auth and unknown-model
+        errors are CONFIG tier and re-raise loudly: a revoked key fails
+        every row identically and must never read as a quietly bad
+        agent."""
+        agent = self._agent(prompt, instructions=AGENT_INSTRUCTIONS if tools else DIRECT_INSTRUCTIONS, tools=tools)
         limits = UsageLimits(request_limit=MAX_TOOL_CALLS + 3, tool_calls_limit=MAX_TOOL_CALLS)
 
         async def run():
@@ -237,7 +266,27 @@ class CellAnswerer:
             # collector (a fill would otherwise leak one pooled client
             # per row).
             try:
-                result = await agent.run(f"Task:\n{prompt}", deps=deps, usage_limits=limits)
+                try:
+                    result = await agent.run(f"Task:\n{prompt}", deps=deps, usage_limits=limits)
+                except UsageLimitExceeded:
+                    # The budget ran out while the model was still
+                    # reaching for a tool, so it was never asked for a
+                    # verdict. With records in the pool, ask ONCE, tools
+                    # withheld: the confidence floor and grounding then
+                    # judge what it gathered, instead of the cap deciding
+                    # the cell blank. With nothing pooled there is
+                    # nothing to judge from, and the cap stands.
+                    if not deps.records:
+                        raise
+                    logger.info(
+                        "cell: tool budget spent mid-search; asking for a verdict from %d records", len(deps.records)
+                    )
+                    verdict = self._agent(prompt, instructions=CAPPED_INSTRUCTIONS)
+                    result = await verdict.run(
+                        _capped_task(prompt, deps),
+                        deps=deps,
+                        usage_limits=UsageLimits(request_limit=1 + MODEL_RETRIES),
+                    )
                 return result.output
             finally:
                 # Best-effort: scripted test models own no HTTP client.
@@ -245,29 +294,29 @@ class CellAnswerer:
                 if client is not None:
                     await client.close()
 
+        def blank(cause: StoredCellState) -> Answered:
+            return Answered(None, cause, deps.judgement)
+
         try:
-            return asyncio.run(run())
+            return Answered(asyncio.run(run()), "", deps.judgement)
         except UsageLimitExceeded:
             # Its own cause, distinct from MODEL_ERROR: the budget spent
-            # without an answer is the model's verdict under this
-            # config, so the blank is settled, not infrastructure.
-            logger.info("cell: request/tool budget exhausted before an answer")
-            deps.blank_cause = StoredCellState.NO_ANSWER
-            return None
-        except SearchMisconfigured:
-            # Config tier: build_tools' availability gates make this
-            # unreachable, but if a gate ever regresses the error must
-            # surface loudly, not blank one cell quietly.
-            raise
+            # with nothing gathered to judge from is the model's verdict
+            # under this config, so the blank is settled, not
+            # infrastructure.
+            # Reached with nothing pooled, and also when the capped
+            # verdict's own budget ran dry: either way no verdict
+            # landed.
+            logger.info("cell: request/tool budget exhausted before a verdict could land")
+            return blank(StoredCellState.NO_ANSWER)
         except ModelHTTPError as e:
             if e.status_code in (401, 403, 404):
                 raise ModelUnavailable(f"the model endpoint refused the address ({e.status_code})") from e
             # 429 and 5xx are the INFRASTRUCTURE tier: the row retries
             # (and AIMD halves); anything else is the model's own error.
             transient = e.status_code == 429 or e.status_code >= 500
-            deps.blank_cause = StoredCellState.TRANSIENT if transient else StoredCellState.MODEL_ERROR
             logger.warning("cell: answer failed (%s %s)", type(e).__name__, e.status_code)
-            return None
+            return blank(StoredCellState.TRANSIENT if transient else StoredCellState.MODEL_ERROR)
         except MODEL_TIMEOUT_EXCEPTIONS as e:
             # A timeout is indistinguishable from an overloaded server:
             # infrastructure tier, retried like a 429.
@@ -276,23 +325,22 @@ class CellAnswerer:
             # Each SDK catches the transport's timeout and re-raises
             # its own, which does not inherit from it, so httpx's type
             # alone matches nothing a real door can raise.
-            deps.blank_cause = StoredCellState.TRANSIENT
             logger.warning("cell: answer timed out (%s)", type(e).__name__)
-            return None
+            return blank(StoredCellState.TRANSIENT)
         except UnexpectedModelBehavior as e:
             # The framework's validation retry ran dry: the model spoke,
             # but never in the output type.
-            deps.blank_cause = StoredCellState.UNPARSEABLE
             logger.warning("cell: answer failed validation: %s", e)
-            return None
+            return blank(StoredCellState.UNPARSEABLE)
         except Exception as e:
-            deps.blank_cause = StoredCellState.MODEL_ERROR
             logger.warning("cell: answer failed (%s): %s", type(e).__name__, e)
-            return None
+            return blank(StoredCellState.MODEL_ERROR)
 
-    def _agent(self, *, instructions: str, tools: list[Tool] | None = None) -> Agent:
+    def _agent(self, prompt: str, *, instructions: str, tools: list[Tool] | None = None) -> Agent:
         """The ONE constructor both legs share: deps-typed and grounded
-        at construction, never wrapped after."""
+        at construction, never wrapped after. `prompt` is the rendered
+        task, closed over by the validator: its URLs are the user's own
+        ground truth, so grounding allows them beside the tools' hits."""
         agent = Agent(
             self._model,
             deps_type=CellDeps,
@@ -309,7 +357,7 @@ class CellAnswerer:
         keys = self._keys
 
         def validate(ctx: RunContext[CellDeps], output: BaseModel) -> BaseModel:
-            return _ground(ctx, _verify(ctx, output, keys))
+            return _ground(ctx, _verify(ctx, output, keys), prompt)
 
         agent.output_validator(validate)
         return agent

@@ -101,9 +101,15 @@ class CellClampTests(TestCase):
         target = service.create(
             label="Sheet", columns=[{"key": "a", "label": "A", "type": "text"}], origin=ListOrigin.MANUAL
         )
-        service.add_rows(target, [{"a": "x" * (CELL_MAX_LENGTH + 8)}])
+        # And the clamp is LOGGED: a cut value is data the sheet no
+        # longer holds in full, so silence would hide it.
+        with self.assertLogs("lists.services.lists", level="WARNING") as logs:
+            service.add_rows(target, [{"a": "x" * (CELL_MAX_LENGTH + 8)}])
         row = service.rows_page(target, after_position=0, limit=1)[0]
         self.assertEqual(len(row.data["a"]), CELL_MAX_LENGTH)
+        self.assertIn(f"clamped from {CELL_MAX_LENGTH + 8} to {CELL_MAX_LENGTH}", logs.output[0])
+        with self.assertNoLogs("lists.services.lists"):
+            service.add_rows(target, [{"a": "x" * CELL_MAX_LENGTH}])
 
 
 class FolderServiceTests(TestCase):

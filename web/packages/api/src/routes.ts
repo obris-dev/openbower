@@ -72,14 +72,14 @@ export const apiRoutes = {
     column: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${encodeURIComponent(key)}`,
     // POST: add an AI column and admit its fill in one transaction.
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
-    // POST: refill a column's unanswered rows (a NEW job, fresh snapshot).
+    // POST: refill a column's unanswered rows (a NEW run, fresh snapshot).
     columnRefill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/refill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).
     columnPrompt: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/prompt`,
-    // GET: keyset fill jobs by -id (?after=), ALL states first-class.
+    // GET: keyset fill runs by -id (?after=), ALL states first-class.
     fills: (id: string) => `/${API_VERSION}/lists/${id}/fills`,
-    // POST: stop a live fill (an already-terminal job no-ops).
-    fillCancel: (id: string, jobId: string) => `/${API_VERSION}/lists/${id}/fills/${jobId}/cancel`,
+    // POST: stop a live fill (an already-terminal run no-ops).
+    fillCancel: (id: string, runId: string) => `/${API_VERSION}/lists/${id}/fills/${runId}/cancel`,
   },
 } as const;
 

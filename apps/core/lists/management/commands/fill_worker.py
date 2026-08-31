@@ -19,7 +19,6 @@ import threading
 from django.core.management.base import BaseCommand
 
 from ...operations.fill_worker import FillWorkerOperation, paid_search
-from ...services.fill_queue import FillQueueService
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +34,9 @@ class Command(BaseCommand):
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, self._request_stop)
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
-        queue = FillQueueService(worker_id=worker_id)
         logger.info("fill_worker %s up (paid search: %s)", worker_id, paid_search())
         try:
-            FillWorkerOperation(queue=queue, stop=self._stop).run(once=options["once"])
+            FillWorkerOperation(worker_id=worker_id, stop=self._stop).run(once=options["once"])
         finally:
             logger.info("fill_worker %s down", worker_id)
 

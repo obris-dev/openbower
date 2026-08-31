@@ -9,7 +9,6 @@ import {
   isNumericColumn,
   type ColumnFillSummary,
   type ColumnType,
-  type FillWire,
   type ListColumn,
   type RenderableListRow,
 } from "@bower/api";
@@ -19,21 +18,25 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, FillTrackerCell } from "./fill";
+import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
- * together: the exposed jobs and the management verbs the popover's
- * chip and scoped continue call. */
+ * together: the LIVE runs and the management verbs the popover's
+ * chip and continues call. */
 export type SheetFills = {
   // The sheet's own id: the popover's prompt edit calls the
   // column-scoped endpoint.
   listId: string;
-  jobs: FillWire[];
-  // Server truth per column (current job, canonical filled count).
+  runs: LiveRun[];
+  // Server truth per column (current run and its status, the newest
+  // failure, canonical totals).
   summaries: ColumnFillSummary[];
+  // The page's poll cannot reach the server (the footer's line): the
+  // loading cells hold still instead of claiming progress.
+  pollTrouble: boolean;
   rowCount: number;
-  onStop: (jobId: string) => Promise<string | null>;
-  onRefill: (job: FillWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onStop: (runId: string) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -59,8 +62,8 @@ function Cell({ column, value }: { column: ListColumn; value: string }) {
  * nearest scrolling ancestor. AI cell states ride the ROW itself
  * (RenderableListRow.states), so a value and its state can never come from
  * different requests and disagree; `fills`
- * adds the tracker row under the header (one cell per AI column, the
- * per-column fill surface; the footer tray stays the sheet-wide one).
+ * adds the tracker row under the header (one cell per AI column, THE
+ * per-column fill surface; the footer keeps only a passive glance).
  * `onAddColumn` puts the spreadsheet-native "+" entry point in the
  * last header cell (header only, never the body rows). */
 export function SheetTable({
@@ -73,9 +76,13 @@ export function SheetTable({
   onDeleteColumn,
   pendingColumn,
   onNamePending,
+  searchDoor = null,
 }: {
   columns: ListColumn[];
   rows: RenderableListRow[];
+  /** The deployment's web-search door once the sheet has fetched it
+   * (a rate-limited cell's popover composes the paid-door nudge). */
+  searchDoor?: SearchDoor;
   /** Absent on a sheet that cannot be reordered; its presence is what
    * arms both the drag and the header menu. */
   onReorder?: (keys: string[]) => void;
@@ -187,7 +194,8 @@ export function SheetTable({
                     listId={tracker.listId}
                     column={column}
                     summary={tracker.summaries.find((entry) => entry.column_key === column.key)}
-                    jobs={tracker.jobs}
+                    pollTrouble={tracker.pollTrouble}
+                    runs={tracker.runs}
                     rowCount={tracker.rowCount}
                     onStop={tracker.onStop}
                     onRefill={tracker.onRefill}
@@ -207,11 +215,14 @@ export function SheetTable({
               // A state dresses only AI cells; without one, a value
               // is the plain filled cell and no value is
               // not-attempted, undecorated by design.
-              // A REAL VALUE always outranks a state. Both come off
-              // THIS row object, so they are one encoding rather than
-              // two reads that can disagree.
+              // A REAL VALUE always outranks a state: it renders as
+              // the value, with a mark beside it when the row's run
+              // had a degraded tool. Both come off THIS row
+              // object, so they are one encoding rather than two
+              // reads that can disagree.
               const value = row.data[column.key] ?? "";
-              const state = column.fill && !value ? row.states?.[column.key] : undefined;
+              const entry = column.fill ? row.states?.[column.key] : undefined;
+              const state = !value ? entry : undefined;
               return (
                 <td
                   key={column.key}
@@ -221,10 +232,16 @@ export function SheetTable({
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's
                     // overflow-hidden would clip the focus tooltip.
-                    <AiCellState state={state} />
+                    <AiCellState entry={state} searchDoor={searchDoor} />
                   ) : (
-                    <div className="max-w-64 truncate">
-                      <Cell column={column} value={value} />
+                    // justify-end mirrors the td's text-right: the
+                    // flex wrapper makes the value a shrink-to-content
+                    // item, so the td's alignment no longer reaches it.
+                    <div className={`flex items-center gap-2 ${isNumericColumn(column) ? "justify-end" : ""}`}>
+                      <div className="max-w-64 truncate">
+                        <Cell column={column} value={value} />
+                      </div>
+                      {isDegradedFill(entry) && <DegradedToolMark tools={entry.tools} searchDoor={searchDoor} />}
                     </div>
                   )}
                 </td>

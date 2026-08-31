@@ -5,9 +5,10 @@ There are two on purpose. StoredCellState is what a fill WROTE about a
 cell; WireCellState is what a client renders. They differ in both
 directions and one serializer projection stands between them:
 
-  filled  is stored and never travels. A value on the row plus no
-          state IS the filled signal, so shipping the word would be
-          something the renderer already knows.
+  filled  is stored, and travels ONLY when the run that filled the
+          cell had a degraded tool (the value is the renderer's
+          already; the mark beside it is not). A value plus no entry
+          IS the clean filled signal.
   pending is on the wire and never stored. It is DERIVED from queued
           tasks on live fills, which is what lets admission write
           nothing to the sheet and a stopped fill need no sweep.
@@ -29,9 +30,11 @@ from django.test import SimpleTestCase
 from openbower_schema.fills import SETTLED_CELL_STATES
 from openbower_schema.lists import WireCellState
 
-from ..constants import StoredCellState
+from ..constants import CELL_STATE_MAX_LENGTH, StoredCellState
 
-STORED_ONLY = {"filled"}
+# `filled` travels only for a cell whose run had a degraded tool (the
+# mark beside the value); a clean filled cell is still an absence.
+STORED_ONLY: set[str] = set()
 WIRE_ONLY = {"pending"}
 
 
@@ -58,5 +61,77 @@ class CellStateParityTests(SimpleTestCase):
                 self.assertIn(cause, wire)
 
     def test_neither_exclusive_word_leaks_into_the_settled_partition(self):
-        # filled is not a blank cause; pending is not terminal.
+        # filled is not a blank cause; pending is not terminal. FILLED
+        # is asserted directly because it left STORED_ONLY when it
+        # started traveling, which made the set-intersection half of
+        # this vacuous for it.
         self.assertFalse(set(SETTLED_CELL_STATES) & (STORED_ONLY | WIRE_ONLY))
+        self.assertNotIn(StoredCellState.FILLED, SETTLED_CELL_STATES)
+        self.assertNotIn("pending", SETTLED_CELL_STATES)
+
+    def test_every_base_status_has_a_cell_state_and_every_retry_cause_re_runs(self):
+        # A closed door lands as the cell state its code maps to, for
+        # EVERY tool's vocabulary; a code added without a row would
+        # KeyError mid-run. Not configured is written at once (nothing
+        # to retry); every other closed door parks. And a retry cause
+        # that was also settled would park a row and then never re-run
+        # it.
+        from agents.constants import SearchStatus, ToolStatus
+
+        from ..constants import CELL_STATE_BY_STATUS, RETRY_CAUSES
+
+        self.assertEqual(set(CELL_STATE_BY_STATUS), {s.value for s in ToolStatus} - {ToolStatus.OPEN})
+        for status in SearchStatus:
+            if status is not SearchStatus.OPEN:
+                self.assertIn(status, CELL_STATE_BY_STATUS)
+        self.assertEqual(CELL_STATE_BY_STATUS[ToolStatus.NOT_CONFIGURED], StoredCellState.TOOL_NOT_CONFIGURED)
+        for status, state in CELL_STATE_BY_STATUS.items():
+            if status is not ToolStatus.NOT_CONFIGURED:
+                self.assertIn(state, RETRY_CAUSES)
+        self.assertNotIn(StoredCellState.TOOL_NOT_CONFIGURED, RETRY_CAUSES)
+        self.assertFalse(set(RETRY_CAUSES) & set(SETTLED_CELL_STATES))
+        self.assertNotIn(StoredCellState.TOOL_NOT_CONFIGURED, SETTLED_CELL_STATES)
+        for state in StoredCellState:
+            self.assertLessEqual(len(state.value), CELL_STATE_MAX_LENGTH)
+
+    def test_a_search_stored_before_the_status_fields_still_reads(self):
+        # TestSearch's defaults exist FOR the stored read: task
+        # results and bench runs written before the door-status fields
+        # carry only query/hits (plus retired keys). A required field
+        # there bricks the drawer on every old row; this fails if one
+        # of the four fields loses its default.
+        from openbower_schema.agents import TestSearch
+
+        search = TestSearch.model_validate({"query": "acme", "hits": 3, "failed": True, "cause": "timeout"})
+        self.assertEqual((search.status, search.provider, search.attempts, search.tool), ("", "", 1, ""))
+
+    def test_every_tools_status_vocabulary_contains_the_base_and_ships(self):
+        # StrEnums cannot extend one another, so each tool's enum
+        # restates the base; this is what makes that a rule. The
+        # REGISTRY is the add-a-tool pin: a new AgentTool member with
+        # no spec fails here, before a missing function, label, door,
+        # or cell-state row could surface as a KeyError mid-run. And
+        # the wire's per-tool lists (the client's copy-table types)
+        # are the registry's own enums, so a code added server-side
+        # reaches the client.
+        from agents.constants import AgentTool, ToolStatus
+        from agents.runtime.tools import TOOL_REGISTRY
+        from openbower_schema.agents import TOOL_STATUSES, ToolStatusWire
+
+        from ..constants import CELL_STATE_BY_STATUS
+        from ..operations.fill_worker import _STATUS_PHRASE
+
+        self.assertEqual(set(TOOL_REGISTRY), set(AgentTool))
+        self.assertEqual(set(get_args(ToolStatusWire)), {s.value for s in ToolStatus})
+        self.assertEqual(set(TOOL_STATUSES), {t.value for t in AgentTool})
+        for tool, spec in TOOL_REGISTRY.items():
+            with self.subTest(tool=tool.value):
+                self.assertLessEqual({s.value for s in ToolStatus}, {s.value for s in spec.statuses})
+                self.assertEqual(set(TOOL_STATUSES[tool.value]), {s.value for s in spec.statuses})
+                for status in spec.statuses:
+                    if status.value != ToolStatus.OPEN:
+                        self.assertIn(status.value, CELL_STATE_BY_STATUS)
+                        # The breaker's tier-1 sentence table: without
+                        # a row, a code renders the generic "is
+                        # failing on" about a door with its own story.
+                        self.assertIn(status.value, _STATUS_PHRASE)

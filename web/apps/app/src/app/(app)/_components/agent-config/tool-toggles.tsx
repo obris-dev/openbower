@@ -9,19 +9,23 @@ import { AGENT_TOOLS, type AgentToolKey } from "./tools-meta";
 // Per-tool doors: web search runs through ANY usable provider; finding
 // contacts requires DataForSEO specifically (LinkedIn profile searches
 // need Google-grade results). Keys and labels come from the ONE tool
-// registry; this map adds only what the toggles alone need.
-const TOOL_DETAIL: Record<AgentToolKey, { icon: typeof Globe; hint: string; ready: (c: AgentCatalog) => boolean }> = {
+// registry; this map adds only what the toggles alone need. A door is
+// ready when the catalog's status for the tool is "open"; any other
+// code is the reason it is off.
+const TOOL_DETAIL: Record<AgentToolKey, { icon: typeof Globe; hint: string }> = {
   web_search: {
     icon: Globe,
     hint: "Search the web for more context before answering.",
-    ready: (catalog) => catalog.search_available,
   },
   find_contacts: {
     icon: Users,
     hint: "Find people's LinkedIn profiles matching the prompt; links stay grounded in evidence.",
-    ready: (catalog) => catalog.contacts_available,
   },
 };
+
+function doorOpen(catalog: AgentCatalog, tool: AgentToolKey): boolean {
+  return catalog.doors[tool] === "open";
+}
 
 /** Tool toggles with the SETUP WORKFLOW inline: a tool whose search
  * door isn't ready is gated, and the card walks through the DataForSEO
@@ -39,8 +43,8 @@ export function ToolToggles({
   tools: AgentTools;
   onChange: (next: AgentTools) => void;
 }) {
-  const searchReady = catalog?.search_available ?? false;
-  const contactsReady = catalog?.contacts_available ?? false;
+  const searchReady = catalog !== null && doorOpen(catalog, "web_search");
+  const contactsReady = catalog !== null && doorOpen(catalog, "find_contacts");
   return (
     <Card className="space-y-3 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-faint">Tools</p>
@@ -58,7 +62,7 @@ export function ToolToggles({
       )}
       {AGENT_TOOLS.map((tool) => {
         const detail = TOOL_DETAIL[tool.key];
-        const ready = catalog !== null && detail.ready(catalog);
+        const ready = catalog !== null && doorOpen(catalog, tool.key);
         return (
           <div key={tool.key} className="flex items-start gap-3">
             <detail.icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-faint" />
@@ -84,7 +88,7 @@ export function ToolToggles({
         <div className="space-y-1.5 rounded-md border border-warning-hairline bg-warning-wash px-3 py-2 text-xs">
           <p className="font-medium text-warning">
             {searchReady
-              ? "Contact search isn't set up yet: finding contacts needs DataForSEO (LinkedIn profile searches need Google-grade results). Web search works out of the box through the free search provider."
+              ? "Contact search isn't set up yet: finding contacts needs DataForSEO."
               : `Search is misconfigured on this deployment: the chosen provider is missing its credentials; ${catalog.support_followup}. For contact search, set up DataForSEO:`}
           </p>
           <ol className="list-decimal space-y-0.5 pl-4 text-muted">

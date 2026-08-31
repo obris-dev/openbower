@@ -60,9 +60,52 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         from agents.constants import SearchProvider
         from agents.search import _DOORS
         from conf.settings import base as settings_base
+        from openbower_schema.agents import SearchProviderWire
 
         self.assertEqual(set(_DOORS), set(SearchProvider))
         self.assertEqual(set(settings_base._SEARCH_DOORS), {p.value for p in SearchProvider})
+        self.assertEqual(set(get_args(SearchProviderWire)), {p.value for p in SearchProvider})
+
+    def test_the_worst_case_counts_the_verdict_and_the_clamped_backoff(self):
+        # The two terms once missing from the derivation, pinned
+        # independently: the capped verdict is a SECOND run with its
+        # own request budget, and a door's Retry-After stretches every
+        # wait to the schedule's LARGEST step (the clamp honors the
+        # ask up to max(schedule), not up to that attempt's own step).
+        # FAILS if either term falls back out of the formula, which
+        # the grace test alone cannot catch (it compares compose to
+        # the constant, not the constant to its parts).
+        from agents.constants import (
+            COMPLETION_TIMEOUT_SECONDS,
+            DATAFORSEO_TIMEOUT_SECONDS,
+            MODEL_RETRIES,
+            SEARCH_BACKOFF_SECONDS,
+            TEST_RUN_WORST_CASE_SECONDS,
+        )
+        from openbower_schema.agents import MAX_TOOL_CALLS
+
+        floor = (MAX_TOOL_CALLS + 3 + 1 + MODEL_RETRIES) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * (
+            DATAFORSEO_TIMEOUT_SECONDS + len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
+        )
+        self.assertGreaterEqual(TEST_RUN_WORST_CASE_SECONDS, floor)
+
+    def test_the_worker_stop_grace_clears_one_runs_worst_case(self):
+        # Compose cannot import the constant, so the worker's
+        # stop_grace_period restates it by hand: a grace BELOW the
+        # worst case SIGKILLs a legitimately slow row through its
+        # outcome write, which is exactly what the grace exists to
+        # prevent. The worst case moves whenever a timeout, the tool
+        # budget, or the search backoff schedule moves; this is what
+        # makes the compose value follow.
+        import re
+        from pathlib import Path
+
+        from agents.constants import TEST_RUN_WORST_CASE_SECONDS
+
+        compose = (Path(__file__).resolve().parents[4] / "docker-compose.yml").read_text()
+        graces = [int(value) for value in re.findall(r"^\s*stop_grace_period:\s*(\d+)s\s*$", compose, re.MULTILINE)]
+        self.assertEqual(len(graces), 1, "one worker grace expected in docker-compose.yml")
+        self.assertGreater(graces[0], TEST_RUN_WORST_CASE_SECONDS)
 
 
 class ReservedKeyParityPins(SimpleTestCase):

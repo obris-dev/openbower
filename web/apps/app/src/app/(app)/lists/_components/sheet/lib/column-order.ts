@@ -40,3 +40,16 @@ export function nudgeColumn(columns: ListColumn[], key: string, direction: -1 | 
   const index = columns.findIndex((column) => column.key === key);
   return moveColumn(columns, index, index + direction);
 }
+
+/** The column RECORDS in the given key order, or null when the keys
+ * are not exactly this sheet's set (a missing, unknown, or repeated
+ * key). Null is reachable: both gestures compute their keys from a
+ * render a teammate's add or delete may have outrun, and applying a
+ * partial order optimistically would show a sheet the server is
+ * about to refuse. */
+export function columnsInKeyOrder(columns: ListColumn[], keys: string[]): ListColumn[] | null {
+  if (keys.length !== columns.length || new Set(keys).size !== keys.length) return null;
+  const byKey = new Map(columns.map((column) => [column.key, column]));
+  const moved = keys.map((key) => byKey.get(key)).filter((column) => column !== undefined);
+  return moved.length === columns.length ? moved : null;
+}

@@ -1,11 +1,15 @@
 {
   "$defs": {
     "AgentCatalog": {
-      "description": "What THIS deploy can run; search_available gates the tools.",
+      "description": "What THIS deploy can run; `doors` gates the tools.",
       "properties": {
-        "contacts_available": {
-          "title": "Contacts Available",
-          "type": "boolean"
+        "doors": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Each tool's door status BEFORE a run, keyed by AgentTool (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells).",
+          "title": "Doors",
+          "type": "object"
         },
         "models": {
           "items": {
@@ -14,9 +18,21 @@
           "title": "Models",
           "type": "array"
         },
-        "search_available": {
-          "title": "Search Available",
-          "type": "boolean"
+        "search_provider": {
+          "anyOf": [
+            {
+              "enum": [
+                "duckduckgo",
+                "dataforseo"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which door serves web search on this deployment (the server's SearchProvider, pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot refuses an unset door, so client copy never needs a no-search-door story. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it.",
+          "title": "Search Provider"
         },
         "support_followup": {
           "description": "The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify.",
@@ -33,8 +49,8 @@
         "models",
         "support_followup",
         "truncated",
-        "search_available",
-        "contacts_available"
+        "doors",
+        "search_provider"
       ],
       "title": "AgentCatalog",
       "type": "object"
@@ -233,6 +249,14 @@
           },
           "title": "Searches",
           "type": "array"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Tools",
+          "type": "object"
         }
       },
       "required": [
@@ -384,6 +408,41 @@
       "title": "CatalogModel",
       "type": "object"
     },
+    "CellStateWire": {
+      "description": "One AI cell's state and the tool statuses of the run that wrote\nit: `tools` is tool -> status code (a base ToolStatus code or the\ntool's own; \"open\" for a tool that served), empty for a pending\ncell or a run before tools reported statuses. The client resolves\ncopy by (tool, code) and tolerates a code it has not heard of.",
+      "properties": {
+        "state": {
+          "enum": [
+            "pending",
+            "filled",
+            "no_evidence",
+            "no_answer",
+            "unverified",
+            "unparseable",
+            "type_mismatch",
+            "model_error",
+            "transient",
+            "tool_not_configured",
+            "tool_unavailable"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "CellStateWire",
+      "type": "object"
+    },
     "ColumnFill": {
       "description": "A column's fill linkage: present exactly on AI columns (the\nagent that fills it; the ephemeral-vs-roster custody rides the\nagent, not the column).",
       "properties": {
@@ -393,7 +452,7 @@
         },
         "current_fill_id": {
           "default": "",
-          "description": "The fill that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
+          "description": "The fill run that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
           "title": "Current Fill Id",
           "type": "string"
         }
@@ -417,19 +476,52 @@
           "type": "string"
         },
         "current_fill_id": {
-          "description": "The newest fill naming this column; \"\" when none is exposed.",
+          "description": "The newest fill run naming this column; \"\" when none is exposed.",
           "title": "Current Fill Id",
           "type": "string"
+        },
+        "current_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "pending",
+                "running",
+                "complete",
+                "failed",
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "",
+              "type": "string"
+            }
+          ],
+          "description": "The status of the run current_fill_id names; \"\" when the column has never run. The page's runs list is LIVE runs only, so this is where a terminal story lands.",
+          "title": "Current Status"
         },
         "filled": {
           "description": "Cells in this column that hold a value.",
           "title": "Filled",
           "type": "integer"
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FillError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The newest run's error, both legs (tier 1: the message renders verbatim); None unless that run FAILED, so a newer clean run clears it and a stopped run carries none."
         }
       },
       "required": [
         "column_key",
         "current_fill_id",
+        "current_status",
+        "last_error",
         "filled",
         "attempted"
       ],
@@ -618,7 +710,8 @@
       "title": "FillError",
       "type": "object"
     },
-    "FillPage": {
+    "FillRunPage": {
+      "description": "LIVE runs plus the per-column summaries. Terminal runs do not\nride the poll: a finished run's story (its status, its error) lands\non the column summary the moment it leaves this list, so the page\ncarries the in-flight work and the summaries carry everything a\ncolumn needs to say about its past.",
       "properties": {
         "columns": {
           "default": [],
@@ -627,13 +720,6 @@
             "$ref": "#/$defs/ColumnFillSummary"
           },
           "title": "Columns",
-          "type": "array"
-        },
-        "items": {
-          "items": {
-            "$ref": "#/$defs/FillWire"
-          },
-          "title": "Items",
           "type": "array"
         },
         "next_cursor": {
@@ -646,37 +732,41 @@
             }
           ],
           "default": null,
-          "description": "The last id when more fills exist.",
+          "description": "The last id when more runs exist.",
           "title": "Next Cursor"
+        },
+        "runs": {
+          "description": "LIVE runs only. Named for what it holds rather than the house `items`, because this page carries a second collection (`columns`) and `items` beside it would name neither.",
+          "items": {
+            "$ref": "#/$defs/FillRunWire"
+          },
+          "title": "Runs",
+          "type": "array"
         }
       },
       "required": [
-        "items"
+        "runs"
       ],
-      "title": "FillPage",
+      "title": "FillRunPage",
       "type": "object"
     },
-    "FillWire": {
-      "description": "The fill envelope: what the POST returns and the sheet re-attaches\nto on load. ALL states are first-class (a failed fill is an API\nobject with its error, not a 4xx).",
+    "FillRunWire": {
+      "description": "The fill run envelope. The POST and cancel ECHOES carry every\nstate (a failed run is an API object with its error, not a 4xx);\nthe fills LIST the sheet re-attaches to carries live runs only\n(see FillRunPage).",
       "properties": {
         "agent_id": {
           "title": "Agent Id",
           "type": "string"
         },
         "column_keys": {
-          "description": "The columns this fill owns, frozen at consent.",
+          "description": "The columns this run owns, frozen at consent.",
           "items": {
             "type": "string"
           },
           "title": "Column Keys",
           "type": "array"
         },
-        "config_snapshot": {
-          "$ref": "#/$defs/AgentConfig",
-          "description": "The FULL resolved config frozen at admission; results render with the config that produced them."
-        },
         "confirmed_row_count": {
-          "description": "Rows this fill TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
+          "description": "Rows this run TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
           "title": "Confirmed Row Count",
           "type": "integer"
         },
@@ -696,7 +786,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "This run's error, both legs (tier 1: the message renders verbatim); None unless the run FAILED, the same predicate ColumnFillSummary.last_error states."
         },
         "heartbeat_at": {
           "anyOf": [
@@ -749,11 +840,10 @@
         "counters",
         "confirmed_row_count",
         "started_by",
-        "config_snapshot",
         "created_at",
         "updated_at"
       ],
-      "title": "FillWire",
+      "title": "FillRunWire",
       "type": "object"
     },
     "FolderSummary": {
@@ -902,21 +992,10 @@
         },
         "states": {
           "additionalProperties": {
-            "enum": [
-              "pending",
-              "no_evidence",
-              "no_answer",
-              "unverified",
-              "no_tools_door",
-              "unparseable",
-              "type_mismatch",
-              "model_error",
-              "transient"
-            ],
-            "type": "string"
+            "$ref": "#/$defs/CellStateWire"
           },
           "default": {},
-          "description": "AI cell states keyed by column key, for the cells that have no value: a WireCellState (see fills.py). Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled, and never-attempted is likewise an absence.",
+          "description": "AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.",
           "title": "States",
           "type": "object"
         }
@@ -1265,25 +1344,40 @@
       "type": "object"
     },
     "TestSearch": {
-      "description": "One search query's diagnosis: failed means the provider errored\n(rate limit, outage), distinct from an honest zero-hit answer.",
+      "description": "One search query's outcome: `status` is what the door said (a\nSearchStatus code: open, and hits, possibly zero, is the honest\nanswer; any other code is why there are none). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts), and `tool` which tool asked (web_search | find_contacts),\nso a reader can tell whose door refused.",
       "properties": {
-        "failed": {
-          "title": "Failed",
-          "type": "boolean"
+        "attempts": {
+          "default": 1,
+          "title": "Attempts",
+          "type": "integer"
         },
         "hits": {
           "title": "Hits",
           "type": "integer"
         },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
         "query": {
           "title": "Query",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "title": "Status",
+          "type": "string"
+        },
+        "tool": {
+          "default": "",
+          "title": "Tool",
           "type": "string"
         }
       },
       "required": [
         "query",
-        "hits",
-        "failed"
+        "hits"
       ],
       "title": "TestSearch",
       "type": "object"
@@ -1297,6 +1391,10 @@
     "MAX_TOOL_CALLS": 6,
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "ROW_LEASE_STALE_SECONDS": 256,
+    "SEARCH_DOORS": [
+      "duckduckgo",
+      "dataforseo"
+    ],
     "SETTLED_CELL_STATES": [
       "no_evidence",
       "no_answer",
@@ -1304,7 +1402,23 @@
       "unparseable",
       "type_mismatch"
     ],
-    "TEST_ROW_MAX_KEYS": 16
+    "TEST_ROW_MAX_KEYS": 16,
+    "TOOL_STATUSES": {
+      "find_contacts": [
+        "open",
+        "not_configured",
+        "rate_limited",
+        "unreachable",
+        "error"
+      ],
+      "web_search": [
+        "open",
+        "not_configured",
+        "rate_limited",
+        "unreachable",
+        "error"
+      ]
+    }
   },
   "x-reserved-output-keys": [
     "construct",

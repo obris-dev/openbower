@@ -33,8 +33,8 @@ from openbower_schema import (
     AgentTestRun,
     AuthUser,
     ColumnPromptWire,
-    FillPage,
-    FillWire,
+    FillRunPage,
+    FillRunWire,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -44,7 +44,13 @@ from openbower_schema import (
     LookalikeListResponse,
     RowsAdded,
 )
-from openbower_schema.agents import MAX_TOOL_CALLS, RESERVED_OUTPUT_MARKER, TEST_ROW_MAX_KEYS
+from openbower_schema.agents import (
+    MAX_TOOL_CALLS,
+    RESERVED_OUTPUT_MARKER,
+    SEARCH_DOORS,
+    TEST_ROW_MAX_KEYS,
+    TOOL_STATUSES,
+)
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS,
     FREE_SEARCH_FILL_BUDGET,
@@ -64,8 +70,8 @@ CONTRACT_MODELS: list[type[Any]] = [
     AgentTestRun,
     AuthUser,
     ColumnPromptWire,
-    FillPage,
-    FillWire,
+    FillRunPage,
+    FillRunWire,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -112,7 +118,12 @@ def build_schema() -> dict[str, Any]:
             "MAX_TOOL_CALLS": MAX_TOOL_CALLS,
             "RESERVED_OUTPUT_MARKER": RESERVED_OUTPUT_MARKER,
             "ROW_LEASE_STALE_SECONDS": ROW_LEASE_STALE_SECONDS,
+            "SEARCH_DOORS": list(SEARCH_DOORS),
             "SETTLED_CELL_STATES": list(SETTLED_CELL_STATES),
+            # Each tool's status vocabulary (its own enum, containing
+            # the base codes), so the client's copy table is typed per
+            # tool and an unknown code degrades instead of crashing.
+            "TOOL_STATUSES": {tool: list(statuses) for tool, statuses in TOOL_STATUSES.items()},
             "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
         },
     }

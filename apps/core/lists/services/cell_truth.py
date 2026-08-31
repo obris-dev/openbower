@@ -24,10 +24,10 @@ from ..constants import FILL_WRITE_BATCH, StoredCellState
 from ..models import Fill, FillCellState
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
-_UPSERT_FIELDS = ["state", "fill_id", "config_fingerprint", "updated_at"]
+_UPSERT_FIELDS = ["state", "fill_id", "config_fingerprint", "tools", "updated_at"]
 
 
-def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState]) -> None:
+def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools: dict[str, str]) -> None:
     """One row's cell states, written inside the terminal transaction
     that also writes the sheet row and closes the task.
 
@@ -39,7 +39,9 @@ def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState]) -> Non
     Every column the fill owns gets a record, including the answered
     ones. That is what keeps the per-column counts an indexed read
     rather than a scan of the sheet, and it is why absence means
-    NEVER ATTEMPTED and nothing else."""
+    NEVER ATTEMPTED and nothing else. `tools` is the run's per-tool
+    door statuses, the same on every column of the row: a filled cell
+    keeps the record of a degraded tool beside its value."""
     if not states:
         return
     FillCellState.objects.bulk_create(
@@ -52,6 +54,7 @@ def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState]) -> Non
                 state=state,
                 fill_id=str(fill.id),
                 config_fingerprint=fill.config_fingerprint,
+                tools=tools,
             )
             for column_key, state in states.items()
         ],
