@@ -42,8 +42,10 @@ const PROMPT_TOGGLE_CHARS = 256;
  * (aria-expanded, Escape, outside-click, focus return). A MISSING
  * summary means the poll has not answered for this column yet: the
  * first page pending, or a just-added column whose entry arrives on
- * the next tick (the server ships one per AI column, zero counts
- * included, so no other state is missing one). It renders a
+ * the next tick (a server that ships `columns` sends one per AI
+ * column, zero counts included; the tolerant read's one gap is an
+ * ancient server omitting the field, which leaves these cells
+ * loading). It renders a
  * skeleton, held STATIC once the page's trouble line speaks
  * (pollTrouble), so it can never claim progress a dead poll is not
  * making. A column with no exposed run shows the header line alone,
@@ -75,7 +77,10 @@ export function FillTrackerCell({
     // not making.
     return (
       <div className="flex h-5 items-center px-1">
-        {pollTrouble ? <span aria-hidden className="h-3 w-16 rounded-md bg-hairline" /> : <Skeleton className="h-3 w-16" />}
+        {/* One owner of the look: the still box is the primitive
+            minus its pulse (cn is twMerge-backed, so animate-none
+            wins), never a hand-copied twin that drifts. */}
+        {pollTrouble ? <Skeleton className="h-3 w-16 animate-none" /> : <Skeleton className="h-3 w-16" />}
         <span className="sr-only">
           {pollTrouble
             ? `The ${column.label} column's fill state is unavailable right now`

@@ -12,7 +12,7 @@ import type { ColumnFillSummary, FillRunWire } from "@bower/api";
  * | joined run, else summary   | kind   | cell                                       |
  * | none, or ended quietly     | none   | the header line alone                      |
  * | a run joins (it IS live)   | live   | "164 filled | 13% run" + thin progress bar |
- * | failed                     | failed | "Run failed"; the popover speaks the error |
+ * | failed                     | failed | "Fill failed"; the popover speaks the error|
  * A finished run's counters are not replayed: the header's historic
  * totals are the honest answer once a run has ended. */
 
@@ -89,5 +89,7 @@ export function trackerCell(run: TrackerRun | null, currentStatus: ColumnFillSum
     const pct = Math.round(fraction * 100);
     return { kind: "live", text: `${count(run.counters.filled)} filled | ${pct}% run`, fraction };
   }
-  return currentStatus === "failed" ? { kind: "failed", text: "Run failed" } : { kind: "none" };
+  // "Fill failed", not "Run failed": copy a user reads keeps the
+  // feature's word; "run" stays a code and wire noun.
+  return currentStatus === "failed" ? { kind: "failed", text: "Fill failed" } : { kind: "none" };
 }

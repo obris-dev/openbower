@@ -161,12 +161,12 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
     const outcome = await columns.addAi(payload);
     if (!outcome.ok) return outcome;
-    // The drawer closes on the 201 itself: the reconciles below are
-    // the SHEET's reactions, and holding the drawer open through a
-    // second read would make the Save button claim work the server
-    // has already accepted. The poll loop's promise settles only when
-    // the fill ENDS, so the attach is fire-and-forget; the summary
-    // and the loaded rows are bounded reads, awaited.
+    // The reconciles below are the SHEET's reactions; holding the
+    // drawer open through a second read would make the Save button
+    // claim work the server has already accepted. The poll loop's
+    // promise settles only when the fill ENDS, so the attach is
+    // fire-and-forget; the summary and the loaded rows are bounded
+    // reads, awaited.
     closeAddColumn();
     void fill.refresh();
     await columns.refreshDetail();

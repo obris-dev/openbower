@@ -62,7 +62,7 @@ test("without a live run the summary's status decides the cell", () => {
   // summary's current_status: failed keeps a mark on the column, and
   // every quiet ending is the header line alone (a finished run's
   // counters are not replayed; the historic totals are the answer).
-  assert.deepEqual(trackerCell(null, "failed"), { kind: "failed", text: "Run failed" });
+  assert.deepEqual(trackerCell(null, "failed"), { kind: "failed", text: "Fill failed" });
   assert.deepEqual(trackerCell(null, "complete"), { kind: "none" });
   assert.deepEqual(trackerCell(null, "cancelled"), { kind: "none" });
   assert.deepEqual(trackerCell(null, ""), { kind: "none" });
