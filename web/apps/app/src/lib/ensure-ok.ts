@@ -4,11 +4,12 @@ import { GENERIC_FAILURE, loginUrl } from "@bower/api";
 
 type Toast = { error: (message: string, title?: string) => void };
 
-// The outcome vocabulary both gates accept. Constrained to the
-// literal union, never a bare string: a wire model also carries a
-// `status` field (a run's lifecycle), and a bare-string constraint
-// would let one through as a guard that compiles and never fires.
-type Outcome = { status: "ok" | "unauthenticated" | "error" | "missing" };
+// The outcome vocabulary both gates accept (the client ApiResult's
+// members). Constrained to the literal union, never a bare string: a
+// wire model also carries a `status` field (a run's lifecycle), and
+// a bare-string constraint would let one through as a guard that
+// compiles and never fires.
+type Outcome = { status: "ok" | "unauthenticated" | "error" };
 
 /** The one outcome gate for client mutations: unauthenticated resolves
  * with a fresh login, errors toast, ok proceeds. Generic over the

@@ -29,9 +29,8 @@ export type SheetFills = {
   listId: string;
   runs: LiveRun[];
   // Server truth per column (current run and its status, the newest
-  // failure, canonical totals); NULL until the first poll answers,
-  // which is the tracker cells' loading discriminator.
-  summaries: ColumnFillSummary[] | null;
+  // failure, canonical totals).
+  summaries: ColumnFillSummary[];
   // The page's poll cannot reach the server (the footer's line): the
   // loading cells hold still instead of claiming progress.
   pollTrouble: boolean;
@@ -194,8 +193,7 @@ export function SheetTable({
                   <FillTrackerCell
                     listId={tracker.listId}
                     column={column}
-                    summary={tracker.summaries?.find((entry) => entry.column_key === column.key)}
-                    loaded={tracker.summaries !== null}
+                    summary={tracker.summaries.find((entry) => entry.column_key === column.key)}
                     pollTrouble={tracker.pollTrouble}
                     runs={tracker.runs}
                     rowCount={tracker.rowCount}

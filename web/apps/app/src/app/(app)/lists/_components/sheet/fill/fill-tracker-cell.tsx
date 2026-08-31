@@ -39,19 +39,19 @@ const PROMPT_TOGGLE_CHARS = 256;
  * run's frozen snapshot; a live run disables the affordance, since
  * the live run holds its snapshot and an edit only reaches the
  * NEXT run). The Popover primitive carries the disclosure floor
- * (aria-expanded, Escape, outside-click, focus return). `loaded` is
- * the typed loading discriminator (the first fills poll has not
- * answered): a loading cell renders a skeleton, held STATIC once the
- * page's trouble line speaks (pollTrouble), so it can never claim
- * progress a dead poll is not making. A loaded page ships one
- * summary per AI column, zero counts included, so a missing one on a
- * loaded page renders nothing; a column with no exposed run shows
- * the header line alone, naming the work. */
+ * (aria-expanded, Escape, outside-click, focus return). A MISSING
+ * summary means the poll has not answered for this column yet: the
+ * first page pending, or a just-added column whose entry arrives on
+ * the next tick (the server ships one per AI column, zero counts
+ * included, so no other state is missing one). It renders a
+ * skeleton, held STATIC once the page's trouble line speaks
+ * (pollTrouble), so it can never claim progress a dead poll is not
+ * making. A column with no exposed run shows the header line alone,
+ * naming the work. */
 export function FillTrackerCell({
   listId,
   column,
   summary,
-  loaded,
   pollTrouble,
   runs,
   rowCount,
@@ -61,21 +61,21 @@ export function FillTrackerCell({
   listId: string;
   column: ListColumn;
   summary: ColumnFillSummary | undefined;
-  loaded: boolean;
   pollTrouble: boolean;
   runs: LiveRun[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
   onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 }) {
-  if (!loaded) {
+  if (summary === undefined) {
     // Sized like the header line it resolves into. Once the page's
-    // own trouble line speaks, the box holds STILL: a pulse beside
-    // "updates aren't reaching this page" would claim a load the
-    // dead poll is not making.
+    // own trouble line speaks, the box holds STILL (the primitive's
+    // resting look, nothing else changing): a pulse beside "updates
+    // aren't reaching this page" would claim a load the dead poll is
+    // not making.
     return (
       <div className="flex h-5 items-center px-1">
-        {pollTrouble ? <span aria-hidden className="h-3 w-16 rounded bg-wash-strong" /> : <Skeleton className="h-3 w-16" />}
+        {pollTrouble ? <span aria-hidden className="h-3 w-16 rounded-md bg-hairline" /> : <Skeleton className="h-3 w-16" />}
         <span className="sr-only">
           {pollTrouble
             ? `The ${column.label} column's fill state is unavailable right now`
@@ -84,9 +84,6 @@ export function FillTrackerCell({
       </div>
     );
   }
-  // A loaded page ships one summary per AI column; a missing one is a
-  // contract gap and renders nothing rather than a state it cannot know.
-  if (summary === undefined) return null;
   // The SUMMARY is what this cell needs; the run envelope only dresses
   // the chip. A column whose current run has aged off the fetched page
   // still shows its progress and keeps its management surface, rather

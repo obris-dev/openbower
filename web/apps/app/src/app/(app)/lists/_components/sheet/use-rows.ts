@@ -105,6 +105,7 @@ export function useRows(
   }, [nextCursor, loadMore]);
 
   // Boolean(), not a null check: an empty-string cursor must read as
-  // done, or the sentinel arms while loadMore's own guard refuses.
+  // done, or the Load more button renders while loadMore's own guard
+  // refuses to act on it.
   return { rows, hasMore: Boolean(nextCursor), loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef };
 }

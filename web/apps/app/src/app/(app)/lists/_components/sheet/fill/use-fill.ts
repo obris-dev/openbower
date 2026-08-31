@@ -40,17 +40,13 @@ export function useFill(
   listId: string,
 ): {
   runs: LiveRun[];
-  // NULL until the first ok tick: the tracker's loading discriminator
-  // is a typed fact, never an inference from an empty array (an empty
-  // array is a real answer: a sheet whose fills read came back with
-  // no AI columns).
-  summaries: ColumnFillSummary[] | null;
+  summaries: ColumnFillSummary[];
   pollTrouble: boolean;
   refresh: () => Promise<void>;
   stop: (runId: string) => Promise<string | null>;
 } {
   const [runs, setRuns] = useState<LiveRun[]>([]);
-  const [summaries, setSummaries] = useState<ColumnFillSummary[] | null>(null);
+  const [summaries, setSummaries] = useState<ColumnFillSummary[]>([]);
   const [pollTrouble, setPollTrouble] = useState(false);
   const generationRef = useRef(0);
   const runsRef = useRef<LiveRun[]>([]);
