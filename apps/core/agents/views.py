@@ -96,7 +96,7 @@ class AgentsView(_ScopedView):
 
 class AgentCatalogView(_ScopedView):
     """GET /v1/agents/catalog: what THIS deploy can run. Models come
-    from the configured doors; the availability flags gate the tools."""
+    from the configured doors; `doors` gates the tools."""
 
     def get(self, request: Request) -> Response:
         entries, truncated = catalog_entries()

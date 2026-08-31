@@ -93,9 +93,8 @@ class EvidenceRecord(NamedTuple):
 
     `tool` is which tool fetched the hit (the registry's record
     label), so a reader can tell a general web result from a people
-    result. NOT "door",
-    which is this repo's word for a PROVIDER entry point; these are
-    the runtime's own tools."""
+    result. NOT "door", which is this repo's word for a PROVIDER
+    entry point; these are the runtime's own tools."""
 
     position: int
     tool: str
@@ -134,9 +133,9 @@ class CellDeps:
     tool call and validator (RunContext.deps) and run_cell reads after
     the run: the evidence pool (what grounding fences the answer to,
     beside the rendered prompt's own URLs, which the answerer holds),
-    every call's outcome (what the bench
-    renders as per-query diagnoses), each toggled tool's door status,
-    and the time the doors took. The one thing on it that is not tool
+    every call's outcome (what the bench renders as per-query
+    diagnoses), each toggled tool's door status, and the time the
+    doors took. The one thing on it that is not tool
     state is `judgement`: the answerer's slot, because a validator can
     write nowhere else; the answerer hands it back and no tool reads
     it. The model never sees any of this; it sees the tool's docstring
@@ -277,9 +276,10 @@ TOOL_REGISTRY: dict[AgentTool, ToolSpec] = {
 
 
 def toggled_tools(config: AgentConfig) -> list[AgentTool]:
-    """The tools this config asks for, in the order the config lists
-    them (which is the order a user sees the toggles, and the order a
-    blank cell's cause is named in)."""
+    """The tools this config asks for, in AgentTool declaration order.
+    The order is load-bearing: a blank cell's cause is named by the
+    FIRST toggled tool whose door closed unserved, so reordering the
+    enum reorders the blame."""
     return [tool for tool in AgentTool if getattr(config.tools, tool.value)]
 
 
@@ -310,9 +310,10 @@ def _result(records: list[dict], note: str = "") -> str:
 
 
 def _closed_note(tool: AgentTool, status: SearchStatus) -> str:
-    return _result(
-        [], NOTE_DOOR_CLOSED.format(tool=tool.value.replace("_", " "), status=status.value.replace("_", " "))
-    )
+    # The tool's CALLABLE name, verbatim: the note says "do not call
+    # it again", so the useful token is the name in the model's own
+    # tool list, not a prose rendering of it.
+    return _result([], NOTE_DOOR_CLOSED.format(tool=tool.value, status=status.value.replace("_", " ")))
 
 
 def _search_through(deps: CellDeps, query: str, *, tool: AgentTool) -> str:

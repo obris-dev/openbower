@@ -84,12 +84,19 @@ class FillService:
             return {}
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
-        recorded = FillCellState.objects.filter(
-            account_id=self.account_id,
-            list_id=str(target.id),
-            row_id__in=row_ids,
-            column_key__in=fill_keys,
-        ).values_list("row_id", "column_key", "state", "tools")
+        recorded = (
+            FillCellState.objects.filter(
+                account_id=self.account_id,
+                list_id=str(target.id),
+                row_id__in=row_ids,
+                column_key__in=fill_keys,
+            )
+            # DB-side narrowing only (a pre-tools filled row); the
+            # Python guard below stays the rule, because a clean run
+            # records {"web_search": "open"}, never {}.
+            .exclude(state=StoredCellState.FILLED, tools={})
+            .values_list("row_id", "column_key", "state", "tools")
+        )
         for row_id, column_key, state, tools in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())

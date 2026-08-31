@@ -43,7 +43,7 @@ import { ensureOk } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsTray, useFill, type SearchDoor } from "./fill";
+import { FillsTray, needsSearchDoor, useFill, type SearchDoor } from "./fill";
 import { SheetTable } from "./sheet-table";
 
 // How far below the viewport the scroll sentinel arms (binary): far
@@ -93,17 +93,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // cell is on screen: a sheet with none never pays for the catalog.
   // Absence degrades to the bare sentence.
   const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
-  // Only the throughput codes render the paid-door nudge, so only
-  // they warrant the fetch; an error or not-configured mark shows the
-  // same copy with or without the door's name.
-  const needsSearchDoor = rows.some((row) =>
-    Object.values(row.states ?? {}).some((entry) => {
-      const status = entry.tools.web_search ?? "open";
-      return status === "rate_limited" || status === "unreachable";
-    }),
-  );
+  // The predicate lives with the nudge copy it serves (cell-state):
+  // one spelling for the fetch gate and the renderer.
+  const doorNeeded = rows.some((row) => Object.values(row.states ?? {}).some((entry) => needsSearchDoor(entry.tools)));
   useEffect(() => {
-    if (!needsSearchDoor || searchDoor !== null) return;
+    if (!doorNeeded || searchDoor !== null) return;
     let superseded = false;
     async function load() {
       const res = await fetchAgentCatalog();
@@ -113,7 +107,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     return () => {
       superseded = true;
     };
-  }, [needsSearchDoor, searchDoor]);
+  }, [doorNeeded, searchDoor]);
 
   // Reorder is OPTIMISTIC, because a drag that waits for a round trip
   // reads as a failed drag. The server's echo replaces the guess

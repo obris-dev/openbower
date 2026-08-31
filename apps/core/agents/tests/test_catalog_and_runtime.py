@@ -532,10 +532,14 @@ class SearchBackoffTests(TestCase):
     def test_an_unreachable_free_door_is_reported_once(self):
         # A timeout and a dropped connection both read as unreachable
         # (the library wraps both in its own exceptions), once, no
-        # retry: the next query may get through.
-        from agents.search import SearchUnreachable, search
+        # retry: the next query may get through. The second fixture is
+        # the library's BASE exception, so this fails if the seam
+        # narrows back to catching timeouts alone.
+        from ddgs.exceptions import DDGSException
 
-        for exc in (DDGSTimeout("timed out"), SearchUnreachable("Server disconnected")):
+        from agents.search import search
+
+        for exc in (DDGSTimeout("timed out"), DDGSException("Server disconnected")):
             with self.subTest(exc=type(exc).__name__):
                 sleeps, calls = self._free_door([exc])
                 outcome = search("acme")
@@ -572,6 +576,23 @@ class SearchBackoffTests(TestCase):
         self.assertEqual(outcome.provider, "dataforseo")
         self.assertEqual(sleeps, [3, max(SEARCH_BACKOFF_SECONDS)])
         self.assertEqual(keywords, ["acme"] * 3)
+
+    def test_a_hostile_retry_after_takes_the_schedule(self):
+        # A negative, NaN, or non-numeric delay is a broken header,
+        # not a schedule: NaN poisons min() and a negative wait raises
+        # out of sleep as a settled model error. Each falls back to
+        # the schedule's step; FAILS if _retry_after stops rejecting
+        # them.
+        from agents.search import search
+
+        for value in ("-5", "nan", "inf", "soon"):
+            with self.subTest(value=value):
+                sleeps, _ = self._paid_door(
+                    [_HeaderedResponse(429, {}, {"Retry-After": value}), FakeResponse(200, _SERP)]
+                )
+                outcome = search("acme")
+                self.assertEqual((outcome.status, outcome.attempts), ("open", 2))
+                self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
 
     def test_the_paid_doors_own_transient_task_code_is_a_rate_limit(self):
         from agents.search import DATAFORSEO_SE_ERROR, search
@@ -867,6 +888,7 @@ class AgenticLoopTests(TestCase):
             "evidence": run.evidence,
             "searches": run.searches,
             "blank_cause": run.blank_cause,
+            "declined_cause": run.declined_cause,
             "tools": run.tools,
         }
 
@@ -1175,23 +1197,27 @@ class AgenticLoopTests(TestCase):
             )
         self.assertEqual(body["cells"]["person"], "Jane Doe")
         self.assertEqual(body["blank_cause"], "")
+        # The DECLINED cause still names the degraded door: a column
+        # this run left unanswered lands as tool_unavailable at once
+        # (no park; the filled siblings would be held hostage), and a
+        # later Continue re-targets it.
+        self.assertEqual(body["declined_cause"], "tool_unavailable")
         self.assertEqual(body["tools"], {"web_search": "rate_limited", "find_contacts": "open"})
         self.assertEqual([s.tool for s in body["searches"]], ["web_search", "find_contacts"])
 
-    def test_two_closed_doors_name_the_first_toggled_tool(self):
-        # Blank cell, both doors closed: the config's first tool names
-        # it (the toggle order the user sees); both statuses ride the
-        # task.
+    def test_two_closed_doors_name_the_first_in_the_enum(self):
+        # Blank cell, both doors closed with DIFFERENT cell states:
+        # web_search unreachable (tool_unavailable), find_contacts not
+        # configured (tool_not_configured), so the assertion pins
+        # WHICH tool names the cell, not merely that one did. The
+        # order is AgentTool declaration order; FAILS if _blank_cause
+        # walks it reversed. Contacts is never offered (seeded
+        # closed), so the model sees one tool and declines after it
+        # fails.
         def behavior(kind, messages, info):
-            returned = [part for m in messages for part in getattr(m, "parts", []) if isinstance(part, ToolReturnPart)]
-            if not returned:
+            if not _tool_returned(messages):
                 return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "Acme"})])
-            if len(returned) == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "VP Sales Acme"})])
             return _final(info, person="", profile="")
-
-        def serp(url, **kwargs):
-            return _HeaderedResponse(429, {}, {})
 
         with (
             patch("agents.search._duckduckgo_fetch", side_effect=DDGSTimeout("timed out")),
@@ -1199,12 +1225,16 @@ class AgenticLoopTests(TestCase):
         ):
             body = self._run(
                 behavior,
-                serp=serp,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={
+                    **_TEST_SETTINGS,
+                    "SEARCH_PROVIDER": "duckduckgo",
+                    "DATAFORSEO_LOGIN": "",
+                    "DATAFORSEO_PASSWORD": "",
+                },
             )
         self.assertEqual(body["blank_cause"], "tool_unavailable")
-        self.assertEqual(body["tools"], {"web_search": "unreachable", "find_contacts": "rate_limited"})
+        self.assertEqual(body["tools"], {"web_search": "unreachable", "find_contacts": "not_configured"})
 
     def test_a_not_configured_tool_is_the_cell_state_without_a_spend(self):
         # Tools toggled with every door not configured: no completion

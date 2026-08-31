@@ -66,14 +66,17 @@ def settle(
     per_column = causes if causes is not None else ({} if cause is None else cell_truth.uniform(fill, cause))
     states = {key: per_column.get(key, StoredCellState.FILLED) for key in fill.column_keys}
     answered = [key for key, value in states.items() if value == StoredCellState.FILLED]
-    if answered:
-        ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
-            fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
-        )
+    # A deliberate restatement of land_row (the per-column `causes`
+    # it cannot express), in land_row's own lock order: ListRow,
+    # FillTask, FillCellState, one transaction.
     with transaction.atomic():
-        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
+        if answered:
+            ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
+                fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
+            )
         landed = queue.complete_task(task, result={"tools": tools or {}})
-    assert landed, f"seam write missed for {fill_id}/{row_id}"
+        assert landed, f"seam write missed for {fill_id}/{row_id}"
+        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
 
 
 def settle_all(fill_id: str, cause: StoredCellState | None = None) -> None:

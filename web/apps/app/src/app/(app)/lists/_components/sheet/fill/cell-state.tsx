@@ -8,6 +8,7 @@ import {
   type RenderableCellStateWire,
   type SettledCellState,
   type ToolKey,
+  type ToolStatus,
   type ToolStatuses,
 } from "@bower/api";
 
@@ -34,10 +35,11 @@ const SETTLED_CAUSES: Record<SettledCause, { word: string; cause: string }> = {
   type_mismatch: { word: "wrong type", cause: "The answer did not fit this column's type" },
 };
 const SETTLED_FACT = "Won't re-run on Continue; edit the prompt to try again.";
-// Filled settles WITHOUT the fingerprint gate, so the prompt-edit
-// remedy above would be a dead end here: refilling a filled cell goes
-// through clearing it, not through Continue.
-const FILLED_FACT = "Won't re-run on Continue; clear the cell to fill it again.";
+// Filled settles UNCONDITIONALLY server-side (its own disjunct: no
+// fingerprint gate, no value test), so no gesture short of deleting
+// the column re-runs it: the fact states the exclusion and stops,
+// naming no remedy.
+const FILLED_FACT = "Won't re-run on Continue: this cell already counted as filled.";
 
 // The retryable causes that are NOT a tool's doing carry one sentence
 // each; the two tool_* states carry none of their own, because the
@@ -72,13 +74,18 @@ const TOOL_SUBJECT: Record<ToolKey, string> = { web_search: "Web search", find_c
 // to be column-wide or cannot know at all. Required, not optional, so
 // a code added later must state its scope to compile.
 type ToolCopy = { said: string; fix?: string; rowScoped: boolean };
-const BASE_COPY: Record<string, ToolCopy> = {
+// The tables are typed CLOSED over the current contract (ToolStatus
+// derives from TOOL_STATUSES), so a code added server-side fails
+// this build until it gets copy; the LOOKUPS below stay open,
+// because a deployed bundle must tolerate a code it has not heard
+// of and degrade to the unknown line.
+const BASE_COPY: Record<Exclude<ToolStatus, "open">, ToolCopy> = {
   not_configured: { said: "isn't set up on this deployment", fix: "Set it up under the agent's Tools.", rowScoped: false },
   rate_limited: { said: "was rate-limited past its retries", rowScoped: true },
   unreachable: { said: "couldn't be reached", rowScoped: true },
   error: { said: "kept failing", rowScoped: true },
 };
-const TOOL_COPY: Record<ToolKey, Record<string, ToolCopy>> = {
+const TOOL_COPY: Record<ToolKey, Partial<Record<ToolStatus, ToolCopy>>> = {
   web_search: {},
   find_contacts: {
     not_configured: {
@@ -89,6 +96,15 @@ const TOOL_COPY: Record<ToolKey, Record<string, ToolCopy>> = {
   },
 };
 const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't name", rowScoped: false };
+
+/** Whether any of a cell's tool statuses warrants fetching the
+ * deployment's search door: exactly the throughput codes that render
+ * the paid-door nudge below, exported so the fetch gate in sheet.tsx
+ * and the copy that needs the door cannot drift. */
+export function needsSearchDoor(tools: ToolStatuses): boolean {
+  const status = tools.web_search ?? "open";
+  return status === "rate_limited" || status === "unreachable";
+}
 // The paid-door nudge is a tier-2 composition: the server ships WHICH
 // door serves web search, and the sentence renders only where the
 // paid door is a remedy (the free door refused). A contacts refusal
@@ -96,8 +112,9 @@ const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't 
 // nothing.
 const PAID_DOOR_NUDGE = "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput.";
 
-/** The tools whose door did not serve this run, in the order the
- * config lists them (the toggle order the user sees). */
+/** The tools whose door did not serve this run, in the subject
+ * table's order, which mirrors the server's AgentTool declaration
+ * order (the order a blank's cause is named in). */
 function degraded(tools: ToolStatuses): [ToolKey, string][] {
   return (Object.keys(TOOL_SUBJECT) as ToolKey[])
     .filter((tool) => tool in tools && tools[tool] !== "open")
@@ -107,7 +124,10 @@ function degraded(tools: ToolStatuses): [ToolKey, string][] {
 /** One tool's sentence for its status: "Web search couldn't be reached
  * on this row", plus the fix and the paid-door nudge where they apply. */
 function toolSentence(tool: ToolKey, code: string, searchDoor: SearchDoor): { cause: string; fix: string } {
-  const copy = TOOL_COPY[tool][code] ?? BASE_COPY[code] ?? UNKNOWN_TOOL_COPY;
+  const copy =
+    (TOOL_COPY[tool] as Partial<Record<string, ToolCopy>>)[code] ??
+    (BASE_COPY as Partial<Record<string, ToolCopy>>)[code] ??
+    UNKNOWN_TOOL_COPY;
   // The nudge is a THROUGHPUT remedy, so it renders only where
   // throughput is the problem (the free door refusing or timing
   // out), never on a door that is erroring or was never set up.
@@ -205,8 +225,10 @@ export function AiCellState({ entry, searchDoor = null }: { entry: RenderableCel
     );
   }
   if (state === "tool_not_configured" || state === "tool_unavailable" || state === "filled") {
-    // `filled` here is a filled cell with no value left on the row
-    // (cleared by hand after the fill): it reads as its tool statuses.
+    // `filled` here is a filled cell with no value left on the row.
+    // No shipped gesture produces one today (values are write-if-
+    // blank, and column delete purges the record with the value), so
+    // this is the defensive arm for a shape the wire can carry.
     const [first] = degraded(entry.tools);
     const sentence = first
       ? toolSentence(first[0], first[1], searchDoor)

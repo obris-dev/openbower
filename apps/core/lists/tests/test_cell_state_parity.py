@@ -61,8 +61,13 @@ class CellStateParityTests(SimpleTestCase):
                 self.assertIn(cause, wire)
 
     def test_neither_exclusive_word_leaks_into_the_settled_partition(self):
-        # filled is not a blank cause; pending is not terminal.
+        # filled is not a blank cause; pending is not terminal. FILLED
+        # is asserted directly because it left STORED_ONLY when it
+        # started traveling, which made the set-intersection half of
+        # this vacuous for it.
         self.assertFalse(set(SETTLED_CELL_STATES) & (STORED_ONLY | WIRE_ONLY))
+        self.assertNotIn(StoredCellState.FILLED, SETTLED_CELL_STATES)
+        self.assertNotIn("pending", SETTLED_CELL_STATES)
 
     def test_every_base_status_has_a_cell_state_and_every_retry_cause_re_runs(self):
         # A closed door lands as the cell state its code maps to, for
@@ -114,6 +119,7 @@ class CellStateParityTests(SimpleTestCase):
         from openbower_schema.agents import TOOL_STATUSES, ToolStatusWire
 
         from ..constants import CELL_STATE_BY_STATUS
+        from ..operations.fill_worker import _STATUS_PHRASE
 
         self.assertEqual(set(TOOL_REGISTRY), set(AgentTool))
         self.assertEqual(set(get_args(ToolStatusWire)), {s.value for s in ToolStatus})
@@ -125,3 +131,7 @@ class CellStateParityTests(SimpleTestCase):
                 for status in spec.statuses:
                     if status.value != ToolStatus.OPEN:
                         self.assertIn(status.value, CELL_STATE_BY_STATUS)
+                        # The breaker's tier-1 sentence table: without
+                        # a row, a code renders the generic "is
+                        # failing on" about a door with its own story.
+                        self.assertIn(status.value, _STATUS_PHRASE)

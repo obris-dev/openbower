@@ -158,7 +158,9 @@ class ToolPoolTests(SimpleTestCase):
         deps = CellDeps()
         with patch("agents.runtime.tools.search", return_value=self._answer("rate_limited", attempts=5)):
             first = json.loads(web_search(self._Ctx(deps), "acme"))
-        self.assertIn("web search is unavailable", first["note"])
+        # The note names the CALLABLE ("do not call it again"), so the
+        # token is the tool's own name, not a prose rendering.
+        self.assertIn("web_search is unavailable", first["note"])
         self.assertNotIn("answer from", first["note"])
         self.assertEqual(deps.tool_status, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
         self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)

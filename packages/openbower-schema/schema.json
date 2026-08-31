@@ -432,6 +432,7 @@
           "additionalProperties": {
             "type": "string"
           },
+          "default": {},
           "title": "Tools",
           "type": "object"
         }

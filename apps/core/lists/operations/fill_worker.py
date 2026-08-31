@@ -164,6 +164,7 @@ class _Breakers:
 
 # What a door's status reads as in the breaker's sentence.
 _STATUS_PHRASE = {
+    ToolStatus.NOT_CONFIGURED: "isn't set up on",
     ToolStatus.RATE_LIMITED: "is being rate-limited by",
     ToolStatus.UNREACHABLE: "cannot reach",
     ToolStatus.ERROR: "is failing on",
@@ -171,8 +172,8 @@ _STATUS_PHRASE = {
 
 
 class FillState:
-    """One live fill's state: its lifecycle in one place. Its ENTRY is `admit`
-    (the frozen config, the concurrency window and the controller
+    """One live fill's state: its lifecycle in one place. Its ENTRY
+    is `admit` (the frozen config, the concurrency window and the controller
     resumed from the stored point, the breakers); its EXITS are
     `try_finish`, `cancel`, and `fail`, the three terminal transitions,
     each one line over fill_progress; between them, the per-row
@@ -591,7 +592,9 @@ class FillWorkerOperation:
         refusing, not that the model answered badly. A task that never
         parked (its thread died every pass) has no stored cause and
         lands as transient. This is the ONLY writer of the terminal
-        retry blanks; the stored run stays as the audit."""
+        retry blanks; the give-up stamps its terminal cause over the
+        park's, and the searches and evidence ride through in the
+        contract's shape."""
         run = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
         if run.declined_cause not in RETRY_CAUSES:
             run = run.model_copy(

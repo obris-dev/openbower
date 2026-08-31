@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 from lists.constants import CELL_STATE_BY_STATUS, StoredCellState
 from openbower_schema.agents import AgentConfig
 
-from ..constants import AgentTool, SearchStatus, ToolStatus
+from ..constants import SearchStatus, ToolStatus
 from ..providers import model_for
 from .answer import Answered, CellAnswerer
 from .outcomes import SearchOutcome
@@ -141,7 +141,12 @@ def _blank_cause(config: AgentConfig, deps: CellDeps, answered: Answered) -> str
     tool may be exactly why the output is empty, the state is written
     at once, and Continue re-runs it once the door is set up (door
     credentials live in deployment settings, outside the config
-    fingerprint, so no settled state could re-open on setup)."""
+    fingerprint, so no settled state could re-open on setup).
+
+    The same pick is also stored as the DECLINED cause of a run that
+    answered other outputs: the silent columns land at once wearing it
+    (no park, which would hold hostage the cells that answered), and a
+    later Continue re-targets them."""
     if answered.cause:
         return answered.cause
     for tool in toggled_tools(config):
@@ -197,6 +202,3 @@ def run_cell(
         answered.judgement.assessments,
         tools,
     )
-
-
-__all__ = ["AgentTool", "CellRun", "SearchStatus", "run_cell"]
