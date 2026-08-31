@@ -7,7 +7,6 @@ import { columnProgress, currentRunFor, trackerCell, type TrackerRun } from "./f
 function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun & { id: string } {
   return {
     id: "01RUN",
-    status: "running",
     confirmed_row_count: 100,
     counters: { filled: 0, attempted: 0 },
     ...overrides,
@@ -15,18 +14,25 @@ function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun &
 }
 
 function summary(overrides: Partial<ColumnFillSummary> = {}): ColumnFillSummary {
-  return { column_key: "email", current_fill_id: "01RUN", filled: 0, attempted: 0, ...overrides };
+  return {
+    column_key: "email",
+    current_fill_id: "01RUN",
+    current_status: "running",
+    last_error: null,
+    filled: 0,
+    attempted: 0,
+    ...overrides,
+  };
 }
 
-test("no summary, no named run, or a run off the page is the quiet blank", () => {
+test("no summary, no named run, or a run off the live page joins to null", () => {
   assert.equal(currentRunFor(undefined, [run()]), null);
   assert.equal(currentRunFor(summary({ current_fill_id: "" }), [run()]), null);
   assert.equal(currentRunFor(summary({ current_fill_id: "01OTHER" }), [run()]), null);
-  assert.deepEqual(trackerCell(null), { kind: "none" });
 });
 
 test("the column's run is the envelope behind the server's pointer", () => {
-  const runs = [run({ id: "01NEW" }), run({ id: "01OLD", status: "failed" })];
+  const runs = [run({ id: "01NEW" }), run({ id: "01OLD" })];
   assert.equal(currentRunFor(summary({ current_fill_id: "01OLD" }), runs), runs[1]);
 });
 
@@ -37,26 +43,38 @@ test("a column with nothing left says so, rather than showing a zero", () => {
 test("a live run speaks its filled count and its PROCESSED percent", () => {
   // Percent means processed (attempted over confirmed), not
   // productive: 312 of 2343 rows run is 13%, whatever filled says.
-  const cell = trackerCell(run({ confirmed_row_count: 2343, counters: { filled: 164, attempted: 312 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 2343, counters: { filled: 164, attempted: 312 } }), "running");
   assert.deepEqual(cell, { kind: "live", text: "164 filled | 13% run", fraction: 312 / 2343 });
 });
 
 test("counts localize and the fraction (and its percent) clamp to one", () => {
-  const cell = trackerCell(run({ confirmed_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }), "running");
   assert.deepEqual(cell, { kind: "live", text: "1,499 filled | 100% run", fraction: 1 });
 });
 
 test("a zero confirmed count divides to nothing, never NaN", () => {
-  const cell = trackerCell(run({ confirmed_row_count: 0, counters: { filled: 0, attempted: 0 } }));
+  const cell = trackerCell(run({ confirmed_row_count: 0, counters: { filled: 0, attempted: 0 } }), "pending");
   assert.deepEqual(cell, { kind: "live", text: "0 filled | 0% run", fraction: 0 });
 });
 
-test("pending is live; failed tints; complete and cancelled are done", () => {
-  const base = { counters: { filled: 10, attempted: 20 } };
-  assert.equal(trackerCell(run({ ...base, status: "pending" })).kind, "live");
-  assert.equal(trackerCell(run({ ...base, status: "failed" })).kind, "failed");
-  assert.equal(trackerCell(run({ ...base, status: "complete" })).kind, "done");
-  assert.equal(trackerCell(run({ ...base, status: "cancelled" })).kind, "done");
+test("without a live run the summary's status decides the cell", () => {
+  // The page ships live runs only, so a terminal story arrives as the
+  // summary's current_status: failed keeps a mark on the column, and
+  // every quiet ending is the header line alone (a finished run's
+  // counters are not replayed; the historic totals are the answer).
+  assert.deepEqual(trackerCell(null, "failed"), { kind: "failed", text: "Run failed" });
+  assert.deepEqual(trackerCell(null, "complete"), { kind: "none" });
+  assert.deepEqual(trackerCell(null, "cancelled"), { kind: "none" });
+  assert.deepEqual(trackerCell(null, ""), { kind: "none" });
+});
+
+test("a joined run outranks a stale summary status", () => {
+  // The payload's two halves come from separate server-side reads
+  // (runs first, then summaries), so a run that flips terminal
+  // between them ships live in one leg and failed in the other for
+  // one poll. The live walk is the current truth for that window.
+  const cell = trackerCell(run({ counters: { filled: 1, attempted: 2 } }), "failed");
+  assert.deepEqual(cell, { kind: "live", text: "1 filled | 2% run", fraction: 2 / 100 });
 });
 
 test("the header answers is there work left, not how well it went", () => {

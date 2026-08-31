@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .agents import MAX_TOOL_CALLS, AgentConfig, TestSearch
+from .agents import MAX_TOOL_CALLS, TestSearch
 from .lists import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
@@ -122,9 +122,10 @@ class FillCounters(BaseModel):
 
 
 class FillRunWire(BaseModel):
-    """The fill run envelope: what the POST returns and the sheet re-attaches
-    to on load. ALL states are first-class (a failed run is an API
-    object with its error, not a 4xx)."""
+    """The fill run envelope. The POST and cancel ECHOES carry every
+    state (a failed run is an API object with its error, not a 4xx);
+    the fills LIST the sheet re-attaches to carries live runs only
+    (see FillRunPage)."""
 
     id: str
     list_id: str
@@ -144,10 +145,14 @@ class FillRunWire(BaseModel):
         description="Stamped with each counter write; the client judges staleness against "
         "ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
     )
-    error: FillError | None = None
-    config_snapshot: AgentConfig = Field(
-        description="The FULL resolved config frozen at admission; results render with the config that produced them."
+    error: FillError | None = Field(
+        default=None,
+        description="This run's error, both legs (tier 1: the message renders verbatim); "
+        "None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.",
     )
+    # The config snapshot frozen at admission stays STORED, not wired:
+    # nothing renders it on a poll, and a run-detail read is where it
+    # belongs when a surface needs it.
     created_at: str
     updated_at: str
 
@@ -163,6 +168,18 @@ class ColumnFillSummary(BaseModel):
 
     column_key: str
     current_fill_id: str = Field(description='The newest fill run naming this column; "" when none is exposed.')
+    # No defaults on either field, the sibling current_fill_id's rule:
+    # a constructor that forgets one must fail loudly, because the
+    # defaults are real stories ("never ran", "no failure") that would
+    # otherwise ship silently.
+    current_status: FillStatusWire | Literal[""] = Field(
+        description='The status of the run current_fill_id names; "" when the column has never run. '
+        "The page's runs list is LIVE runs only, so this is where a terminal story lands.",
+    )
+    last_error: FillError | None = Field(
+        description="The newest run's error, both legs (tier 1: the message renders verbatim); "
+        "None unless that run FAILED, so a newer clean run clears it and a stopped run carries none.",
+    )
     filled: int = Field(description="Cells in this column that hold a value.")
     attempted: int = Field(
         description="Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted "
@@ -172,6 +189,12 @@ class ColumnFillSummary(BaseModel):
 
 
 class FillRunPage(BaseModel):
+    """LIVE runs plus the per-column summaries. Terminal runs do not
+    ride the poll: a finished run's story (its status, its error) lands
+    on the column summary the moment it leaves this list, so the page
+    carries the in-flight work and the summaries carry everything a
+    column needs to say about its past."""
+
     runs: list[FillRunWire]
     columns: list[ColumnFillSummary] = Field(
         default=[], description="One summary per AI column of the list this page belongs to."

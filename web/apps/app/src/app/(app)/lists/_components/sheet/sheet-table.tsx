@@ -9,7 +9,6 @@ import {
   isNumericColumn,
   type ColumnFillSummary,
   type ColumnType,
-  type FillRunWire,
   type ListColumn,
   type RenderableListRow,
 } from "@bower/api";
@@ -19,21 +18,22 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type SearchDoor } from "./fill";
+import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchDoor } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
- * together: the exposed runs and the management verbs the popover's
- * chip and scoped continue call. */
+ * together: the LIVE runs and the management verbs the popover's
+ * chip and continues call. */
 export type SheetFills = {
   // The sheet's own id: the popover's prompt edit calls the
   // column-scoped endpoint.
   listId: string;
-  runs: FillRunWire[];
-  // Server truth per column (current run, canonical filled count).
+  runs: LiveRun[];
+  // Server truth per column (current run and its status, the newest
+  // failure, canonical totals).
   summaries: ColumnFillSummary[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (run: FillRunWire | null, columnKey: string, opts?: { rows?: number; resume?: boolean }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -59,8 +59,8 @@ function Cell({ column, value }: { column: ListColumn; value: string }) {
  * nearest scrolling ancestor. AI cell states ride the ROW itself
  * (RenderableListRow.states), so a value and its state can never come from
  * different requests and disagree; `fills`
- * adds the tracker row under the header (one cell per AI column, the
- * per-column fill surface; the footer tray stays the sheet-wide one).
+ * adds the tracker row under the header (one cell per AI column, THE
+ * per-column fill surface; the footer keeps only a passive glance).
  * `onAddColumn` puts the spreadsheet-native "+" entry point in the
  * last header cell (header only, never the body rows). */
 export function SheetTable({

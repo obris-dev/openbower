@@ -6,8 +6,9 @@ import {
   loginUrl,
   postFillCancel,
   type ColumnFillSummary,
-  type FillRunWire,
 } from "@bower/api";
+
+import { livenessRead, type LiveRun } from "./lib/live-status";
 
 // Poll cadence (binary). This loop deliberately diverges from the
 // bench's use-test-run: a fill is worker-supervised and can walk for
@@ -26,36 +27,28 @@ const MAX_POLL_ERRORS = 4;
 // supervisor from the user's point of view.
 const MAX_POLL_BACKOFF_MS = 65_536;
 
-/** Whether a fill is still working: the two live statuses, in one
- * place, because the attach filter and the loop's exit both ask. */
-function isLive(run: FillRunWire): boolean {
-  return run.status === "pending" || run.status === "running";
-}
-
 /** The sheet's attachment to its fill runs: re-attach on load (the
  * browser is never a fill's liveness signal), an open-ended poll loop
  * with a generation counter while any run is live, and Stop per run.
  * Cell states are NOT read here: they ride the rows the sheet already
- * holds. `runs` is EVERY live
- * run when any exists (cross-column fills run concurrently, and each
- * needs its own counters and a reachable Stop), plus each column's
- * CURRENT run as the server names it (`summaries[].current_fill_id`;
- * the client never reconstructs "newest per column" from a page);
- * polling ends when nothing is live. */
+ * holds. The page ships LIVE runs only; a terminal run's story (its
+ * status, its error) is the summaries' to tell, so `runs` is exactly
+ * the in-flight work, and polling ends when BOTH halves of the
+ * payload read quiet (see tick's liveness note). */
 export function useFill(
   listId: string,
 ): {
-  runs: FillRunWire[];
+  runs: LiveRun[];
   summaries: ColumnFillSummary[];
   pollTrouble: boolean;
   refresh: () => Promise<void>;
   stop: (runId: string) => Promise<string | null>;
 } {
-  const [runs, setRuns] = useState<FillRunWire[]>([]);
+  const [runs, setRuns] = useState<LiveRun[]>([]);
   const [summaries, setSummaries] = useState<ColumnFillSummary[]>([]);
   const [pollTrouble, setPollTrouble] = useState(false);
   const generationRef = useRef(0);
-  const runsRef = useRef<FillRunWire[]>([]);
+  const runsRef = useRef<LiveRun[]>([]);
   const sleepRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tick = useCallback(
@@ -64,25 +57,22 @@ export function useFill(
       if (generationRef.current !== generation) return "superseded";
       if (fills.status === "unauthenticated") return "unauthenticated";
       if (fills.status !== "ok") return "blip";
-      // Attach to every live run when any exists, plus each column's
-      // CURRENT run as the SERVER names it (a terminal story persists
-      // until the next run supersedes it; no dismissal concept exists,
-      // so the management surfaces built on these runs can never be
-      // hidden by a stored preference).
-      const current = new Set(fills.data.columns.map((summary) => summary.current_fill_id));
-      const next = fills.data.runs.filter((run) => isLive(run) || current.has(run.id));
-      runsRef.current = next;
-      setRuns(next);
+      // The trusted runs and the loop's liveness are ONE pure
+      // decision (lib/live-status.livenessRead), pinned in the node
+      // lane where a hook cannot be.
+      const read = livenessRead(fills.data.runs, fills.data.columns);
+      runsRef.current = read.runs;
+      setRuns(read.runs);
       setSummaries(fills.data.columns);
       // The poll is the FILLS read alone. Cell states ride the rows
-      // the sheet already holds, so walking them again here was a
+      // the sheet already holds; walking them again here would be a
       // second full page-through of the loaded sheet every tick,
       // fetching each row's data only to throw it away and keep
       // .states. Nothing needs clearing when the last fill goes
       // terminal either: pending is derived from queued tasks on LIVE
       // fills, and stopping a fill abandons its tasks before it flips,
       // so both legs of that derivation go false on their own.
-      return next.some(isLive) ? "ok-live" : "ok-idle";
+      return read.live ? "ok-live" : "ok-idle";
     },
     [listId],
   );
@@ -155,10 +145,11 @@ export function useFill(
         return null;
       }
       if (res.status !== "ok") return res.message;
-      runsRef.current = runsRef.current.map((run) => (run.id === res.data.id ? res.data : run));
+      // The cancel echo is terminal and `runs` is the LIVE set, so the
+      // run leaves it now rather than a tick later; the summary read
+      // behind refresh() carries its terminal story.
+      runsRef.current = runsRef.current.filter((run) => run.id !== res.data.id);
       setRuns(runsRef.current);
-      // Re-read once more: the worker may have finished rows between
-      // the flip and now, and the final counters render in the chip.
       void refresh();
       return null;
     },

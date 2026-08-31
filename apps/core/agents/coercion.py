@@ -6,10 +6,12 @@ written under. A read that refuses is worse than a read that renders
 something clamped: the row is already on disk, the GET that touches it
 has no way to skip it, and no surface exists to remove it.
 
-Two custodies store one: the agent row, and the FROZEN snapshot on a
-fill. The snapshot is the harder case, because nothing ever rewrites
-it and the fills page shows all history, so one stale snapshot could
-500 that endpoint for a sheet permanently."""
+One custody reads through here: the agent row. A fill's FROZEN
+snapshot once did too, for the fills page that showed all history;
+that page is live-only now and the snapshot's one reader is the
+worker, which parses strictly, so a snapshot an old contract wrote
+fails its own fill loudly (FILL_UNRUNNABLE) instead of 500ing an
+endpoint permanently."""
 
 from __future__ import annotations
 

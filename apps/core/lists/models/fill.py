@@ -79,8 +79,9 @@ class Fill(UserScopedModel):
         verbose_name_plural = _("fills")
         indexes = [
             models.Index(fields=["account_id", "id"], name="fill_account_idx"),
-            # The sheet's keyset page, and the one pass that names each
-            # column's newest fill.
+            # The sheet's keyset page (live runs only now;
+            # current_fill_id is stored at admission, so no pass walks
+            # history to name a column's newest fill).
             models.Index(fields=["list_id", "-id"], name="fill_list_recent_idx"),
             # The worker's drain is GLOBAL across accounts, so its scan
             # must cost the number of LIVE fills rather than the number

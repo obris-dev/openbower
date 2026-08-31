@@ -333,7 +333,7 @@ class CompletionTests(TestCase):
 
 
 class RunControlTests(TestCase):
-    def test_cancel_flips_live_job_and_noops_terminal(self) -> None:
+    def test_cancel_flips_live_run_and_noops_terminal(self) -> None:
         fill = make_run(rows=1)
         service = FillService(account_id=ACCOUNT)
         cancelled = service.cancel(str(fill.id))
@@ -342,7 +342,7 @@ class RunControlTests(TestCase):
         # (no further spend) already holds.
         self.assertEqual(service.cancel(str(fill.id)).status, FillStatus.CANCELLED)
 
-    def test_cancelled_job_stops_the_worker_gate(self) -> None:
+    def test_cancelled_run_stops_the_worker_gate(self) -> None:
         fill = make_run(rows=1)
         self.assertTrue(fill_progress.is_live(str(fill.id)))
         FillService(account_id=ACCOUNT).cancel(str(fill.id))
@@ -359,20 +359,21 @@ class RunControlTests(TestCase):
         with self.assertRaises(FillNotFound):
             foreign.cancel(str(fill.id))
 
-    def test_page_for_list_keysets_all_states(self) -> None:
+    def test_page_for_list_keysets_live_runs_only(self) -> None:
         fills = [make_run(rows=1) for _ in range(3)]
-        FillService(account_id=ACCOUNT).cancel(str(fills[0].id))
+        cancelled = fills[0]
+        FillService(account_id=ACCOUNT).cancel(str(cancelled.id))
         # Expected order comes from the IDS, not from creation order.
         # ULIDs are time-monotonic at MILLISECOND resolution only (see
         # min_ulid_at), so fills minted inside one millisecond share a
         # time prefix and their random suffixes decide the sort.
-        # Asserting creation order tested the clock, not the keyset,
-        # and flaked whenever two of these three landed together.
-        newest_first = sorted((str(fill.id) for fill in fills), reverse=True)
+        live_newest_first = sorted((str(fill.id) for fill in fills[1:]), reverse=True)
         service = FillService(account_id=ACCOUNT)
-        page = service.page_for_list("01LISTAAAAAAAAAAAAAAAAAAAA", after_id="", limit=2)
-        self.assertEqual([str(fill.id) for fill in page], newest_first[:2])
+        page = service.page_for_list("01LISTAAAAAAAAAAAAAAAAAAAA", after_id="", limit=1)
+        self.assertEqual([str(fill.id) for fill in page], live_newest_first[:1])
         rest = service.page_for_list("01LISTAAAAAAAAAAAAAAAAAAAA", after_id=str(page[-1].id), limit=2)
-        self.assertEqual([str(fill.id) for fill in rest], newest_first[2:])
-        # The cancelled fill is still on a page: every state is visible.
-        self.assertEqual(sorted(str(fill.id) for fill in (*page, *rest)), sorted(newest_first))
+        self.assertEqual([str(fill.id) for fill in rest], live_newest_first[1:])
+        # The cancelled run is on NO page: its story is the column
+        # summary's to tell, and a poll that re-shipped every dead run
+        # forever would grow without bound.
+        self.assertNotIn(str(cancelled.id), [str(fill.id) for fill in (*page, *rest)])
