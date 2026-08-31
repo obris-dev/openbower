@@ -217,6 +217,12 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertEqual([run.id for run in page.runs], [fill_id])
         self.assertEqual(by_key["answer"].current_status, "pending")
         self.assertIsNone(by_key["answer"].last_error)
+        # A never-touched column still ships its summary, ZERO counts
+        # included: the summaries build from the sheet's fill columns,
+        # never from the grouped cell states, and the client's loading
+        # discriminator rests on that (a missing entry on a loaded
+        # page is a contract gap, not a fresh column).
+        self.assertEqual((by_key["answer"].filled, by_key["answer"].attempted), (0, 0))
 
     def test_a_failed_run_leaves_the_page_and_lands_its_error(self) -> None:
         fill_id = self.post_ai().json()["id"]

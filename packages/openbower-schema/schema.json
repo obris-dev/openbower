@@ -443,7 +443,7 @@
         },
         "current_fill_id": {
           "default": "",
-          "description": "The fill that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
+          "description": "The fill run that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
           "title": "Current Fill Id",
           "type": "string"
         }
@@ -727,6 +727,7 @@
           "title": "Next Cursor"
         },
         "runs": {
+          "description": "LIVE runs only. Named for what it holds rather than the house `items`, because this page carries a second collection (`columns`) and `items` beside it would name neither.",
           "items": {
             "$ref": "#/$defs/FillRunWire"
           },
@@ -748,7 +749,7 @@
           "type": "string"
         },
         "column_keys": {
-          "description": "The columns this fill owns, frozen at consent.",
+          "description": "The columns this run owns, frozen at consent.",
           "items": {
             "type": "string"
           },
@@ -756,7 +757,7 @@
           "type": "array"
         },
         "confirmed_row_count": {
-          "description": "Rows this fill TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
+          "description": "Rows this run TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
           "title": "Confirmed Row Count",
           "type": "integer"
         },

@@ -43,7 +43,7 @@ anonymous volume the next start re-syncs (`make prune-venvs` clears the
 strays). `make reset` removes the named volumes too, which is how you
 get a clean database. The stack needs Docker Compose v2.24 or newer. `make logs` tails
 everything. Compose runs exactly ONE worker. The worker takes `--once`
-(exit when no job has claimable work, the suite's smoke), and SIGTERM
+(exit when no fill has claimable work, the suite's smoke), and SIGTERM
 or SIGINT lets rows in flight finish before it exits, so a restart is
 always safe: it can also take a while, because a row already talking to
 a provider is allowed to finish. `make db-up` starts just the database,

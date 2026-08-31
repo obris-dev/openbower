@@ -66,7 +66,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   const [addColumnKind, setAddColumnKind] = useState<ColumnKind | null>(null);
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
-  // A cell whose run had a degraded web search composes the
+  // A cell whose row's run had a degraded web search composes the
   // deployment's search door into its popover (the paid-door nudge
   // belongs only to the free door), fetched once and only when such a
   // cell is on screen: a sheet with none never pays for the catalog.
@@ -97,7 +97,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // nothing: the server rendered those rows fresh.
   const runsSignature = [
     ...fill.runs.map((run) => `${run.id}:${run.counters.attempted}`),
-    ...fill.summaries.map((summary) => `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}`),
+    ...(fill.summaries ?? []).map((summary) => `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}`),
   ].join(" ");
   const anyLive = fill.runs.length > 0;
   const prevRunsRef = useRef<{ signature: string; live: boolean } | null>(null);
@@ -161,11 +161,15 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
     const outcome = await columns.addAi(payload);
     if (!outcome.ok) return outcome;
+    // The drawer closes on the 201 itself: the reconciles below are
+    // the SHEET's reactions, and holding the drawer open through a
+    // second read made the Save button claim work the server had
+    // already accepted. The poll loop's promise settles only when the
+    // fill ENDS, so the attach is fire-and-forget; the summary and
+    // the loaded rows are bounded reads, awaited.
     closeAddColumn();
-    // The poll loop's promise settles only when the fill ENDS, so the
-    // attach is fire-and-forget (it happens on the loop's first tick);
-    // only the bounded row re-read is awaited.
     void fill.refresh();
+    await columns.refreshDetail();
     await refreshLoaded();
     router.refresh();
     return outcome;
@@ -333,7 +337,15 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           columns={detail.columns}
           rows={rows}
           searchDoor={searchDoor}
-          fills={{ listId: detail.id, runs: fill.runs, summaries: fill.summaries, rowCount: detail.row_count, onStop: fill.stop, onRefill: continueFill }}
+          fills={{
+            listId: detail.id,
+            runs: fill.runs,
+            summaries: fill.summaries,
+            pollTrouble: fill.pollTrouble,
+            rowCount: detail.row_count,
+            onStop: fill.stop,
+            onRefill: continueFill,
+          }}
           onAddColumn={openAddColumn}
           onReorder={columns.reorder}
           onRenameColumn={columns.rename}
@@ -362,7 +374,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           <span className="hidden sm:inline">{" rows"}</span>
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
-          <FillsGlance summaries={fill.summaries} liveRunIds={fill.runs.map((run) => run.id)} />
+          <FillsGlance summaries={fill.summaries ?? []} liveRunIds={fill.runs.map((run) => run.id)} />
           {fill.pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is

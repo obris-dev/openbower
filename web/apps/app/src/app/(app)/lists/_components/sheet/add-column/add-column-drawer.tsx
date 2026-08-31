@@ -37,7 +37,12 @@ export type AiColumnPayload = {
 
 export type BlankColumnPayload = { label: string; type: ColumnType };
 
-type SubmitResult = { ok: true } | { ok: false; error?: string; detail?: string };
+/** A submission's outcome, declared HERE because this drawer renders
+ * the refusal (field-level where it can): `error` is the machine
+ * code, `detail` the server's verbatim copy, both required so a
+ * missing-copy case is unrepresentable (a LEAVING outcome carries ""
+ * for both, which renders nothing while login navigation lands). */
+export type ColumnOutcome = { ok: true } | { ok: false; error: string; detail: string };
 
 type Tab = "prompt" | "agents";
 type ModelTriple = { provider: Provider; source: string; model: string };
@@ -99,8 +104,8 @@ export function AddColumnDrawer(props: {
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
-  onSubmit: (payload: AiColumnPayload) => Promise<SubmitResult>;
-  onAddBlank: (payload: BlankColumnPayload) => Promise<SubmitResult>;
+  onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  onAddBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
 }) {
   // Mounted fresh per open: state resets with the gesture, autoFocus
   // lands on a fresh mount, and no fetch runs while the drawer is
@@ -142,8 +147,8 @@ function DrawerContent({
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
-  onSubmit: (payload: AiColumnPayload) => Promise<SubmitResult>;
-  onAddBlank: (payload: BlankColumnPayload) => Promise<SubmitResult>;
+  onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  onAddBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("prompt");
@@ -401,7 +406,7 @@ function DrawerContent({
       if (res.error && OUTPUTS_REFUSAL_CODES.has(res.error) && res.detail) {
         setOutputsRefusal(res.detail);
       } else {
-        setServerError(res.detail ?? "The fill did not start. Try again.");
+        setServerError(res.detail);
       }
     }
   }
@@ -423,7 +428,7 @@ function DrawerContent({
     setSubmitting(false);
     if (!res.ok) {
       // The same verbatim rule as the AI pane, in its own slot.
-      setBlankError(res.detail ?? "The column was not added. Try again.");
+      setBlankError(res.detail);
     }
   }
 

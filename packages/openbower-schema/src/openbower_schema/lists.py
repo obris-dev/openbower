@@ -48,7 +48,7 @@ class ColumnFill(BaseModel):
     agent_id: str
     current_fill_id: str = Field(
         default="",
-        description="The fill that speaks for this column, stored here when it opens. "
+        description="The fill run that speaks for this column, stored here when it opens. "
         "Blank on a column filled before it was recorded. Clients read it off "
         "ColumnFillSummary, which the fills poll serves; it is declared here because "
         "this model is what the column's own structure is, and an undeclared key is "

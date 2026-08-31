@@ -21,7 +21,9 @@ const SCROLL_PREFETCH_MARGIN = "256px";
  * the button stays as the fallback), and a re-read of the pages
  * already loaded. The re-read is the ONLY walk of loaded rows, and it
  * carries their states with them, so a value and its state can never
- * come from different requests. */
+ * come from different requests. `scrollRef` and `sentinelRef` are the
+ * CALLER's to attach (the scroll region and the sentinel inside it);
+ * the observer never arms while either is loose. */
 export function useRows(
   listId: string,
   initialRows: RenderableListRowsPage,
@@ -102,5 +104,7 @@ export function useRows(
     return () => observer.disconnect();
   }, [nextCursor, loadMore]);
 
-  return { rows, hasMore: nextCursor !== null, loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef };
+  // Boolean(), not a null check: an empty-string cursor must read as
+  // done, or the sentinel arms while loadMore's own guard refuses.
+  return { rows, hasMore: Boolean(nextCursor), loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef };
 }

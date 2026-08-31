@@ -4,8 +4,10 @@ A fill RUN is a durable background walk of a sheet: one agent run
 per row, cells written where blank, every blank carrying its cause. The
 queue is materialized at admission, one task per consented row, and a
 cell reads PENDING because a queued task on a live fill says so, so
-the wire speaks fill envelopes, per-cell states,
-and nothing about workers.
+the wire speaks fill run envelopes, per-cell states,
+and nothing about workers. On surfaces a user reads, the feature
+keeps its own word: copy says "fill", and "run" is the record noun
+in code and on the wire.
 """
 
 from __future__ import annotations
@@ -131,10 +133,10 @@ class FillRunWire(BaseModel):
     list_id: str
     agent_id: str
     status: FillStatusWire
-    column_keys: list[str] = Field(description="The columns this fill owns, frozen at consent.")
+    column_keys: list[str] = Field(description="The columns this run owns, frozen at consent.")
     counters: FillCounters
     confirmed_row_count: int = Field(
-        description="Rows this fill TARGETED, fixed when it opened: the progress denominator. "
+        description="Rows this run TARGETED, fixed when it opened: the progress denominator. "
         "The consent echo is a REQUEST field of the same name that admission compares against "
         "the sheet, 409ing on drift; what ships here is what the walk actually consented to, "
         "which a scoped fill makes smaller than the sheet."
@@ -195,7 +197,11 @@ class FillRunPage(BaseModel):
     carries the in-flight work and the summaries carry everything a
     column needs to say about its past."""
 
-    runs: list[FillRunWire]
+    runs: list[FillRunWire] = Field(
+        description="LIVE runs only. Named for what it holds rather than the house `items`, "
+        "because this page carries a second collection (`columns`) and `items` beside it "
+        "would name neither."
+    )
     columns: list[ColumnFillSummary] = Field(
         default=[], description="One summary per AI column of the list this page belongs to."
     )

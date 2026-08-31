@@ -8,6 +8,7 @@ import {
   type ColumnFillSummary,
 } from "@bower/api";
 
+import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { livenessRead, type LiveRun } from "./lib/live-status";
 
 // Poll cadence (binary). This loop deliberately diverges from the
@@ -39,13 +40,17 @@ export function useFill(
   listId: string,
 ): {
   runs: LiveRun[];
-  summaries: ColumnFillSummary[];
+  // NULL until the first ok tick: the tracker's loading discriminator
+  // is a typed fact, never an inference from an empty array (an empty
+  // array is a real answer: a sheet whose fills read came back with
+  // no AI columns).
+  summaries: ColumnFillSummary[] | null;
   pollTrouble: boolean;
   refresh: () => Promise<void>;
   stop: (runId: string) => Promise<string | null>;
 } {
   const [runs, setRuns] = useState<LiveRun[]>([]);
-  const [summaries, setSummaries] = useState<ColumnFillSummary[]>([]);
+  const [summaries, setSummaries] = useState<ColumnFillSummary[] | null>(null);
   const [pollTrouble, setPollTrouble] = useState(false);
   const generationRef = useRef(0);
   const runsRef = useRef<LiveRun[]>([]);
@@ -140,10 +145,7 @@ export function useFill(
   const stop = useCallback(
     async (runId: string): Promise<string | null> => {
       const res = await postFillCancel(listId, runId);
-      if (res.status === "unauthenticated") {
-        window.location.href = loginUrl();
-        return null;
-      }
+      if (redirectIfUnauthenticated(res)) return null;
       if (res.status !== "ok") return res.message;
       // The cancel echo is terminal and `runs` is the LIVE set, so the
       // run leaves it now rather than a tick later; the summary read

@@ -18,14 +18,16 @@ import {
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import type { AiColumnPayload, BlankColumnPayload } from "./add-column";
+import { columnsInKeyOrder } from "./lib/column-order";
+import type { AiColumnPayload, BlankColumnPayload, ColumnOutcome } from "./add-column";
 
-/** A drawer submission's outcome: the drawer renders refusals itself
- * (field-level where it can), so the error envelope maps through
- * instead of toasting: `error` is the machine code, `detail` the
- * server's verbatim copy. */
-export type ColumnOutcome = { ok: true } | { ok: false; error: string; detail: string };
+// Re-exported beside the ops that produce it, so the sheet imports
+// its hook surface from one place; the TYPE lives with the drawer
+// that renders it.
+export type { ColumnOutcome };
 
+// The outcome when the page is leaving for login: no code and no
+// copy, so no surface renders a refusal while navigation lands.
 const LEAVING: ColumnOutcome = { ok: false, error: "", detail: "" };
 
 /** The list summary and every write to it. Column writes echo the
@@ -43,8 +45,9 @@ export function useColumns(initialDetail: ListSummary): {
   remove: (column: ListColumn) => Promise<boolean>;
   addBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
   addAi: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  refreshDetail: () => Promise<void>;
   startPending: (type: ColumnType) => void;
-  namePending: (label: string) => Promise<boolean>;
+  namePending: (label: string) => Promise<void>;
   renameList: (label: string) => Promise<boolean>;
 } {
   const toast = useToast();
@@ -57,12 +60,26 @@ export function useColumns(initialDetail: ListSummary): {
   // it, so every later attempt would refuse the same way until a
   // manual reload. Re-read instead, so the server's "try again" can
   // succeed in place. True when the page is leaving for login.
+  // SILENT on a non-ok by design: this runs only on refusal paths,
+  // where the caller's own toast or rendered refusal is the voice and
+  // a second message would be noise (the success-path re-read is
+  // refreshDetail, which speaks for itself).
   const reread = useCallback(async (): Promise<boolean> => {
     const summary = await fetchList(detail.id);
     if (redirectIfUnauthenticated(summary)) return true;
     if (summary.status === "ok") setDetail(summary.data);
     return false;
   }, [detail.id]);
+
+  // The SUCCESS-path re-read, for callers reconciling after a write
+  // whose echo carries no summary (the AI add's run envelope): the
+  // one fetch here that may toast, because no other voice speaks for
+  // its failure.
+  const refreshDetail = useCallback(async (): Promise<void> => {
+    const summary = await fetchList(detail.id);
+    if (!ensureOk(summary, toast, { title: "Sheet not refreshed" })) return;
+    setDetail(summary.data);
+  }, [detail.id, toast]);
 
   // Reorder is OPTIMISTIC, because a drag that waits for a round trip
   // reads as a failed drag. The server's echo replaces the guess
@@ -74,9 +91,8 @@ export function useColumns(initialDetail: ListSummary): {
     async (keys: string[]) => {
       if (reorderBusyRef.current) return;
       const previous = detail.columns;
-      const byKey = new Map(previous.map((column) => [column.key, column]));
-      const moved = keys.map((key) => byKey.get(key)).filter((column) => column !== undefined);
-      if (moved.length !== previous.length) return;
+      const moved = columnsInKeyOrder(previous, keys);
+      if (moved === null) return;
       reorderBusyRef.current = true;
       // The guard spans the WHOLE exchange, recovery included: a
       // second gesture starting mid-refetch would carry its own
@@ -151,10 +167,10 @@ export function useColumns(initialDetail: ListSummary): {
     [detail.id],
   );
 
-  // The AI add starts a fill: the new column (and any test-run
-  // prewrite cells) exist only server-side, so success re-reads the
-  // summary for the column set. The rows and the fill attachment are
-  // the caller's to refresh.
+  // The AI add starts a fill. Its echo is the run envelope, not the
+  // summary, so the caller reconciles afterwards (refreshDetail, the
+  // rows, the fill attachment): the outcome returns on the 201 at
+  // once, and the drawer closes without waiting on a second read.
   const addAi = useCallback(
     async (payload: AiColumnPayload): Promise<ColumnOutcome> => {
       const res = await postAiColumn(detail.id, payload);
@@ -163,7 +179,6 @@ export function useColumns(initialDetail: ListSummary): {
         if (res.code === ROW_COUNT_CHANGED_CODE && (await reread())) return LEAVING;
         return { ok: false, error: res.code ?? "", detail: res.message };
       }
-      if (await reread()) return LEAVING;
       return { ok: true };
     },
     [detail.id, reread],
@@ -174,25 +189,24 @@ export function useColumns(initialDetail: ListSummary): {
   // grid.
   const startPending = useCallback((type: ColumnType) => setPendingColumn({ type }), []);
 
-  // True when the pending cell is done with (created, or abandoned):
-  // on a refusal (a taken name, a reserved key, the cap) the cell
+  // On a refusal (a taken name, a reserved key, the cap) the cell
   // STAYS open, because the request is what has to change and closing
-  // it would throw away what they typed.
+  // it would throw away what they typed; `pendingColumn` carries that
+  // fact, so there is no return value to read.
   const namePending = useCallback(
-    async (label: string): Promise<boolean> => {
+    async (label: string): Promise<void> => {
       const type = pendingColumn?.type;
-      if (type === undefined) return true;
+      if (type === undefined) return;
       // Abandoned (Escape, or nothing typed): nothing was created, so
       // there is nothing to undo.
       if (!label) {
         setPendingColumn(null);
-        return true;
+        return;
       }
       const res = await postColumn(detail.id, { label, type });
-      if (!ensureOk(res, toast, { title: "Column not added" })) return false;
+      if (!ensureOk(res, toast, { title: "Column not added" })) return;
       setPendingColumn(null);
       setDetail(res.data);
-      return true;
     },
     [detail.id, pendingColumn, toast],
   );
@@ -200,12 +214,12 @@ export function useColumns(initialDetail: ListSummary): {
   const renameList = useCallback(
     async (label: string): Promise<boolean> => {
       const res = await updateList(detail.id, { label });
-      if (!ensureOk(res, toast)) return false;
+      if (!ensureOk(res, toast, { title: "List not renamed" })) return false;
       setDetail(res.data);
       return true;
     },
     [detail.id, toast],
   );
 
-  return { detail, pendingColumn, reorder, rename, remove, addBlank, addAi, startPending, namePending, renameList };
+  return { detail, pendingColumn, reorder, rename, remove, addBlank, addAi, refreshDetail, startPending, namePending, renameList };
 }

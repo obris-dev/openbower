@@ -5,13 +5,13 @@ import { Button, cn, Popover, PopoverButton, PopoverPanel, Skeleton, Textarea } 
 import {
   AGENT_PROMPT_MAX_LENGTH,
   getColumnPrompt,
-  loginUrl,
   updateColumnPrompt,
   type ColumnFillSummary,
   type ColumnPromptWire,
   type ListColumn,
 } from "@bower/api";
 
+import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { FillProgress } from "./fill-progress";
 import { RefillScope } from "./fill-refill-scope";
 import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
@@ -37,18 +37,22 @@ const PROMPT_TOGGLE_CHARS = 256;
  * the prompt peek with its inline EDIT (reading and writing the
  * column-scoped prompt endpoint, the column's CURRENT config, never a
  * run's frozen snapshot; a live run disables the affordance, since
- * the running one holds its snapshot and an edit only reaches the
+ * the live run holds its snapshot and an edit only reaches the
  * NEXT run). The Popover primitive carries the disclosure floor
- * (aria-expanded, Escape, outside-click, focus return). A missing
- * summary means only that the first fills poll has not answered (the
- * server ships one for EVERY AI column, zero counts included), so it
- * renders a skeleton, never a blank the header line then shoves
- * aside; a column with no exposed run shows the header line alone,
- * naming the work. */
+ * (aria-expanded, Escape, outside-click, focus return). `loaded` is
+ * the typed loading discriminator (the first fills poll has not
+ * answered): a loading cell renders a skeleton, held STATIC once the
+ * page's trouble line speaks (pollTrouble), so it can never claim
+ * progress a dead poll is not making. A loaded page ships one
+ * summary per AI column, zero counts included, so a missing one on a
+ * loaded page renders nothing; a column with no exposed run shows
+ * the header line alone, naming the work. */
 export function FillTrackerCell({
   listId,
   column,
   summary,
+  loaded,
+  pollTrouble,
   runs,
   rowCount,
   onStop,
@@ -57,27 +61,37 @@ export function FillTrackerCell({
   listId: string;
   column: ListColumn;
   summary: ColumnFillSummary | undefined;
+  loaded: boolean;
+  pollTrouble: boolean;
   runs: LiveRun[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
   onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
 }) {
-  const run = currentRunFor(summary, runs);
+  if (!loaded) {
+    // Sized like the header line it resolves into. Once the page's
+    // own trouble line speaks, the box holds STILL: a pulse beside
+    // "updates aren't reaching this page" would claim a load the
+    // dead poll is not making.
+    return (
+      <div className="flex h-5 items-center px-1">
+        {pollTrouble ? <span aria-hidden className="h-3 w-16 rounded bg-wash-strong" /> : <Skeleton className="h-3 w-16" />}
+        <span className="sr-only">
+          {pollTrouble
+            ? `The ${column.label} column's fill state is unavailable right now`
+            : `Loading the ${column.label} column's fill state`}
+        </span>
+      </div>
+    );
+  }
+  // A loaded page ships one summary per AI column; a missing one is a
+  // contract gap and renders nothing rather than a state it cannot know.
+  if (summary === undefined) return null;
   // The SUMMARY is what this cell needs; the run envelope only dresses
   // the chip. A column whose current run has aged off the fetched page
   // still shows its progress and keeps its management surface, rather
   // than vanishing as though the column had never been filled.
-  if (summary === undefined) {
-    // Sized like the header line it resolves into. If the poll cannot
-    // answer, the footer's trouble line speaks for the page; this
-    // skeleton keeps loading honestly (the loop never stops).
-    return (
-      <span className="flex h-5 items-center px-1">
-        <Skeleton className="h-3 w-16" />
-        <span className="sr-only">Loading this column&apos;s fill state</span>
-      </span>
-    );
-  }
+  const run = currentRunFor(summary, runs);
   const cell = trackerCell(run, summary.current_status);
   const live = cell.kind === "live";
   // Two instruments, one cell: is there WORK LEFT in this column (the
@@ -193,7 +207,7 @@ function ResumeContinue({ verb, onContinue }: { verb: "Retry" | "Continue"; onCo
  * plus the inline EDIT: a plain bounded textarea with Save/Cancel
  * (the drawer's full editor is overkill here), Save calling the same
  * endpoint, a refusal rendered verbatim (tier 1). While the fill is
- * LIVE the affordance disables: the running one holds its frozen
+ * LIVE the affordance disables: the live run holds its frozen
  * snapshot, so an edit mid-walk would only invite mixed-config
  * confusion; stopping first keeps one run one config. Mounted per
  * popover open, so each open re-reads the current truth. */
@@ -214,10 +228,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
       setUnreadable(false);
       const res = await getColumnPrompt(listId, columnKey);
       if (stale) return;
-      if (res.status === "unauthenticated") {
-        window.location.href = loginUrl();
-        return;
-      }
+      if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") {
         setConfig(res.data);
         return;
@@ -250,10 +261,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
     setRefusal("");
     const res = await updateColumnPrompt(listId, columnKey, draft);
     setSaving(false);
-    if (res.status === "unauthenticated") {
-      window.location.href = loginUrl();
-      return;
-    }
+    if (redirectIfUnauthenticated(res)) return;
     if (res.status !== "ok") {
       // Tier 1: the server wrote the detail; render it verbatim.
       setRefusal(res.message);
@@ -348,7 +356,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
               </button>
             </div>
           ) : config === null ? (
-            <p aria-hidden className="h-4 w-3/4 animate-pulse rounded bg-wash-strong motion-reduce:animate-none" />
+            <Skeleton className="h-4 w-3/4" />
           ) : (
             <>
               <p className={cn("whitespace-pre-wrap text-xs text-muted", !expanded && "line-clamp-3")}>

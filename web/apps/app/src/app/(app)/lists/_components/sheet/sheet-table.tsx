@@ -29,8 +29,12 @@ export type SheetFills = {
   listId: string;
   runs: LiveRun[];
   // Server truth per column (current run and its status, the newest
-  // failure, canonical totals).
-  summaries: ColumnFillSummary[];
+  // failure, canonical totals); NULL until the first poll answers,
+  // which is the tracker cells' loading discriminator.
+  summaries: ColumnFillSummary[] | null;
+  // The page's poll cannot reach the server (the footer's line): the
+  // loading cells hold still instead of claiming progress.
+  pollTrouble: boolean;
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
   onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
@@ -190,7 +194,9 @@ export function SheetTable({
                   <FillTrackerCell
                     listId={tracker.listId}
                     column={column}
-                    summary={tracker.summaries.find((entry) => entry.column_key === column.key)}
+                    summary={tracker.summaries?.find((entry) => entry.column_key === column.key)}
+                    loaded={tracker.summaries !== null}
+                    pollTrouble={tracker.pollTrouble}
                     runs={tracker.runs}
                     rowCount={tracker.rowCount}
                     onStop={tracker.onStop}
@@ -212,8 +218,8 @@ export function SheetTable({
               // is the plain filled cell and no value is
               // not-attempted, undecorated by design.
               // A REAL VALUE always outranks a state: it renders as
-              // the value, with a mark beside it when the run that
-              // filled it had a degraded tool. Both come off THIS row
+              // the value, with a mark beside it when the row's run
+              // had a degraded tool. Both come off THIS row
               // object, so they are one encoding rather than two
               // reads that can disagree.
               const value = row.data[column.key] ?? "";
