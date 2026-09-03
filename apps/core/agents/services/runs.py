@@ -60,8 +60,15 @@ def config_fingerprint(config: AgentConfig) -> str:
     """The canonical digest of a drafted config: what makes a stored
     bench run SEEDABLE by a fill admission (seed only when the
     admitted config is THIS config; a near-miss must re-run, never
-    borrow answers produced by different instructions)."""
-    return hashlib.sha256(json.dumps(config.model_dump(), sort_keys=True).encode("utf-8")).hexdigest()
+    borrow answers produced by different instructions).
+
+    `tools` canonicalizes to the SORTED ENABLED NAMES before hashing:
+    a future tool's default-False field must not churn every stored
+    fingerprint (re-targeting settled cells on the next Continue) just
+    by existing in the shape."""
+    dump = config.model_dump()
+    dump["tools"] = sorted(name for name, on in dump["tools"].items() if on)
+    return hashlib.sha256(json.dumps(dump, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class TestRunService:

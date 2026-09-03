@@ -153,7 +153,7 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(Agent.objects.count(), 0)
 
     def test_duplicate_output_keys_refuse(self) -> None:
-        # The request serializer refuses duplicate keys at the door,
+        # The request serializer refuses duplicate keys at the provider,
         # but AgentConfig itself does not: a config arriving any other
         # way with two same-key outputs would silently merge one
         # output's answers into the other's column.
@@ -240,21 +240,47 @@ class GuardTests(AdmissionTestCase):
         with self.assertRaises(FreeSearchBudget) as caught:
             self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
         # Rendered verbatim in the drawer: user words only (no internal
-        # door vocabulary), and the next step is the paid provider.
+        # provider vocabulary), and the next step is the paid provider.
         self.assertEqual(
             str(caught.exception),
             f"This fill could need up to {rows * MAX_TOOL_CALLS:,} searches; free search is budgeted for "
-            f"{FREE_SEARCH_FILL_BUDGET} per fill. Connect DataForSEO for metered search.",
+            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to DataForSEO (a deployment setting) for metered search.",
         )
 
-    @override_settings(DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
-    def test_paid_door_lifts_the_free_budget(self) -> None:
+    @override_settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    def test_paid_provider_lifts_the_free_budget(self) -> None:
         wide = self.lists.create(label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
         self.assertEqual(fill.status, FillStatus.PENDING)
+
+    @override_settings(DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    def test_a_contacts_only_fill_is_never_free_budgeted(self) -> None:
+        # Contact search is metered whatever the switch says (it pins
+        # the paid provider), so a contacts-only fill spends nothing
+        # free and the free budget must not cap it. FAILS if the gate
+        # reads uses_tools instead of searches_web.
+        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
+        self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        config = quick_config(tools=AgentTools(find_contacts=True))
+        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
+        self.assertEqual(fill.status, FillStatus.PENDING)
+
+    @override_settings(DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    def test_credentials_alone_do_not_lift_the_free_budget(self) -> None:
+        # Credentials route nothing: web search runs SEARCH_PROVIDER
+        # (contact search pins the paid provider regardless), so with
+        # the switch on the free provider the budget must still refuse.
+        # FAILS if the predicate reads the credential pair again.
+        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
+        self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        config = quick_config(tools=AgentTools(web_search=True))
+        with self.assertRaises(FreeSearchBudget):
+            self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
 
 
 class ScopedFillTests(AdmissionTestCase):
@@ -335,7 +361,7 @@ class RosterPathTests(AdmissionTestCase):
 
     def test_retired_provider_refuses(self) -> None:
         agent = self.admission.agents.create(label="Old", config=quick_config())
-        Agent.objects.filter(id=agent.id).update(provider="legacy_door")
+        Agent.objects.filter(id=agent.id).update(provider="legacy_provider")
         with self.assertRaises(ProviderRetiredRefusal):
             self.admit(config=None, agent_id=str(agent.id))
 
@@ -348,7 +374,7 @@ class BenchSeedTests(AdmissionTestCase):
             status="complete",
             config_fingerprint=config_fingerprint(config),
             row_id=row_id,
-            result={"cells": cells, "evidence": ["seen"], "searches": []},
+            result={"cells": cells, "evidence": ["seen"], "tool_calls": []},
         )
 
     def test_config_identical_run_seeds_the_borrowed_row(self) -> None:
@@ -378,7 +404,7 @@ class BenchSeedTests(AdmissionTestCase):
         config = quick_config()
         row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
         run = self._run_for(config, row_id=str(row.id), cells={})
-        run.result = {**run.result, "blank_cause": "search_throttled", "declined_cause": "search_throttled"}
+        run.result = {**run.result, "declined_cause": "search_throttled"}
         run.save(update_fields=["result"])
         fill = self.admit(config=config, test_run_id=str(run.id))
         row.refresh_from_db()
@@ -543,7 +569,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             status="complete",
             config_fingerprint=config_fingerprint(config),
             row_id=str(row.id),
-            result={"cells": {"answer": "seeded"}, "evidence": ["seen"], "searches": []},
+            result={"cells": {"answer": "seeded"}, "evidence": ["seen"], "tool_calls": []},
         )
         with CaptureQueriesContext(connection) as captured:
             self.admit(config=config, test_run_id=str(run.id))

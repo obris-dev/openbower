@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from agents.constants import ToolStatus
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
@@ -90,8 +89,8 @@ FILL_CONCURRENCY_HOSTED_START = 4
 MAX_ACTIVE_FILLS = 4
 # Consecutive rows parked for retry that fail the FILL config-tier
 # (binary): per-row attempts are patience for flaky moments, this
-# breaker is across-row detection of a dead or throttling door, the
-# model's or a tool's search door alike (a search door that keeps
+# breaker is across-row detection of a dead or throttling provider, the
+# model's or a tool's search provider alike (a search provider that keeps
 # refusing parks its rows exactly as a throttling model does).
 CONSECUTIVE_TRANSIENT_LIMIT = 8
 
@@ -160,7 +159,7 @@ FILL_WRITE_BATCH = 1000
 # ride Fill.error_code and reach the client as the failed
 # fill's two-tier error. MODEL_UNRUNNABLE is deliberately the SAME
 # member the admission lane refuses under: an address that cannot run
-# is one fact, whether it is caught at the door or at claim time.
+# is one fact, whether it is caught at the provider or at claim time.
 class FillFailureCode(StrEnum):
     FILL_UNRUNNABLE = "fill_unrunnable"
     SOURCE_GONE = "source_gone"
@@ -252,7 +251,7 @@ class StoredCellState(StrEnum):
     TYPE_MISMATCH = "type_mismatch"
     MODEL_ERROR = "model_error"
     TRANSIENT = "transient"
-    # A tool's door did not serve this row. The SHEET keys on the BASE
+    # A tool's provider did not serve this row. The SHEET keys on the BASE
     # status code only, never on a (tool, code) cross product: which
     # tool, and the tool's own code, ride the cell record's `tools`
     # map beside the state, so a tool can add a failure mode without
@@ -270,24 +269,11 @@ class StoredCellState(StrEnum):
 # The causes that PARK a row for retry instead of settling a cell (the
 # worker's branch); every other cause is terminal for the run.
 RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
-# The cell state a blank cell takes for a tool's status CODE. Keyed by
-# the code string, so every tool's enum looks up here directly (a
-# StrEnum member IS its string) and a tool-specific code adds one row
-# without a projection in between. A parity test pins that every
-# non-open code of every tool has a row.
-CELL_STATE_BY_STATUS: dict[str, StoredCellState] = {
-    ToolStatus.NOT_CONFIGURED: StoredCellState.TOOL_NOT_CONFIGURED,
-    ToolStatus.RATE_LIMITED: StoredCellState.TOOL_UNAVAILABLE,
-    ToolStatus.UNREACHABLE: StoredCellState.TOOL_UNAVAILABLE,
-    ToolStatus.ERROR: StoredCellState.TOOL_UNAVAILABLE,
-}
-
-
 # The worker's idle heartbeat (binary): how long it sleeps when no fill
 # has claimable work before scanning again.
 FILL_WORKER_IDLE_SECONDS = 4
 # A parked task's backoff base (binary): multiplied by the attempt so
-# a door under pressure is asked less often each time, and long enough
+# a provider under pressure is asked less often each time, and long enough
 # that a retry never lands inside the same rate window it just hit.
 FILL_RETRY_BACKOFF_SECONDS = 32
 # The supervising heartbeat (binary): while rows are IN FLIGHT the

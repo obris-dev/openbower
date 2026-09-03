@@ -1,4 +1,4 @@
-"""The messages SPEC door: any server speaking it, as NAMED SOURCES."""
+"""The messages SPEC provider: any server speaking it, as NAMED SOURCES."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from openbower_kernel.provider_config import SourceConfig
 
-from .base import ProviderDoor
+from .base import InferenceProvider
 
-# See the sibling door: the SDK's own timeout type, not httpx's.
+# See the sibling provider: the SDK's own timeout type, not httpx's.
 TIMEOUT_EXCEPTION: type[Exception] = anthropic.APITimeoutError
 
 _API_VERSION = "2023-06-01"
 
 
-class AnthropicCompatibleDoor(ProviderDoor):
+class AnthropicCompatibleProvider(InferenceProvider):
     @property
     def configured_sources(self) -> dict[str, SourceConfig]:
         return settings.ANTHROPIC_COMPATIBLE_SOURCES
@@ -32,7 +32,7 @@ class AnthropicCompatibleDoor(ProviderDoor):
     def _list_models(self, source: SourceConfig) -> list[str]:
         rows = self._probe_rows(source, "/v1/models")
         if not source["canonical"]:
-            # The same universal hygiene as the openai door: an
+            # The same universal hygiene as the openai provider: an
             # embedding model cannot fill a cell, whatever serves it.
             rows = [row for row in rows if "embed" not in str(row.get("id", ""))]
         return [str(row["id"]) for row in rows if row.get("id")]
@@ -42,4 +42,4 @@ class AnthropicCompatibleDoor(ProviderDoor):
         return AnthropicModel(model_name, provider=provider)
 
 
-DOOR = AnthropicCompatibleDoor()
+PROVIDER = AnthropicCompatibleProvider()

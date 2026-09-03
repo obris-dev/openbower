@@ -19,10 +19,10 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import DatabaseError, close_old_connections, connections
 
-from agents.constants import AgentTool, SearchProvider, ToolStatus
+from agents.constants import SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.runtime.cell import run_cell
-from agents.runtime.tools import TOOL_REGISTRY, CellDeps
+from agents.tools import registry as tool_registry
 from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
@@ -77,9 +77,11 @@ def _release_connection() -> None:
 
 
 def paid_search() -> bool:
-    """Whether fills run their searches through the METERED door.
-    Public: the command narrates it at startup."""
-    return bool(settings.DATAFORSEO_LOGIN and settings.DATAFORSEO_PASSWORD)
+    """Whether fill web searches run through the METERED provider: the
+    SEARCH_PROVIDER switch, the same fact the admission budget reads
+    (credentials alone route nothing). Public: the command narrates it
+    at startup."""
+    return settings.SEARCH_PROVIDER == SearchProvider.DATAFORSEO
 
 
 class _Window(NamedTuple):
@@ -113,22 +115,23 @@ _STOPPED = "it stopped rather than blanking the column. Filled cells are kept."
 
 class _Breakers:
     """The ONE across-row breaker, shared by a fill's row threads:
-    consecutive rows parked for retry mean a dead or throttling door,
-    whichever door it is (the model's, or a tool's search door), and
-    trip a config-tier fill failure that NAMES the door from the
+    consecutive rows parked for retry mean a dead or throttling provider,
+    whichever provider it is (the model's, or a tool's search provider), and
+    trip a config-tier fill failure that NAMES the provider from the
     cause that tripped it. Per-row attempts are patience for flaky
     moments; this is the detection that the moment is not passing."""
 
-    def __init__(self, *, search_provider: str) -> None:
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._transients = 0
-        self._search_provider = search_provider
         self.tripped: tuple[str, str] | None = None
 
-    def row_finished(self, *, retry_cause: str, tools: dict[str, str]) -> None:
+    def row_finished(self, *, retry_cause: str, tools: dict[str, str], blamed_tool: str = "") -> None:
         """`retry_cause` is the RETRY_CAUSES value that parked the row,
         "" for a row that finished terminally; `tools` the run's
-        per-tool door statuses (what a tool_unavailable cause names)."""
+        per-tool provider statuses; `blamed_tool` the runtime's own
+        verdict on WHICH tool a tool_unavailable cause names ("" on
+        records stored before the field)."""
         with self._lock:
             if self.tripped is not None:
                 # First trip wins: the failed fill's error must name
@@ -136,39 +139,37 @@ class _Breakers:
                 return
             self._transients = self._transients + 1 if retry_cause else 0
             if self._transients >= CONSECUTIVE_TRANSIENT_LIMIT:
-                self.tripped = self._attribute(retry_cause, tools)
+                self.tripped = self._attribute(retry_cause, tools, blamed_tool)
 
-    def _attribute(self, retry_cause: str, tools: dict[str, str]) -> tuple[str, str]:
+    def _attribute(self, retry_cause: str, tools: dict[str, str], blamed_tool: str) -> tuple[str, str]:
         """The failed fill's error, tier 1 (server-authored, rendered
-        verbatim): which tool, what its door said, which door, and the
-        remedy where one exists. Named from the cause that tripped the
-        streak: a mixed streak reports its latest evidence."""
+        verbatim): the tool's OWN failure copy (each spec authors its
+        problem and remedy, read at failure time so settings-dependent
+        wording is current), composed with the fill-level stop
+        sentence. Named from the cause that tripped the streak: a
+        mixed streak reports its latest evidence. The BLAMED tool is
+        the run's own verdict (its walk exempts tools that served,
+        which the status map alone cannot show); the status walk is
+        only the fallback for records stored without one, and it can
+        name a tool that also served."""
         if retry_cause == StoredCellState.TOOL_UNAVAILABLE:
-            for tool in AgentTool:
-                status = tools.get(tool.value, ToolStatus.OPEN)
+            for tool in self._blame_order(blamed_tool):
+                status = tools.get(tool.name, ToolStatus.OPEN)
                 if status != ToolStatus.OPEN:
-                    return FillFailureCode.SEARCH_THROTTLED, self._tool_message(tool, status)
+                    copy = tool.failure_copy(status)
+                    return FillFailureCode.SEARCH_THROTTLED, f"{copy.problem}; {_STOPPED}{copy.remedy}"
         return (
             FillFailureCode.PROVIDER_THROTTLED,
             f"The model provider is throttling this fill; {_STOPPED}",
         )
 
-    def _tool_message(self, tool: AgentTool, status: str) -> str:
-        name = TOOL_REGISTRY[tool].display_name
-        said = _STATUS_PHRASE.get(status, "is failing on")
-        free = tool is AgentTool.WEB_SEARCH and self._search_provider != SearchProvider.DATAFORSEO
-        door = "the free search provider" if free else "DataForSEO"
-        remedy = " Connect DataForSEO for metered search." if free else ""
-        return f"{name} {said} {door}; {_STOPPED}{remedy}"
-
-
-# What a door's status reads as in the breaker's sentence.
-_STATUS_PHRASE = {
-    ToolStatus.NOT_CONFIGURED: "isn't set up on",
-    ToolStatus.RATE_LIMITED: "is being rate-limited by",
-    ToolStatus.UNREACHABLE: "cannot reach",
-    ToolStatus.ERROR: "is failing on",
-}
+    @staticmethod
+    def _blame_order(blamed_tool: str) -> list:
+        """The blamed tool first when the record names one it can still
+        resolve; registration order otherwise."""
+        ordered = tool_registry.all_tools()
+        blamed = [tool for tool in ordered if tool.name == blamed_tool]
+        return blamed + [tool for tool in ordered if tool.name != blamed_tool]
 
 
 class FillState:
@@ -209,7 +210,7 @@ class FillState:
             fill,
             config,
             ConcurrencyController(start=start, ceiling=window.ceiling),
-            _Breakers(search_provider=settings.SEARCH_PROVIDER),
+            _Breakers(),
             window.ceiling,
         )
 
@@ -272,7 +273,7 @@ class FillState:
         if newly_parked:
             fill_progress.bump(str(self.fill.id), transient=1)
         self.controller.record_throttle(generation)
-        self.breakers.row_finished(retry_cause=run.blank_cause, tools=run.tools)
+        self.breakers.row_finished(retry_cause=run.declined_cause, tools=run.tools, blamed_tool=run.blamed_tool)
 
     def row_landed(
         self,
@@ -288,7 +289,7 @@ class FillState:
         """A row ran to a terminal write. `landed` is None when the
         close missed (a reclaimed lease): nothing was written, so no
         counters move, but the rate signal still counts, since the
-        door was asked either way."""
+        provider was asked either way."""
         if landed is not None:
             deltas = landed.deltas(was_parked=was_parked)
             deltas["row_seconds"] = round(row_seconds)
@@ -307,13 +308,13 @@ class FillState:
             )
         # A FAILED search is a RATE signal, not a clean completion, and
         # so is one that only succeeded after the seam backed off (the
-        # door refused at least once; the seam's retry hides that from
-        # the outcome's flag, not from its attempt count): the door is
+        # provider refused at least once; the seam's retry hides that from
+        # the outcome's flag, not from its attempt count): the provider is
         # saying we are asking too fast, and counting it as clean
         # climbed the point straight into the ban the breaker then had
         # to kill the fill over. Backing off is the response; stopping
         # is what happens when backing off runs out of room.
-        if any(search.status != ToolStatus.OPEN or search.attempts > 1 for search in run.searches):
+        if any(call.status != ToolStatus.OPEN or call.attempts > 1 for call in run.tool_calls):
             self.controller.record_throttle(generation)
         else:
             self.controller.record_success(generation)
@@ -321,7 +322,7 @@ class FillState:
 
     def row_given_up(self, task: FillTask, landed: Landed | None) -> None:
         """A row closed past its attempt cap without a run: counters
-        only (no door was asked, so no rate signal and no streak).
+        only (no provider was asked, so no rate signal and no streak).
         `task.parked` is the same flag every terminal writer reads: a
         row whose thread died every pass never parked at all."""
         if landed is not None:
@@ -582,13 +583,13 @@ class FillWorkerOperation:
     def _give_up(self, state: FillState, task: FillTask) -> None:
         """A task past its attempt cap, closed WITHOUT spending: every
         column it owed carries the RETRY cause its last park recorded
-        (a park stores its run, so the cell can say whose door refused:
-        the model's, or a tool's search door), which is retryable, so a
+        (a park stores its run, so the cell can say whose provider refused:
+        the model's, or a tool's search provider), which is retryable, so a
         later refill re-targets the row under a fresh consent.
 
         A retry cause rather than model_error because attempts only
         climb through parks and lost leases, and a park only happens on
-        the infrastructure tier: reaching the cap means a door kept
+        the infrastructure tier: reaching the cap means a provider kept
         refusing, not that the model answered badly. A task that never
         parked (its thread died every pass) has no stored cause and
         lands as transient. This is the ONLY writer of the terminal
@@ -597,9 +598,7 @@ class FillWorkerOperation:
         contract's shape."""
         run = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
         if run.declined_cause not in RETRY_CAUSES:
-            run = run.model_copy(
-                update={"blank_cause": StoredCellState.TRANSIENT, "declined_cause": StoredCellState.TRANSIENT}
-            )
+            run = run.model_copy(update={"declined_cause": StoredCellState.TRANSIENT})
         landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
         state.row_given_up(task, landed)
 
@@ -641,16 +640,12 @@ class FillWorkerOperation:
             # goes on with the rows that still exist.
             state.row_missing(task, self.queue.mark_row_missing(task))
             return
-        # No DB in deps callbacks: they execute on the framework's
-        # ephemeral executor threads, where a connection opened is a
-        # connection leaked (the supervisor loop renews leases).
-        deps = CellDeps()
         # Before the long IO (the model call + searches): held
         # connections must not scale with the concurrency ceiling. The
         # post-run writes reopen lazily.
         _release_connection()
         # The pace figures: row wall seconds (measured here) vs seconds
-        # parked on search (the runtime counts them on deps), so the UI
+        # parked on tool calls (the run returns them per tool), so the UI
         # and the logs can say WHAT is slow instead of a bare ETA.
         row_started = time.monotonic()
         # Whether a park has already counted this task into the gauge.
@@ -667,9 +662,15 @@ class FillWorkerOperation:
         # client, so concurrent rows must never share one (the first
         # finisher would kill every sibling's completion).
         try:
-            run = run_cell(state.config, row.data, deps=deps)
+            run = run_cell(state.config, row.data)
         except ModelUnavailable as e:
             state.fail(code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            return
+        except tool_registry.UnknownTool as e:
+            # Config tier like an unrunnable address: it fails every
+            # row identically, so it fails the fill loudly instead of
+            # burning attempts as anonymous thread deaths.
+            state.fail(code=FillFailureCode.FILL_UNRUNNABLE, message=str(e))
             return
         # What the run PRODUCED, through the contract model, so this
         # writer and the bench's cannot drift: a seeded row and a run
@@ -677,13 +678,16 @@ class FillWorkerOperation:
         result = CellRunResult(
             cells=dict(run.cells),
             evidence=list(run.evidence),
-            searches=[o.wire() for o in run.searches],
+            tool_calls=[o.wire() for o in run.tool_calls],
             assessments=dict(run.assessments),
-            blank_cause=run.blank_cause,
             declined_cause=run.declined_cause,
+            blamed_tool=run.blamed_tool,
             tools=dict(run.tools),
         )
-        if run.blank_cause in RETRY_CAUSES:
+        # The row-level blank DERIVES: a partial answer lands (a park
+        # would hold its filled cells hostage); only a fully blank row
+        # with a retriable cause parks.
+        if not run.cells and run.declined_cause in RETRY_CAUSES:
             # A park diagnoses NOTHING on the sheet: nothing terminal
             # happened, the cell is still owed, and it still shimmers
             # because its task is still queued. The run is STORED
@@ -708,12 +712,16 @@ class FillWorkerOperation:
             state.cancel()
             return
 
+        row_seconds = time.monotonic() - row_started
         state.row_landed(
             task,
             landed,
             result,
             generation=generation,
             was_parked=was_parked,
-            row_seconds=time.monotonic() - row_started,
-            search_seconds=deps.search_seconds,
+            row_seconds=row_seconds,
+            # Clamped to the row's wall time: sibling tool calls run on
+            # parallel threads, so the per-tool sum can exceed it, and
+            # the wire promises a SHARE of the row's seconds.
+            search_seconds=min(sum(run.tool_call_seconds.values()), row_seconds),
         )

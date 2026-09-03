@@ -13,7 +13,7 @@ from rest_framework import serializers
 
 from lists.constants import ColumnType
 from openbower_kernel.fields import min_ulid_at
-from openbower_schema.agents import AgentListItem
+from openbower_schema.agents import AgentListItem, AgentTools
 from openbower_schema.agents import AgentSummary as WireAgentSummary
 from openbower_schema.agents import AgentTestRun as WireTestRun
 
@@ -32,7 +32,6 @@ from .constants import (
     TEST_RUN_WORST_CASE_SECONDS,
     TEST_VALUE_MAX_LENGTH,
     AgentProvider,
-    AgentTool,
     TestRunStatus,
 )
 from .models import Agent, AgentTestRun
@@ -101,12 +100,12 @@ class AgentConfigRequest(serializers.Serializer):
         return value
 
     def validate_tools(self, value: dict) -> dict:
-        unknown = set(value) - {t.value for t in AgentTool}
+        unknown = set(value) - set(AgentTools.model_fields)
         if unknown:
             # A typo'd tool name silently vanishing would run the agent
             # without the tool the user thinks is on.
             raise serializers.ValidationError(f"unknown tool(s): {', '.join(sorted(unknown))}")
-        return {t.value: bool(value.get(t.value)) for t in AgentTool}
+        return {name: bool(value.get(name)) for name in AgentTools.model_fields}
 
     def validate_outputs(self, value: list[dict]) -> list[dict]:
         return _clean_outputs(value)

@@ -175,7 +175,7 @@ class FillService:
         # The newest run's status and error, off the runs the columns
         # name: one query keyed by those ids, bounded by the sheet's
         # fill columns, and PROJECTED to the three facts it feeds (the
-        # snapshot must not ride the poll through a back door either).
+        # snapshot must not ride the poll through a side channel either).
         current_by_key = {
             column["key"]: (column.get("fill") or {}).get("current_fill_id", "") for column in fill_columns
         }

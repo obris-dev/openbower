@@ -60,7 +60,7 @@ class ListPatchRequest(serializers.Serializer):
 
 
 class RowsAddRequest(serializers.Serializer):
-    """Manual append. Cell values are strings, enforced at the door: one
+    """Manual append. Cell values are strings, enforced at the boundary: one
     non-string cell would fail the wire schema on every later read,
     bricking the sheet with no repair path."""
 

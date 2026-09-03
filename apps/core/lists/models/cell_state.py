@@ -47,7 +47,7 @@ class FillCellState(AccountScopedModel):
     config_fingerprint = models.CharField(
         _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
     )
-    # tool -> the status code its door reported for the run that wrote
+    # tool -> the status code it reported for the run that wrote
     # this cell, filled or blank alike ("open" for a tool that served).
     # The one place a FILLED cell can say a tool was degraded, and the
     # detail behind a blank cell's tool_* state. Empty for a run before

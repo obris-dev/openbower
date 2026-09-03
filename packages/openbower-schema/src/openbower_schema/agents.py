@@ -30,7 +30,7 @@ TEST_ROW_MAX_KEYS = 16
 # fill consent footer's "up to N searches" is rows times this number,
 # computed client-side off x-constants, so both sides must read one
 # home. The runtime derives its own bounds from it. Sized for TWO
-# doors: both tools share this one budget when both are on, so a
+# providers: both tools share this one budget when both are on, so a
 # budget sized for one starves a run that uses both.
 MAX_TOOL_CALLS = 6
 # Outputs BECOME sheet columns when a fill maps them: their bounds ARE
@@ -110,7 +110,11 @@ class AgentConfig(BaseModel):
 
     @property
     def uses_tools(self) -> bool:
-        return self.finds_contacts or self.searches_web
+        # DERIVED over every field, never a hand-written OR: three
+        # guards gate on this (the no-spend refusal, the fabrication
+        # guard, the free-search budget), and a tool field this misses
+        # would switch all three off silently.
+        return any(self.tools.model_dump().values())
 
 
 class AgentSummary(BaseModel):
@@ -153,29 +157,30 @@ class CatalogModel(BaseModel):
     model: str
 
 
-# The search seam's doors, mirrored from the server enum (pinned by a
-# parity test). Defined BEFORE AgentCatalog uses it, like every other
-# wire alias.
+# The search seam's providers, mirrored from the server enum (pinned
+# by a parity test). Defined BEFORE AgentCatalog uses it, like every
+# other wire alias.
 SearchProviderWire = Literal["duckduckgo", "dataforseo"]
-# The doors as DATA for the wire document (x-constants): the client's
-# tolerant catalog read maps any door outside this set to null instead
-# of failing the whole parse (a strict enum would brick the model
-# picker for every deployed bundle the day a third door ships).
-SEARCH_DOORS: tuple[str, ...] = get_args(SearchProviderWire)
-# The BASE tool status codes (the server's ToolStatus, pinned): what a
-# tool's door did. Each tool's own vocabulary contains these and may
+# The providers as DATA for the wire document (x-constants): the
+# client's tolerant catalog read maps any provider outside this set to
+# null instead of failing the whole parse (a strict enum would brick
+# the model picker for every deployed bundle the day a third one
+# ships).
+SEARCH_PROVIDER_CHOICES: tuple[str, ...] = get_args(SearchProviderWire)
+# The BASE tool status codes (the server's ToolStatus, pinned): what
+# a tool's call did. Each tool's own vocabulary contains these and may
 # add its own; the client resolves copy by (tool, code) and tolerates
 # a code it has not heard of.
 ToolStatusWire = Literal["open", "not_configured", "rate_limited", "unreachable", "error"]
 # Each tool's FULL vocabulary (the base codes plus the tool's own),
 # shipped as an x-constant so the client types its copy table per tool.
 # Mirrors the server enums (agents.constants.SearchStatus), pinned.
-SEARCH_STATUSES: tuple[str, ...] = ("open", "not_configured", "rate_limited", "unreachable", "error")
+SEARCH_STATUSES: tuple[str, ...] = get_args(ToolStatusWire)
 TOOL_STATUSES: dict[str, tuple[str, ...]] = {"web_search": SEARCH_STATUSES, "find_contacts": SEARCH_STATUSES}
 
 
 class AgentCatalog(BaseModel):
-    """What THIS deploy can run; `doors` gates the tools."""
+    """What THIS deploy can run; `tools` gates the toggles."""
 
     models: list[CatalogModel]
     support_followup: str = Field(
@@ -187,13 +192,14 @@ class AgentCatalog(BaseModel):
         description="True when the catalog cap cut the list: an address past the cap "
         "may still RUN (model_for validates against the full roster), it just is not shown."
     )
-    doors: dict[str, str] = Field(
-        description="Each tool's door status BEFORE a run, keyed by AgentTool (web_search, "
-        "find_contacts): 'open' gates the toggle on; any other code is the reason it is off "
-        "(today only 'not_configured' can appear here; the run-time codes ride the cells)."
+    tools: dict[str, str] = Field(
+        description="Each tool's availability BEFORE a run, keyed by registered tool name "
+        "(web_search, find_contacts): 'open' gates the toggle on; any other code is the reason "
+        "it is off (today only 'not_configured' can appear here; the run-time codes ride the "
+        "cells)."
     )
     search_provider: SearchProviderWire | None = Field(
-        description="Which door serves web search on this deployment (the server's SearchProvider, "
+        description="Which provider serves web search on this deployment (the server's SearchProvider, "
         "pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot "
         "refuses an unset door, so client copy never needs a no-search-door story. Client copy "
         "composes it: a rate-limited cell names the paid door only where it is a remedy, never to "
@@ -201,28 +207,41 @@ class AgentCatalog(BaseModel):
     )
 
 
-class TestSearch(BaseModel):
-    """One search query's outcome: `status` is what the door said (a
-    SearchStatus code: open, and hits, possibly zero, is the honest
-    answer; any other code is why there are none). `provider` is the
-    door that served it, `attempts` how many tries the seam made for
-    this one query (a rate limit is retried, same query, before it
-    counts), and `tool` which tool asked (web_search | find_contacts),
-    so a reader can tell whose door refused."""
+class SearchToolCall(BaseModel):
+    """One search-tool call's record: `status` is what the provider
+    said (open, and hits, possibly zero, is the honest answer; any
+    other code is the tool's own failure code saying why there are
+    none), `provider` which provider served it, `attempts` how many
+    tries the seam made for this one query (a rate limit is retried,
+    same query, before it counts), and `tool` which tool called, so a
+    reader can tell whose call refused. `hits` counts what the tool
+    KEPT; `discarded` counts served hits the tool dropped as off-scope
+    (an engine that runs dry on a demanded site: relaxes the query and
+    serves off-site pages dressed as answers), so a thin answer shows
+    whether the provider ran dry or ran off. Every field REQUIRED: the
+    one writer sets them all, and a stored record is the same shape as
+    a served one."""
 
-    # Defaults, deliberately, on everything but the query and hits:
-    # this shape rides STORED result blobs (task results, bench runs)
-    # written by earlier versions that carried different fields, and a
-    # stored read is the one place this contract is tolerant (a
-    # required field here bricks the give-up path and the drawer on
-    # rows written before the field existed). Live writers set all of
-    # them.
+    # The record FAMILY discriminant, defaulted so records stored
+    # before it read back as what they are. Two search tools share
+    # this one member (kind says the SHAPE, `tool` says who called);
+    # a differently-shaped record (a contact provider's filters-in,
+    # records-out call) joins as a new member with its own kind.
+    kind: Literal["search"] = "search"
+    tool: str
+    status: str
+    provider: str
+    attempts: int
     query: str
     hits: int
-    status: str = ""
-    provider: str = ""
-    attempts: int = 1
-    tool: str = ""
+    discarded: int
+
+
+# The tool-call record family, ONE member today: the seam a new tool's
+# record type joins (a second member turns this into a discriminated
+# union on `kind`, which is why kind exists now, while adding it is a
+# defaulted field instead of a stored-blob migration).
+ToolCall = SearchToolCall
 
 
 TestRunStatus = Literal["pending", "complete", "failed"]
@@ -230,12 +249,12 @@ TestRunStatus = Literal["pending", "complete", "failed"]
 
 class AgentTestResult(BaseModel):
     """One hand-fed row's outcome: the cells it would write (possibly
-    empty, honestly), the evidence the model saw, and the searches that
-    produced it with each query's diagnosis."""
+    empty, honestly), the evidence the model saw, and the tool calls
+    that produced it with each call's diagnosis."""
 
     cells: dict[str, str]
     evidence: list[str]
-    searches: list[TestSearch]
+    tool_calls: list[ToolCall]
     # Tool name to its final door status: what lets the bench render
     # the same degraded story a sheet cell carries. Defaulted for runs
     # stored before tools reported statuses.

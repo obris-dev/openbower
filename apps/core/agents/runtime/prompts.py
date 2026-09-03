@@ -6,8 +6,9 @@ already ship, never from growing a private grammar):
 
 - the context is the row's STRINGS only (nothing rich to traverse);
 - underscore attributes are a parse error (Django blocks them);
-- the engine is LOADERLESS ({% include %}/{% extends %} have no
-  filesystem to reach; they fail at render as a config-tier error);
+- the engine is LOADERLESS, and {% include %}/{% extends %} refuse at
+  validation (they have no filesystem to reach, and would otherwise
+  parse clean and detonate per row at render);
 - autoescape is OFF (prompts are text for a model, not HTML);
 - a missing variable renders "" (blank over garbage).
 
@@ -23,6 +24,7 @@ from django.template import Context, Engine
 from django.template.base import VariableNode
 from django.template.defaulttags import DebugNode
 from django.template.exceptions import TemplateSyntaxError
+from django.template.loader_tags import ExtendsNode, IncludeNode
 
 from openbower_schema.agents import CONFIDENCE_REASON_SUFFIX, CONFIDENCE_SUFFIX
 
@@ -96,6 +98,12 @@ def validate_prompt(template: str) -> None:
     parsed = _ENGINE.from_string(template)
     if parsed.nodelist.get_nodes_by_type(DebugNode):
         raise TemplateSyntaxError("the debug tag is not available in prompts")
+    # include/extends parse clean but detonate at RENDER (there is no
+    # template filesystem behind a prompt, so TemplateDoesNotExist
+    # fires per row, past every config gate). Nothing legitimate is
+    # refused: a prompt has no other templates to reach.
+    if parsed.nodelist.get_nodes_by_type(IncludeNode) or parsed.nodelist.get_nodes_by_type(ExtendsNode):
+        raise TemplateSyntaxError("include and extends tags are not available in prompts")
 
 
 def prompt_variables(template: str) -> set[str]:

@@ -13,23 +13,24 @@ import { outputKey } from "../../../_components/agent-config";
 import { AGENT_TOOLS } from "../../../_components/agent-config/tools-meta";
 
 /** One search's diagnosis line: what it returned or why it did not,
- * how many tries the seam made, the door that served it, and which
- * tool asked (a reader must be able to tell whose door refused). */
-function describeSearch(search: AgentTestResult["searches"][number]): string {
+ * how many tries the seam made, the provider that served it, and which
+ * tool asked (a reader must be able to tell whose call refused). */
+function describeSearch(search: AgentTestResult["tool_calls"][number]): string {
   // An unknown tool renders its own wire key, never a guessed label.
   const tool = search.tool === "find_contacts" ? "contacts" : search.tool === "web_search" ? "web" : search.tool;
-  const door = search.provider ? ` via ${search.provider}` : "";
-  // A result stored before searches reported a status parses with the
-  // defaults ("" everywhere): absence of a diagnosis is not a failure,
-  // and the tool/door labels would be guesses.
-  if (!search.status) return `${search.hits} hits, no diagnosis recorded`;
-  if (search.status === "open") return `${search.hits} hits (${tool}${door})`;
-  if (search.status === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${door})`;
-  if (search.status === "unreachable") return `unreachable (${tool}${door})`;
+  const via = search.provider ? ` via ${search.provider}` : "";
+  if (search.status === "open") {
+    // The discard is the degraded-provider tell: served results the
+    // tool refused as off-scope, distinct from an honest dry query.
+    const dropped = search.discarded > 0 ? `, ${search.discarded} off-scope discarded` : "";
+    return `${search.hits} hits${dropped} (${tool}${via})`;
+  }
+  if (search.status === "rate_limited") return `rate limited after ${search.attempts} tries (${tool}${via})`;
+  if (search.status === "unreachable") return `unreachable (${tool}${via})`;
   if (search.status === "not_configured") return `not set up (${tool})`;
   // The sheet's unknown-code policy, restated: a raw server code is
   // not user copy.
-  return `reported a problem this page can't name (${tool}${door})`;
+  return `reported a problem this page can't name (${tool}${via})`;
 }
 
 /** The test bench's INPUTS AND RESULTS: hand-fed values for the
@@ -99,7 +100,7 @@ export function TestBench({
   const sourceList = lists.find((l) => l.id === sourceListId) ?? null;
   // Normalized once: a localStorage DRAFT can hold a result from before
   // this field existed, so absence must degrade, never crash.
-  const searches = result?.searches ?? [];
+  const searches = result?.tool_calls ?? [];
   const failedSearches = searches.filter((s) => s.status && s.status !== "open").length;
   const rateLimited = searches.filter((s) => s.status === "rate_limited").length;
   // The run's own tool statuses answer what zero searches cannot: a
@@ -107,6 +108,7 @@ export function TestBench({
   // WHICH story an empty run is.
   const notConfigured = AGENT_TOOLS.filter((t) => result?.tools?.[t.key] === "not_configured").map((t) => t.label);
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
+  const totalDiscarded = searches.reduce((acc, s) => acc + (s.discarded ?? 0), 0);
   const emptyCells = result !== null && Object.keys(result.cells).length === 0;
   // Rendering follows the DECLARED type through the SAME cell-link
   // module the sheet renders with: a value must not link here and sit
@@ -259,7 +261,19 @@ export function TestBench({
               {supportFollowup ? `; if it keeps happening, ${supportFollowup}.` : "."}
             </p>
           )}
-          {emptyCells && failedSearches === 0 && searches.length > 0 && totalHits === 0 && (
+          {totalDiscarded > 0 && (
+            // The degraded-provider tell: the provider SERVED, but
+            // off-scope (a demanded site: relaxed away), so what the
+            // model saw is thinner than the call count suggests. This
+            // notice owns the story whenever discards exist; the
+            // returned-nothing hint below yields to it.
+            <p className="mt-2 text-xs text-warning">
+              The search provider may be serving degraded results: {totalDiscarded} result
+              {totalDiscarded === 1 ? " was" : "s were"} off-scope and discarded before the model saw{" "}
+              {totalDiscarded === 1 ? "it" : "them"}. Expect thin evidence until it recovers.
+            </p>
+          )}
+          {emptyCells && failedSearches === 0 && searches.length > 0 && totalHits === 0 && totalDiscarded === 0 && (
             <p className="mt-2 text-xs text-muted">
               Every search returned nothing. If queries that match on Google keep returning nothing here, the free
               search provider may be rate-limiting; DataForSEO (pay as you go, a deployment setting) gives

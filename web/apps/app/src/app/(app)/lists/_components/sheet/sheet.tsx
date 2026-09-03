@@ -29,7 +29,7 @@ import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
-import { FillsGlance, needsSearchDoor, useFill, type SearchDoor } from "./fill";
+import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { SheetTable } from "./sheet-table";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
@@ -67,26 +67,26 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
-  // deployment's search door into its popover (the paid-door nudge
-  // belongs only to the free door), fetched once and only when such a
+  // deployment's search provider into its popover (the paid-provider nudge
+  // belongs only to the free provider), fetched once and only when such a
   // cell is on screen: a sheet with none never pays for the catalog.
   // Absence degrades to the bare sentence.
-  const [searchDoor, setSearchDoor] = useState<SearchDoor>(null);
+  const [searchProvider, setSearchProviderChoice] = useState<SearchProviderChoice>(null);
   // The predicate lives with the nudge copy it serves (cell-state):
   // one spelling for the fetch gate and the renderer.
-  const doorNeeded = rows.some((row) => Object.values(row.states ?? {}).some((entry) => needsSearchDoor(entry.tools)));
+  const providerNeeded = rows.some((row) => Object.values(row.states ?? {}).some((entry) => needsSearchProvider(entry.tools)));
   useEffect(() => {
-    if (!doorNeeded || searchDoor !== null) return;
+    if (!providerNeeded || searchProvider !== null) return;
     let superseded = false;
     async function load() {
       const res = await fetchAgentCatalog();
-      if (!superseded && res.status === "ok") setSearchDoor(res.data.search_provider);
+      if (!superseded && res.status === "ok") setSearchProviderChoice(res.data.search_provider);
     }
     void load();
     return () => {
       superseded = true;
     };
-  }, [doorNeeded, searchDoor]);
+  }, [providerNeeded, searchProvider]);
 
   // Rows re-read when a live run progressed (attempted moved), on
   // first sight of one, and once on the last-live-to-terminal edge:
@@ -336,7 +336,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         <SheetTable
           columns={detail.columns}
           rows={rows}
-          searchDoor={searchDoor}
+          searchProvider={searchProvider}
           fills={{
             listId: detail.id,
             runs: fill.runs,

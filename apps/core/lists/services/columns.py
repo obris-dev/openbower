@@ -128,7 +128,7 @@ class ColumnService:
         updated list.
 
         The key SET must be unchanged, which is what keeps this from
-        being a mutation door: every other columns writer decides what
+        being a mutation path: every other columns writer decides what
         a column IS, and this one may only decide where it sits. It
         carries each column's dict across VERBATIM, so a fill member,
         a type, and a label cannot be edited through an ordering

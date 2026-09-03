@@ -10,7 +10,7 @@ os.environ.setdefault("APP_BASE_URL", "http://localhost:3003")
 # The local identity service (:8001 by suite convention).
 os.environ.setdefault("OPENBOWER_AUTH_URL", "http://localhost:8001")
 os.environ.setdefault("OPENBOWER_DATA_URL", "http://localhost:8003")
-# The zero-config inference door (see the ollama source below). A
+# The zero-config inference provider (see the ollama source below). A
 # containerized app reaches the host's Ollama via host.docker.internal,
 # not localhost, so compose overrides this.
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -44,7 +44,7 @@ DEBUG = env_bool("DEBUG", "true")
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "core"]
 
 # The zero-config dev loop: a natively-run Ollama through the
-# OpenAI-compatible door, added only when the operator's config file
+# OpenAI-compatible provider, added only when the operator's config file
 # didn't already name an ollama source. Keyless is fine (non-canonical
 # bases are open); absent Ollama degrades to an empty catalog honestly.
 #

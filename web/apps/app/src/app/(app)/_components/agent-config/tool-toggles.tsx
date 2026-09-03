@@ -6,12 +6,12 @@ import type { AgentCatalog, AgentTools } from "@bower/api";
 
 import { AGENT_TOOLS, type AgentToolKey } from "./tools-meta";
 
-// Per-tool doors: web search runs through ANY usable provider; finding
+// Per-tool providers: web search runs through ANY usable provider; finding
 // contacts requires DataForSEO specifically (LinkedIn profile searches
 // need Google-grade results). Keys and labels come from the ONE tool
-// registry; this map adds only what the toggles alone need. A door is
-// ready when the catalog's status for the tool is "open"; any other
-// code is the reason it is off.
+// registry; this map adds only what the toggles alone need. A tool is
+// ready when the catalog's status for it is "open"; any other code is
+// the reason it is off.
 const TOOL_DETAIL: Record<AgentToolKey, { icon: typeof Globe; hint: string }> = {
   web_search: {
     icon: Globe,
@@ -23,8 +23,8 @@ const TOOL_DETAIL: Record<AgentToolKey, { icon: typeof Globe; hint: string }> = 
   },
 };
 
-function doorOpen(catalog: AgentCatalog, tool: AgentToolKey): boolean {
-  return catalog.doors[tool] === "open";
+function toolReady(catalog: AgentCatalog, tool: AgentToolKey): boolean {
+  return catalog.tools[tool] === "open";
 }
 
 /** Tool toggles with the SETUP WORKFLOW inline: a tool whose search
@@ -43,8 +43,8 @@ export function ToolToggles({
   tools: AgentTools;
   onChange: (next: AgentTools) => void;
 }) {
-  const searchReady = catalog !== null && doorOpen(catalog, "web_search");
-  const contactsReady = catalog !== null && doorOpen(catalog, "find_contacts");
+  const searchReady = catalog !== null && toolReady(catalog, "web_search");
+  const contactsReady = catalog !== null && toolReady(catalog, "find_contacts");
   return (
     <Card className="space-y-3 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-faint">Tools</p>
@@ -62,7 +62,7 @@ export function ToolToggles({
       )}
       {AGENT_TOOLS.map((tool) => {
         const detail = TOOL_DETAIL[tool.key];
-        const ready = catalog !== null && doorOpen(catalog, tool.key);
+        const ready = catalog !== null && toolReady(catalog, tool.key);
         return (
           <div key={tool.key} className="flex items-start gap-3">
             <detail.icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-faint" />

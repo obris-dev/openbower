@@ -54,7 +54,7 @@ def settle(
     `cause` None means the run answered every column the fill owns (a
     value lands in each). `causes` is the per-column truth a partially
     answered run produces; omitted, `cause` speaks for every column.
-    `tools` is the run's per-tool door statuses (empty by default).
+    `tools` is the run's per-tool provider statuses (empty by default).
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
     fill = Fill.objects.get(id=fill_id)

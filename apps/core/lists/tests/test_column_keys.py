@@ -87,13 +87,12 @@ class ShapeHintTests(SimpleTestCase):
                     self.assertEqual(shape_hint(column_type), "")
 
     def test_the_hint_reaches_the_model_beside_the_authored_description(self):
-        from agents.runtime.answer import CellAnswerer
+        from agents.runtime.answer.schema import construct_answer_schema
         from openbower_schema.agents import AgentOutput
 
-        model = CellAnswerer(
-            model=None,
-            outputs=[AgentOutput(key="founded", label="Founded", type="date", description="Year founded")],
+        answer_type = construct_answer_schema(
+            [AgentOutput(key="founded", label="Founded", type="date", description="Year founded")]
         )
-        described = model._answer_type.model_json_schema()["properties"]["founded"]["description"]
+        described = answer_type.model_json_schema()["properties"]["founded"]["description"]
         self.assertIn("Year founded", described)
         self.assertIn("YYYY-MM-DD", described)
