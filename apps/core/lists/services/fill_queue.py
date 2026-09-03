@@ -180,7 +180,7 @@ class FillQueueService:
         )
 
     def park_task(self, task: FillTask, *, backoff_seconds: int, result: dict) -> bool:
-        """A 429 or timeout (the model's, or a search door's): the task
+        """A 429 or timeout (the model's, or a search provider's): the task
         stays QUEUED and comes round again after a real backoff, rather
         than waiting out a lease it never held. NOTHING is diagnosed on
         the sheet, because nothing terminal happened: a parked cell is

@@ -5,7 +5,7 @@
 // derive from (eta, pace, staleness, scope, tracker, glance).
 // Everything the family needs from itself it imports by file; this
 // index is what the REST of the sheet may reach for.
-export { AiCellState, DegradedToolMark, isDegradedFill, needsSearchDoor, type SearchDoor } from "./cell-state";
+export { AiCellState, DegradedToolMark, isDegradedFill, needsSearchProvider, type SearchProviderChoice } from "./cell-state";
 export { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, type ScopeChoice } from "./lib/fill-scope";
 export { FillsGlance } from "./fills-glance";
 export { isLiveStatus, type LiveRun } from "./lib/live-status";

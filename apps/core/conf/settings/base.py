@@ -150,7 +150,7 @@ DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"
 # rejected at the other.
 OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 
-# Inference doors for agents: two API SPECS, each holding NAMED SOURCES
+# Inference providers for agents: two API SPECS, each holding NAMED SOURCES
 # so one deploy can run several servers of the same spec side by side
 # (a local Ollama AND the canonical vendor). The config file
 # (config/providers.toml, operator-owned, gitignored; template in
@@ -172,19 +172,19 @@ except ProviderConfigError as e:
 OPENAI_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.OPENAI_COMPATIBLE]
 ANTHROPIC_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.ANTHROPIC_COMPATIBLE]
 
-# The search seam behind agents' evidence tools, two doors:
+# The search seam behind agents' evidence tools, two providers:
 # DuckDuckGo by DEFAULT: free and keyless, so web search works out of
-# the box and offloads the paid door. Contact search PINS DataForSEO
+# the box and offloads the paid provider. Contact search PINS DataForSEO
 # regardless (LinkedIn x-rays need Google-grade SERPs) and stays gated
 # until its credentials are set.
 SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")
-# The door names, mirrored from agents.constants.SearchProvider
+# The provider names, mirrored from agents.constants.SearchProvider
 # (settings cannot import app code; a parity test pins the mirror). A
 # typo'd provider is a CONFIG error and refuses at startup, distinct
 # from missing credentials (which gate honestly at runtime).
-_SEARCH_DOORS = ("duckduckgo", "dataforseo")
-if SEARCH_PROVIDER not in _SEARCH_DOORS:
-    raise ImproperlyConfigured(f"SEARCH_PROVIDER must be one of {_SEARCH_DOORS}, not {SEARCH_PROVIDER!r}")
+_SEARCH_PROVIDER_CHOICES = ("duckduckgo", "dataforseo")
+if SEARCH_PROVIDER not in _SEARCH_PROVIDER_CHOICES:
+    raise ImproperlyConfigured(f"SEARCH_PROVIDER must be one of {_SEARCH_PROVIDER_CHOICES}, not {SEARCH_PROVIDER!r}")
 DATAFORSEO_LOGIN = os.environ.get("DATAFORSEO_LOGIN", "")
 DATAFORSEO_PASSWORD = os.environ.get("DATAFORSEO_PASSWORD", "")
 

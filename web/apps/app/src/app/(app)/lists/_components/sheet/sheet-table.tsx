@@ -18,7 +18,7 @@ import { AddColumnMenuItems, type ColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchDoor } from "./fill";
+import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
 
 /** The tracker row's inputs, one object because they only travel
  * together: the LIVE runs and the management verbs the popover's
@@ -76,13 +76,13 @@ export function SheetTable({
   onDeleteColumn,
   pendingColumn,
   onNamePending,
-  searchDoor = null,
+  searchProvider = null,
 }: {
   columns: ListColumn[];
   rows: RenderableListRow[];
-  /** The deployment's web-search door once the sheet has fetched it
-   * (a rate-limited cell's popover composes the paid-door nudge). */
-  searchDoor?: SearchDoor;
+  /** The deployment's web-search provider once the sheet has fetched it
+   * (a rate-limited cell's popover composes the paid-provider nudge). */
+  searchProvider?: SearchProviderChoice;
   /** Absent on a sheet that cannot be reordered; its presence is what
    * arms both the drag and the header menu. */
   onReorder?: (keys: string[]) => void;
@@ -232,7 +232,7 @@ export function SheetTable({
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's
                     // overflow-hidden would clip the focus tooltip.
-                    <AiCellState entry={state} searchDoor={searchDoor} />
+                    <AiCellState entry={state} searchProvider={searchProvider} />
                   ) : (
                     // justify-end mirrors the td's text-right: the
                     // flex wrapper makes the value a shrink-to-content
@@ -241,7 +241,7 @@ export function SheetTable({
                       <div className="max-w-64 truncate">
                         <Cell column={column} value={value} />
                       </div>
-                      {isDegradedFill(entry) && <DegradedToolMark tools={entry.tools} searchDoor={searchDoor} />}
+                      {isDegradedFill(entry) && <DegradedToolMark tools={entry.tools} searchProvider={searchProvider} />}
                     </div>
                   )}
                 </td>

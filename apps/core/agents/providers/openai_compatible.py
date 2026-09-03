@@ -1,4 +1,4 @@
-"""The chat-completions SPEC door: any server speaking it, as NAMED
+"""The chat-completions SPEC provider: any server speaking it, as NAMED
 SOURCES (one deploy can run a local Ollama and the canonical vendor
 side by side)."""
 
@@ -12,12 +12,12 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from openbower_kernel.provider_config import SourceConfig
 
-from .base import ProviderDoor
+from .base import InferenceProvider
 
 # What THIS spec's SDK raises when a call runs out of time. The
 # SDK catches httpx's timeout and re-raises its own, which is NOT
 # an httpx.TimeoutException subclass, so catching the transport's
-# type alone never fires for a real door.
+# type alone never fires for a real provider.
 TIMEOUT_EXCEPTION: type[Exception] = openai.APITimeoutError
 
 # The canonical vendor's /v1/models lists EVERYTHING it serves
@@ -43,7 +43,7 @@ _EXCLUDE_PARTS = (
 )
 
 
-class OpenAICompatibleDoor(ProviderDoor):
+class OpenAICompatibleProvider(InferenceProvider):
     @property
     def configured_sources(self) -> dict[str, SourceConfig]:
         return settings.OPENAI_COMPATIBLE_SOURCES
@@ -75,4 +75,4 @@ class OpenAICompatibleDoor(ProviderDoor):
         return OpenAIChatModel(model_name, provider=provider)
 
 
-DOOR = OpenAICompatibleDoor()
+PROVIDER = OpenAICompatibleProvider()

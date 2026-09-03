@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .agents import MAX_TOOL_CALLS, TestSearch
+from .agents import MAX_TOOL_CALLS, ToolCall
 from .lists import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
@@ -58,7 +58,7 @@ FREE_SEARCH_FILL_BUDGET = MAX_TOOL_CALLS * 128
 class CellRunResult(BaseModel):
     """What ONE row's run produced, stored verbatim on the task that
     ran it: the cells it would write ({} = nothing, honestly), the
-    evidence the model saw, each query's diagnosis, and the causes
+    evidence the model saw, each tool call's diagnosis, and the causes
     behind any blank.
 
     ONE shape for both writers. A row can be answered by the worker or
@@ -76,13 +76,19 @@ class CellRunResult(BaseModel):
 
     cells: dict[str, str] = Field(default_factory=dict)
     evidence: list[str] = Field(default_factory=list)
-    searches: list[TestSearch] = Field(default_factory=list)
-    # WHY cells is empty ("" when cells landed), and the cause an
-    # UNANSWERED output carries when the run answered others. Both are
-    # WireCellState values; both default blank because a fully answered run
-    # has neither.
-    blank_cause: str = ""
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    # The cause an UNANSWERED output carries (a WireCellState value):
+    # the run's ONE stored verdict. The row-level reading derives from
+    # it (a run with no cells is blank FOR this cause; a partial
+    # answer's silent columns wear it), so there is no second field to
+    # drift from it.
     declined_cause: str = ""
+    # WHICH tool the run blames for its blanks ("" when none, and on
+    # records stored before the field): the runtime's own blame walk,
+    # served-exemption included, carried so the fill's failure copy
+    # quotes the culprit instead of re-deriving it from `tools`, which
+    # cannot see which tools served.
+    blamed_tool: str = ""
     # key -> the model's confidence and the reason it gave, for every
     # answered output INCLUDING the ones the floor discarded. The only
     # place the rejected distribution exists.

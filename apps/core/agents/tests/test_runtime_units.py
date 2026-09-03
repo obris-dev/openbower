@@ -47,8 +47,8 @@ class ModelForTests(SimpleTestCase):
     def setUp(self) -> None:
         from agents.providers import openai_compatible
 
-        openai_compatible.DOOR._roster_cache.clear()
-        self.addCleanup(openai_compatible.DOOR._roster_cache.clear)
+        openai_compatible.PROVIDER._roster_cache.clear()
+        self.addCleanup(openai_compatible.PROVIDER._roster_cache.clear)
 
     def test_open_source_yields_a_runnable_model(self):
         with self.settings(OPENAI_COMPATIBLE_SOURCES=self._LOCAL), self._with_roster(["gemma4:12b"]):
@@ -116,114 +116,192 @@ class ToolPoolTests(SimpleTestCase):
             self.deps = deps
 
     @staticmethod
-    def _answer(status, hits=(), provider="duckduckgo", attempts=1):
-        from agents.constants import SearchStatus
-        from agents.search import DoorAnswer
+    def _serve(hits=(), provider="duckduckgo", attempts=1):
+        from agents.tools.search.providers.base import ProviderAnswer
 
-        return DoorAnswer(SearchStatus(status), list(hits), provider, attempts)
+        return ProviderAnswer(list(hits), provider, attempts)
+
+    @staticmethod
+    def _refuse(code, provider="duckduckgo", attempts=1):
+        """A provider failure IS a raise now: an exception instance
+        for side_effect, resolved from the family's declarations."""
+        from agents.tools.search.errors import SEARCH_ERRORS
+
+        cls = next(error for error in SEARCH_ERRORS if error.code == code)
+        return cls(provider=provider, attempts=attempts)
 
     def test_hits_dedupe_by_canonical_url_across_calls(self):
-        from agents.runtime.tools import CellDeps, web_search
-        from agents.search import SearchHit
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.providers.base import SearchHit
+        from agents.tools.search.web_search import web_search
 
         deps = CellDeps()
         hits = [
             SearchHit("A", "https://www.acme.com/x", "s"),
             SearchHit("B", "https://acme.com/x/", "s"),
         ]
-        with patch("agents.runtime.tools.search", return_value=self._answer("open", hits)):
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits)):
             web_search(self._Ctx(deps), "acme")
         self.assertEqual(len(deps.evidence), 1)
 
+    def test_off_scope_hits_are_dropped_before_the_pool(self):
+        # site: is a DEMAND: an engine that runs dry on the strict
+        # query relaxes it and serves off-scope pages dressed as
+        # answers, and pooling those would hand the model noise wearing
+        # the contacts label. In-scope hits (regional subdomains
+        # included) pool; off-scope ones never enter the evidence.
+        import json
+
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.find_contacts import find_contacts
+        from agents.tools.search.providers.base import SearchHit
+
+        hits = [
+            SearchHit("A", "https://br.linkedin.com/in/ana", "s"),
+            SearchHit("B", "https://www.linkedin.com/in/bob", "s"),
+            SearchHit("C", "https://www.linkedin.com/company/acme", "s"),
+            SearchHit("D", "https://www.reddit.com/r/jobs/1", "s"),
+        ]
+        deps = CellDeps()
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="dataforseo")):
+            body = json.loads(find_contacts(self._Ctx(deps), "engineer acme"))
+        self.assertEqual(
+            [r["url"] for r in body["records"]],
+            ["https://br.linkedin.com/in/ana", "https://www.linkedin.com/in/bob"],
+        )
+        self.assertEqual(len(deps.evidence), 2)
+        # The audit stores the KEPT count (what the run may pool) and
+        # keeps the discard beside it, so a relaxed answer reads as
+        # thin, never as eight hits of noise.
+        self.assertEqual(len(deps.outcomes[0].hits), 2)
+        self.assertEqual(deps.outcomes[0].discarded, 2)
+
+    def test_a_fully_relaxed_answer_pools_nothing_and_says_why(self):
+        # Distinct from an honest drought: the provider SERVED, but
+        # nothing in scope. The pool stays empty, the note says why,
+        # and the audit shows served-and-discarded rather than a lie.
+        import json
+
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.find_contacts import NOTE_OFF_SCOPE, find_contacts
+        from agents.tools.search.providers.base import SearchHit
+
+        hits = [SearchHit("D", "https://www.reddit.com/r/jobs/1", "s")]
+        deps = CellDeps()
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="dataforseo")):
+            body = json.loads(find_contacts(self._Ctx(deps), "engineer acme"))
+        self.assertEqual(body["records"], [])
+        self.assertEqual(body["note"], NOTE_OFF_SCOPE)
+        self.assertEqual(deps.evidence, [])
+        self.assertEqual(len(deps.outcomes[0].hits), 0)
+        self.assertEqual(deps.outcomes[0].discarded, 1)
+
     def test_an_empty_query_never_buys_a_search(self):
-        from agents.runtime.tools import CellDeps, find_contacts, web_search
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.find_contacts import find_contacts
+        from agents.tools.search.web_search import web_search
 
         deps = CellDeps()
-        with patch("agents.runtime.tools.search") as searched:
+        with patch("agents.tools.search.machinery.search") as searched:
             web_search(self._Ctx(deps), "")
             find_contacts(self._Ctx(deps), "")
         searched.assert_not_called()
 
-    def test_a_rate_limit_closes_that_tools_door_and_only_that_one(self):
+    def test_a_rate_limit_closes_that_tools_provider_and_only_that_one(self):
         # The closed note never says "answer from the records already
         # gathered"; later calls of THAT tool are refused BEFORE the
         # spend and leave no outcome, so the stored searches show only
-        # what hit the wire. The other tool's door is its own: it
+        # what hit the wire. The other tool's provider is its own: it
         # still runs.
         import json
 
-        from agents.constants import AgentTool, SearchStatus
-        from agents.runtime.tools import CellDeps, find_contacts, web_search
+        from agents.constants import SearchStatus
+        from agents.runtime.deps import CellDeps
+        from agents.tools.harness import wrap
+        from agents.tools.search.find_contacts import SPEC as CONTACTS_SPEC
+        from agents.tools.search.web_search import SPEC as WEB_SPEC
 
+        web_search, find_contacts = wrap(WEB_SPEC), wrap(CONTACTS_SPEC)
         deps = CellDeps()
-        with patch("agents.runtime.tools.search", return_value=self._answer("rate_limited", attempts=5)):
+        with patch("agents.tools.search.machinery.search", side_effect=self._refuse("rate_limited", attempts=5)):
             first = json.loads(web_search(self._Ctx(deps), "acme"))
         # The note names the CALLABLE ("do not call it again"), so the
         # token is the tool's own name, not a prose rendering.
         self.assertIn("web_search is unavailable", first["note"])
         self.assertNotIn("answer from", first["note"])
-        self.assertEqual(deps.tool_status, {AgentTool.WEB_SEARCH: SearchStatus.RATE_LIMITED})
+        self.assertEqual(deps.tool_status, {"web_search": SearchStatus.RATE_LIMITED})
         self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)
-        with patch("agents.runtime.tools.search", return_value=self._answer("open", provider="dataforseo")) as searched:
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(provider="dataforseo")) as searched:
             second = json.loads(web_search(self._Ctx(deps), "acme inc"))
             third = json.loads(find_contacts(self._Ctx(deps), "VP Sales Acme"))
         self.assertIn("do not call it again", second["note"])
         self.assertEqual(third, {"records": []})
         self.assertEqual(searched.call_count, 1)
-        self.assertEqual([o.tool for o in deps.outcomes], [AgentTool.WEB_SEARCH, AgentTool.FIND_CONTACTS])
-        self.assertTrue(deps.tool_open(AgentTool.FIND_CONTACTS))
+        self.assertEqual([o.tool for o in deps.outcomes], ["web_search", "find_contacts"])
+        self.assertTrue(deps.tool_open("find_contacts", CONTACTS_SPEC.closers))
 
-    def test_unreachable_and_error_leave_the_door_open(self):
+    def test_unreachable_and_error_leave_the_provider_open(self):
         import json
 
-        from agents.constants import AgentTool
-        from agents.runtime.tools import NOTE_FAILED, CellDeps, web_search
+        from agents.runtime.deps import CellDeps
+        from agents.tools.harness import NOTE_CALL_FAILED, wrap
+        from agents.tools.search.web_search import SPEC as WEB_SPEC
 
+        web_search = wrap(WEB_SPEC)
         deps = CellDeps()
         for status in ("unreachable", "error"):
             with (
                 self.subTest(status=status),
-                patch("agents.runtime.tools.search", return_value=self._answer(status)),
+                patch("agents.tools.search.machinery.search", side_effect=self._refuse(status)),
             ):
                 note = json.loads(web_search(self._Ctx(deps), "q " + status))["note"]
-                self.assertEqual(note, NOTE_FAILED)
-                self.assertTrue(deps.tool_open(AgentTool.WEB_SEARCH))
-                # Provisional: the door wears its last failure while it
+                self.assertEqual(note, NOTE_CALL_FAILED)
+                self.assertTrue(deps.tool_open("web_search", WEB_SPEC.closers))
+                # Provisional: the provider wears its last failure while it
                 # has not served, so a run that ends here records it.
-                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], status)
+                self.assertEqual(deps.tool_status["web_search"], status)
         self.assertEqual([o.status for o in deps.outcomes], ["unreachable", "error"])
 
-    def test_a_door_that_served_keeps_open_through_a_later_failure(self):
+    def test_a_provider_that_served_keeps_open_through_a_later_failure(self):
         # Folded as answers arrive, in either order: a failure before
-        # the door serves is provisional and clears when it serves; a
+        # the provider serves is provisional and clears when it serves; a
         # failure after it served does not change its status, since
         # the row has its evidence.
-        from agents.constants import AgentTool, SearchStatus
-        from agents.runtime.tools import CellDeps, web_search
-        from agents.search import SearchHit
+        from agents.constants import SearchStatus
+        from agents.runtime.deps import CellDeps
+        from agents.tools.harness import wrap
+        from agents.tools.search.providers.base import SearchHit
+        from agents.tools.search.web_search import SPEC as WEB_SPEC
 
+        web_search = wrap(WEB_SPEC)
         hit = [SearchHit("A", "https://acme.com/", "s")]
         for order in (("unreachable", "open"), ("open", "unreachable")):
             with self.subTest(order=order):
                 deps = CellDeps()
                 for status in order:
-                    with patch("agents.runtime.tools.search", return_value=self._answer(status, hit)):
+                    mocked = (
+                        {"return_value": self._serve(hit)}
+                        if status == "open"
+                        else {"side_effect": self._refuse(status)}
+                    )
+                    with patch("agents.tools.search.machinery.search", **mocked):
                         web_search(self._Ctx(deps), "q " + status)
-                self.assertEqual(deps.tool_status[AgentTool.WEB_SEARCH], SearchStatus.OPEN)
-                self.assertIn(AgentTool.WEB_SEARCH, deps.served)
+                self.assertEqual(deps.tool_status["web_search"], SearchStatus.OPEN)
+                self.assertIn("web_search", deps.served)
 
     def test_a_closer_sticks_whichever_order_the_answers_land(self):
         # Sibling calls run on parallel threads, so a slow success can
-        # land AFTER the closer that ended the door: it must not
+        # land AFTER the closer that ended the provider: it must not
         # reopen the status (the model would re-buy a full backoff and
-        # the cell would ship "open" for a door that refused), though
-        # it still marks the door served, the historical fact the
+        # the cell would ship "open" for a provider that refused), though
+        # it still marks the provider served, the historical fact the
         # blank-cause skip reads. Folded directly: the threaded path
-        # cannot script this order, since a closed door is not called
+        # cannot script this order, since a closed provider is not called
         # again. FAILS if record_tool_status stops checking the
         # standing status before writing.
-        from agents.constants import AgentTool, SearchStatus
-        from agents.runtime.tools import CellDeps
+        from agents.constants import SearchStatus
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.web_search import SPEC as WEB_SPEC
 
         for order in (
             (SearchStatus.RATE_LIMITED, SearchStatus.OPEN),
@@ -233,46 +311,49 @@ class ToolPoolTests(SimpleTestCase):
             with self.subTest(order=[s.value for s in order]):
                 deps = CellDeps()
                 for status in order:
-                    deps.record_tool_status(AgentTool.WEB_SEARCH, status)
+                    deps.record_tool_status("web_search", status, WEB_SPEC.closers)
                 self.assertEqual(
-                    deps.tool_status[AgentTool.WEB_SEARCH], order[0] if order[0] != SearchStatus.OPEN else order[1]
+                    deps.tool_status["web_search"], order[0] if order[0] != SearchStatus.OPEN else order[1]
                 )
         deps = CellDeps()
-        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.RATE_LIMITED)
-        deps.record_tool_status(AgentTool.WEB_SEARCH, SearchStatus.OPEN)
-        self.assertIn(AgentTool.WEB_SEARCH, deps.served)
+        deps.record_tool_status("web_search", SearchStatus.RATE_LIMITED, WEB_SPEC.closers)
+        deps.record_tool_status("web_search", SearchStatus.OPEN, WEB_SPEC.closers)
+        self.assertIn("web_search", deps.served)
 
     def test_an_outcome_refuses_a_bare_string_status(self):
         # The status vocabulary is typed per outcome: the type checker
         # holds it at the call site, and the dataclass holds it at
         # runtime, so a string never rides where an enum belongs.
-        from agents.constants import AgentTool
         from agents.runtime.outcomes import SearchOutcome
 
         with self.assertRaises(TypeError):
-            SearchOutcome(tool=AgentTool.WEB_SEARCH, status="open", provider="p", attempts=1, query="q", hits=[])
+            SearchOutcome(tool="web_search", status="open", provider="p", attempts=1, query="q", hits=[])
 
     def test_model_authored_queries_clamp(self):
         from agents.constants import QUERY_MAX_LENGTH
-        from agents.runtime.tools import CellDeps, web_search
+        from agents.runtime.deps import CellDeps
+        from agents.tools.search.web_search import web_search
 
         seen: list[str] = []
 
         def fake_search(query, **kwargs):
             seen.append(query)
-            return self._answer("open")
+            return self._serve()
 
         # The clamp is LOGGED: a cut query is a different question than
         # the model asked, and silence would hide a model that keeps
         # overrunning the bound.
         with (
-            patch("agents.runtime.tools.search", side_effect=fake_search),
-            self.assertLogs("agents.runtime.tools", level="WARNING") as logs,
+            patch("agents.tools.search.machinery.search", side_effect=fake_search),
+            self.assertLogs("agents.tools.base", level="WARNING") as logs,
         ):
             web_search(self._Ctx(CellDeps()), "q" * (QUERY_MAX_LENGTH + 64))
         self.assertEqual(len(seen[0]), QUERY_MAX_LENGTH)
         self.assertIn(f"web_search query truncated from {QUERY_MAX_LENGTH + 64} to {QUERY_MAX_LENGTH}", logs.output[0])
-        with patch("agents.runtime.tools.search", side_effect=fake_search), self.assertNoLogs("agents.runtime.tools"):
+        with (
+            patch("agents.tools.search.machinery.search", side_effect=fake_search),
+            self.assertNoLogs("agents.tools.base"),
+        ):
             web_search(self._Ctx(CellDeps()), "q" * QUERY_MAX_LENGTH)
 
 
@@ -304,13 +385,17 @@ class RenderPromptTests(SimpleTestCase):
         with self.assertRaises(TemplateSyntaxError):
             validate_prompt("{{ name.__class__ }}")
 
-    def test_includes_have_no_filesystem_to_reach(self):
-        from django.template.exceptions import TemplateDoesNotExist
+    def test_includes_and_extends_are_refused_at_the_gate(self):
+        # Both tags parse clean and detonate at RENDER (no template
+        # filesystem behind a prompt), which is per-row, past every
+        # config gate; the validator must refuse them at save time.
+        from django.template.exceptions import TemplateSyntaxError
 
-        from agents.runtime.prompts import render_prompt
+        from agents.runtime.prompts import validate_prompt
 
-        with self.assertRaises(TemplateDoesNotExist):
-            render_prompt("{% include 'admin/base.html' %}", {})
+        for template in ("{% include 'admin/base.html' %}", "{% extends 'admin/base.html' %}"):
+            with self.subTest(template=template), self.assertRaises(TemplateSyntaxError):
+                validate_prompt(template)
 
 
 class GroundValueTests(SimpleTestCase):

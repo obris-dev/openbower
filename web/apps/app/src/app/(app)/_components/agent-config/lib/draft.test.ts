@@ -34,7 +34,7 @@ test("a well-shaped draft survives whole", () => {
     tools: { web_search: true },
     outputs: [output],
     testRow: { name: "Acme" },
-    testResult: { cells: { person: "Jane" }, evidence: [], searches: [] },
+    testResult: { cells: { person: "Jane" }, evidence: [], tool_calls: [] },
     testToolsOn: true,
   };
   // tools parse through the generated AgentTools schema, so a key a

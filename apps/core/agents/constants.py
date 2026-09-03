@@ -32,8 +32,8 @@ from openbower_schema.agents import (
     TEST_ROW_MAX_KEYS as TEST_ROW_MAX_KEYS,
 )
 
-# Inference doors are API SPECS, never products (a local Ollama or
-# vLLM is the openai_compatible door with its base pointed there;
+# Inference providers are API SPECS, never products (a local Ollama or
+# vLLM is the openai_compatible provider with its base pointed there;
 # keyless bases are OPEN when non-canonical). The enum itself lives in
 # the kernel: the config file's vocabulary, the model column, and the
 # wire Literal are one fact.
@@ -110,7 +110,7 @@ DATAFORSEO_TIMEOUT_SECONDS = 64
 # A rate-limited query is retried, SAME query, on this schedule
 # (binary) before the seam gives up on it. Transport, never the
 # model's budget: a retry of one question is not a new one. The
-# schedule's own waits total 15s, but a door's Retry-After ask is
+# schedule's own waits total 15s, but a provider's Retry-After ask is
 # honored clamped to the LARGEST step, so the true bound per call is
 # len(schedule) * max(schedule) (SEARCH_ATTEMPT_WORST_CASE_SECONDS
 # carries it into the worst-case derivation).
@@ -133,8 +133,8 @@ COMPLETION_TOKENS_PER_OUTPUT = 256
 TEST_VALUE_MAX_LENGTH = 512
 # A failed run's wire diagnosis, clamped like every authored value.
 TEST_RUN_ERROR_MAX_LENGTH = 256
-# One search call's worst case: the door's timeout, plus every wait
-# the backoff schedule allows AT ITS CLAMP. Not sum(schedule): a door
+# One search call's worst case: the provider's timeout, plus every wait
+# the backoff schedule allows AT ITS CLAMP. Not sum(schedule): a provider
 # answering Retry-After above the schedule is honored clamped to the
 # schedule's largest step on EVERY attempt, so each wait can reach
 # max(schedule), not its own step.
@@ -149,8 +149,8 @@ CAPPED_VERDICT_REQUESTS = 1 + MODEL_RETRIES
 # The runtime's worst case for ONE run, derived, never invented: every
 # completion the request budget allows at the completion timeout,
 # including the capped verdict's own budget, plus every paid search at
-# its clamped worst case (the free door's timeout is shorter, so the
-# paid door's bounds both). The wire's poll_budget_seconds publishes
+# its clamped worst case (the free provider's timeout is shorter, so the
+# paid provider's bounds both). The wire's poll_budget_seconds publishes
 # THIS (a hung run must not spin the client for the whole stale
 # window), and the worker's compose stop_grace_period must clear it.
 TEST_RUN_WORST_CASE_SECONDS = (
@@ -194,8 +194,8 @@ class TestRunStatus(StrEnum):
 
 
 class SearchProvider(StrEnum):
-    """The search seam's doors: the free keyless default, and the paid
-    Google-grade door contact search pins to. Settings mirror these
+    """The search seam's providers: the free keyless default, and the paid
+    Google-grade provider contact search pins to. Settings mirror these
     values as literals (settings cannot import app code); a parity
     test pins the mirror."""
 
@@ -204,15 +204,12 @@ class SearchProvider(StrEnum):
 
 
 class ToolStatus(StrEnum):
-    """The BASE status codes every tool can report for one call: what
-    its door did. Each outcome type carries its own enum that restates
-    these (StrEnums cannot extend one another; a parity test pins the
-    containment) and may add modes of its own, so a tool-specific
-    failure never lands here and never touches another tool. The
-    sheet's cell vocabulary is a table keyed by code (lists:
-    CELL_STATE_BY_STATUS), so a tool-specific code adds one row there;
-    the tool's own code rides the task and the cell record beside the
-    cell state."""
+    """The BASE status codes a provider-backed tool reports for one
+    call. A tool's failure vocabulary is its spec's failure_modes KEYS
+    (tool-owned, open vocabulary); the sheet's cell vocabulary maps
+    from each code's declared failure MODE in the runtime's harness,
+    and the tool's own code rides the task and the cell record beside
+    the cell state."""
 
     OPEN = "open"
     NOT_CONFIGURED = "not_configured"
@@ -221,29 +218,10 @@ class ToolStatus(StrEnum):
     ERROR = "error"
 
 
-class SearchStatus(StrEnum):
-    """The search door's vocabulary: the base codes, plus any mode only
-    a search door has (none yet)."""
-
-    OPEN = "open"
-    NOT_CONFIGURED = "not_configured"
-    RATE_LIMITED = "rate_limited"
-    UNREACHABLE = "unreachable"
-    ERROR = "error"
-
-
-# The search statuses that CLOSE the tool's door for the rest of the
-# run, the moment they are reported: a rate limit (the seam already
-# retried it) and a door found unconfigured. Unreachable and error do
-# not: the next query may get through, and a door that only ever
-# failed is settled at the end of the run instead.
-SEARCH_DOOR_CLOSERS = frozenset({SearchStatus.RATE_LIMITED, SearchStatus.NOT_CONFIGURED})
-
-
-class AgentTool(StrEnum):
-    """The tools the model may drive (each gated by its search door).
-    FIND_CONTACTS is the people x-ray, pinned to DataForSEO;
-    WEB_SEARCH runs the configured door."""
-
-    WEB_SEARCH = "web_search"
-    FIND_CONTACTS = "find_contacts"
+# The search family's vocabulary IS the base today (no search-only
+# code exists): an ALIAS, not a twin, so the two spellings cannot
+# drift. The day the family adds its own code this becomes a real
+# enum (the base members plus the new one), and the parity pins
+# (declared codes are members; members ship on the wire) catch every
+# seam that has to follow.
+SearchStatus = ToolStatus

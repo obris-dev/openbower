@@ -1,10 +1,10 @@
-"""The door contract: every provider is an API SPEC (never a company)
-holding NAMED SOURCES, and every door behaves identically on custody
-and caching, so those live here. A door owns exactly what the
+"""The provider contract: every provider is an API SPEC (never a company)
+holding NAMED SOURCES, and every provider behaves identically on custody
+and caching, so those live here. A provider owns exactly what the
 framework does not: WHICH sources are open (custody), WHAT each one
 serves (the roster probe), and HOW to construct the pydantic-ai Model
 for an address; the loop, tool schemas, and structured output are
-pydantic-ai's. The ABC is what forces a new door to implement the
+pydantic-ai's. The ABC is what forces a new provider to implement the
 full seam."""
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from ..constants import LIST_TIMEOUT_SECONDS, MODEL_MAX_LENGTH, PROBE_FAILURE_TT
 logger = logging.getLogger(__name__)
 
 
-class ProviderDoor(ABC):
+class InferenceProvider(ABC):
     def __init__(self) -> None:
         # Rosters change server-side, not per process: probe once per
         # source and keep the answer (a restart refreshes). ONLY
@@ -37,7 +37,7 @@ class ProviderDoor(ABC):
     @property
     @abstractmethod
     def configured_sources(self) -> dict[str, SourceConfig]:
-        """The door's settings entry: {name: SourceConfig}. A property,
+        """The provider's settings entry: {name: SourceConfig}. A property,
         never cached at init, so test overrides apply."""
 
     @abstractmethod
@@ -63,7 +63,7 @@ class ProviderDoor(ABC):
         return bool(source["api_key"]) or not source["canonical"]
 
     def sources(self) -> list[str]:
-        """The door's OPEN source names, in env order."""
+        """The provider's OPEN source names, in env order."""
         return [name for name, source in self.configured_sources.items() if self._is_open(source)]
 
     def models(self, source_name: str) -> list[str]:

@@ -47,7 +47,7 @@ from openbower_schema import (
 from openbower_schema.agents import (
     MAX_TOOL_CALLS,
     RESERVED_OUTPUT_MARKER,
-    SEARCH_DOORS,
+    SEARCH_PROVIDER_CHOICES,
     TEST_ROW_MAX_KEYS,
     TOOL_STATUSES,
 )
@@ -118,7 +118,7 @@ def build_schema() -> dict[str, Any]:
             "MAX_TOOL_CALLS": MAX_TOOL_CALLS,
             "RESERVED_OUTPUT_MARKER": RESERVED_OUTPUT_MARKER,
             "ROW_LEASE_STALE_SECONDS": ROW_LEASE_STALE_SECONDS,
-            "SEARCH_DOORS": list(SEARCH_DOORS),
+            "SEARCH_PROVIDER_CHOICES": list(SEARCH_PROVIDER_CHOICES),
             "SETTLED_CELL_STATES": list(SETTLED_CELL_STATES),
             # Each tool's status vocabulary (its own enum, containing
             # the base codes), so the client's copy table is typed per

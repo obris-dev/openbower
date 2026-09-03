@@ -2,7 +2,7 @@
 typed by the tool's OWN status vocabulary.
 
 `ToolOutcome` is the base every tool shares (which tool, what its
-door said, which provider served it, how many tries the seam made).
+provider said, which provider served it, how many tries the seam made).
 A tool specializes it with what it returned (`SearchOutcome` adds the
 query and the hits) and PINS the status enum it draws from, so a
 status of the wrong vocabulary is a type error at construction and a
@@ -18,15 +18,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from openbower_schema.agents import TestSearch
+from openbower_schema.agents import SearchToolCall
 
-from ..constants import AgentTool, SearchStatus, ToolStatus
-from ..search import SearchHit
+from ..constants import SearchStatus, ToolStatus
+from ..tools.search.providers.base import SearchHit
 
 
 @dataclass(frozen=True, slots=True)
 class ToolOutcome[StatusT: StrEnum]:
-    tool: AgentTool
+    # The tool's REGISTERED name (the registry's key, the wire's
+    # vocabulary): a plain string on purpose, so a newly registered
+    # tool records its audit without a closed enum to widen first.
+    tool: str
     status: StatusT
     provider: str
     attempts: int
@@ -44,19 +47,25 @@ class ToolOutcome[StatusT: StrEnum]:
 
 @dataclass(frozen=True, slots=True)
 class SearchOutcome(ToolOutcome[SearchStatus]):
-    """One search query's outcome: `hits` is what the door returned on
+    """One search query's outcome: `hits` is what the provider returned on
     an `open` status (empty is an honest zero-hit answer), nothing on
-    any other."""
+    any other. A tool that DEMANDS a scope (contact search's site:
+    operator) keeps only in-scope hits, so `hits` is what the run may
+    pool and the wire's count reads 0 when the engine relaxed the
+    query; `discarded` keeps the served-but-off-scope count for the
+    audit."""
 
     query: str
     hits: list[SearchHit]
+    discarded: int = 0
 
-    def wire(self) -> TestSearch:
+    def wire(self) -> SearchToolCall:
         """The ONE constructor for the stored and served diagnosis, so
         the bench's writer and the fill worker's cannot drift."""
-        return TestSearch(
+        return SearchToolCall(
             query=self.query,
             hits=len(self.hits),
+            discarded=self.discarded,
             status=self.status,
             provider=self.provider,
             attempts=self.attempts,

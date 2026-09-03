@@ -101,30 +101,30 @@ export async function deleteAgent(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.agents.detail(id));
 }
 
-// The doors this bundle can NAME, off the contract (never
+// The providers this bundle can NAME, off the contract (never
 // hand-retyped): the tolerant read below maps anything else to null.
-export const SEARCH_DOORS = WIRE_CONSTANTS.SEARCH_DOORS;
-const KNOWN_SEARCH_DOORS = new Set<string>(SEARCH_DOORS);
+export const SEARCH_PROVIDER_CHOICES = WIRE_CONSTANTS.SEARCH_PROVIDER_CHOICES;
+const KNOWN_SEARCH_PROVIDER_CHOICES = new Set<string>(SEARCH_PROVIDER_CHOICES);
 
-// The catalog's door is a server-owned enum, so the read is TOLERANT:
+// The catalog's provider is a server-owned enum, so the read is TOLERANT:
 // a strict parse would fail the WHOLE catalog for every deployed
-// bundle the day a third door ships, and the picker it feeds would
+// bundle the day a third provider ships, and the picker it feeds would
 // render an unloadable catalog with a Retry that can never succeed.
 export const TolerantAgentCatalogSchema = AgentCatalogSchema.extend({
   search_provider: z.string().nullable().default(null),
 });
 
-/** A door this bundle has never heard of reads as null, the value
- * that promises LEAST: the copy composing it names the paid door only
- * where it IS the remedy, and a door we cannot name is not one. */
-export function knownSearchDoor(door: string | null): AgentCatalog["search_provider"] {
-  return door !== null && KNOWN_SEARCH_DOORS.has(door) ? (door as AgentCatalog["search_provider"]) : null;
+/** A provider this bundle has never heard of reads as null, the value
+ * that promises LEAST: the copy composing it names the paid provider only
+ * where it IS the remedy, and a provider we cannot name is not one. */
+export function knownSearchProvider(provider: string | null): AgentCatalog["search_provider"] {
+  return provider !== null && KNOWN_SEARCH_PROVIDER_CHOICES.has(provider) ? (provider as AgentCatalog["search_provider"]) : null;
 }
 
 export async function fetchAgentCatalog(): Promise<ApiResult<AgentCatalog>> {
   const res = await http.get(apiRoutes.agents.catalog, TolerantAgentCatalogSchema);
   if (res.status !== "ok") return res;
-  return { ...res, data: { ...res.data, search_provider: knownSearchDoor(res.data.search_provider) } };
+  return { ...res, data: { ...res.data, search_provider: knownSearchProvider(res.data.search_provider) } };
 }
 
 /** Start a test run of a DRAFTED config (saved or not) against one

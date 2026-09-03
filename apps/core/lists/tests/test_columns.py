@@ -141,7 +141,7 @@ class ColumnOrderTests(TestCase):
         self.assertEqual([c["key"] for c in self.sheet.columns], ["notes", "company", "contact"])
 
     def test_it_carries_each_column_across_verbatim(self) -> None:
-        # The guard that keeps this from being a mutation door: the
+        # The guard that keeps this from being a mutation path: the
         # request names keys and nothing else, so a label, a type, or a
         # fill member cannot be edited through an ordering request.
         before = {c["key"]: dict(c) for c in self.sheet.columns}

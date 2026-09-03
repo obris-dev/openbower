@@ -155,7 +155,7 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body["error"], "free_search_budget")
-        self.assertIn("Connect DataForSEO", body["detail"])
+        self.assertIn("Switch search to DataForSEO", body["detail"])
 
     def test_an_existing_column_is_400_with_the_envelope(self) -> None:
         # EXISTENCE, not occupancy: this column is empty and still
@@ -380,7 +380,7 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual(second.states["answer"].tools, {"web_search": "unreachable"})
 
     def test_a_filled_cell_with_a_clean_tool_map_stays_an_absence(self) -> None:
-        # The live writer's most common shape: filled with every door
+        # The live writer's most common shape: filled with every provider
         # OPEN ({"web_search": "open"}), which must suppress exactly
         # like a pre-tools filled row (empty map). FAILS if the
         # degraded test decays to bool(tools), which would put a mark

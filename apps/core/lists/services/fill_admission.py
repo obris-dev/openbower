@@ -21,12 +21,14 @@ from itertools import batched, islice
 from django.conf import settings
 from django.db import models, transaction
 
-from agents.constants import TestRunStatus
+from agents.constants import SearchProvider, TestRunStatus
 from agents.models import Agent, AgentTestRun
 from agents.providers import ModelUnavailable, model_for
 from agents.runtime.answer import reserved_output_key
 from agents.runtime.prompts import prompt_variables
 from agents.services import AgentNotFound, AgentService, TestRunService, config_fingerprint
+from agents.tools import registry as tool_registry
+from agents.tools.registry import UnknownTool
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 from openbower_schema.fills import SETTLED_CELL_STATES, CellRunResult
@@ -154,15 +156,16 @@ class RefillEmpty(FillRefused):
 
 
 class FreeSearchBudget(FillRefused):
-    """The free door's admission bound, refusing BEFORE it spends and
-    naming the paid door."""
+    """The free provider's admission bound, refusing BEFORE it spends and
+    naming the paid provider."""
 
     code = FillErrorCode.FREE_SEARCH_BUDGET
 
     def __init__(self, *, searches: int) -> None:
         super().__init__(
             f"This fill could need up to {searches:,} searches; free search is budgeted for "
-            f"{FREE_SEARCH_FILL_BUDGET} per fill. Connect DataForSEO for metered search."
+            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to DataForSEO (a deployment setting) for metered"
+            " search."
         )
 
 
@@ -233,7 +236,7 @@ class DerivedKeyCollision(FillRefused):
     """Two of the agent's own outputs carry the SAME key: refusal,
     because the second output's answers would silently vanish into the
     first's column. The request serializer refuses duplicates at the
-    door; this guard covers configs that arrive any other way."""
+    provider; this guard covers configs that arrive any other way."""
 
     code = FillErrorCode.DERIVED_KEY_COLLISION
 
@@ -320,11 +323,13 @@ def _row_is_eligible(data: dict, variables: set[str]) -> bool:
     return any(str(data.get(variable, "")).strip() for variable in variables)
 
 
-def _fill_search_door_is_free() -> bool:
-    """Fills PREFER the paid door whenever its credentials exist; only
-    a credential-less deploy runs fill searches through the free
-    scraping door (which is what the budget bounds)."""
-    return not (settings.DATAFORSEO_LOGIN and settings.DATAFORSEO_PASSWORD)
+def _fill_search_provider_is_free() -> bool:
+    """Whether fill web searches run through the FREE scraping provider
+    (which is what the budget bounds): the routing fact is the
+    SEARCH_PROVIDER switch, never the paid credentials (contact search
+    pins the paid provider regardless, and credentials alone route
+    nothing)."""
+    return settings.SEARCH_PROVIDER != SearchProvider.DATAFORSEO
 
 
 class RefillTargets:
@@ -776,14 +781,14 @@ class FillAdmissionService:
         borrowed = self._borrowed_row(config=resolved, test_run_id=test_run_id)
         seeded_at: int | None = None
         consented = 0
-        cap = self._free_door_row_cap(resolved)
+        cap = self._free_provider_row_cap(resolved)
         # strict=False: the last page is short whenever the target count
         # is not a multiple of the batch, which is the normal case.
         for page in batched(targets, FILL_WRITE_BATCH, strict=False):
             tasks = []
             for row_id, position in page:
                 consented += 1
-                # Free-door budget, checked AS the walk counts rather
+                # Free-provider budget, checked AS the walk counts rather
                 # than against a total nobody has yet. Per ROW, not per
                 # page, so the refusal names the count that crossed the
                 # cap instead of wherever the page happened to end. It
@@ -875,10 +880,13 @@ class FillAdmissionService:
     @staticmethod
     def _check_model(config: AgentConfig) -> None:
         """Add-time UX only; the worker's claim-time resolution is
-        authoritative (a source can die mid-fill either way)."""
+        authoritative (a source can die mid-fill either way). The
+        toggles resolve here too: a toggle naming no registered tool
+        fails every row identically, so it refuses at add time."""
         try:
             model_for(config.provider, config.source, config.model)
-        except ModelUnavailable as e:
+            tool_registry.toggled_tools(config)
+        except (ModelUnavailable, UnknownTool) as e:
             raise ModelUnrunnable(str(e)) from e
 
     def _claim_columns(
@@ -1094,13 +1102,16 @@ class FillAdmissionService:
             raise AccountFillsFull()
 
     @staticmethod
-    def _free_door_row_cap(config: AgentConfig) -> int:
+    def _free_provider_row_cap(config: AgentConfig) -> int:
         """How many rows this fill may consent to before the FREE search
-        door's budget refuses it. A CAP rather than a check on a total,
+        provider's budget refuses it. A CAP rather than a check on a total,
         because admission counts its rows as it walks them and never
-        holds the whole set to measure it. Unbounded when the door is
-        metered or the config uses no tools."""
-        if config.uses_tools and _fill_search_door_is_free():
+        holds the whole set to measure it. Gated on WEB search alone:
+        the budget bounds the free scraping provider, and contact
+        search is metered (pinned to the paid provider) whatever the
+        switch says, so a contacts-only fill spends nothing free.
+        Unbounded when the provider is metered or no free tool runs."""
+        if config.searches_web and _fill_search_provider_is_free():
             return FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS
         return MAX_LIST_ROWS
 
@@ -1168,10 +1179,9 @@ class FillAdmissionService:
         # current words, and the one writer of cell truth stays
         # strict.
         known = {state.value for state in StoredCellState}
-        for key in ("blank_cause", "declined_cause"):
-            value = (run.result or {}).get(key, "")
-            if value and value not in known:
-                return None
+        value = (run.result or {}).get("declined_cause", "")
+        if value and value not in known:
+            return None
         return run
 
     def _settle_fill(self, fill: Fill, *, seed: tuple[AgentTestRun, int] | None) -> Fill:

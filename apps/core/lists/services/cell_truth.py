@@ -40,7 +40,7 @@ def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools:
     ones. That is what keeps the per-column counts an indexed read
     rather than a scan of the sheet, and it is why absence means
     NEVER ATTEMPTED and nothing else. `tools` is the run's per-tool
-    door statuses, the same on every column of the row: a filled cell
+    provider statuses, the same on every column of the row: a filled cell
     keeps the record of a degraded tool beside its value."""
     if not states:
         return

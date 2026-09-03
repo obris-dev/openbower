@@ -81,7 +81,7 @@ class AgentCrudTests(TestCase):
     def test_unknown_provider_rejected(self):
         resp = self.client.post(
             reverse("agents_index"),
-            {"label": "Bad door", "config": {**CONFIG, "provider": "mystery"}},
+            {"label": "Bad provider", "config": {**CONFIG, "provider": "mystery"}},
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400)
@@ -162,7 +162,7 @@ class PatchAndBoundsTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("nothing to change", str(resp.json()))
 
-    def test_wire_bounds_refuse_at_the_door(self):
+    def test_wire_bounds_refuse_at_the_provider(self):
         from agents.constants import LABEL_MAX_LENGTH, MAX_AGENT_OUTPUTS, PROMPT_MAX_LENGTH
 
         cases = [

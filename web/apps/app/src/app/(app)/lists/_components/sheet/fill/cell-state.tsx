@@ -12,9 +12,9 @@ import {
   type ToolStatuses,
 } from "@bower/api";
 
-/** The deployment's web-search door, when the sheet has fetched it
+/** The deployment's web-search provider, when the sheet has fetched it
  * (a server fact the degraded-tool copy composes; null until known). */
-export type SearchDoor = AgentCatalog["search_provider"] | null;
+export type SearchProviderChoice = AgentCatalog["search_provider"] | null;
 
 // The blank causes in user words (the server ships the structured
 // cause, this surface phrases it). The settled-vs-retryable PARTITION
@@ -61,7 +61,7 @@ const NOT_CONFIGURED_FACT = "Runs again on Continue once it's set up.";
 // little as the cause does.
 const UNKNOWN_FACT = "This page is too old to say whether Continue will retry it.";
 
-// The copy table for a TOOL's status code: what its door did, in user
+// The copy table for a TOOL's status code: what its provider did, in user
 // words, and the fix where one exists. Resolved by (tool, code) first,
 // then by the base code every tool shares, then the generic line for a
 // code this bundle has never heard of (a tool may add a mode
@@ -98,16 +98,16 @@ const TOOL_COPY: Record<ToolKey, Partial<Record<ToolStatus, ToolCopy>>> = {
 const UNKNOWN_TOOL_COPY: ToolCopy = { said: "reported a problem this page can't name", rowScoped: false };
 
 /** Whether any of a cell's tool statuses warrants fetching the
- * deployment's search door: exactly the throughput codes that render
- * the paid-door nudge below, exported so the fetch gate in sheet.tsx
+ * deployment's search provider: exactly the throughput codes that render
+ * the paid-provider nudge below, exported so the fetch gate in sheet.tsx
  * and the copy that needs the door cannot drift. */
-export function needsSearchDoor(tools: ToolStatuses): boolean {
+export function needsSearchProvider(tools: ToolStatuses): boolean {
   const status = tools.web_search ?? "open";
   return status === "rate_limited" || status === "unreachable";
 }
-// The paid-door nudge is a tier-2 composition: the server ships WHICH
+// The paid-provider nudge is a tier-2 composition: the server ships WHICH
 // door serves web search, and the sentence renders only where the
-// paid door is a remedy (the free door refused). A contacts refusal
+// paid door is a remedy (the free provider refused). A contacts refusal
 // already came from the paid door, and an unknown door claims
 // nothing.
 const PAID_DOOR_NUDGE = "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput.";
@@ -122,17 +122,17 @@ function degraded(tools: ToolStatuses): [ToolKey, string][] {
 }
 
 /** One tool's sentence for its status: "Web search couldn't be reached
- * on this row", plus the fix and the paid-door nudge where they apply. */
-function toolSentence(tool: ToolKey, code: string, searchDoor: SearchDoor): { cause: string; fix: string } {
+ * on this row", plus the fix and the paid-provider nudge where they apply. */
+function toolSentence(tool: ToolKey, code: string, searchProvider: SearchProviderChoice): { cause: string; fix: string } {
   const copy =
     (TOOL_COPY[tool] as Partial<Record<string, ToolCopy>>)[code] ??
     (BASE_COPY as Partial<Record<string, ToolCopy>>)[code] ??
     UNKNOWN_TOOL_COPY;
   // The nudge is a THROUGHPUT remedy, so it renders only where
-  // throughput is the problem (the free door refusing or timing
+  // throughput is the problem (the free provider refusing or timing
   // out), never on a door that is erroring or was never set up.
   const nudge =
-    tool === "web_search" && searchDoor === "duckduckgo" && (code === "rate_limited" || code === "unreachable")
+    tool === "web_search" && searchProvider === "duckduckgo" && (code === "rate_limited" || code === "unreachable")
       ? PAID_DOOR_NUDGE
       : "";
   return {
@@ -174,10 +174,10 @@ const WarningDot = () => <span aria-hidden className="h-2 w-2 rounded-full bg-wa
 /** The mark beside a FILLED value whose run had a degraded tool: the
  * answer landed on the evidence another tool found, and the user
  * should know which tool did not serve and what fixes it. */
-export function DegradedToolMark({ tools, searchDoor = null }: { tools: ToolStatuses; searchDoor?: SearchDoor }) {
+export function DegradedToolMark({ tools, searchProvider = null }: { tools: ToolStatuses; searchProvider?: SearchProviderChoice }) {
   const [first] = degraded(tools);
   if (!first) return null;
-  const { cause, fix } = toolSentence(first[0], first[1], searchDoor);
+  const { cause, fix } = toolSentence(first[0], first[1], searchProvider);
   return (
     <CauseMark cause={cause} fact={fix || "The answer came from what the other tools found."}>
       <WarningDot />
@@ -201,10 +201,10 @@ export function isDegradedFill(entry: RenderableCellStateWire | undefined): entr
  * the tool statuses beside it (which tool, what its door said). Clean
  * filled cells and not-attempted rows never reach here: both are the
  * ABSENCE of a state, rendered as the plain value or nothing.
- * `searchDoor` is the deployment's web-search door when the sheet has
+ * `searchProvider` is the deployment's web-search provider when the sheet has
  * it (fetched only once a degraded cell is on screen); the copy
- * composes the paid-door nudge off it. */
-export function AiCellState({ entry, searchDoor = null }: { entry: RenderableCellStateWire; searchDoor?: SearchDoor }) {
+ * composes the paid-provider nudge off it. */
+export function AiCellState({ entry, searchProvider = null }: { entry: RenderableCellStateWire; searchProvider?: SearchProviderChoice }) {
   const state = entry.state as CellState | typeof UNKNOWN_CELL_STATE;
   if (state === "pending") {
     return (
@@ -231,7 +231,7 @@ export function AiCellState({ entry, searchDoor = null }: { entry: RenderableCel
     // this is the defensive arm for a shape the wire can carry.
     const [first] = degraded(entry.tools);
     const sentence = first
-      ? toolSentence(first[0], first[1], searchDoor)
+      ? toolSentence(first[0], first[1], searchProvider)
       : { cause: "A tool did not serve this row", fix: "" };
     const fact =
       state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? FILLED_FACT : RETRY_FACT;

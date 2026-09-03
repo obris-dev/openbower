@@ -1,16 +1,8 @@
 {
   "$defs": {
     "AgentCatalog": {
-      "description": "What THIS deploy can run; `doors` gates the tools.",
+      "description": "What THIS deploy can run; `tools` gates the toggles.",
       "properties": {
-        "doors": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Each tool's door status BEFORE a run, keyed by AgentTool (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells).",
-          "title": "Doors",
-          "type": "object"
-        },
         "models": {
           "items": {
             "$ref": "#/$defs/CatalogModel"
@@ -31,13 +23,21 @@
               "type": "null"
             }
           ],
-          "description": "Which door serves web search on this deployment (the server's SearchProvider, pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot refuses an unset door, so client copy never needs a no-search-door story. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it.",
+          "description": "Which provider serves web search on this deployment (the server's SearchProvider, pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot refuses an unset door, so client copy never needs a no-search-door story. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it.",
           "title": "Search Provider"
         },
         "support_followup": {
           "description": "The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify.",
           "title": "Support Followup",
           "type": "string"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Each tool's availability BEFORE a run, keyed by registered tool name (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells).",
+          "title": "Tools",
+          "type": "object"
         },
         "truncated": {
           "description": "True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.",
@@ -49,7 +49,7 @@
         "models",
         "support_followup",
         "truncated",
-        "doors",
+        "tools",
         "search_provider"
       ],
       "title": "AgentCatalog",
@@ -227,7 +227,7 @@
       "type": "object"
     },
     "AgentTestResult": {
-      "description": "One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the searches that\nproduced it with each query's diagnosis.",
+      "description": "One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the tool calls\nthat produced it with each call's diagnosis.",
       "properties": {
         "cells": {
           "additionalProperties": {
@@ -243,11 +243,11 @@
           "title": "Evidence",
           "type": "array"
         },
-        "searches": {
+        "tool_calls": {
           "items": {
-            "$ref": "#/$defs/TestSearch"
+            "$ref": "#/$defs/SearchToolCall"
           },
-          "title": "Searches",
+          "title": "Tool Calls",
           "type": "array"
         },
         "tools": {
@@ -262,7 +262,7 @@
       "required": [
         "cells",
         "evidence",
-        "searches"
+        "tool_calls"
       ],
       "title": "AgentTestResult",
       "type": "object"
@@ -1343,20 +1343,28 @@
       "title": "RowsAdded",
       "type": "object"
     },
-    "TestSearch": {
-      "description": "One search query's outcome: `status` is what the door said (a\nSearchStatus code: open, and hits, possibly zero, is the honest\nanswer; any other code is why there are none). `provider` is the\ndoor that served it, `attempts` how many tries the seam made for\nthis one query (a rate limit is retried, same query, before it\ncounts), and `tool` which tool asked (web_search | find_contacts),\nso a reader can tell whose door refused.",
+    "SearchToolCall": {
+      "description": "One search-tool call's record: `status` is what the provider\nsaid (open, and hits, possibly zero, is the honest answer; any\nother code is the tool's own failure code saying why there are\nnone), `provider` which provider served it, `attempts` how many\ntries the seam made for this one query (a rate limit is retried,\nsame query, before it counts), and `tool` which tool called, so a\nreader can tell whose call refused. `hits` counts what the tool\nKEPT; `discarded` counts served hits the tool dropped as off-scope\n(an engine that runs dry on a demanded site: relaxes the query and\nserves off-site pages dressed as answers), so a thin answer shows\nwhether the provider ran dry or ran off. Every field REQUIRED: the\none writer sets them all, and a stored record is the same shape as\na served one.",
       "properties": {
         "attempts": {
-          "default": 1,
           "title": "Attempts",
+          "type": "integer"
+        },
+        "discarded": {
+          "title": "Discarded",
           "type": "integer"
         },
         "hits": {
           "title": "Hits",
           "type": "integer"
         },
+        "kind": {
+          "const": "search",
+          "default": "search",
+          "title": "Kind",
+          "type": "string"
+        },
         "provider": {
-          "default": "",
           "title": "Provider",
           "type": "string"
         },
@@ -1365,21 +1373,24 @@
           "type": "string"
         },
         "status": {
-          "default": "",
           "title": "Status",
           "type": "string"
         },
         "tool": {
-          "default": "",
           "title": "Tool",
           "type": "string"
         }
       },
       "required": [
+        "tool",
+        "status",
+        "provider",
+        "attempts",
         "query",
-        "hits"
+        "hits",
+        "discarded"
       ],
-      "title": "TestSearch",
+      "title": "SearchToolCall",
       "type": "object"
     }
   },
@@ -1391,7 +1402,7 @@
     "MAX_TOOL_CALLS": 6,
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "ROW_LEASE_STALE_SECONDS": 256,
-    "SEARCH_DOORS": [
+    "SEARCH_PROVIDER_CHOICES": [
       "duckduckgo",
       "dataforseo"
     ],

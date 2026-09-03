@@ -10,7 +10,7 @@ from typing import get_args
 
 from django.test import SimpleTestCase
 
-from agents.constants import AgentProvider, AgentTool
+from agents.constants import AgentProvider
 from openbower_schema.agents import AgentProvider as WireAgentProvider
 from openbower_schema.agents import AgentTools
 
@@ -31,7 +31,7 @@ class ToolPropertyParityTests(SimpleTestCase):
             provider="openai_compatible",
             source="s",
             model="m",
-            tools={tool.value: True for tool in AgentTool},
+            tools=dict.fromkeys(AgentTools.model_fields, True),
             outputs=[{"key": "value", "label": "Value", "type": "text"}],
         )
         self.assertTrue(config.finds_contacts)
@@ -39,11 +39,13 @@ class ToolPropertyParityTests(SimpleTestCase):
         self.assertTrue(config.uses_tools)
         bare = config.model_copy(update={"tools": AgentTools()})
         self.assertFalse(bare.uses_tools)
-
-    def test_tools_submodel_fields_match_the_enum(self):
-        # The wire's CLOSED tool shape and the Django enum are two
-        # homes for one key set; the web derives from the wire.
-        self.assertEqual(set(AgentTools.model_fields), {tool.value for tool in AgentTool})
+        # ANY single toggle counts: uses_tools derives over every
+        # field, so a tool the named properties never mention still
+        # arms the no-spend, fabrication, and budget guards.
+        for field in AgentTools.model_fields:
+            with self.subTest(only=field):
+                one = config.model_copy(update={"tools": AgentTools(**{field: True})})
+                self.assertTrue(one.uses_tools)
 
 
 class DuplicatedKnowledgePins(SimpleTestCase):
@@ -56,20 +58,35 @@ class DuplicatedKnowledgePins(SimpleTestCase):
 
         self.assertEqual(set(get_args(WireStatus)), {s.value for s in TestRunStatus})
 
-    def test_settings_serp_door_mirror_matches_the_enum(self):
+    def test_settings_serp_provider_mirror_matches_the_enum(self):
         from agents.constants import SearchProvider
-        from agents.search import _DOORS
+        from agents.tools.search.providers.registry import all_providers
         from conf.settings import base as settings_base
         from openbower_schema.agents import SearchProviderWire
 
-        self.assertEqual(set(_DOORS), set(SearchProvider))
-        self.assertEqual(set(settings_base._SEARCH_DOORS), {p.value for p in SearchProvider})
+        self.assertEqual({p.name for p in all_providers()}, {p.value for p in SearchProvider})
+        self.assertEqual(set(settings_base._SEARCH_PROVIDER_CHOICES), {p.value for p in SearchProvider})
         self.assertEqual(set(get_args(SearchProviderWire)), {p.value for p in SearchProvider})
+
+    def test_the_search_familys_codes_are_search_statuses_with_phrases(self):
+        # ask_provider coerces SearchStatus(failure.code) while
+        # recording the audit, and the copy builder looks the phrase
+        # up directly: a new family error class whose code misses
+        # either home would raise INSIDE a fill (dressed as a tool
+        # crash), so both memberships pin here instead.
+        from agents.constants import SearchStatus
+        from agents.tools.search.errors import SEARCH_ERRORS
+        from agents.tools.search.machinery import STATUS_PHRASE
+
+        for error in SEARCH_ERRORS:
+            with self.subTest(code=error.code):
+                SearchStatus(error.code)
+                self.assertIn(error.code, STATUS_PHRASE)
 
     def test_the_worst_case_counts_the_verdict_and_the_clamped_backoff(self):
         # The two terms once missing from the derivation, pinned
         # independently: the capped verdict is a SECOND run with its
-        # own request budget, and a door's Retry-After stretches every
+        # own request budget, and a provider's Retry-After stretches every
         # wait to the schedule's LARGEST step (the clamp honors the
         # ask up to max(schedule), not up to that attempt's own step).
         # FAILS if either term falls back out of the formula, which

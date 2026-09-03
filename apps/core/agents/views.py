@@ -10,7 +10,6 @@ import threading
 from functools import cached_property
 
 from django.conf import settings
-from pydantic_ai.models import Model
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -20,10 +19,9 @@ from lists.constants import FillErrorCode
 from openbower_schema.agents import AgentCatalog, AgentConfig, AgentsList, CatalogModel
 from openbower_schema.fills import CellRunResult
 
-from .constants import TEST_RUN_MAX_CONCURRENT, AgentTool
+from .constants import TEST_RUN_MAX_CONCURRENT
 from .models import Agent
 from .providers import ModelUnavailable, catalog_entries, model_for
-from .runtime.tools import door_status_for_tool
 from .serializers import (
     AgentCreateRequest,
     AgentPatchRequest,
@@ -45,6 +43,8 @@ from .services import (
     fail_run,
     run_is_pending,
 )
+from .tools import registry as tool_registry
+from .tools.registry import UnknownTool
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class AgentsView(_ScopedView):
 
 class AgentCatalogView(_ScopedView):
     """GET /v1/agents/catalog: what THIS deploy can run. Models come
-    from the configured doors; `doors` gates the tools."""
+    from the configured providers; `tools` gates the toggles."""
 
     def get(self, request: Request) -> Response:
         entries, truncated = catalog_entries()
@@ -105,8 +105,8 @@ class AgentCatalogView(_ScopedView):
             models=models,
             support_followup=settings.SUPPORT_FOLLOWUP,
             truncated=truncated,
-            doors={tool.value: door_status_for_tool(tool).value for tool in AgentTool},
-            # The test profile pins every door shut with an empty
+            tools={tool.name: tool.availability().value for tool in tool_registry.all_tools()},
+            # The test profile pins every provider shut with an empty
             # setting; the wire says "none" as null, never as "".
             search_provider=settings.SEARCH_PROVIDER or None,
         )
@@ -119,20 +119,18 @@ class AgentCatalogView(_ScopedView):
 _TEST_SLOTS = threading.BoundedSemaphore(TEST_RUN_MAX_CONCURRENT)
 
 
-def _spawn_test(run_id: str, config: AgentConfig, row: dict, model: Model) -> None:
-    threading.Thread(target=_execute_test, args=(run_id, config, row, model), daemon=True).start()
+def _spawn_test(run_id: str, config: AgentConfig, row: dict) -> None:
+    threading.Thread(target=_execute_test, args=(run_id, config, row), daemon=True).start()
 
 
-def _execute_test(
-    run_id: str, config: AgentConfig, row: dict, model: Model | None = None, *, close_connection: bool = True
-) -> None:
+def _execute_test(run_id: str, config: AgentConfig, row: dict, *, close_connection: bool = True) -> None:
     """The background half of a test run: the cell walk, then the row
     flips terminal. Runs on a daemon thread with its own DB connection
     (closed on exit so threads never leak connections); ANY failure
     lands as status=failed WITH its why, never a stuck pending."""
     from django.db import connection
 
-    from .runtime import run_cell
+    from .runtime.cell import run_cell
 
     try:
         # REFUSE at capacity, never queue: queue time is invisible to
@@ -148,16 +146,16 @@ def _execute_test(
             if not run_is_pending(run_id):
                 logger.info("test run %s superseded before start; skipping", run_id)
                 return
-            run = run_cell(config, row, model=model)
+            run = run_cell(config, row)
             # Wire-shaping happens HERE, at the boundary, THROUGH the
             # contract models: drift fails at write, in the code that
             # caused it.
             result = CellRunResult(
                 cells=run.cells,
                 evidence=run.evidence,
-                searches=[o.wire() for o in run.searches],
-                blank_cause=run.blank_cause,
+                tool_calls=[o.wire() for o in run.tool_calls],
                 declined_cause=run.declined_cause,
+                blamed_tool=run.blamed_tool,
                 assessments=run.assessments,
                 # ONE shape for both writers: a borrowed bench row
                 # lands through the same landing as a worker row, and
@@ -168,7 +166,7 @@ def _execute_test(
             complete_run(run_id, result.model_dump())
         finally:
             _TEST_SLOTS.release()
-    except ModelUnavailable as e:
+    except (ModelUnavailable, UnknownTool) as e:
         # Config-tier refusals carry their own user-facing why.
         logger.exception("test run %s failed", run_id)
         fail_run(run_id, str(e))
@@ -198,8 +196,16 @@ class AgentTestView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         config = AgentConfig(**serializer.validated_data["config"])
         try:
-            model = model_for(config.provider, config.source, config.model)
-        except ModelUnavailable as e:
+            # The 400 gate: resolve-and-DISCARD, the worker's
+            # claim-time pattern (the run's answerer resolves its own;
+            # a shared instance would die under whichever run finishes
+            # first).
+            model_for(config.provider, config.source, config.model)
+            # The toggles resolve here too: a toggle naming no
+            # registered tool is the same config-tier refusal as an
+            # unrunnable address, and must 400, never start a run.
+            tool_registry.toggled_tools(config)
+        except (ModelUnavailable, UnknownTool) as e:
             raise ValidationError(str(e)) from e
         # Account-level admission BEFORE a run row exists: the bench
         # is a metered lane like a fill, so the fill lane's cap gates
@@ -223,7 +229,7 @@ class AgentTestView(_ScopedView):
             # verbatim. No run id: adopting a teammate's run would
             # show their cells under your config's types and diagnoses.
             return Response({"error": TEST_RUN_ACTIVE_CODE, "detail": str(e)}, status=409)
-        _spawn_test(str(run.id), config, serializer.validated_data["row"], model)
+        _spawn_test(str(run.id), config, serializer.validated_data["row"])
         return Response(test_run_wire(run), status=202)
 
 

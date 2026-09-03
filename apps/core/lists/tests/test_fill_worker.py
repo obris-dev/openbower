@@ -123,7 +123,7 @@ def _patches(model, *, source=None):
     against real providers), so both seams are patched."""
     stack = ExitStack()
     stack.enter_context(patch("lists.operations.fill_worker.model_for", return_value=model))
-    stack.enter_context(patch("agents.runtime.cell.model_for", return_value=model))
+    stack.enter_context(patch("agents.runtime.answer.answerer.model_for", return_value=model))
     stack.enter_context(patch("lists.operations.fill_worker.source_config", return_value=source or PINNED_SOURCE))
     return stack
 
@@ -338,7 +338,7 @@ class WorkerTestCase(TransactionTestCase):
 
     def test_a_failed_fill_releases_them_too(self) -> None:
         # Same sweep, reached through the breaker rather than a cancel,
-        # which is the likelier door: PROVIDER_THROTTLED trips when
+        # which is the likelier provider: PROVIDER_THROTTLED trips when
         # rows are transient by definition.
         self.run_worker(throttling_model(), passes=1)
         self.fill.refresh_from_db()
@@ -465,14 +465,14 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.TRANSIENT)
 
-    def test_a_rate_limited_search_door_parks_the_row_and_the_cell_names_the_tool(self) -> None:
-        # The model searches, the free door refuses past its backoff,
+    def test_a_rate_limited_search_provider_parks_the_row_and_the_cell_names_the_tool(self) -> None:
+        # The model searches, the free provider refuses past its backoff,
         # and the model answers anyway from nothing: the answer is
         # discarded, the row parks like a model 429 would (its run
         # stored, so the refusals are the audit), and once the attempts
         # are spent the cell lands in the state the TOOL owns, never in
         # a bare transient and never as "found".
-        from agents.search import _DuckduckgoPage
+        from agents.tools.search.providers.duckduckgo import _Page
 
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
@@ -492,8 +492,8 @@ class WorkerTestCase(TransactionTestCase):
 
         with (
             # The engine's bot challenge: a 202 with no results in it.
-            patch("agents.search._duckduckgo_fetch", return_value=_DuckduckgoPage(202, [])),
-            patch("agents.search._sleep"),
+            patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(202, [])),
+            patch("agents.tools.search.providers.schedule._sleep"),
             self.settings(SEARCH_PROVIDER="duckduckgo"),
         ):
             self.run_worker(FunctionModel(fn), passes=1)
@@ -502,10 +502,13 @@ class WorkerTestCase(TransactionTestCase):
             self.assertEqual(fill.status, FillStatus.RUNNING)
             self.assertEqual(fill.transient, 1)
             self.assertTrue(task.parked)
-            self.assertEqual(task.result["blank_cause"], StoredCellState.TOOL_UNAVAILABLE)
+            self.assertEqual(task.result["declined_cause"], StoredCellState.TOOL_UNAVAILABLE)
             self.assertEqual(task.result["tools"], {"web_search": "rate_limited"})
+            # The run's own blame verdict rides the record: the breaker
+            # quotes it instead of re-walking the status map.
+            self.assertEqual(task.result["blamed_tool"], "web_search")
             self.assertEqual(task.result["cells"], {})
-            [search] = task.result["searches"]
+            [search] = task.result["tool_calls"]
             self.assertEqual(
                 (search["status"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
             )
@@ -519,11 +522,15 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
         cell = FillCellState.objects.get()
-        # The cell carries WHICH tool and WHAT its door said beside the
+        # The cell carries WHICH tool and WHAT its provider said beside the
         # base state: the sheet's word is the state, the sentence is
         # the tool's status.
         self.assertEqual((cell.state, cell.tools), (StoredCellState.TOOL_UNAVAILABLE, {"web_search": "rate_limited"}))
         self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
+        # The wire promises a SHARE of the row's wall seconds: the
+        # per-tool sum is clamped, since sibling tool calls run on
+        # parallel threads and an unclamped sum can exceed it.
+        self.assertLessEqual(fill.search_wait_seconds, fill.row_seconds)
 
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
         # One row gone, the list still here: its task is ROW_MISSING
