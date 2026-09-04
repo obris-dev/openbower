@@ -9,7 +9,7 @@ from typing import Any
 from django.template.exceptions import TemplateSyntaxError
 from rest_framework import serializers
 
-from openbower_schema.agents import AgentListItem, AgentTools
+from openbower_schema.agents import AGENT_PROVIDER_CHOICES, AgentListItem, AgentTools
 from openbower_schema.agents import AgentSummary as WireAgentSummary
 from openbower_schema.lists import COLUMN_TYPE_CHOICES
 
@@ -22,7 +22,6 @@ from .constants import (
     OUTPUT_LABEL_MAX_LENGTH,
     PROMPT_MAX_LENGTH,
     SOURCE_MAX_LENGTH,
-    AgentProvider,
 )
 from .models import Agent
 
@@ -72,7 +71,10 @@ class AgentConfigRequest(serializers.Serializer):
     """The config shape both custodies and the test bench share."""
 
     prompt = serializers.CharField(max_length=PROMPT_MAX_LENGTH)
-    provider = serializers.ChoiceField(choices=[p.value for p in AgentProvider])
+    # Contract-derived on purpose (import-time safe; the registry
+    # fills at ready()): this field's only registry coupling is the
+    # parity pin holding the Literal to the roster.
+    provider = serializers.ChoiceField(choices=list(AGENT_PROVIDER_CHOICES))
     source = serializers.CharField(max_length=SOURCE_MAX_LENGTH)
     model = serializers.CharField(max_length=MODEL_MAX_LENGTH)
     tools = serializers.DictField(child=serializers.BooleanField(), required=False, default=dict)

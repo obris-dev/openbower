@@ -5,20 +5,12 @@ side by side)."""
 from __future__ import annotations
 
 import openai
-from django.conf import settings
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from openbower_kernel.provider_config import SourceConfig
-
-from .base import InferenceProvider
-
-# What THIS spec's SDK raises when a call runs out of time. The
-# SDK catches httpx's timeout and re-raises its own, which is NOT
-# an httpx.TimeoutException subclass, so catching the transport's
-# type alone never fires for a real provider.
-TIMEOUT_EXCEPTION: type[Exception] = openai.APITimeoutError
+from .base import InferenceProvider, SourceConfig
+from .registry import register
 
 # The canonical vendor's /v1/models lists EVERYTHING it serves
 # (embeddings, audio, images, moderation) with no capability flag, so
@@ -44,9 +36,8 @@ _EXCLUDE_PARTS = (
 
 
 class OpenAICompatibleProvider(InferenceProvider):
-    @property
-    def configured_sources(self) -> dict[str, SourceConfig]:
-        return settings.OPENAI_COMPATIBLE_SOURCES
+    canonical_base = "https://api.openai.com/v1"
+    timeout_exception = openai.APITimeoutError
 
     def _headers(self, source: SourceConfig) -> dict[str, str]:
         key = source["api_key"]
@@ -76,3 +67,5 @@ class OpenAICompatibleProvider(InferenceProvider):
 
 
 PROVIDER = OpenAICompatibleProvider()
+
+register(PROVIDER)

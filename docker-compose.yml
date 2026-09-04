@@ -44,10 +44,6 @@ x-core-env: &core_env
   # the sibling dev stack's service names.
   OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-http://auth:8001}
   OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-http://data:8003}
-  # Overridable: the default is a host-run Ollama, but any
-  # OpenAI-compatible server can serve, so a remote box or a different port is a
-  # variable rather than an edit here.
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
 
 x-host-gateway: &host_gateway
   # For the genuinely HOST-run process (Ollama). Docker Desktop maps

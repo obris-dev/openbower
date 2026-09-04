@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from openbower_schema.agents import AgentConfig, AgentTools
+from openbower_schema.agents import DEFAULT_AGENT_PROVIDER, AgentConfig, AgentTools
 from openbower_schema.lists import COLUMN_TYPE_CHOICES, DEFAULT_COLUMN_TYPE
 
 from .constants import (
@@ -29,8 +29,8 @@ from .constants import (
     OUTPUT_LABEL_MAX_LENGTH,
     PROMPT_MAX_LENGTH,
     SOURCE_MAX_LENGTH,
-    AgentProvider,
 )
+from .providers.registry import provider_names
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,9 @@ def coerce_config(stored: dict[str, Any], *, origin: str) -> AgentConfig:
     brokenness, because the contract's min-1 must hold to render at
     all.
 
-    A retired provider renders under the FIRST spec, and normally
-    refuses at run time because no same-named source exists there; a
+    A retired provider renders under the contract's DEFAULT spec
+    (DEFAULT_AGENT_PROVIDER), and normally refuses at run time
+    because no same-named source exists there; a
     deploy that DOES name one identically under the substitute spec
     would run it there, which is the render-over-refuse trade this
     read path makes.
@@ -77,7 +78,7 @@ def coerce_config(stored: dict[str, Any], *, origin: str) -> AgentConfig:
         logger.warning("%s: stored config is not an object (%s)", origin, type(stored).__name__)
         stored = {}
     column_types = set(COLUMN_TYPE_CHOICES)
-    providers = {p.value for p in AgentProvider}
+    providers = set(provider_names())
     stored_rows = stored.get("outputs") if isinstance(stored.get("outputs"), list) else []
     rows = [o for o in stored_rows if isinstance(o, dict)][:MAX_AGENT_OUTPUTS]
     outputs = [
@@ -98,7 +99,7 @@ def coerce_config(stored: dict[str, Any], *, origin: str) -> AgentConfig:
         outputs = [dict(UNREADABLE_OUTPUT)]
     provider = stored.get("provider")
     if provider not in providers:
-        provider = AgentProvider.OPENAI_COMPATIBLE.value
+        provider = DEFAULT_AGENT_PROVIDER
     prompt = _text(stored.get("prompt"))[:PROMPT_MAX_LENGTH]
     if (
         outputs != stored_rows

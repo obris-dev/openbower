@@ -21,7 +21,9 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.constants import SEARCH_BACKOFF_SECONDS
-from openbower_kernel.provider_config import ProviderSpec, canonical_base, make_source
+from agents.providers.base import full_source
+from agents.providers.openai_compatible import OpenAICompatibleProvider
+from openbower_kernel.provider_config import make_source
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
 from ..constants import (
@@ -101,19 +103,23 @@ def flaky_then_answering_model(value: str) -> FunctionModel:
 
 
 # The default test source: one row in flight, so row order is
-# deterministic. Built through make_source, never a SourceConfig
-# literal: passing the derived `canonical` by hand is the one thing
-# that constructor exists to prevent, and a fixture that does it is a
-# fixture that can disagree with production.
-PINNED_SOURCE = make_source(ProviderSpec.OPENAI_COMPATIBLE.value, base_url="http://localhost:11434/v1", concurrency=1)
+# deterministic. Built through make_source + full_source, never a
+# SourceConfig literal: `canonical` is DERIVED against the provider's
+# own vendor origin by full_source, and a fixture that hand-passes it
+# is a fixture that can disagree with production.
+PINNED_SOURCE = full_source(
+    make_source(base_url="http://localhost:11434/v1", concurrency=1),
+    canonical_base=OpenAICompatibleProvider.canonical_base,
+)
 # A source the AIMD controller can actually MOVE inside: the vendor
 # origin (so canonical, starting at FILL_CONCURRENCY_HOSTED_START) with
 # no declared ceiling (so it may climb to MAX_FILL_CONCURRENCY). Every
 # other worker test pins the window to (1, 1), where the controller is
 # inert: min(2, 1) and max(1, 0) are both 1, so no climb, no halving,
 # and no epoch is observable.
-WIDE_SOURCE = make_source(
-    ProviderSpec.OPENAI_COMPATIBLE.value, base_url=canonical_base(ProviderSpec.OPENAI_COMPATIBLE.value), api_key="k"
+WIDE_SOURCE = full_source(
+    make_source(base_url=OpenAICompatibleProvider.canonical_base, api_key="k"),
+    canonical_base=OpenAICompatibleProvider.canonical_base,
 )
 
 

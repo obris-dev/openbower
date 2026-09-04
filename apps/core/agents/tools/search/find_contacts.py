@@ -47,6 +47,7 @@ SPEC = SearchToolSpec(
     # The pinned provider has no cheaper next step to offer, so the
     # remedy is empty whatever the configured one is.
     failure_copy=provider_failure_copy("Finding contacts", lambda: "DataForSEO", lambda: ""),
+    blame_order=2,
     record_label="contacts",
     display_name="Finding contacts",
     provider=SearchProvider.DATAFORSEO,

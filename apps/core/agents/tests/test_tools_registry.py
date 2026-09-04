@@ -40,6 +40,13 @@ class RegisterGuardTests(SimpleTestCase):
     def test_reregistering_the_same_spec_is_idempotent(self):
         registry.register(web_search.SPEC)
 
+    def test_a_non_integer_blame_order_refuses(self):
+        # Blame order is a DECLARED fact (the walk order carries
+        # nothing); a spec without a real one must refuse at
+        # registration, not sort as a surprise.
+        with self.assertRaisesMessage(ValueError, "blame_order"):
+            registry.register(replace(web_search.SPEC, blame_order=True))
+
     def test_a_different_spec_on_a_taken_name_collides_loudly(self):
         with self.assertRaisesMessage(ValueError, "already registered"):
             registry.register(replace(web_search.SPEC, display_name="Other web search"))

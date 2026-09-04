@@ -72,8 +72,9 @@ export function ModelPicker({
           {/* The setup walkthrough, under the copy rule's carve-out:
               framed so hosted users can tell it is not for them. */}
           <p className="text-xs text-faint">
-            Self-hosting? A local Ollama is picked up automatically, and config/providers.toml declares other
-            sources.
+            Self-hosting? config/providers.toml declares your sources; setup seeds it with a local Ollama entry, and
+            any OpenAI-compatible or Anthropic-compatible server is one entry more. If someone else runs this
+            deployment, send them this note.
           </p>
         </>
       ) : (

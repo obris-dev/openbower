@@ -12,8 +12,7 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 # (a running Ollama; DuckDuckGo needs no config); tests must never
 # reach a real server, so
 # every provider is pinned shut and each test opens what it mocks.
-OPENAI_COMPATIBLE_SOURCES = {}
-ANTHROPIC_COMPATIBLE_SOURCES = {}
+INFERENCE_SOURCES = {}
 # Deliberately NOT a valid provider: any test that reaches the search seam
 # without patching it gets a not_configured answer instead of making a
 # live network call. Tests that want a provider set one explicitly.

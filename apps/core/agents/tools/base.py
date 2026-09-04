@@ -150,6 +150,11 @@ class ToolSpec:
     errors: tuple[type[ToolError], ...]
     # failure code -> the tier-1 copy for a fill this tool failed.
     failure_copy: Callable[[FailureCode], FailureCopy]
+    # WHERE this tool stands in the blame walk: a blank cell's cause
+    # is named by the LOWEST blame_order among the toggled tools that
+    # closed unserved. A DECLARED fact, never the import or walk
+    # order (ties break by name, deterministically).
+    blame_order: int
     # The label the model reads on evidence records; defaults to the
     # name, overridden with shorter prose ("web") when the name reads
     # long in a record line.

@@ -49,6 +49,9 @@ SPEC = SearchToolSpec(
     availability=provider_availability(),
     errors=SEARCH_ERRORS,
     failure_copy=_failure_copy,
+    # First in the blame walk: the general search is the likelier
+    # culprit for an unserved blank than the pinned contacts tool.
+    blame_order=1,
     record_label="web",
 )
 

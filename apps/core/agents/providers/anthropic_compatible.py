@@ -3,25 +3,19 @@
 from __future__ import annotations
 
 import anthropic
-from django.conf import settings
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from openbower_kernel.provider_config import SourceConfig
-
-from .base import InferenceProvider
-
-# See the sibling provider: the SDK's own timeout type, not httpx's.
-TIMEOUT_EXCEPTION: type[Exception] = anthropic.APITimeoutError
+from .base import InferenceProvider, SourceConfig
+from .registry import register
 
 _API_VERSION = "2023-06-01"
 
 
 class AnthropicCompatibleProvider(InferenceProvider):
-    @property
-    def configured_sources(self) -> dict[str, SourceConfig]:
-        return settings.ANTHROPIC_COMPATIBLE_SOURCES
+    canonical_base = "https://api.anthropic.com"
+    timeout_exception = anthropic.APITimeoutError
 
     def _headers(self, source: SourceConfig) -> dict[str, str]:
         headers = {"anthropic-version": _API_VERSION}
@@ -43,3 +37,5 @@ class AnthropicCompatibleProvider(InferenceProvider):
 
 
 PROVIDER = AnthropicCompatibleProvider()
+
+register(PROVIDER)

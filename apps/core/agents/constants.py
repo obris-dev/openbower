@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from openbower_kernel.provider_config import SOURCE_NAME_MAX_LENGTH, ProviderSpec
+from openbower_kernel.provider_config import SOURCE_NAME_MAX_LENGTH
 from openbower_schema.agents import (
     LABEL_MAX_LENGTH as LABEL_MAX_LENGTH,
 )
@@ -28,13 +28,6 @@ from openbower_schema.agents import (
 from openbower_schema.agents import (
     PROMPT_MAX_LENGTH as PROMPT_MAX_LENGTH,
 )
-
-# Inference providers are API SPECS, never products (a local Ollama or
-# vLLM is the openai_compatible provider with its base pointed there;
-# keyless bases are OPEN when non-canonical). The enum itself lives in
-# the kernel: the config file's vocabulary, the model column, and the
-# wire Literal are one fact.
-AgentProvider = ProviderSpec
 
 # Wire bounds (label, prompt, outputs) live on the CONTRACT and are
 # re-exported here: one number enforced by the serializer, the wire
@@ -63,7 +56,9 @@ CATALOG_PROBE_CONCURRENCY = 8
 # budget. Lives on the CONTRACT since the fill consent footer computes
 # "up to N searches" from it client-side; the runtime's derivations
 # read the re-export here.
-# Column width for the enum-backed field (generous over exact).
+# Column width for the stored provider name, and the bound the
+# registry holds a registered (module-derived) name to: a name past
+# it could never be stored (generous over exact).
 PROVIDER_MAX_LENGTH = 32
 # Search queries are MODEL-AUTHORED text crossing into a metered
 # external call: bounded, like every authored value here (Google

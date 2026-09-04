@@ -9,6 +9,14 @@ from pydantic import BaseModel, Field
 from .lists import COLUMN_KEY_MAX_LENGTH, COLUMN_LABEL_MAX_LENGTH, ColumnType
 
 AgentProvider = Literal["openai_compatible", "anthropic_compatible"]
+# The SPEC coercion falls back to when a stored draft names a provider
+# no current release knows: a door, never a source or a server (the
+# user still picks the source). openai_compatible because it is the
+# spec Ollama, vLLM, gateways, and the vendor all speak.
+DEFAULT_AGENT_PROVIDER: AgentProvider = "openai_compatible"
+# The specs as DATA (the SEARCH_PROVIDER_CHOICES idiom), for choice
+# fields that cannot hold a Literal.
+AGENT_PROVIDER_CHOICES: tuple[str, ...] = get_args(AgentProvider)
 
 # Wire bounds live ON the contract (Field constraints below) so both
 # sides enforce one number: the server's serializers import these, the
