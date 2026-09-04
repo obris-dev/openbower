@@ -10,14 +10,14 @@ from typing import Annotated, NamedTuple
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, create_model
 
-from lists.cell_types import shape_hint
-from lists.constants import CELL_MAX_LENGTH
 from openbower_schema.agents import (
     CONFIDENCE_REASON_SUFFIX,
     CONFIDENCE_SUFFIX,
     RESERVED_OUTPUT_MARKER,
     AgentOutput,
 )
+from openbower_schema.cell_types import shape_hint
+from openbower_schema.lists import CELL_MAX_LENGTH
 
 # Whitespace strips and the cell ceiling CLAMPS in the schema itself
 # (a clamp, deliberately not max_length: rejection would burn a retry

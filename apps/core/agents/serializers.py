@@ -4,18 +4,14 @@ the views fails loudly here, never in the client's zod."""
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 from django.template.exceptions import TemplateSyntaxError
-from django.utils import timezone
 from rest_framework import serializers
 
-from lists.constants import ColumnType
-from openbower_kernel.fields import min_ulid_at
 from openbower_schema.agents import AgentListItem, AgentTools
 from openbower_schema.agents import AgentSummary as WireAgentSummary
-from openbower_schema.agents import AgentTestRun as WireTestRun
+from openbower_schema.lists import COLUMN_TYPE_CHOICES
 
 from .constants import (
     LABEL_MAX_LENGTH,
@@ -26,21 +22,15 @@ from .constants import (
     OUTPUT_LABEL_MAX_LENGTH,
     PROMPT_MAX_LENGTH,
     SOURCE_MAX_LENGTH,
-    TEST_KEY_MAX_LENGTH,
-    TEST_ROW_MAX_KEYS,
-    TEST_RUN_STALE_PENDING_SECONDS,
-    TEST_RUN_WORST_CASE_SECONDS,
-    TEST_VALUE_MAX_LENGTH,
     AgentProvider,
-    TestRunStatus,
 )
-from .models import Agent, AgentTestRun
+from .models import Agent
 
 
 class OutputDef(serializers.Serializer):
     key = serializers.CharField(required=False, allow_blank=True, max_length=OUTPUT_KEY_MAX_LENGTH)
     label = serializers.CharField(max_length=OUTPUT_LABEL_MAX_LENGTH)
-    type = serializers.ChoiceField(choices=[t.value for t in ColumnType])
+    type = serializers.ChoiceField(choices=list(COLUMN_TYPE_CHOICES))
     description = serializers.CharField(required=False, allow_blank=True, max_length=OUTPUT_DESCRIPTION_MAX_LENGTH)
 
 
@@ -140,41 +130,6 @@ def agent_wire(agent: Agent) -> dict[str, Any]:
     ).model_dump()
 
 
-def test_run_wire(run: AgentTestRun) -> dict[str, Any]:
-    """The polled envelope. A pending run older than the stale window
-    presents as FAILED with its why (daemon threads die unwound on
-    restarts and nothing else revisits a pending row); presentation
-    only, no write (a zombie completion may still land). Staleness is
-    judged off the ULID id's time prefix, the SAME fact the start
-    guard filters on (two legs judging different columns can
-    disagree)."""
-    status = run.status
-    error = run.error or None
-    if status == TestRunStatus.PENDING and str(run.id) < min_ulid_at(
-        timezone.now() - timedelta(seconds=TEST_RUN_STALE_PENDING_SECONDS)
-    ):
-        status = TestRunStatus.FAILED
-        error = "the run was interrupted (the server restarted mid-run); run the test again"
-    return WireTestRun(
-        id=str(run.id),
-        status=status,
-        # The stored shape is a CellRunResult; AgentTestResult is the
-        # NARROWER bench view of it, so this is a projection and the
-        # extra keys (the causes and assessments the fill's drawer
-        # reads) are dropped here on purpose, by the field's type.
-        #
-        # `or None`: a complete row whose result is the model default
-        # {} must present as the contract-breach it is, not 500 the
-        # poll inside AgentTestResult validation.
-        result=(run.result or None) if status == TestRunStatus.COMPLETE else None,
-        error=error,
-        # The client's poll budget is the runtime's WORST CASE, not
-        # the stale window: a hung run must not spin the client for
-        # the extra ~900s the orphan margin exists for.
-        poll_budget_seconds=TEST_RUN_WORST_CASE_SECONDS,
-    ).model_dump()
-
-
 def list_item_wire(agent: Agent) -> dict[str, Any]:
     """The list's slim row: the index renders name, model, tools, and
     dates; shipping every agent's full config to draw four columns
@@ -187,28 +142,3 @@ def list_item_wire(agent: Agent) -> dict[str, Any]:
         created_at=agent.created_at.isoformat(),
         updated_at=agent.updated_at.isoformat(),
     ).model_dump()
-
-
-class AgentTestRequest(serializers.Serializer):
-    """POST /v1/agents/test: a drafted config plus one hand-fed row of
-    {{token}} values, every authored value bounded (clamped, never
-    rejected, matching the sheet's own cell doctrine)."""
-
-    config = AgentConfigRequest()
-    row = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False), default=dict)
-    # The borrowed row's id, when the bench row came from a sheet: it
-    # makes the run seedable by a later fill admission (the prewrite
-    # economy). Blank for hand-typed rows; never validated against a
-    # sheet here (admission does that, with the sheet in hand).
-    row_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
-
-    def validate_row(self, value: dict) -> dict:
-        # DictField(child=CharField) already guaranteed strings. The key
-        # COUNT clamps like everything else here (first N in JSON
-        # order): a 17-variable prompt is authored input, not an error.
-        # Truncated keys keep FIRST-wins semantics: two long keys
-        # sharing a prefix must not silently collapse to the later one.
-        row: dict[str, str] = {}
-        for key, item in list(value.items())[:TEST_ROW_MAX_KEYS]:
-            row.setdefault(key[:TEST_KEY_MAX_LENGTH], item[:TEST_VALUE_MAX_LENGTH])
-        return row

@@ -52,12 +52,6 @@ class DuplicatedKnowledgePins(SimpleTestCase):
     """Facts declared in two homes that cannot import each other: each
     pair pins here so drift fails a test instead of shipping."""
 
-    def test_test_run_status_wire_matches_enum(self):
-        from agents.constants import TestRunStatus
-        from openbower_schema.agents import TestRunStatus as WireStatus
-
-        self.assertEqual(set(get_args(WireStatus)), {s.value for s in TestRunStatus})
-
     def test_settings_serp_provider_mirror_matches_the_enum(self):
         from agents.constants import SearchProvider
         from agents.tools.search.providers.registry import all_providers
@@ -93,36 +87,67 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         # the grace test alone cannot catch (it compares compose to
         # the constant, not the constant to its parts).
         from agents.constants import (
+            CELL_RUN_WORST_CASE_SECONDS,
             COMPLETION_TIMEOUT_SECONDS,
             DATAFORSEO_TIMEOUT_SECONDS,
             MODEL_RETRIES,
             SEARCH_BACKOFF_SECONDS,
-            TEST_RUN_WORST_CASE_SECONDS,
         )
         from openbower_schema.agents import MAX_TOOL_CALLS
 
         floor = (MAX_TOOL_CALLS + 3 + 1 + MODEL_RETRIES) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * (
             DATAFORSEO_TIMEOUT_SECONDS + len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
         )
-        self.assertGreaterEqual(TEST_RUN_WORST_CASE_SECONDS, floor)
+        self.assertGreaterEqual(CELL_RUN_WORST_CASE_SECONDS, floor)
 
-    def test_the_worker_stop_grace_clears_one_runs_worst_case(self):
-        # Compose cannot import the constant, so the worker's
-        # stop_grace_period restates it by hand: a grace BELOW the
-        # worst case SIGKILLs a legitimately slow row through its
-        # outcome write, which is exactly what the grace exists to
-        # prevent. The worst case moves whenever a timeout, the tool
-        # budget, or the search backoff schedule moves; this is what
-        # makes the compose value follow.
+    def test_the_cron_sweeps_test_fills(self):
+        # The test-fill TTL is a compose cron, never an admission
+        # preflight (a bench click must not pay a sweep, and an idle
+        # deploy still purges). Two files carry it: the compose cron
+        # service runs supercronic over the crontab, and the crontab's
+        # line is the schedule. FAILS if either half is dropped.
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[4]
+        compose = (root / "docker-compose.yml").read_text()
+        self.assertIn("cron:", compose)
+        self.assertIn("supercronic /app/apps/core/crontab", compose)
+        crontab = (root / "apps" / "core" / "crontab").read_text()
+        self.assertIn("manage.py sweep_test_fills", crontab)
+
+    def test_the_worker_topology_and_graces_hold(self):
+        # Compose cannot import the constant, so the FILL worker's
+        # stop_grace_period restates the worst case by hand (a grace
+        # below it SIGKILLs a legitimately slow row through its outcome
+        # write). Grace is attributed PER SERVICE, never max()d: the
+        # test worker's deliberately short grace must not satisfy the
+        # fill worker's bound. The kinds flags are pinned here too,
+        # because the two-instance topology's whole isolation is the
+        # claim filter each command line carries.
         import re
         from pathlib import Path
 
-        from agents.constants import TEST_RUN_WORST_CASE_SECONDS
+        from agents.constants import CELL_RUN_WORST_CASE_SECONDS
 
         compose = (Path(__file__).resolve().parents[4] / "docker-compose.yml").read_text()
-        graces = [int(value) for value in re.findall(r"^\s*stop_grace_period:\s*(\d+)s\s*$", compose, re.MULTILINE)]
-        self.assertEqual(len(graces), 1, "one worker grace expected in docker-compose.yml")
-        self.assertGreater(graces[0], TEST_RUN_WORST_CASE_SECONDS)
+        services: dict[str, dict[str, str]] = {}
+        current = ""
+        for line in compose.splitlines():
+            top = re.match(r"^  (\w[\w-]*):\s*$", line)
+            if top:
+                current = top.group(1)
+                continue
+            grace = re.match(r"^\s*stop_grace_period:\s*(\d+)s\s*$", line)
+            if grace and current:
+                services.setdefault(current, {})["grace"] = grace.group(1)
+            command = re.match(r"^\s*command:.*fill_worker(.*)$", line)
+            if command and current:
+                services.setdefault(current, {})["kinds"] = command.group(1).strip()
+        graced = {name: conf for name, conf in services.items() if "grace" in conf}
+        self.assertEqual(set(graced), {"worker", "worker-test"})
+        self.assertGreater(int(graced["worker"]["grace"]), CELL_RUN_WORST_CASE_SECONDS)
+        self.assertEqual(graced["worker"]["kinds"], "--kinds normal")
+        self.assertEqual(graced["worker-test"]["kinds"], "--kinds test")
 
 
 class ReservedKeyParityPins(SimpleTestCase):
@@ -144,19 +169,3 @@ class ReservedKeyParityPins(SimpleTestCase):
         self.assertEqual(shipped, computed)
         for name in shipped:
             self.assertTrue(reserved_output_key(name), name)
-
-
-class ComposedMessageBoundsPins(SimpleTestCase):
-    def test_the_crash_message_never_meets_the_error_clamp(self):
-        # The follow-up is operator config bounded at boot; this holds
-        # the arithmetic so the composed message cannot truncate
-        # mid-URL through fail_run's clamp.
-        from django.conf import settings
-
-        from agents.constants import TEST_RUN_ERROR_MAX_LENGTH
-        from agents.views import CRASH_MESSAGE_PREFIX
-
-        self.assertLessEqual(
-            len(CRASH_MESSAGE_PREFIX) + settings.SUPPORT_FOLLOWUP_MAX_LENGTH, TEST_RUN_ERROR_MAX_LENGTH
-        )
-        self.assertLessEqual(len(settings.SUPPORT_FOLLOWUP), settings.SUPPORT_FOLLOWUP_MAX_LENGTH)

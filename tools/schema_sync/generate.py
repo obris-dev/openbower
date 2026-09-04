@@ -30,9 +30,9 @@ from openbower_schema import (
     AgentCatalog,
     AgentsList,
     AgentSummary,
-    AgentTestRun,
     AuthUser,
     ColumnPromptWire,
+    FillRunDetail,
     FillRunPage,
     FillRunWire,
     FoldersList,
@@ -48,7 +48,9 @@ from openbower_schema.agents import (
     MAX_TOOL_CALLS,
     RESERVED_OUTPUT_MARKER,
     SEARCH_PROVIDER_CHOICES,
+    TEST_KEY_MAX_LENGTH,
     TEST_ROW_MAX_KEYS,
+    TEST_VALUE_MAX_LENGTH,
     TOOL_STATUSES,
 )
 from openbower_schema.fills import (
@@ -67,9 +69,9 @@ CONTRACT_MODELS: list[type[Any]] = [
     AgentCatalog,
     AgentsList,
     AgentSummary,
-    AgentTestRun,
     AuthUser,
     ColumnPromptWire,
+    FillRunDetail,
     FillRunPage,
     FillRunWire,
     FoldersList,
@@ -125,6 +127,8 @@ def build_schema() -> dict[str, Any]:
             # tool and an unknown code degrades instead of crashing.
             "TOOL_STATUSES": {tool: list(statuses) for tool, statuses in TOOL_STATUSES.items()},
             "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
+            "TEST_KEY_MAX_LENGTH": TEST_KEY_MAX_LENGTH,
+            "TEST_VALUE_MAX_LENGTH": TEST_VALUE_MAX_LENGTH,
         },
     }
 

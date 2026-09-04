@@ -14,6 +14,7 @@ from openbower_schema.fills import (
 from openbower_schema.fills import (
     ROW_LEASE_STALE_SECONDS as ROW_LEASE_STALE_SECONDS,
 )
+from openbower_schema.lists import CELL_MAX_LENGTH as WIRE_CELL_MAX_LENGTH
 from openbower_schema.lists import (
     COLUMN_KEY_MAX_LENGTH as COLUMN_KEY_MAX_LENGTH,
 )
@@ -28,7 +29,7 @@ MAX_LIST_ROWS = 50_000
 # spreadsheets (Sheets 50,000, Excel 32,767): our sheet is not bounded
 # by theirs, at the honest cost that a maxed cell truncates if an
 # exported CSV lands back in those tools.
-CELL_MAX_LENGTH = 65_536
+CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
 DEFAULT_ROWS_PAGE = 50
 MAX_ROWS_PAGE = 200
@@ -83,9 +84,10 @@ FILL_CLAIM_BATCH = MAX_FILL_CONCURRENCY
 # self-hosted sources start at 1 and never probe past their declared
 # ceiling (only the operator can see that box).
 FILL_CONCURRENCY_HOSTED_START = 4
-# Live fills per ACCOUNT (binary). The bench lane's account-level
-# admission reads this same constant so the two lanes cannot drift;
-# the bench keeps its own per-process semaphore as a backstop.
+# Live fills per ACCOUNT (binary). Every kind COUNTS into it (a live
+# test spends like any fill), but only NORMAL admissions run the
+# guard: the test admission is deliberately uncapped (the bench must
+# always answer; supersede bounds that lane instead).
 MAX_ACTIVE_FILLS = 4
 # Consecutive rows parked for retry that fail the FILL config-tier
 # (binary): per-row attempts are patience for flaky moments, this
@@ -104,7 +106,7 @@ FILL_ERROR_CODE_MAX_LENGTH = 64
 FILL_ERROR_MESSAGE_MAX_LENGTH = 256
 # The claimant's identity stamp (hostname:pid); diagnostic, bounded.
 LEASED_BY_MAX_LENGTH = 128
-# A config's sha256 hex digest (agents.services.config_fingerprint).
+# A config's sha256 hex digest (services/fingerprint.py).
 CONFIG_FINGERPRINT_MAX_LENGTH = 64
 
 
@@ -140,6 +142,13 @@ class FillErrorCode(StrEnum):
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"
+    # A teammate's test run is live: wait a moment (your OWN live test
+    # is superseded, never refused).
+    TEST_ACTIVE = "test_active"
+    # A hand-fed test row past the wire's bench bounds: too many
+    # values, or a key or value over its length. Refused, never
+    # truncated.
+    TEST_ROW_INVALID = "test_row_invalid"
 
 
 # Rows per fetch when a fill service STREAMS the sheet (binary,
@@ -150,7 +159,7 @@ class FillErrorCode(StrEnum):
 FILL_SCAN_CHUNK = 1000
 # Rows per write when a fill service touches many at once (binary):
 # admission materializes a fill's queue, cancel abandons what is left
-# of it, list delete purges.
+# of it, list delete purges, the cron sweep pages its deletes.
 FILL_WRITE_BATCH = 1000
 
 
@@ -194,6 +203,30 @@ class FillTaskStatus(StrEnum):
     ROW_MISSING = "row_missing"
 
 
+class FillKind(StrEnum):
+    """A fill's OPERATING MODE. NORMAL writes a sheet; TEST is the
+    bench's one-row diagnostic run, landing its result on its task
+    instead of a sheet. The throwaway rides the real execution path on
+    purpose: every bench click regression-tests the machinery fills
+    depend on. A MODE, deliberately not a priority: it decides where
+    results land, which surfaces see the run, and its lifecycle; the
+    worker's --kinds flag selecting on it is the scheduling
+    side-effect, not the concept."""
+
+    NORMAL = "normal"
+    TEST = "test"
+
+
+# Column width for the kind field (generous over exact).
+FILL_KIND_MAX_LENGTH = 8
+
+# Test-kind fills are throwaway diagnostics: the compose cron's
+# sweep_test_fills command deletes them past this age. A day, the
+# baseline: generous next to any live poll (staleness reads in
+# seconds), so a sweep can never race a run anyone is watching.
+TEST_FILL_MAX_AGE_SECONDS = 86_400
+
+
 class FillStatus(StrEnum):
     """A fill's lifecycle. Terminal states are terminal: recovery
     is a NEW fill (refill), never a reopened row."""
@@ -208,7 +241,7 @@ class FillStatus(StrEnum):
 # The statuses a fill can still be claimed into or cancelled from:
 # ONE definition, because "is this fill live" is asked by the queue,
 # the admission gate, the cancel path, the derived-pending read, and
-# the bench's account cap.
+# the test lane's supersede scan.
 LIVE_FILL_STATUSES = (FillStatus.PENDING, FillStatus.RUNNING)
 
 

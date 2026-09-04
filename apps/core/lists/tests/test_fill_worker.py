@@ -160,7 +160,7 @@ class WorkerTestCase(TransactionTestCase):
             label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             self.fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(self.sheet.id),
                 config=quick_config(),
@@ -261,7 +261,9 @@ class WorkerTestCase(TransactionTestCase):
         self.run_worker(answering_model(lambda prompt: "found"))
         for outcome in FillTask.objects.filter(fill_id=str(self.fill.id)):
             self.assertEqual(outcome.result["assessments"]["answer"]["confidence"], 0.95)
-            self.assertNotIn("dropped", outcome.result["assessments"]["answer"])
+            # "" is the LANDED value on the typed judgement (the wire
+            # shape is fixed; key-absence was the storage-era spelling).
+            self.assertEqual(outcome.result["assessments"]["answer"]["dropped"], "")
 
     def test_throttled_rows_park_and_are_owed_until_the_fill_stops(self) -> None:
         # A 429 is infrastructure, not an answer. The task stays QUEUED
@@ -356,7 +358,7 @@ class WorkerTestCase(TransactionTestCase):
         # whose thread dies every pass never parks, never increments,
         # and still got decremented at the cap.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             solo = self.lists.create(
                 label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
             )
@@ -387,7 +389,7 @@ class WorkerTestCase(TransactionTestCase):
         # per-event shedding, so reverting it would keep the suite
         # green. This runs against a source the point can move inside.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             wide = self.lists.create(
                 label="Wide", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
             )
@@ -411,7 +413,7 @@ class WorkerTestCase(TransactionTestCase):
         # permanently negative. The park marker is not_before, which
         # only park_task sets.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             solo = self.lists.create(
                 label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
             )
@@ -438,7 +440,7 @@ class WorkerTestCase(TransactionTestCase):
         # blank): it lands in attempted/blank and leaves transient at
         # zero, so the chip's totals reach the consented count.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             solo = self.lists.create(
                 label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
             )
@@ -476,7 +478,7 @@ class WorkerTestCase(TransactionTestCase):
 
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             solo = self.lists.create(
                 label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
             )
@@ -577,7 +579,7 @@ class WorkerTestCase(TransactionTestCase):
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
 
     def test_type_mismatch_diagnosed_when_shape_refuses(self) -> None:
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             other = self.lists.create(label="Nums", columns=[], origin="manual")
             self.lists.add_rows(other, [{"company": "acme.com"}])
             config = AgentConfig(
@@ -611,7 +613,7 @@ class FairnessTests(WorkerTestCase):
             label="Theirs", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
         )
         lists.add_rows(sheet, [{"company": f"c{n}.io"} for n in range(rows)])
-        with patch("lists.services.fill_admission.model_for"):
+        with patch("lists.services.fill_admission.base.model_for"):
             fill = FillAdmissionService(account_id=account, user_id=USER).admit(
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )

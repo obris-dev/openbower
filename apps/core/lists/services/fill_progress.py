@@ -25,8 +25,12 @@ from ..constants import LIVE_FILL_STATUSES, FillStatus, FillTaskStatus
 from ..models import Fill, FillTask
 
 
-def live_fills() -> list[Fill]:
-    """Every live fill, oldest first. A READ, not a claim: the
+def live_fills(kinds: tuple[str, ...] = ()) -> list[Fill]:
+    """Every live fill, oldest first; `kinds` narrows to the named
+    operating modes (empty = all), the ONE isolation point the
+    two-worker topology rests on (the queue claims by fill_id, so a
+    worker that never enumerates a kind never touches its tasks).
+    A READ, not a claim: the
     task-level skip_locked claim is what arbitrates between
     workers, and the supervisor interleaves these rather than
     working one to completion.
@@ -36,7 +40,10 @@ def live_fills() -> list[Fill]:
     and the supervisor needs it in hand to renew those leases;
     deciding a fill is drained is the supervisor's call, since only
     it knows what this process still has in flight."""
-    return list(Fill.objects.filter(status__in=LIVE_FILL_STATUSES).order_by("id"))
+    qs = Fill.objects.filter(status__in=LIVE_FILL_STATUSES)
+    if kinds:
+        qs = qs.filter(kind__in=kinds)
+    return list(qs.order_by("id"))
 
 
 def is_live(fill_id: str) -> bool:
@@ -84,30 +91,22 @@ def fail(fill_id: str, *, code: str, message: str) -> bool:
 
 
 def live_fill_count(account_id: str) -> int:
-    """The account's fills that are still live. Public because the
-    BENCH lane shares this account cap: it must not reach into the
-    fills domain to count them, nor re-spell which statuses count as
-    live. It lives here rather than in fill_admission because that
-    module imports agents, and agents importing it back would close a
-    cycle."""
+    """The account's fills that are still live, EVERY kind: a test run
+    is a fill, so it counts against the same metered cap by
+    construction (the one rule that used to need a cross-app import to
+    enforce)."""
     return Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).count()
 
 
 def try_finish(fill_id: str) -> bool:
-    """THE completion rule, shared by the worker's drain and admission,
-    so the two cannot disagree about when a fill is done: a fill flips
-    COMPLETE when no QUEUED task remains.
+    """THE completion rule, shared by the worker's drain and its
+    per-row landings, so the two cannot disagree about when a fill is
+    done: a fill flips COMPLETE when no QUEUED task remains.
 
     Monotonic by construction, because nothing creates tasks after
     admission: the set only ever shrinks, so the check cannot go stale
     between reading and flipping. A stale-leased task is still queued,
     so a crashed claimant never fakes completion.
-
-    Admission needs it because a fill can be born drained: every row it
-    consented to was answered on the bench, so nothing is claimable and
-    no worker would ever visit it. That is the same question the worker
-    asks after its last row, and asking it in two places is how the two
-    answers drift.
 
     Module level rather than a queue method because it reads no worker
     identity: a fill is finished or it is not, whoever is asking."""

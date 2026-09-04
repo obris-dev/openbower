@@ -8,7 +8,7 @@ company behavior interprets a chosen column's values at use time.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,14 @@ from pydantic import BaseModel, Field
 # type is a parse error, never a silently unstyled column. Types drive
 # RENDERING only.
 ColumnType = Literal["text", "number", "currency", "date", "url", "email"]
+# The types as DATA (the SEARCH_PROVIDER_CHOICES idiom), and the type
+# an unrecognized declaration coerces to: shared vocabulary both apps
+# read off the contract instead of a sibling app's enum.
+COLUMN_TYPE_CHOICES: tuple[str, ...] = get_args(ColumnType)
+DEFAULT_COLUMN_TYPE: ColumnType = "text"
+# One cell value's bound (binary): storage clamps at it, so a client
+# may rely on never receiving more.
+CELL_MAX_LENGTH = 65_536
 
 ListOrigin = Literal["discover", "csv", "manual"]
 

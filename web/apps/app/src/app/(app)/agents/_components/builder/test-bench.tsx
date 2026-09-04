@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { FlaskConical, X } from "lucide-react";
 import { Button, Input, Label, Spinner, useToast } from "@bower/ui";
-import { fetchListRows, TEST_ROW_MAX_KEYS, type AgentOutput, type AgentTestResult, type ListSummary } from "@bower/api";
+import {
+  fetchListRows,
+  TEST_KEY_MAX_LENGTH,
+  TEST_ROW_MAX_KEYS,
+  TEST_VALUE_MAX_LENGTH,
+  type AgentOutput,
+  type CellRunResult,
+  type ListSummary,
+} from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
@@ -15,7 +23,7 @@ import { AGENT_TOOLS } from "../../../_components/agent-config/tools-meta";
 /** One search's diagnosis line: what it returned or why it did not,
  * how many tries the seam made, the provider that served it, and which
  * tool asked (a reader must be able to tell whose call refused). */
-function describeSearch(search: AgentTestResult["tool_calls"][number]): string {
+function describeSearch(search: NonNullable<CellRunResult["tool_calls"]>[number]): string {
   // An unknown tool renders its own wire key, never a guessed label.
   const tool = search.tool === "find_contacts" ? "contacts" : search.tool === "web_search" ? "web" : search.tool;
   const via = search.provider ? ` via ${search.provider}` : "";
@@ -50,6 +58,7 @@ export function TestBench({
   onTestRow,
   result,
   busy,
+  stale,
   sourceListId,
   onSourceList,
   onRemoveKey,
@@ -63,8 +72,12 @@ export function TestBench({
   listsTruncated?: boolean;
   testRow: Record<string, string>;
   onTestRow: (next: Record<string, string>) => void;
-  result: AgentTestResult | null;
+  result: CellRunResult | null;
   busy: boolean;
+  // The heartbeat-quiet warning while a run is still live: a WARNING
+  // fact, never presented as failure (the loop ends on terminal
+  // status; quiet may just mean queued).
+  stale: boolean;
   sourceListId: string;
   onSourceList: (id: string) => void;
   onRemoveKey: (key: string) => void;
@@ -92,7 +105,11 @@ export function TestBench({
     const next = { ...testRow };
     for (const key of inputKeys) {
       const value = first.data[key];
-      if (value !== undefined) next[key] = value;
+      // Clamped at the bench bound so the FIELD shows exactly what a
+      // test will run: a borrowed sheet cell can be far wider than
+      // the wire's row bound, and sending it whole would refuse the
+      // whole test.
+      if (value !== undefined) next[key] = value.slice(0, TEST_VALUE_MAX_LENGTH);
     }
     onTestRow(next);
   }
@@ -109,7 +126,7 @@ export function TestBench({
   const notConfigured = AGENT_TOOLS.filter((t) => result?.tools?.[t.key] === "not_configured").map((t) => t.label);
   const totalHits = searches.reduce((acc, s) => acc + s.hits, 0);
   const totalDiscarded = searches.reduce((acc, s) => acc + (s.discarded ?? 0), 0);
-  const emptyCells = result !== null && Object.keys(result.cells).length === 0;
+  const emptyCells = result !== null && Object.keys(result.cells ?? {}).length === 0;
   // Rendering follows the DECLARED type through the SAME cell-link
   // module the sheet renders with: a value must not link here and sit
   // flat there (or vice versa).
@@ -127,7 +144,17 @@ export function TestBench({
         </p>
       ) : (
         <>
-          {inputKeys.filter((key) => (testRow[key] ?? "") !== "").length > TEST_ROW_MAX_KEYS && (
+          {inputKeys.some((key) => key.length > TEST_KEY_MAX_LENGTH) && (
+            // Judged on ALL inputs (an over-long variable is
+            // unrunnable whether or not it is filled yet); the payload
+            // drops what the server would refuse, and silence would
+            // leave an undiagnosed blank variable.
+            <p className="text-xs text-warning">
+              Variables over {TEST_KEY_MAX_LENGTH} characters render blank in a test; shorten them in the prompt.
+            </p>
+          )}
+          {inputKeys.filter((key) => key.length <= TEST_KEY_MAX_LENGTH && (testRow[key] ?? "") !== "").length >
+            TEST_ROW_MAX_KEYS && (
             // Judged on FILLED inputs (the payload carries only
             // those, in prompt order); the rest render blank, so
             // silence here would be an undiagnosed blank variable.
@@ -174,6 +201,10 @@ export function TestBench({
                 <Input
                   id={`test-${key}`}
                   value={testRow[key] ?? ""}
+                  // The admission REFUSES past the bound (never
+                  // truncates); the input carrying it keeps the
+                  // refusal unreachable from here.
+                  maxLength={TEST_VALUE_MAX_LENGTH}
                   onChange={(e) => onTestRow({ ...testRow, [key]: e.target.value })}
                 />
               </div>
@@ -182,16 +213,23 @@ export function TestBench({
         </>
       )}
       {busy && (
-        <span className="flex items-center gap-2 text-xs text-muted">
-          <Spinner className="h-3.5 w-3.5" />
-          searching and thinking…
-        </span>
+        <div>
+          <span className="flex items-center gap-2 text-xs text-muted">
+            <Spinner className="h-3.5 w-3.5" />
+            searching and thinking…
+          </span>
+          {stale && (
+            <p className="mt-0.5 text-xs text-warning">
+              Still running | no word from the worker in a while. It may be queued behind other work.
+            </p>
+          )}
+        </div>
       )}
       {result !== null && !busy && (
         <div className="rounded-lg bg-wash px-3 py-2 text-sm">
-          {Object.keys(result.cells).length > 0 ? (
+          {Object.keys(result.cells ?? {}).length > 0 ? (
             <div className="divide-y divide-hairline">
-              {Object.entries(result.cells).map(([key, value]) => {
+              {Object.entries(result.cells ?? {}).map(([key, value]) => {
                 const type = typeByKey.get(key) ?? "text";
                 const href = cellHref(type, value);
                 return (
@@ -294,13 +332,13 @@ export function TestBench({
               </ul>
             </details>
           )}
-          {result.evidence.length > 0 && (
+          {(result.evidence ?? []).length > 0 && (
             <details className="mt-2 border-t border-hairline pt-2">
               <summary className="cursor-pointer text-xs text-faint hover:text-foreground">
-                Evidence the model saw ({result.evidence.length})
+                Evidence the model saw ({(result.evidence ?? []).length})
               </summary>
               <ul className="mt-1.5 space-y-1">
-                {result.evidence.map((line, index) => (
+                {(result.evidence ?? []).map((line, index) => (
                   <li key={index} className="truncate text-xs text-muted" title={line}>
                     {line}
                   </li>

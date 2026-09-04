@@ -9,6 +9,7 @@ export { fetchJson, GENERIC_FAILURE } from "./request.ts";
 export type { ApiResult } from "./request.ts";
 export * from "./domains.ts";
 export * from "./agents.ts";
+export * from "./fills.ts";
 // Explicit, not a star: buildApiFetchUrl carries the container-internal
 // origin and only the fetch funnel inside this package may reach it, so
 // it is deliberately absent from the public surface.

@@ -70,14 +70,14 @@ class ShapeHintTests(SimpleTestCase):
     type without one says nothing."""
 
     def test_every_shape_ruled_type_tells_the_model_its_shape(self):
-        from lists.cell_types import _VALIDATORS, shape_hint
+        from openbower_schema.cell_types import _VALIDATORS, shape_hint
 
         for column_type in _VALIDATORS:
             with self.subTest(column_type=column_type):
                 self.assertTrue(shape_hint(column_type), f"{column_type} refuses shapes it never asked for")
 
     def test_pass_through_types_invent_no_rule(self):
-        from lists.cell_types import _VALIDATORS, shape_hint
+        from openbower_schema.cell_types import _VALIDATORS, shape_hint
 
         from ..constants import ColumnType
 

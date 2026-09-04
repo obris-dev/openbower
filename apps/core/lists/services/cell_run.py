@@ -1,5 +1,9 @@
-"""The runtime's ENTRY, and the harness that assigns SHEET MEANING to
-what the answerer reports: run_cell(config, row_data) -> CellRun. The
+"""The fill lane's harness over the agents runtime: run_cell(config,
+row_data) -> CellRun, assigning SHEET MEANING to what the answerer
+reports. It lives in LISTS because the verdicts are sheet vocabulary
+(StoredCellState), completing the set this app already owns (the park
+policy, the landing, the cell truth); agents exports only the
+answerer's FACTS (Answer, the AgentError family, CallRecord). The
 answerer speaks its own vocabulary (an Answer for every completed
 call, typed AgentErrors with the facts aboard for every failed one,
 refusals for a call that cannot happen); this module maps each to the
@@ -21,11 +25,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
-from lists.constants import StoredCellState
-from openbower_schema.agents import AgentConfig
-
-from ..tools.base import FailureMode
-from .answer import (
+from agents.runtime.answer import (
     EMPTY_RECORD,
     AgentError,
     AgentResponseInvalid,
@@ -35,7 +35,11 @@ from .answer import (
     EmptyRender,
     NoAvailableTools,
 )
-from .outcomes import SearchOutcome
+from agents.runtime.outcomes import SearchOutcome
+from agents.tools.base import FailureMode
+from openbower_schema.agents import AgentConfig
+
+from ..constants import StoredCellState
 
 logger = logging.getLogger(__name__)
 

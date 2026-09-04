@@ -49,6 +49,12 @@ auth + data services live in a separate private repo.
   deletes its own children in one transaction. A child model added
   without a line in its owner's delete is orphaned forever, invisible
   to every surface that filters by its parent.
+- Scheduled work is a crontab line per job (apps/core/crontab, run
+  by supercronic in the compose cron service) driving a management
+  command over an operation (the fill_worker command/operation
+  split). Jobs run independently, so every command there must be safe
+  to MISS and safe to DOUBLE: a pure age or idempotent judgement,
+  never a lock.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

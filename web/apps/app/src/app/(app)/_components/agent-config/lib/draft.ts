@@ -7,11 +7,12 @@ import {
   AGENT_PROVIDERS,
   AgentOutputSchema,
   MAX_AGENT_OUTPUTS,
-  AgentTestResultSchema,
+  CellRunResultSchema,
   AgentToolsSchema,
+  TEST_VALUE_MAX_LENGTH,
   type AgentConfig,
   type AgentOutput,
-  type AgentTestResult,
+  type CellRunResult,
   type AgentTools,
 } from "@bower/api";
 
@@ -37,7 +38,7 @@ export type Draft = {
   tools?: AgentTools;
   outputs?: AgentOutput[];
   testRow?: Record<string, string>;
-  testResult?: AgentTestResult | null;
+  testResult?: CellRunResult | null;
   /** The outputs AT RUN TIME: the stored result renders with these,
    * never with the live editor's types. */
   testOutputs?: AgentOutput[];
@@ -75,7 +76,15 @@ export function parseDraft(raw: string | null): Draft | null {
   const tools = AgentToolsSchema.safeParse(record.tools);
   if (tools.success) draft.tools = tools.data;
   const testRow = stringRecord(record.testRow);
-  if (testRow) draft.testRow = testRow;
+  // Values clamp on RESTORE (the borrow path's rule): a draft from
+  // before the bench bound existed can hold a value the server
+  // would refuse, and the field must show exactly what a test will
+  // run.
+  if (testRow) {
+    draft.testRow = Object.fromEntries(
+      Object.entries(testRow).map(([key, value]) => [key, value.slice(0, TEST_VALUE_MAX_LENGTH)]),
+    );
+  }
   // Capped at the wire bound: a tampered/old draft must not restore
   // more rows than the editor can ever remove back below. Key is
   // DEFAULTED before the parse: a stricter current schema must never
@@ -88,8 +97,15 @@ export function parseDraft(raw: string | null): Draft | null {
   if (outputs.success && outputs.data.length > 0) draft.outputs = outputs.data.slice(0, MAX_AGENT_OUTPUTS);
   const testOutputs = AgentOutputSchema.array().safeParse(keyed(record.testOutputs));
   if (testOutputs.success) draft.testOutputs = testOutputs.data.slice(0, MAX_AGENT_OUTPUTS);
-  const testResult = AgentTestResultSchema.nullable().safeParse(record.testResult);
-  if (testResult.success) draft.testResult = testResult.data;
+  const testResult = CellRunResultSchema.nullable().safeParse(record.testResult);
+  // Gated on a recognizable field: every member of the schema is
+  // defaulted, so an ALIEN object (a shape some future version
+  // stored) parses "successfully" into an all-default result, and
+  // restoring that fabricates a verdict card for a run that produced
+  // nothing of the sort. Absent cells = not this era's record = drop.
+  if (testResult.success && (testResult.data === null || record.testResult && typeof record.testResult === "object" && "cells" in (record.testResult as object))) {
+    draft.testResult = testResult.data;
+  }
   if (typeof record.testToolsOn === "boolean") draft.testToolsOn = record.testToolsOn;
   return draft;
 }

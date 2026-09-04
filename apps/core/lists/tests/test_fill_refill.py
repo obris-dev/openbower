@@ -44,7 +44,7 @@ class RefillTestCase(TestCase):
             label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
-        patcher = patch("lists.services.fill_admission.model_for")
+        patcher = patch("lists.services.fill_admission.base.model_for")
         patcher.start()
         self.addCleanup(patcher.stop)
 

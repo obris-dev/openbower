@@ -113,7 +113,6 @@ export type AiColumnBody = {
   agent_id?: string;
   confirmed_row_count: number;
   rows?: number;
-  test_run_id?: string;
   concurrency?: number;
 };
 

@@ -43,12 +43,16 @@ export const apiRoutes = {
     index: `/${API_VERSION}/agents`,
     // What THIS deploy can run (models + search availability).
     catalog: `/${API_VERSION}/agents/catalog`,
-    // POST a drafted config + one hand-fed row; 202 + a run to poll.
-    test: `/${API_VERSION}/agents/test`,
-    // GET: poll the test run to a terminal status.
-    testRun: (id: string) => `/${API_VERSION}/agents/test/${id}`,
     // GET / PATCH / DELETE one agent.
     detail: (id: string) => `/${API_VERSION}/agents/${id}`,
+  },
+  fills: {
+    // POST a drafted config + one hand-fed row; 202 + a test-kind run to poll.
+    test: `/${API_VERSION}/fills/test`,
+    // GET: one run by id (a complete test run's result rides it).
+    detail: (id: string) => `/${API_VERSION}/fills/${id}`,
+    // POST: stop a run wherever it is scoped; terminal runs no-op.
+    cancel: (id: string) => `/${API_VERSION}/fills/${id}/cancel`,
   },
   lists: {
     // GET: keyset index (?after=). POST: create.

@@ -18,6 +18,7 @@ import threading
 
 from django.core.management.base import BaseCommand
 
+from ...constants import FillKind
 from ...operations.fill_worker import FillWorkerOperation, paid_search
 
 logger = logging.getLogger(__name__)
@@ -27,16 +28,26 @@ class Command(BaseCommand):
     help = "Run the fill worker: claim row batches, walk cells, write outcomes."
 
     def add_arguments(self, parser) -> None:
-        parser.add_argument("--once", action="store_true", help="Exit when no fill is live (the CI smoke).")
+        parser.add_argument("--once", action="store_true", help="Exit when no fill has claimable work (the CI smoke).")
+        parser.add_argument(
+            "--kinds",
+            nargs="+",
+            choices=[kind.value for kind in FillKind],
+            default=[],
+            help="Serve only these fill kinds (default: all). The deploy runs one instance per kind.",
+        )
 
     def handle(self, *args, **options) -> None:
         self._stop = threading.Event()
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, self._request_stop)
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
-        logger.info("fill_worker %s up (paid search: %s)", worker_id, paid_search())
+        kinds = tuple(options["kinds"])
+        logger.info(
+            "fill_worker %s up (kinds: %s, paid search: %s)", worker_id, ",".join(kinds) or "all", paid_search()
+        )
         try:
-            FillWorkerOperation(worker_id=worker_id, stop=self._stop).run(once=options["once"])
+            FillWorkerOperation(worker_id=worker_id, stop=self._stop, kinds=kinds).run(once=options["once"])
         finally:
             logger.info("fill_worker %s down", worker_id)
 
