@@ -28,9 +28,6 @@ from openbower_schema.agents import (
 from openbower_schema.agents import (
     PROMPT_MAX_LENGTH as PROMPT_MAX_LENGTH,
 )
-from openbower_schema.agents import (
-    TEST_ROW_MAX_KEYS as TEST_ROW_MAX_KEYS,
-)
 
 # Inference providers are API SPECS, never products (a local Ollama or
 # vLLM is the openai_compatible provider with its base pointed there;
@@ -66,9 +63,8 @@ CATALOG_PROBE_CONCURRENCY = 8
 # budget. Lives on the CONTRACT since the fill consent footer computes
 # "up to N searches" from it client-side; the runtime's derivations
 # read the re-export here.
-# Column widths for enum-backed fields (generous over exact).
+# Column width for the enum-backed field (generous over exact).
 PROVIDER_MAX_LENGTH = 32
-STATUS_MAX_LENGTH = 16
 # Search queries are MODEL-AUTHORED text crossing into a metered
 # external call: bounded, like every authored value here (Google
 # ignores everything past ~32 words anyway, so truncation loses no
@@ -82,8 +78,6 @@ SEARCH_HIT_COUNT = 8
 # cost per call, but a ceiling under the budget silently discards the
 # late searches the budget was raised to buy.
 EVIDENCE_MAX_LINES = MAX_TOOL_CALLS * SEARCH_HIT_COUNT
-# Test-row keys mirror prompt tokens; bounded like every authored value.
-TEST_KEY_MAX_LENGTH = 64
 # The confidence floor: an answer whose model-stated confidence sits
 # below this is discarded per-field (the blank reads unverified).
 # Confident-or-blank is the product's contract; 0.9 keeps only answers
@@ -128,11 +122,6 @@ MODEL_RETRIES = 1
 COMPLETION_TOKENS_BASE = 256
 COMPLETION_TOKENS_PER_OUTPUT = 256
 
-# Test bench bounds: hand-fed fixture values, not cells
-# (TEST_ROW_MAX_KEYS lives on the contract; the bench reads it too).
-TEST_VALUE_MAX_LENGTH = 512
-# A failed run's wire diagnosis, clamped like every authored value.
-TEST_RUN_ERROR_MAX_LENGTH = 256
 # One search call's worst case: the provider's timeout, plus every wait
 # the backoff schedule allows AT ITS CLAMP. Not sum(schedule): a provider
 # answering Retry-After above the schedule is honored clamped to the
@@ -150,47 +139,16 @@ CAPPED_VERDICT_REQUESTS = 1 + MODEL_RETRIES
 # completion the request budget allows at the completion timeout,
 # including the capped verdict's own budget, plus every paid search at
 # its clamped worst case (the free provider's timeout is shorter, so the
-# paid provider's bounds both). The wire's poll_budget_seconds publishes
-# THIS (a hung run must not spin the client for the whole stale
-# window), and the worker's compose stop_grace_period must clear it.
-TEST_RUN_WORST_CASE_SECONDS = (
+# paid provider's bounds both). The NORMAL fill worker's compose
+# stop_grace_period must clear it (a row that runs to the bound still
+# owes its outcome write); the test lane's worker trades that away
+# deliberately, so its short grace kills an in-flight bench row.
+CELL_RUN_WORST_CASE_SECONDS = (
     MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS
 ) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * SEARCH_ATTEMPT_WORST_CASE_SECONDS
-# A pending run is superseded only after this much SILENCE since its
-# last poll (the poll GET stamps polled_at). Sized ABOVE browser
-# background-tab throttling (a hidden tab's timers drop to about one
-# fire per minute), or a legitimately running test in a backgrounded
-# tab would read as abandoned and be superseded mid-spend; still far
-# under the worst case. Run AGE says nothing here: one completion
-# timeout alone is this long.
-TEST_RUN_ABANDON_SECONDS = 128
-# Concurrent test-run threads PER PROCESS (binary): the account-wide
-# invariant lives in the start guard; this is the local backstop for
-# the paid work itself, REFUSING (a fast failed run with its why)
-# rather than queueing, because queue time is invisible to the
-# published poll budget.
-TEST_RUN_MAX_CONCURRENT = 2
-# A run still pending past this is ORPHANED (daemon threads die
-# unwound on restarts); the poll leg presents it as failed. Binary,
-# and strictly above TEST_RUN_WORST_CASE_SECONDS (pinned) so a
-# legitimately slow run is never presented dead.
-TEST_RUN_STALE_PENDING_SECONDS = 2_048
-# Finished test runs are throwaway diagnostics; anything older than
-# this purges opportunistically on the next test POST.
-TEST_RUN_MAX_AGE_SECONDS = 4_096
-
 # The people-profile site find_contacts pins its queries to (the tool
 # injects the site: scope; the model never controls it).
 DEFAULT_PEOPLE_SITE = "linkedin.com/in"
-
-
-class TestRunStatus(StrEnum):
-    """A test-bench run's lifecycle (polled: the bench must not hold a
-    connection for the seconds a run takes)."""
-
-    PENDING = "pending"
-    COMPLETE = "complete"
-    FAILED = "failed"
 
 
 class SearchProvider(StrEnum):

@@ -12,8 +12,8 @@ from django.db.models import Count
 from django.utils import timezone
 
 from agents.services import AgentService
+from openbower_schema.cell_types import CellTypeMismatch, validate_cell
 
-from ..cell_types import CellTypeMismatch, validate_cell
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, FillTask, Folder, List, ListRow
 from . import cell_truth

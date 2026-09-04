@@ -1,6 +1,5 @@
 """Agent roster services: the Agent model's ORM custody (account
-scoped; cross-tenant access fails as not-found). Test-run persistence
-lives in runs.py."""
+scoped; cross-tenant access fails as not-found)."""
 
 from __future__ import annotations
 

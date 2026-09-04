@@ -22,7 +22,7 @@ Run requirements and setup docs land with the phases that need them.
 
 ## Running it (the self-host footprint)
 
-A working deploy is four long-running services plus a one-shot
+A working deploy is six long-running services plus a one-shot
 migrator, and `docker-compose.yml` carries all of them: `make up` on
 a fresh clone builds the images, seeds `apps/core/.env` from its
 example, and serves. The containers bind-mount the checkout, so edits
@@ -31,9 +31,11 @@ hot-reload without a rebuild.
 | Service | What it runs | Where to look |
 |---------|--------------|---------------|
 | db      | Postgres 16 (host port 5433) | `make local-dbshell` for psql |
-| core-setup | migrations and the cache table, once per start; core and the worker wait for it to finish | `make logs` |
+| core-setup | migrations and the cache table, once per start; core, the workers, and the cron wait for it to finish | `make logs` |
 | core    | the Django api on :8002 | `make logs-core` |
-| worker  | `manage.py fill_worker`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
+| worker  | `manage.py fill_worker --kinds normal`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
+| worker-test | the same binary serving only test-kind fills (the bench's one-row diagnostics), so bench latency never queues behind a wide fill | `make logs-worker` |
+| cron    | supercronic over `apps/core/crontab`: scheduled maintenance, today the hourly purge of test fills older than a day | `make logs-cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3005 | `make logs-web` |
 
 `make stop` halts the stack in place and `make up` resumes it;
@@ -42,11 +44,14 @@ dependencies survive in named volumes, while the Python venv is an
 anonymous volume the next start re-syncs (`make prune-venvs` clears the
 strays). `make reset` removes the named volumes too, which is how you
 get a clean database. The stack needs Docker Compose v2.24 or newer. `make logs` tails
-everything. Compose runs exactly ONE worker. The worker takes `--once`
-(exit when no fill has claimable work, the suite's smoke), and SIGTERM
-or SIGINT lets rows in flight finish before it exits, so a restart is
-always safe: it can also take a while, because a row already talking to
-a provider is allowed to finish. `make db-up` starts just the database,
+everything. Compose runs exactly ONE worker PER FILL KIND (a normal
+one and a test one). The worker takes `--once`
+(exit when no fill has claimable work, the suite's smoke). SIGTERM
+or SIGINT lets the NORMAL worker's rows in flight finish before it
+exits, so restarting it is always safe and can take a while (a row
+already talking to a provider is allowed to finish); the test
+worker's short grace kills its bench row instead, costing one metered
+call and one counted attempt on a throwaway diagnostic. `make db-up` starts just the database,
 which is what the host-run test suite needs.
 
 Signing in needs an identity provider, which is a SEPARATE service (the
@@ -83,8 +88,14 @@ carries the full annotated list):
   would exceed that budget is refused before it spends, naming the
   paid provider.
 
-Run ONE worker process per deploy. The row-claim design is
-multi-worker safe, but each worker enforces a source's declared
-concurrency ceiling on its own, so N workers would put N times the
-declared load on that source; multi-worker scale-out ships as an
-operated story (docs and compose profiles) when it lands.
+Run ONE worker process per FILL KIND per deploy, which is what the
+compose file ships. The row-claim design is multi-worker safe, but
+each process enforces a source's declared concurrency ceiling on its
+own, so a second worker of the SAME kind would double the load on
+that source. Each test FILL is one row wide, so in the common case
+(one bench click at a time) the overlap is a single request; but the
+one-live-test rule is per account and advisory, so a source declaring
+a ceiling of N can see up to N extra rows while several accounts
+bench at once;
+multi-worker scale-out ships as an operated story (docs and compose
+profiles) when it lands.

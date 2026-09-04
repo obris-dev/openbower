@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from lists.constants import ColumnType
 from openbower_schema.agents import AgentConfig, AgentTools
+from openbower_schema.lists import COLUMN_TYPE_CHOICES, DEFAULT_COLUMN_TYPE
 
 from .constants import (
     MAX_AGENT_OUTPUTS,
@@ -76,7 +76,7 @@ def coerce_config(stored: dict[str, Any], *, origin: str) -> AgentConfig:
     if not isinstance(stored, dict):
         logger.warning("%s: stored config is not an object (%s)", origin, type(stored).__name__)
         stored = {}
-    column_types = {t.value for t in ColumnType}
+    column_types = set(COLUMN_TYPE_CHOICES)
     providers = {p.value for p in AgentProvider}
     stored_rows = stored.get("outputs") if isinstance(stored.get("outputs"), list) else []
     rows = [o for o in stored_rows if isinstance(o, dict)][:MAX_AGENT_OUTPUTS]
@@ -89,7 +89,7 @@ def coerce_config(stored: dict[str, Any], *, origin: str) -> AgentConfig:
             # shape).
             "key": _text(o.get("key"))[:OUTPUT_KEY_MAX_LENGTH],
             "label": _text(o.get("label"))[:OUTPUT_LABEL_MAX_LENGTH],
-            "type": o.get("type") if o.get("type") in column_types else ColumnType.TEXT.value,
+            "type": o.get("type") if o.get("type") in column_types else DEFAULT_COLUMN_TYPE,
             "description": _text(o.get("description"))[:OUTPUT_DESCRIPTION_MAX_LENGTH],
         }
         for o in rows

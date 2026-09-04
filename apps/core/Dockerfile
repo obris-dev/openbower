@@ -26,10 +26,28 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PYTHON_PREFERENCE=only-system
 
-# Build deps for psycopg[c] (compiled against libpq). Builder-only.
+# Build deps for psycopg[c] (compiled against libpq), plus curl for
+# the supercronic fetch below. Builder-only.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# supercronic, the cron service's scheduler (no crond in this image):
+# fetched here because the runtime stage carries no curl, verified
+# against a pinned per-arch digest so a moved tag cannot swap the
+# binary. Bump the version and BOTH digests together.
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+ARG SUPERCRONIC_SHA256_AMD64=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1
+ARG SUPERCRONIC_SHA256_ARM64=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5
+RUN curl -fsSL -o /usr/local/bin/supercronic \
+        "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
+    && case "${TARGETARCH}" in \
+         amd64) echo "${SUPERCRONIC_SHA256_AMD64}  /usr/local/bin/supercronic" | sha256sum -c - ;; \
+         arm64) echo "${SUPERCRONIC_SHA256_ARM64}  /usr/local/bin/supercronic" | sha256sum -c - ;; \
+         *) echo "no supercronic digest pinned for ${TARGETARCH}" && exit 1 ;; \
+       esac \
+    && chmod +x /usr/local/bin/supercronic
 
 WORKDIR /app
 
@@ -71,6 +89,9 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq5 \
     && rm -rf /var/lib/apt/lists/*
+
+# The verified scheduler binary from the builder (see the pin there).
+COPY --from=builder /usr/local/bin/supercronic /usr/local/bin/supercronic
 
 WORKDIR /app
 # The built venv + app code, owned by the non-root runtime user (uid 1000). The

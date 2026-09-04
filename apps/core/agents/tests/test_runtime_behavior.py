@@ -15,8 +15,8 @@ from django.test import SimpleTestCase
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-from agents.runtime.cell import run_cell
 from lists.constants import StoredCellState
+from lists.services.cell_run import run_cell
 from openbower_schema.agents import AgentConfig
 
 from .test_catalog_and_runtime import (

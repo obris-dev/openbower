@@ -1,5 +1,6 @@
-# The full local stack for the open app: db, the Django api, the fill
-# worker, and the web dev servers. `make up` runs it; the containers
+# The full local stack for the open app: db, the Django api, the two
+# fill workers (normal and test), the maintenance cron, and the web
+# dev servers. `make up` runs it; the containers
 # bind-mount the checkout, so edits hot-reload without a rebuild.
 #
 # The project name is PINNED so every checkout of this repo (a worktree,
@@ -86,8 +87,9 @@ services:
       timeout: 3s
       retries: 10
 
-  # One-shot pre-start setup, run once per `up` and gated before core and
-  # the worker start (both depend_on it: service_completed_successfully).
+  # One-shot pre-start setup, run once per `up` and gated before core,
+  # both fill workers, and the cron start (all four depend_on it:
+  # service_completed_successfully).
   # Migrate rides here because the local profile's loop is zero-step (a
   # fresh clone must serve after `make up` alone); keeping it OUT of
   # core's own command means restarting/rolling core alone doesn't re-run
@@ -107,9 +109,9 @@ services:
 
   core:
     # core-setup owns the `build:` and every other core service just names
-    # the image: three services declaring one build target race to write
-    # the same tag. Both services here depend on core-setup, so the image
-    # is always built before they start. Pre-start setup lives there too,
+    # the image: five services declaring one build target would race to
+    # write the same tag. Every one of them depends on core-setup, so the
+    # image is always built before they start. Pre-start setup lives there too,
     # so restarting/rolling core alone doesn't re-run it.
     image: *core_image
     command: uv run --frozen --package openbower-core python apps/core/manage.py runserver 0.0.0.0:8002
@@ -150,11 +152,14 @@ services:
   # kills and respawns, which would drop a row mid flight against a metered
   # provider. A change to worker code needs `make restart-worker`, and a
   # restart resumes whatever fill was live. Compose runs exactly ONE
-  # worker (each enforces a source's declared ceiling on its own, so two
-  # double the load on that box).
+  # worker PER KIND: disjoint kinds claim disjoint fills, and the test
+  # lane rides above this worker's width on a shared source: one row
+  # per test fill, bounded by the live test fills (the one-live-test
+  # rule is per account and advisory), not by one; a second claimer
+  # of the SAME kind would double the load unbounded.
   worker:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker
+    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker --kinds normal
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
@@ -177,7 +182,7 @@ services:
     # SIGKILL through the grace wastes a metered provider call AND burns
     # one of the row's counted attempts (attempts count at claim). The
     # grace is the repo's own worst case for one row, the runtime's
-    # TEST_RUN_WORST_CASE_SECONDS (every completion the budget allows,
+    # CELL_RUN_WORST_CASE_SECONDS (every completion the budget allows,
     # the capped verdict's own budget included, plus every search at
     # its clamped worst case; see agents/constants.py for the
     # derivation), plus headroom for the outcome write: a row that
@@ -188,6 +193,50 @@ services:
     # nearly every real row. A stop during an active fill can
     # therefore take minutes; that wait is the point.
     stop_grace_period: 2100s
+
+  # The TEST lane's worker: the same binary, claiming only test-kind
+  # fills (the bench's one-row diagnostics), so bench latency never
+  # queues behind a wide fill and a wedged fill worker cannot take
+  # agent-configuration UX down. One row wide by construction (a test
+  # fill has exactly one task), so no concurrency knob exists to set.
+  # The SHORT grace is a deliberate trade, and it is effectively
+  # always a kill: 32s is under one completion timeout, so an
+  # in-flight bench row does not finish. What it costs is one metered
+  # call, one of the row's counted attempts, and a poll that reads
+  # live-but-silent until the lease goes stale
+  # (ROW_LEASE_STALE_SECONDS) and the row is reclaimed; a bench run
+  # is throwaway diagnostics, not work worth minutes of shutdown.
+  worker-test:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker --kinds test
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    stop_grace_period: 32s
+
+  # The suite's cron: supercronic (pinned in the core Dockerfile; the
+  # image ships no crond) running the schedule in apps/core/crontab.
+  # Jobs run independently on their own lines, so adding one never
+  # queues it behind another; each command's own age baseline is the
+  # guarantee, so a missed tick costs nothing and a doubled one is
+  # harmless. Logs land on the container's log stream like every
+  # other service.
+  # No stop grace stated: Docker's default is enough, because every
+  # crontab line is safe to miss (the file's own contract).
+  cron:
+    image: *core_image
+    command: supercronic /app/apps/core/crontab
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
 
   web:
     build: ./web

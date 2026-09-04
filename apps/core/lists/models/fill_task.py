@@ -35,9 +35,11 @@ class FillTask(AccountScopedModel):
 
     fill_id = models.CharField(_("fill id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
-    # The row's sheet position, snapshot-coherent (positions are
-    # append-only): claims order by it, so a fill marches TOP TO BOTTOM
-    # down the sheet the user is watching.
+    # WHERE this task's row lives, by kind. NORMAL: the row's sheet
+    # position, 1-based and snapshot-coherent (positions are
+    # append-only), so claims ordered by it march TOP TO BOTTOM down
+    # the sheet the user is watching. TEST: the 0-based index into the
+    # fill's own row_data list, which the worker reads it back by.
     position = models.IntegerField(_("position"), default=0)
     status = models.CharField(_("status"), max_length=FILL_TASK_STATUS_MAX_LENGTH, default=FillTaskStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its
@@ -64,8 +66,8 @@ class FillTask(AccountScopedModel):
     # The serialized CellRun the runtime returned, verbatim: cells the
     # model answered, the evidence it saw, each search and whether it
     # failed, and per output its confidence and stated reason. ONE
-    # column because the runtime returns ONE object and the bench lane
-    # already stores it as one (AgentTestRun.result); splitting it here
+    # column because the runtime returns ONE object and a run's record is
+    # one document; splitting it here
     # is what left the model's ANSWERS with no home and pushed them
     # into the assessment dict.
     #

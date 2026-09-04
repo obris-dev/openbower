@@ -1,5 +1,5 @@
-// Agents: the roster CRUD, the runnable-models catalog, and the test
-// bench. Same result-union philosophy as lists.
+// Agents: the roster CRUD and the runnable-models catalog. Same
+// result-union philosophy as lists.
 
 import {
   AgentCatalogSchema,
@@ -7,8 +7,6 @@ import {
   AgentOutputSchema,
   AgentsListSchema,
   AgentSummarySchema,
-  AgentTestResultSchema,
-  AgentTestRunSchema,
   AgentToolsSchema,
   RESERVED_OUTPUT_KEYS,
   WIRE_BOUNDS,
@@ -19,8 +17,6 @@ import {
   type AgentOutput,
   type AgentsList,
   type AgentSummary,
-  type AgentTestResult,
-  type AgentTestRun,
 } from "@bower/schema";
 
 import { z } from "zod";
@@ -35,8 +31,6 @@ export type {
   AgentOutput,
   AgentsList,
   AgentSummary,
-  AgentTestResult,
-  AgentTestRun,
 };
 export type { AgentTools } from "@bower/schema";
 export { AgentToolsSchema };
@@ -61,22 +55,16 @@ export const AGENT_LABEL_MAX_LENGTH = WIRE_BOUNDS.AgentSummary.label.maxLength;
 export const AGENT_OUTPUT_KEY_MAX_LENGTH = WIRE_BOUNDS.AgentOutput.key.maxLength;
 export const AGENT_OUTPUT_LABEL_MAX_LENGTH = WIRE_BOUNDS.AgentOutput.label.maxLength;
 export const AGENT_OUTPUT_DESCRIPTION_MAX_LENGTH = WIRE_BOUNDS.AgentOutput.description.maxLength;
-// The test POST's 409 code, mirroring the server's constant
-// (agents/views.py TEST_RUN_ACTIVE_CODE): the one refusal a client
-// classifies by code rather than status alone.
-export const TEST_RUN_ACTIVE_CODE = "test_run_active";
-// The server's refused output keys and the bench row cap, off the
-// contract document.
+// The server's refused output keys, off the contract document.
 export { RESERVED_OUTPUT_KEYS };
 // Output keys may not CONTAIN this either: answers carry
 // `<key>_bwr_confidence_reason` and `<key>_bwr_confidence` companions
 // per output, so the namespace is reserved (a user's own "Confidence"
 // output stays legal).
 export const RESERVED_OUTPUT_MARKER = WIRE_CONSTANTS.RESERVED_OUTPUT_MARKER;
-export const TEST_ROW_MAX_KEYS = WIRE_CONSTANTS.TEST_ROW_MAX_KEYS;
 // Validators for client-restored state (drafts are wire data from a
 // past app version; parse, never cast).
-export { AgentOutputSchema, AgentTestResultSchema };
+export { AgentOutputSchema };
 
 export async function fetchAgents(): Promise<ApiResult<AgentsList>> {
   return http.get(apiRoutes.agents.index, AgentsListSchema);
@@ -125,20 +113,4 @@ export async function fetchAgentCatalog(): Promise<ApiResult<AgentCatalog>> {
   const res = await http.get(apiRoutes.agents.catalog, TolerantAgentCatalogSchema);
   if (res.status !== "ok") return res;
   return { ...res, data: { ...res.data, search_provider: knownSearchProvider(res.data.search_provider) } };
-}
-
-/** Start a test run of a DRAFTED config (saved or not) against one
- * hand-fed row. Returns the run to POLL: the agentic loop (the model
- * drives its own bounded tool calls, then answers) takes seconds to
- * minutes, and the bench must not hold a connection open for it. A 409 (another run is live) surfaces
- * through the funnel as its server-written detail; deliberately NOT
- * resumable (adopting another run would render its cells under this
- * config's types and diagnoses). */
-export async function testAgent(config: AgentConfig, row: Record<string, string>): Promise<ApiResult<AgentTestRun>> {
-  return http.post(apiRoutes.agents.test, AgentTestRunSchema, { config, row });
-}
-
-/** The poll leg: the run's status, and its result once complete. */
-export async function fetchTestRun(id: string): Promise<ApiResult<AgentTestRun>> {
-  return http.get(apiRoutes.agents.testRun(id), AgentTestRunSchema);
 }

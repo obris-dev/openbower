@@ -14,12 +14,12 @@ import {
   type AgentConfig,
   type AgentOutput,
   type AgentSummary,
-  type AgentTestResult,
+  type CellRunResult,
   type AgentTools,
   type ListSummary,
 } from "@bower/api";
 
-import { AGENT_LABEL_MAX_LENGTH, TEST_ROW_MAX_KEYS } from "@bower/api";
+import { AGENT_LABEL_MAX_LENGTH, TEST_KEY_MAX_LENGTH, TEST_ROW_MAX_KEYS, TEST_VALUE_MAX_LENGTH } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../_components/breadcrumbs";
@@ -27,7 +27,7 @@ import { configMissing, EMPTY_TOOLS, sheetsTruncatedNote } from "../../../_compo
 import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, goToSection, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
 import { BuilderFooter } from "./footer";
 import { TestBench } from "./test-bench";
-import { useTestRun } from "./use-test-run";
+import { useTestFill } from "./use-test-fill";
 
 type ModelTriple = { provider: Provider; source: string; model: string };
 
@@ -40,7 +40,7 @@ type ModelTriple = { provider: Provider; source: string; model: string };
  * blank). Drafts initialize state DURING first render, which is safe
  * only because the wrapper renders this client-only (ssr: false):
  * there is no server HTML to disagree with. The run lifecycle lives
- * in ./use-test-run, readiness in ./readiness, the template grammar
+ * in ./use-test-fill, readiness in ./readiness, the template grammar
  * in ./template: this component holds form state and composition. */
 export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const router = useRouter();
@@ -51,7 +51,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   // and the discard is SAID, not silent (that is its own data loss).
   const draft = storedDraft && storedDraft.savedAt === agent?.updated_at ? storedDraft : null;
   const draftDiscarded = storedDraft !== null && draft === null;
-  const { testBusy, runTest } = useTestRun();
+  const { testBusy, testStale, runTest } = useTestFill();
 
   const [label, setLabel] = useState(draft?.label ?? agent?.label ?? "");
   const [prompt, setPrompt] = useState(draft?.prompt ?? agent?.config.prompt ?? "");
@@ -79,7 +79,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   // Lifted from the prompt editor and bench so Clear draft resets them.
   const [variablesListId, setVariablesListId] = useState("");
   const [borrowListId, setBorrowListId] = useState("");
-  const [testResult, setTestResult] = useState<AgentTestResult | null>(draft?.testResult ?? null);
+  const [testResult, setTestResult] = useState<CellRunResult | null>(draft?.testResult ?? null);
   // The tools state THAT PRODUCED the stored result: the bench's
   // no-searches diagnosis must describe the run, not today's toggles.
   const [testToolsOn, setTestToolsOn] = useState(draft?.testToolsOn ?? false);
@@ -291,13 +291,20 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
     setTestResult(null);
     setTestToolsOn(Object.values(config.tools).some(Boolean));
     setTestOutputs(config.outputs);
-    // PROMPT order, filled values only, capped client-side: the
-    // server keeps the first TEST_ROW_MAX_KEYS in payload order, so
-    // payload order must BE prompt order (edit order would drop a
-    // variable the user filled first but typed into last).
+    // PROMPT order, filled values only, bounded client-side: the
+    // server REFUSES a row past the bench bounds (never truncates),
+    // so the client cuts first, in prompt order (edit order would
+    // drop a variable the user filled first but typed into last),
+    // and the bench diagnoses what the cut leaves out. Keys past the
+    // key bound are dropped too: a variable the server would refuse
+    // must not make the whole test unrunnable.
     const row = Object.fromEntries(
       inputKeys
-        .map((key) => [key, testRow[key] ?? ""] as const)
+        .filter((key) => key.length <= TEST_KEY_MAX_LENGTH)
+        // Values clamp here too: typing is bounded by the input's
+        // maxLength, but a restored draft is not, and the server
+        // refuses rather than truncates.
+        .map((key) => [key, (testRow[key] ?? "").slice(0, TEST_VALUE_MAX_LENGTH)] as const)
         .filter(([, value]) => value !== "")
         .slice(0, TEST_ROW_MAX_KEYS),
     );
@@ -386,6 +393,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
             onTestRow={setTestRow}
             result={testResult}
             busy={testBusy}
+            stale={testStale}
             sourceListId={borrowListId}
             onSourceList={setBorrowListId}
             onRemoveKey={removeTestKey}

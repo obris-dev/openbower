@@ -1,4 +1,5 @@
-"""Request validation + wire builders for /v1/lists. Wire dicts mirror
+"""Request validation + wire builders for /v1/lists and /v1/fills.
+Wire dicts mirror
 the schema package's models one-to-one (the web types against those)."""
 
 from __future__ import annotations
@@ -10,7 +11,8 @@ from rest_framework import serializers
 from agents.serializers import AgentConfigRequest
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
-from openbower_schema.fills import FillCounters, FillError
+from openbower_schema.fills import CellRunResult, FillCounters, FillError
+from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
@@ -90,7 +92,6 @@ class AiColumnRequest(serializers.Serializer):
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     confirmed_row_count = serializers.IntegerField(min_value=0)
-    test_run_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     # The optional DOWNWARD-only concurrency override; 0 means unset.
     concurrency = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_FILL_CONCURRENCY)
     # Scope: fill only the FIRST N eligible rows (0 = all, the absent
@@ -101,6 +102,20 @@ class AiColumnRequest(serializers.Serializer):
         if (attrs.get("config") is not None) == bool(attrs.get("agent_id")):
             raise serializers.ValidationError("exactly one of config or agent_id is required")
         return attrs
+
+
+class TestFillRequest(serializers.Serializer):
+    """POST /v1/fills/test: a drafted config plus ONE inline row, the
+    bench's hand-fed values. SHAPE only: the bench bounds are refused
+    by the admission (never truncated), so the refusal rides the
+    {error, detail} envelope instead of DRF's field shape, which the
+    client cannot read."""
+
+    config = AgentConfigRequest()
+    # trim_whitespace=False: the bench's whole value is fidelity to
+    # what a fill would run, so a hand-fed value must reach the model
+    # exactly as typed, never silently stripped.
+    row = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
 
 
 class ColumnRefillRequest(serializers.Serializer):
@@ -195,6 +210,13 @@ def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
         created_at=folder.created_at.isoformat(),
         updated_at=folder.updated_at.isoformat(),
     ).model_dump()
+
+
+def fill_run_detail_wire(fill: Fill, result: CellRunResult | None) -> dict[str, Any]:
+    """The single-run read (GET /v1/fills/{id}): the poll envelope's
+    fields plus kind and, for a COMPLETE test run, its stored result.
+    Reads the poll builder so the two projections cannot drift."""
+    return WireFillRunDetail(**fill_run_wire(fill), kind=fill.kind, result=result).model_dump()
 
 
 def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> dict[str, Any]:

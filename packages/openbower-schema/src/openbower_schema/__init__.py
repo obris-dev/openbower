@@ -12,8 +12,6 @@ from .agents import (
     AgentOutput,
     AgentsList,
     AgentSummary,
-    AgentTestResult,
-    AgentTestRun,
     AgentTools,
     CatalogModel,
 )
@@ -30,6 +28,7 @@ from .fills import (
     ColumnPromptWire,
     FillCounters,
     FillError,
+    FillRunDetail,
     FillRunPage,
     FillRunWire,
 )
@@ -52,8 +51,6 @@ __all__ = [
     "AgentListItem",
     "AgentOutput",
     "AgentSummary",
-    "AgentTestResult",
-    "AgentTestRun",
     "AgentTools",
     "AgentsList",
     "AuthUser",
@@ -65,6 +62,7 @@ __all__ = [
     "Company",
     "FillCounters",
     "FillError",
+    "FillRunDetail",
     "FillRunPage",
     "FillRunWire",
     "FolderSummary",

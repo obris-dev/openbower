@@ -21,7 +21,6 @@ from django.db import DatabaseError, close_old_connections, connections
 
 from agents.constants import SearchProvider, ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
-from agents.runtime.cell import run_cell
 from agents.tools import registry as tool_registry
 from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
@@ -36,10 +35,12 @@ from ..constants import (
     FILL_WORKER_IDLE_SECONDS,
     RETRY_CAUSES,
     FillFailureCode,
+    FillKind,
     StoredCellState,
 )
 from ..models import Fill, FillTask, List, ListRow
 from ..services import fill_progress
+from ..services.cell_run import run_cell
 from ..services.fill_queue import FillQueueService
 from ..services.landing import Landed, land_row
 from ..services.lists import ListNotFound, RowNotFound
@@ -98,10 +99,14 @@ def _concurrency_window(provider: str, source: str, run_override: int) -> _Windo
     the ceiling; self-hosted sources start at 1 and never probe past
     their DECLARED ceiling (only the operator can see that box; an
     undeclared self-hosted source stays at 1). The fill's own override
-    only ever narrows. Windows are PER PROCESS: one fill_worker per
-    deploy is the supported topology, since a second worker would run
-    its own controller and multiply the effective width against a
-    declared ceiling."""
+    only ever narrows. Windows are PER PROCESS, and the deploy runs
+    one fill_worker per KIND: each process runs its own controller,
+    so a source can see more rows than its declared ceiling while
+    test-kind rows overlap a normal fill. Each test FILL is one row
+    wide, but the one-live-test rule is per account and advisory, so
+    the overlap is bounded by the live test fills, not by one. A
+    second worker of the SAME kind has no bound at all and is not a
+    supported topology."""
     config = source_config(provider, source)
     canonical, declared = config["canonical"], config["concurrency"]
     ceiling = min(declared, MAX_FILL_CONCURRENCY) if declared else (MAX_FILL_CONCURRENCY if canonical else 1)
@@ -269,9 +274,13 @@ class FillState:
     def row_parked(self, run: CellRunResult, *, generation: int, newly_parked: bool) -> None:
         """A row parked for retry: the gauge counts it once (a re-park
         holds it), the controller sheds width in this row's epoch, and
-        the breaker counts one more consecutive park."""
-        if newly_parked:
-            fill_progress.bump(str(self.fill.id), transient=1)
+        the breaker counts one more consecutive park. EVERY park beats
+        (bump stamps the heartbeat): a fill whose only rows are parked
+        has nothing in flight, so the renew loop skips it, and the
+        retry backoffs sum past the staleness window; without this a
+        healthy retrying one-row test reads as dead and a teammate's
+        admission cancels it."""
+        fill_progress.bump(str(self.fill.id), **({"transient": 1} if newly_parked else {}))
         self.controller.record_throttle(generation)
         self.breakers.row_finished(retry_cause=run.declined_cause, tools=run.tools, blamed_tool=run.blamed_tool)
 
@@ -328,6 +337,15 @@ class FillState:
         if landed is not None:
             fill_progress.bump(str(self.fill.id), **landed.deltas(was_parked=task.parked))
 
+    def row_landed_on_task(self, *, was_parked: bool) -> None:
+        """A TEST row landed on its task (the caller's CAS closed it):
+        only `attempted` moves (a parked task releases its gauge), and
+        the drain check runs here because a one-task fill finishes on
+        its only landing. One home for both task-borne landings (the
+        run path and the give-up), so the counter story cannot fork."""
+        fill_progress.bump(str(self.fill.id), attempted=1, **({"transient": -1} if was_parked else {}))
+        self.try_finish()
+
     def row_missing(self, task: FillTask, closed: bool) -> None:
         """A row that no longer exists: its parked count, if any, is
         released; nothing else moves."""
@@ -349,13 +367,17 @@ class FillWorkerOperation:
     free; a fill's own AIMD point caps its share of them, and its
     source's declared ceiling caps every fill hitting that source."""
 
-    def __init__(self, *, worker_id: str, stop: threading.Event) -> None:
+    def __init__(self, *, worker_id: str, stop: threading.Event, kinds: tuple[str, ...] = ()) -> None:
         # The claimant's stamp (hostname:pid in production): every lease
         # CAS the queue makes filters on it, so the queue is THIS
         # worker's, built here from its identity rather than handed in.
         self.worker_id = worker_id
         self.queue = FillQueueService(worker_id=worker_id)
         self.stop = stop
+        # The kinds this instance serves ("" = all): the deploy's
+        # isolation is the enumerate filter alone (live_fills), never
+        # a second claim rule.
+        self.kinds = kinds
         self._states: dict[str, FillState] = {}
         # Whether the pass in progress found anything to do; the loop
         # idles and `--once` stops on this rather than on liveness.
@@ -402,7 +424,7 @@ class FillWorkerOperation:
         backoff is live and has nothing claimable, so liveness would
         spin this loop against a clock and never let `--once` stop."""
         self._claimed = False
-        fills = fill_progress.live_fills()
+        fills = fill_progress.live_fills(self.kinds)
         self._evict({str(fill.id) for fill in fills})
         for fill in self._rotated(fills):
             # A poisoned fill fails ALONE. Unhandled here the process
@@ -416,7 +438,7 @@ class FillWorkerOperation:
                 fill_progress.fail(
                     str(fill.id),
                     code=FillFailureCode.FILL_UNRUNNABLE,
-                    message="This fill stopped on an internal error; start a new fill. Filled cells are kept.",
+                    message="This run stopped on an internal error; start it again. Finished cells are kept.",
                 )
                 self._states.pop(str(fill.id), None)
         self._renew_and_beat()
@@ -599,6 +621,12 @@ class FillWorkerOperation:
         run = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
         if run.declined_cause not in RETRY_CAUSES:
             run = run.model_copy(update={"declined_cause": StoredCellState.TRANSIENT})
+        if state.fill.kind == FillKind.TEST:
+            # Same task-borne landing as the run path: the stamped
+            # retry cause IS the bench's diagnosis.
+            if self.queue.complete_task(task, run.model_dump()):
+                state.row_landed_on_task(was_parked=task.parked)
+            return
         landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
         state.row_given_up(task, landed)
 
@@ -625,21 +653,28 @@ class FillWorkerOperation:
         # (in-flight spend is sunk cost, stated openly).
         if not state.is_live():
             return
-        row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
-        if row is None:
-            if not List.objects.filter(id=fill.list_id).exists():
-                # The whole list went away mid-walk: resolve the fill
-                # CANCELLED, a user deletion is never a failure story.
-                # ListService.delete purges the fill in its own txn;
-                # this is the racing walker noticing before that
-                # commit lands.
-                state.cancel()
+        if fill.kind == FillKind.TEST:
+            # A test run: its rows ride the fill itself (a list, each
+            # task's position indexing its row); a test fill never
+            # points at a sheet, so there is nothing to fetch.
+            row_data = fill.row_data[task.position]
+        else:
+            row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
+            if row is None:
+                if not List.objects.filter(id=fill.list_id).exists():
+                    # The whole list went away mid-walk: resolve the fill
+                    # CANCELLED, a user deletion is never a failure story.
+                    # ListService.delete purges the fill in its own txn;
+                    # this is the racing walker noticing before that
+                    # commit lands.
+                    state.cancel()
+                    return
+                # The row alone is gone: this task closes as ROW_MISSING (no
+                # cell to diagnose, nothing a resume could owe) and the fill
+                # goes on with the rows that still exist.
+                state.row_missing(task, self.queue.mark_row_missing(task))
                 return
-            # The row alone is gone: this task closes as ROW_MISSING (no
-            # cell to diagnose, nothing a resume could owe) and the fill
-            # goes on with the rows that still exist.
-            state.row_missing(task, self.queue.mark_row_missing(task))
-            return
+            row_data = row.data
         # Before the long IO (the model call + searches): held
         # connections must not scale with the concurrency ceiling. The
         # post-run writes reopen lazily.
@@ -662,7 +697,7 @@ class FillWorkerOperation:
         # client, so concurrent rows must never share one (the first
         # finisher would kill every sibling's completion).
         try:
-            run = run_cell(state.config, row.data)
+            run = run_cell(state.config, row_data)
         except ModelUnavailable as e:
             state.fail(code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             return
@@ -672,9 +707,9 @@ class FillWorkerOperation:
             # burning attempts as anonymous thread deaths.
             state.fail(code=FillFailureCode.FILL_UNRUNNABLE, message=str(e))
             return
-        # What the run PRODUCED, through the contract model, so this
-        # writer and the bench's cannot drift: a seeded row and a run
-        # row land the same shape in the same column.
+        # What the run PRODUCED, through the contract model, so the
+        # sheet landing and the test lane's task-borne landing cannot
+        # drift: both kinds store the one wire shape.
         result = CellRunResult(
             cells=dict(run.cells),
             evidence=list(run.evidence),
@@ -702,10 +737,16 @@ class FillWorkerOperation:
             )
             state.row_parked(result, generation=generation, newly_parked=parked and not was_parked)
             return
+        if fill.kind == FillKind.TEST:
+            # A test run lands ON ITS TASK: no sheet write, no cell
+            # truth (there may be no sheet at all).
+            if self.queue.complete_task(task, result.model_dump()):
+                state.row_landed_on_task(was_parked=was_parked)
+            return
         # The three terminal writes (value, cell truth, close) are ONE
         # landing (services/landing.py); a reclaimed lease lands nothing.
         try:
-            landed = land_row(fill, str(row.id), result, close=partial(self.queue.complete_task, task))
+            landed = land_row(fill, task.row_id, result, close=partial(self.queue.complete_task, task))
         except (ListNotFound, RowNotFound):
             # Same as the missing-row leg above: a user deletion
             # resolves cancelled, never failed.

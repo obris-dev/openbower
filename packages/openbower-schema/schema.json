@@ -226,100 +226,6 @@
       "title": "AgentSummary",
       "type": "object"
     },
-    "AgentTestResult": {
-      "description": "One hand-fed row's outcome: the cells it would write (possibly\nempty, honestly), the evidence the model saw, and the tool calls\nthat produced it with each call's diagnosis.",
-      "properties": {
-        "cells": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Cells",
-          "type": "object"
-        },
-        "evidence": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Evidence",
-          "type": "array"
-        },
-        "tool_calls": {
-          "items": {
-            "$ref": "#/$defs/SearchToolCall"
-          },
-          "title": "Tool Calls",
-          "type": "array"
-        },
-        "tools": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "title": "Tools",
-          "type": "object"
-        }
-      },
-      "required": [
-        "cells",
-        "evidence",
-        "tool_calls"
-      ],
-      "title": "AgentTestResult",
-      "type": "object"
-    },
-    "AgentTestRun": {
-      "description": "The polled test-run envelope: result rides only when complete,\nand a failed run carries its WHY (every empty result ships its\ndiagnosis; failure is the tier that needs it most).",
-      "properties": {
-        "error": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Error"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "poll_budget_seconds": {
-          "description": "The runtime's own worst case for one run: a poller waits this long (plus its margin) and no longer. The server presents runs still pending past its LARGER stale window as failed, so the loop normally ends on a terminal status.",
-          "title": "Poll Budget Seconds",
-          "type": "integer"
-        },
-        "result": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AgentTestResult"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "status": {
-          "enum": [
-            "pending",
-            "complete",
-            "failed"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "status",
-        "poll_budget_seconds"
-      ],
-      "title": "AgentTestRun",
-      "type": "object"
-    },
     "AgentTools": {
       "description": "The tool REGISTRY, one typed field per tool: the wire itself\ncarries the key set, so the web derives its tool list from this\nshape instead of hand-retyping it. Unknown keys are TOLERATED\n(dropped) here because this model validates on every read, and a\nserver that adds a tool must not fail stored rows or a browser\nholding the old bundle; the REQUEST leg's serializer is where\nunknown keys refuse, which is what keeps the set closed on the\nway in.",
       "properties": {
@@ -406,6 +312,85 @@
         "model"
       ],
       "title": "CatalogModel",
+      "type": "object"
+    },
+    "CellAssessment": {
+      "description": "One answered output's judgement, INCLUDING the ones the floor\ndiscarded: what the model staked on the answer, the account it\ngave of the evidence, and the value the floor dropped (\"\" when\nthe answer landed). A typed wire shape, not a bare dict: the\nbench renders these fields, and z.any() is a contract that\npromises nothing.",
+      "properties": {
+        "confidence": {
+          "default": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "dropped": {
+          "default": "",
+          "title": "Dropped",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "title": "CellAssessment",
+      "type": "object"
+    },
+    "CellRunResult": {
+      "description": "What ONE row's run produced, stored verbatim on the task that\nran it: the cells it would write ({} = nothing, honestly), the\nevidence the model saw, each tool call's diagnosis, and the causes\nbehind any blank.\n\nONE shape for both landings. A NORMAL row's answers land in sheet\ncolumns; a TEST row lands on its own task; both store this record,\nso a reader that had to ask which landing produced it would be\nreading two contracts through one field. The bench reads it\nVERBATIM off the run-detail wire (FillRunDetail carries it whole),\nso there is no second projection to drift.\n\nWhat LANDED is the sheet row plus its cell states; the difference\nbetween the two is the audit story (an answer write-if-blank\nrefused, a value the confidence floor dropped, a shape the column\nwould not take), which is why this is stored whole rather than\nreduced to what survived.",
+      "properties": {
+        "assessments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CellAssessment"
+          },
+          "default": {},
+          "title": "Assessments",
+          "type": "object"
+        },
+        "blamed_tool": {
+          "default": "",
+          "title": "Blamed Tool",
+          "type": "string"
+        },
+        "cells": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Cells",
+          "type": "object"
+        },
+        "declined_cause": {
+          "default": "",
+          "title": "Declined Cause",
+          "type": "string"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "tool_calls": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SearchToolCall"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "title": "CellRunResult",
       "type": "object"
     },
     "CellStateWire": {
@@ -708,6 +693,123 @@
         "message"
       ],
       "title": "FillError",
+      "type": "object"
+    },
+    "FillRunDetail": {
+      "description": "One run, read by id (GET /v1/fills/{id}): the poll envelope's\nfields plus what a single-run read can afford. `result` is the\ncompleted TEST run's stored CellRunResult (its one task's record);\nthe `result` field below owns the full predicate. A test run\ncarries no sheet, so `list_id` and `agent_id` are blank (\"\") for\nkind=test, and `confirmed_row_count`/`column_keys` describe the\nhand-fed row rather than a consent echo.",
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "column_keys": {
+          "description": "The columns this run owns, frozen at consent.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Keys",
+          "type": "array"
+        },
+        "confirmed_row_count": {
+          "description": "Rows this run TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet.",
+          "title": "Confirmed Row Count",
+          "type": "integer"
+        },
+        "counters": {
+          "$ref": "#/$defs/FillCounters"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FillError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "This run's error, both legs (tier 1: the message renders verbatim); None unless the run FAILED, the same predicate ColumnFillSummary.last_error states."
+        },
+        "heartbeat_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stamped with each counter write; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+          "title": "Heartbeat At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "normal",
+          "enum": [
+            "normal",
+            "test"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "list_id": {
+          "title": "List Id",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellRunResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A test run's stored result (its one task's record), served whenever that task FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not strand a paid result); None while the task is unfinished, and always for kind=normal (a normal fill's results live on the sheet)."
+        },
+        "started_by": {
+          "description": "User id, ATTRIBUTION only; authorization is account membership.",
+          "title": "Started By",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "list_id",
+        "agent_id",
+        "status",
+        "column_keys",
+        "counters",
+        "confirmed_row_count",
+        "started_by",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "FillRunDetail",
       "type": "object"
     },
     "FillRunPage": {
@@ -1413,7 +1515,9 @@
       "unparseable",
       "type_mismatch"
     ],
+    "TEST_KEY_MAX_LENGTH": 64,
     "TEST_ROW_MAX_KEYS": 16,
+    "TEST_VALUE_MAX_LENGTH": 512,
     "TOOL_STATUSES": {
       "find_contacts": [
         "open",

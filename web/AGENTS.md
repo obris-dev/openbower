@@ -53,15 +53,20 @@ violation shipped once and got caught).
   the cleanup); `Promise.all` for independent fetches. The one blessed
   `.then` is `dynamic(() => import(...).then(...))`.
 - Poll loops carry a generation counter checked after EVERY await
-  (including the first) and a hard binary budget when the BROWSER is
-  the run's supervisor (the bench); a DURABLE, worker-supervised run
-  (a fill) polls open-ended against the worker's heartbeat instead,
+  (including the first) and a hard, stated budget when the BROWSER is
+  the run's supervisor (discover's lookalike run); a DURABLE,
+  worker-supervised run (a fill, the bench's test run included) polls
+  open-ended against the worker's heartbeat instead,
   each poll a short bounded request, staleness rendered as a warning
   and never as failure; a superseded loop
   returns silently. Such a loop NEVER stops on transport failures: the
   fill runs server-side whatever this page can reach, so repeated
-  failures back off toward a ceiling and surface the trouble, and a
-  loop that quit while its copy promised updates would be the lie.
+  failures back off toward a ceiling and surface the trouble,
+  BOUNDED: past MAX_POLL_ERRORS consecutive failures the loop either
+  surfaces persistent trouble and keeps supervising (the sheet) or
+  releases its gesture with a toast (the bench, whose run a swept id
+  can make permanently unreadable), and a loop that quit silently
+  while its copy promised updates would be the lie.
 - A read whose enum the SERVER owns is tolerant on the client: the
   deployed bundle predates the next contract, and a strict enum turns
   one added member into a whole-page parse failure for every open tab.
@@ -89,8 +94,8 @@ violation shipped once and got caught).
   message) and the client phrases them per surface; never whole
   messages on the wire beyond tier 1's own `detail`/`error` (they couple copy to
   backend deploys and forbid per-surface phrasing). (3) Only the
-  client can see it (network loss, contract mismatch, poll budget,
-  its own validation): the client owns the copy and keeps it GENERAL,
+  client can see it (network loss, contract mismatch, its own poll
+  budget, its own validation): the client owns the copy and keeps it GENERAL,
   claiming no knowledge it lacks. A message that hedges about the
   server or its operator is a tier-2/3 message claiming tier-1
   knowledge; compose the server fact (`support_followup`) instead.

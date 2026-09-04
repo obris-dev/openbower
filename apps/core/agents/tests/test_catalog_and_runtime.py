@@ -8,14 +8,12 @@ Run: DJANGO_ENV=test uv run python manage.py test agents
 
 from __future__ import annotations
 
-from datetime import timedelta
 from unittest.mock import patch
 
 import httpx
 from ddgs.exceptions import TimeoutException as DDGSTimeout
 from django.test import TestCase
 from django.urls import reverse
-from django.utils import timezone
 from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -24,18 +22,9 @@ from agents.constants import (
     MODEL_MAX_LENGTH,
     PROBE_FAILURE_TTL_SECONDS,
     SEARCH_BACKOFF_SECONDS,
-    TEST_KEY_MAX_LENGTH,
-    TEST_ROW_MAX_KEYS,
-    TEST_RUN_MAX_AGE_SECONDS,
-    TEST_RUN_STALE_PENDING_SECONDS,
-    TEST_RUN_WORST_CASE_SECONDS,
-    TEST_VALUE_MAX_LENGTH,
-    TestRunStatus,
 )
-from agents.models import AgentTestRun
 from agents.providers import anthropic_compatible, openai_compatible
-from common.testing import TEST_IDENTITY, FakeResponse, login_session
-from openbower_kernel.fields import min_ulid_at
+from common.testing import FakeResponse, login_session
 from openbower_kernel.provider_config import ProviderSpec
 from openbower_schema.agents import CONFIDENCE_SUFFIX
 
@@ -317,14 +306,6 @@ class CatalogTests(TestCase):
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m for m in body["models"] if m["provider"] == "openai_compatible"], [])
-
-
-def _inline_spawn(run_id: str, config: dict, row: dict) -> None:
-    """The spawn seam, made synchronous: a REAL thread opens its own DB
-    connection and cannot see the TestCase's uncommitted transaction."""
-    from agents import views
-
-    views._execute_test(run_id, config, row, close_connection=False)
 
 
 class SearchAvailabilityTests(TestCase):
@@ -694,32 +675,34 @@ class RuntimeTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
 
-    def _poll_result(self, resp) -> dict:
-        """202 -> the run's terminal result (the spawn ran inline, so
-        one poll is already terminal)."""
-        self.assertEqual(resp.status_code, 202, resp.content)
-        run = self.client.get(reverse("agents_test_run", args=[resp.json()["id"]])).json()
-        self.assertEqual(run["status"], "complete", run)
-        return run["result"]
-
     def _test_call(self, answer_values: dict, config: dict | None = None, serp=None, behavior=None):
+        """One run, straight through run_cell, projected into the
+        WIRE shape the worker writes (CellRunResult): the runtime
+        behaviors these tests pin are lane-independent, and the test
+        lane's own endpoint contract lives with the fills tests."""
+        from agents.serializers import AgentConfigRequest
+        from lists.services.cell_run import run_cell
+        from openbower_schema.agents import AgentConfig
+        from openbower_schema.fills import CellRunResult
+
+        serializer = AgentConfigRequest(data=config or _CONFIG)
+        serializer.is_valid(raise_exception=True)
         model = _scripted_model(behavior or _default_behavior(answer_values))
         with (
-            # BOTH resolutions answer the scripted model: the view
-            # resolves once and passes it down (run_cell only resolves
-            # for direct callers).
             patch("agents.runtime.answer.answerer.model_for", return_value=model),
-            patch("agents.views.model_for", return_value=model),
             patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=serp or _serp_response),
-            patch("agents.views._spawn_test", new=_inline_spawn),
             self.settings(**_TEST_SETTINGS),
         ):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": config or _CONFIG, "row": {"name": "Acme", "domain": "acme.com"}},
-                content_type="application/json",
-            )
-        return self._poll_result(resp)
+            run = run_cell(AgentConfig(**serializer.validated_data), {"name": "Acme", "domain": "acme.com"})
+        return CellRunResult(
+            cells=dict(run.cells),
+            evidence=list(run.evidence),
+            tool_calls=[o.wire() for o in run.tool_calls],
+            assessments=dict(run.assessments),
+            declined_cause=run.declined_cause,
+            blamed_tool=run.blamed_tool,
+            tools=dict(run.tools),
+        ).model_dump()
 
     def test_outputs_land_as_cells_with_evidence(self):
         body = self._test_call({"person": "Jane Doe", "profile": "https://www.linkedin.com/in/janedoe"})
@@ -777,10 +760,11 @@ class RuntimeTests(TestCase):
         self.assertEqual(body["cells"], {})
         self.assertTrue(body["tool_calls"])
         self.assertTrue(all(s["status"] == "rate_limited" for s in body["tool_calls"]))
-        # The tool statuses ride the STORED bench result too: a
-        # borrowed bench row lands through the same landing as a
-        # worker row, and without the map its cell would lose the
-        # degraded mark. FAILS if the view's result drops tools=.
+        # The run names the tools that did not serve: without this
+        # map a blank cell loses its degraded mark (the run-detail
+        # read serves it back to the bench verbatim). FAILS if
+        # run_cell stops recording per-tool statuses; the wire
+        # projection itself is pinned where the worker writes it.
         self.assertEqual(body["tools"], {"find_contacts": "rate_limited"})
 
     def test_the_instruction_tail_switches_on_tool_presence(self):
@@ -799,50 +783,6 @@ class RuntimeTests(TestCase):
         seen.clear()
         self._test_call({"person": "Jane Doe", "profile": ""}, config={**_CONFIG, "tools": {}}, behavior=behavior)
         self.assertTrue(seen and "Use the provided tools" not in seen[0])
-
-    def test_non_string_row_values_reject(self):
-        # The row is a DictField of CharFields: structured values are a
-        # contract violation, not something to coerce quietly.
-        with patch("agents.views.model_for"), patch("agents.views._spawn_test"), self.settings(**_TEST_SETTINGS):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": _CONFIG, "row": {"name": {"nested": "no"}}},
-                content_type="application/json",
-            )
-        self.assertEqual(resp.status_code, 400)
-
-    def test_row_keys_values_and_count_all_clamp(self):
-        # Everything about the hand-fed row is authored input: key
-        # length, value length, AND key count clamp (never reject; a
-        # 17-variable prompt is a big prompt, not an error).
-        long_key = "k" * (TEST_KEY_MAX_LENGTH + 8)
-        with (
-            patch("agents.views.model_for"),
-            patch("agents.views._spawn_test") as spawn,
-            self.settings(**_TEST_SETTINGS),
-        ):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": _CONFIG, "row": {long_key: "v" * (TEST_VALUE_MAX_LENGTH + 8)}},
-                content_type="application/json",
-            )
-            self.assertEqual(resp.status_code, 202)
-            row = spawn.call_args.args[2]
-            self.assertEqual(list(row), [long_key[:TEST_KEY_MAX_LENGTH]])
-            self.assertEqual(len(row[long_key[:TEST_KEY_MAX_LENGTH]]), TEST_VALUE_MAX_LENGTH)
-
-            # Clear the one-live-run guard; this test is about bounds.
-            AgentTestRun.objects.all().delete()
-            too_many = {f"k{i:02d}": "v" for i in range(TEST_ROW_MAX_KEYS + 8)}
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": _CONFIG, "row": too_many},
-                content_type="application/json",
-            )
-            self.assertEqual(resp.status_code, 202)
-            row = spawn.call_args.args[2]
-            self.assertEqual(len(row), TEST_ROW_MAX_KEYS)
-            self.assertEqual(list(row), [f"k{i:02d}" for i in range(TEST_ROW_MAX_KEYS)])
 
     def test_a_failed_task_in_a_200_envelope_is_a_failure(self):
         # Insufficient balance answers 200 with a failed TASK; reading
@@ -890,7 +830,7 @@ class AgenticLoopTests(TestCase):
         config: dict | None = None,
         row: dict | None = None,
     ) -> dict:
-        from agents.runtime.cell import run_cell
+        from lists.services.cell_run import run_cell
         from openbower_schema.agents import AgentConfig
 
         with (
@@ -1512,345 +1452,3 @@ class AgenticLoopTests(TestCase):
         self.assertEqual(len(serp_calls), 1)
         self.assertEqual(len(body["tool_calls"]), 1)
         self.assertFalse(body["tool_calls"][0].failed, "an honest zero-hit answer is a drought, not an error")
-
-
-class TestRunLifecycleTests(TestCase):
-    """The poll contract itself: pending until the worker lands, failed
-    on a crash (never a stuck pending), scoped 404s, stale-run purge."""
-
-    def setUp(self) -> None:
-        login_session(self.client)
-
-    def _post(self):
-        with self.settings(**_TEST_SETTINGS):
-            return self.client.post(
-                reverse("agents_test"),
-                {"config": _CONFIG, "row": {"name": "Acme"}},
-                content_type="application/json",
-            )
-
-    def test_post_answers_pending_before_the_worker_lands(self):
-        with patch("agents.views._spawn_test") as spawn, patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 202, resp.content)
-        body = resp.json()
-        self.assertEqual(body["status"], "pending")
-        self.assertIsNone(body["result"])
-        spawn.assert_called_once()
-        polled = self.client.get(reverse("agents_test_run", args=[body["id"]])).json()
-        self.assertEqual(polled["status"], "pending")
-
-    def test_a_crashing_run_lands_failed_not_stuck(self):
-        with (
-            patch("agents.views._spawn_test", new=_inline_spawn),
-            patch("agents.views.model_for"),
-            patch("agents.runtime.answer.answerer.model_for", side_effect=RuntimeError("boom")),
-        ):
-            resp = self._post()
-        run = self.client.get(reverse("agents_test_run", args=[resp.json()["id"]])).json()
-        self.assertEqual(run["status"], "failed")
-        self.assertIsNone(run["result"])
-        # The wire carries the WHY: failure is the tier that needs its
-        # diagnosis most.
-        self.assertIn("crashed unexpectedly", run["error"])
-        self.assertNotIn("boom", run["error"])
-        # The profile-owned follow-up rides the crash leg intact
-        # (bounded at boot, so the clamp cannot cut it mid-URL).
-        from django.conf import settings as django_settings
-
-        self.assertIn(django_settings.SUPPORT_FOLLOWUP, run["error"])
-
-    def test_a_foreign_accounts_run_reads_as_missing(self):
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            run_id = self._post().json()["id"]
-        AgentTestRun.objects.filter(id=run_id).update(account_id="01AC" + "Z" * 22)
-        resp = self.client.get(reverse("agents_test_run", args=[run_id]))
-        self.assertEqual(resp.status_code, 404)
-
-    def test_an_unrunnable_address_refuses_at_post(self):
-        # A config error refuses BEFORE a run row exists: it must never
-        # masquerade as a started run.
-        with self.settings(**_TEST_SETTINGS):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": {**_CONFIG, "source": "ghost"}, "row": {"name": "Acme"}},
-                content_type="application/json",
-            )
-        self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertIn("source unknown or closed", str(resp.json()["detail"]))
-        self.assertEqual(AgentTestRun.objects.count(), 0)
-
-    def test_an_unregistered_toggle_refuses_at_post(self):
-        # Config tier like an unrunnable address: a toggle naming no
-        # registered tool (a tool module whose ready() import was
-        # forgotten) must 400 with its why, never start a run that
-        # crashes per row. FAILS if the gate stops resolving toggles.
-        from agents.tools import registry as tool_registry
-
-        surviving = {"web_search": tool_registry._REGISTRY["web_search"]}
-        with (
-            self.settings(**_TEST_SETTINGS),
-            patch("agents.views.model_for"),
-            patch.dict(tool_registry._REGISTRY, surviving, clear=True),
-        ):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": {**_CONFIG, "tools": {"web_search": True, "find_contacts": True}}, "row": {"name": "A"}},
-                content_type="application/json",
-            )
-        self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertIn("find_contacts", str(resp.json()["detail"]))
-        self.assertEqual(AgentTestRun.objects.count(), 0)
-
-    def test_truncated_row_keys_keep_the_first_value(self):
-        stem = "k" * TEST_KEY_MAX_LENGTH
-        with patch("agents.views.model_for"), patch("agents.views._spawn_test") as spawn:
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": _CONFIG, "row": {stem + "a": "first", stem + "b": "second"}},
-                content_type="application/json",
-            )
-        self.assertEqual(resp.status_code, 202)
-        row = spawn.call_args.args[2]
-        self.assertEqual(row, {stem: "first"})
-
-    def test_the_debug_tag_refuses_at_validation(self):
-        # {% debug %} dumps the context and sys.modules into the
-        # rendered prompt: an information leak into a model call. The
-        # guard walks the PARSED nodes, so the arg-carrying and nested
-        # spellings refuse too (the tag ignores its arguments).
-        for prompt in ("{% debug %}", "{% debug x %}", "{% if name %}{% debug %}{% endif %}"):
-            resp = self.client.post(
-                reverse("agents_test"),
-                {"config": {**_CONFIG, "prompt": prompt}, "row": {}},
-                content_type="application/json",
-            )
-            self.assertEqual(resp.status_code, 400, prompt)
-
-    def test_the_envelope_carries_the_worst_case_poll_budget(self):
-        # The client's budget derives from the runtime's WORST CASE
-        # (never invented client-side, and never the stale window: a
-        # hung run must not spin the browser for the orphan margin).
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            body = self._post().json()
-        self.assertEqual(body["poll_budget_seconds"], TEST_RUN_WORST_CASE_SECONDS)
-        # The whole ordering, pinned: abandonment (poll silence) is
-        # far below the worst case, which the stale window must clear
-        # or an honest slow run is presented dead mid-flight.
-        from agents.constants import TEST_RUN_ABANDON_SECONDS
-
-        self.assertLess(TEST_RUN_ABANDON_SECONDS, TEST_RUN_WORST_CASE_SECONDS)
-        self.assertGreater(TEST_RUN_STALE_PENDING_SECONDS, TEST_RUN_WORST_CASE_SECONDS)
-
-    def test_your_own_run_blocks_young_and_supersedes_past_the_window(self):
-        # YOUNG: its thread is still spending, so a second start 409s
-        # (instant supersede would fork concurrent paid runs on every
-        # reload-and-retest). PAST the abandonment window: the poll
-        # loop is presumed gone, and the row is superseded so the
-        # account is never locked out for the stale window.
-        from agents.constants import TEST_RUN_ABANDON_SECONDS
-
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            first = self._post()
-            self.assertEqual(first.status_code, 202)
-            young = self._post()
-            self.assertEqual(young.status_code, 409)
-            self.assertIn("still running", young.json()["detail"])
-            aged = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_ABANDON_SECONDS + 1))
-            AgentTestRun.objects.filter(id=first.json()["id"]).update(id=aged)
-            second = self._post()
-            self.assertEqual(second.status_code, 202)
-        old = AgentTestRun.objects.get(id=aged)
-        self.assertEqual(old.status, TestRunStatus.FAILED)
-        self.assertIn("superseded", old.error)
-
-    def test_the_fill_lanes_account_cap_gates_the_bench(self):
-        # The bench is a metered lane like a fill: with the account's
-        # fill slots full, a test refuses on the SAME constant the
-        # fill lane reads, before any run row exists.
-        from lists.constants import MAX_ACTIVE_FILLS
-        from lists.models import Fill
-
-        for _ in range(MAX_ACTIVE_FILLS):
-            Fill.objects.create(
-                account_id=TEST_IDENTITY["account_id"],
-                user_id=TEST_IDENTITY["id"],
-                list_id="01LIST" + "A" * 20,
-                agent_id="01AGENT" + "A" * 19,
-                column_keys=["answer"],
-                config_snapshot={},
-                confirmed_row_count=1,
-            )
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 409, resp.content)
-        self.assertEqual(resp.json()["error"], "fills_full")
-        self.assertEqual(AgentTestRun.objects.count(), 0)
-
-    def test_a_colleagues_live_run_refuses_and_is_never_superseded(self):
-        # Foreign pendings win: no run id rides the 409 (adopting a
-        # teammate's run would render their cells under your config),
-        # and your abandoned row is NOT superseded past theirs (the
-        # invariant is one live run per account, not one per user).
-        theirs = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id="01OT" + "H" * 22)
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 409)
-        self.assertNotIn("run_id", resp.json())
-        self.assertIn("teammate", resp.json()["detail"])
-        self.assertEqual(AgentTestRun.objects.get(id=str(theirs.id)).status, TestRunStatus.PENDING)
-
-    def test_a_superseded_run_buys_no_work(self):
-        # The tombstone gate covers the WORK: a run superseded while
-        # its thread was scheduled must not spend a single completion
-        # or search when its slot frees. A REAL config and a patched
-        # run_cell: a gate deletion must fail this by running, never
-        # pass via an unrelated crash on junk arguments.
-        from agents.services import fail_run
-        from agents.views import _execute_test
-        from openbower_schema.agents import AgentConfig
-
-        run = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        fail_run(str(run.id), "superseded by a newer test")
-        with patch("agents.runtime.cell.run_cell") as worker:
-            keyed = {**_CONFIG, "outputs": [{"key": "", **o} for o in _CONFIG["outputs"]]}
-            _execute_test(str(run.id), AgentConfig(**keyed), {"name": "Acme"}, close_connection=False)
-        worker.assert_not_called()
-        run.refresh_from_db()
-        self.assertIn("superseded", run.error)
-
-    def test_at_capacity_the_run_refuses_fast_never_queues(self):
-        # Queue time is invisible to the published poll budget; a
-        # queued run could present as interrupted having never begun.
-        from agents import views
-
-        run = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        drained = views.threading.BoundedSemaphore(1)
-        drained.acquire()
-        with patch.object(views, "_TEST_SLOTS", drained):
-            views._execute_test(str(run.id), None, {}, close_connection=False)
-        run.refresh_from_db()
-        self.assertEqual(run.status, TestRunStatus.FAILED)
-        self.assertIn("capacity", run.error)
-
-    def test_a_foreign_pending_older_than_the_worst_case_never_blocks(self):
-        # Past the worst case a pending row provably cannot be live;
-        # blocking on it was ~15 minutes of dead lockout.
-        theirs = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id="01OT" + "H" * 22)
-        aged = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_WORST_CASE_SECONDS + 1))
-        AgentTestRun.objects.filter(id=str(theirs.id)).update(id=aged)
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 202)
-
-    def test_a_polled_then_silent_run_is_superseded(self):
-        # The signal branch that matters most: a run that WAS polled
-        # and then went quiet past the window (closed tab) supersedes.
-        from agents.constants import TEST_RUN_ABANDON_SECONDS
-
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            first = self._post()
-            AgentTestRun.objects.filter(id=first.json()["id"]).update(
-                polled_at=timezone.now() - timedelta(seconds=TEST_RUN_ABANDON_SECONDS + 1)
-            )
-            second = self._post()
-        self.assertEqual(second.status_code, 202)
-        old = AgentTestRun.objects.get(id=first.json()["id"])
-        self.assertEqual(old.status, TestRunStatus.FAILED)
-        self.assertIn("superseded", old.error)
-
-    def test_an_abandoned_teammates_run_stops_blocking(self):
-        # Abandonment is judged the SAME for foreign rows: a dead
-        # orphan must not lock the whole account for the worst case.
-        from agents.constants import TEST_RUN_ABANDON_SECONDS
-
-        theirs = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id="01OT" + "H" * 22)
-        AgentTestRun.objects.filter(id=str(theirs.id)).update(
-            polled_at=timezone.now() - timedelta(seconds=TEST_RUN_ABANDON_SECONDS + 1)
-        )
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 202)
-        self.assertEqual(AgentTestRun.objects.get(id=str(theirs.id)).status, TestRunStatus.FAILED)
-
-    def test_a_recently_polled_old_run_is_not_abandoned(self):
-        # Abandonment is observed SILENCE, never age: an honest slow
-        # run past the old 32s age window still has a live poll loop
-        # stamping polled_at every cadence.
-        from agents.constants import TEST_RUN_ABANDON_SECONDS
-
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            first = self._post()
-            aged = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_ABANDON_SECONDS + 8))
-            AgentTestRun.objects.filter(id=first.json()["id"]).update(id=aged, polled_at=timezone.now())
-            second = self._post()
-        self.assertEqual(second.status_code, 409)
-        self.assertIn("still running", second.json()["detail"])
-
-    def test_the_poll_get_stamps_the_abandonment_signal(self):
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            run_id = self._post().json()["id"]
-        self.assertIsNone(AgentTestRun.objects.get(id=run_id).polled_at)
-        self.client.get(reverse("agents_test_run", args=[run_id]))
-        self.assertIsNotNone(AgentTestRun.objects.get(id=run_id).polled_at)
-
-    def test_a_teammates_poll_never_stamps_liveness(self):
-        # OWNER-scoped: a colleague reading a run by hand must not
-        # keep an orphan whose owner's loop is gone reading as live.
-        theirs = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id="01OT" + "H" * 22)
-        self.client.get(reverse("agents_test_run", args=[str(theirs.id)]))
-        self.assertIsNone(AgentTestRun.objects.get(id=str(theirs.id)).polled_at)
-
-    def test_the_409_carries_its_machine_code(self):
-        AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id="01OT" + "H" * 22)
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            resp = self._post()
-        self.assertEqual(resp.status_code, 409)
-        self.assertEqual(resp.json()["error"], "test_run_active")
-
-    def test_terminal_writes_never_overwrite_a_tombstone(self):
-        # A superseded run's zombie thread finishing later must not
-        # flip the row back to complete with results from a config the
-        # user already replaced.
-        from agents.services import complete_run, fail_run
-
-        run = AgentTestRun.objects.create(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        fail_run(str(run.id), "superseded by a newer test")
-        complete_run(str(run.id), {"cells": {}, "evidence": [], "searches": []})
-        run.refresh_from_db()
-        self.assertEqual(run.status, TestRunStatus.FAILED)
-        self.assertIn("superseded", run.error)
-
-    def test_an_orphaned_pending_run_polls_as_failed(self):
-        # Daemon threads die unwound on restarts; the poll leg presents
-        # the orphan as its failure instead of pending forever.
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            run_id = self._post().json()["id"]
-        # Aging rewrites the id: BOTH legs (guard and poll) judge the
-        # ULID's time prefix, one fact, never two columns.
-        stale_id = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_STALE_PENDING_SECONDS + 1))
-        AgentTestRun.objects.filter(id=run_id).update(id=stale_id)
-        run = self.client.get(reverse("agents_test_run", args=[stale_id])).json()
-        self.assertEqual(run["status"], "failed")
-        self.assertIn("interrupted", run["error"])
-
-    def test_unknown_run_is_404(self):
-        resp = self.client.get(reverse("agents_test_run", args=["01" + "Z" * 24]))
-        self.assertEqual(resp.status_code, 404)
-
-    def test_stale_runs_purge_on_post_and_only_stale_ones(self):
-        with patch("agents.views._spawn_test"), patch("agents.views.model_for"):
-            from openbower_kernel.fields import min_ulid_at
-
-            # Aging rewrites ids (see the spend-guard test): the purge
-            # rides the id index via the ULID time prefix.
-            stale_id = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_MAX_AGE_SECONDS + 1))
-            AgentTestRun.objects.filter(id=self._post().json()["id"]).update(id=stale_id)
-            boundary_id = min_ulid_at(timezone.now() - timedelta(seconds=TEST_RUN_MAX_AGE_SECONDS - 1))
-            AgentTestRun.objects.filter(id=self._post().json()["id"]).update(id=boundary_id)
-            fresh_id = self._post().json()["id"]
-        # Inside the window survives (a purge that swept everything
-        # would pass a weaker assertion).
-        self.assertFalse(AgentTestRun.objects.filter(id=stale_id).exists())
-        self.assertTrue(AgentTestRun.objects.filter(id=boundary_id).exists())
-        self.assertTrue(AgentTestRun.objects.filter(id=fresh_id).exists())

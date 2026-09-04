@@ -244,7 +244,6 @@ class AiColumnView(_ScopedView):
                 config=config,
                 agent_id=data["agent_id"],
                 confirmed_row_count=data["confirmed_row_count"],
-                test_run_id=data["test_run_id"],
                 concurrency=data["concurrency"],
                 rows=data["rows"],
             )

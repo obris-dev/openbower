@@ -9,10 +9,10 @@ from __future__ import annotations
 from django.db import models
 
 from agents.constants import ToolStatus
-from openbower_schema.fills import ColumnFillSummary, FillError
+from openbower_schema.fills import CellRunResult, ColumnFillSummary, FillError
 from openbower_schema.lists import CellStateWire
 
-from ..constants import LIVE_FILL_STATUSES, FillStatus, FillTaskStatus, StoredCellState
+from ..constants import LIVE_FILL_STATUSES, FillKind, FillStatus, FillTaskStatus, StoredCellState
 from ..models import Fill, FillCellState, FillTask, List, ListRow
 from .fill_progress import stop_fill
 
@@ -36,6 +36,22 @@ class FillService:
         except Fill.DoesNotExist as e:
             raise FillNotFound(fill_id) from e
 
+    def test_result(self, fill: Fill) -> CellRunResult | None:
+        """A test run's stored result: its one task's record, read
+        back through the contract model it was written through. Gated
+        on the TASK (DONE with a stored record), never on the fill's
+        status: the landing commits the task first and flips the fill
+        after, so a cancel racing that gap leaves a CANCELLED fill
+        holding a fully paid result, and a status gate would strand
+        it. None while the task is unfinished, and always for
+        kind=normal (a normal fill's results live on the sheet)."""
+        if fill.kind != FillKind.TEST:
+            return None
+        task = FillTask.objects.filter(fill_id=str(fill.id)).order_by("position").first()
+        if task is None or task.status != FillTaskStatus.DONE or not task.result:
+            return None
+        return CellRunResult.model_validate(task.result)
+
     def page_for_list(self, list_id: str, *, after_id: str, limit: int) -> list[Fill]:
         """Keyset by -id, LIVE runs only: a terminal run's story (its
         status, its error) lands on the column summary the moment it
@@ -46,7 +62,11 @@ class FillService:
         # page must not pay the JSONB either (a test captures the
         # endpoint's SQL and refuses any query touching the column).
         qs = (
-            Fill.objects.filter(account_id=self.account_id, list_id=list_id, status__in=LIVE_FILL_STATUSES)
+            Fill.objects.filter(
+                account_id=self.account_id,
+                list_id=list_id,
+                status__in=LIVE_FILL_STATUSES,
+            )
             .defer("config_snapshot")
             .order_by("-id")
         )
@@ -116,7 +136,9 @@ class FillService:
         live = {
             str(fill_id): [key for key in (keys or ()) if key in fill_keys]
             for fill_id, keys in Fill.objects.filter(
-                account_id=self.account_id, list_id=str(target_list.id), status__in=LIVE_FILL_STATUSES
+                account_id=self.account_id,
+                list_id=str(target_list.id),
+                status__in=LIVE_FILL_STATUSES,
             ).values_list("id", "column_keys")
         }
         if not live:

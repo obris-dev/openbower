@@ -10,10 +10,10 @@ from django.db import connection
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
-from lists.cell_types import CellTypeMismatch, validate_cell
 from lists.constants import CELL_MAX_LENGTH, ColumnType, ListOrigin
 from lists.models import ListRow
 from lists.services.lists import ListNotFound, ListService, RowNotFound
+from openbower_schema.cell_types import CellTypeMismatch, validate_cell
 
 _COLUMNS = [
     {"key": "name", "label": "Name", "type": "text"},

@@ -38,14 +38,28 @@ test("a well-shaped draft survives whole", () => {
     testToolsOn: true,
   };
   // tools parse through the generated AgentTools schema, so a key a
-  // past version never wrote fills with its wire default; the same
-  // holds for the result's tool statuses, defaulted for results a
-  // past version stored without them.
+  // past version never wrote fills with its wire default; the result
+  // parses through CellRunResultSchema (the fill lane's one record),
+  // whose defaulted verdict fields fill in the same way.
   assert.deepEqual(parseDraft(JSON.stringify(stored)), {
     ...stored,
     tools: { web_search: true, find_contacts: false },
-    testResult: { ...stored.testResult, tools: {} },
+    // The collection fields materialize their empty defaults now (the
+    // contract ships literal defaults, so an absent key parses as the
+    // empty value instead of undefined).
+    testResult: { ...stored.testResult, blamed_tool: "", declined_cause: "", assessments: {}, tools: {} },
   });
+});
+
+test("an alien stored result drops instead of restoring as all-defaults", () => {
+  // Every member of CellRunResultSchema is defaulted, so an object
+  // from some future era parses "successfully" into an empty result;
+  // restoring that fabricates a verdict card. The gate keys on the
+  // one field every real record carries.
+  const stored = { label: "Finder", testResult: { verdict: "new-era-shape" } };
+  const parsed = parseDraft(JSON.stringify(stored));
+  assert.equal(parsed?.label, "Finder");
+  assert.equal(parsed?.testResult, undefined);
 });
 
 test("draftEquals ignores key order but nothing else", () => {

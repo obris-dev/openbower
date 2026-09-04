@@ -70,7 +70,7 @@ def verify(ctx: RunContext[CellDeps], output: BaseModel, keys: list[str]) -> Bas
             setattr(output, key, "")
             deps.judgement.verification_dropped = True
         deps.judgement.assessments[key] = assessment
-        logger.info("cell: %r at %.2f%s", key, confidence, " DROPPED" if "dropped" in assessment else "")
+        logger.info("cell: %r at %.2f%s", key, confidence, " DROPPED" if assessment.get("dropped") else "")
     return output
 
 

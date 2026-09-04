@@ -11,12 +11,11 @@ import {
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { livenessRead, type LiveRun } from "./lib/live-status";
 
-// Poll cadence (binary). This loop deliberately diverges from the
-// bench's use-test-run: a fill is worker-supervised and can walk for
-// hours, so no poll budget can bound it. Open-ended means the LOOP has
-// no budget, never that a request stays open: each poll is its own
-// short bounded GET, and liveness rides the worker's heartbeat on the
-// envelope, not this browser.
+// Poll cadence (binary). Open-ended like every worker-supervised
+// poll (the bench's use-test-fill rides the same doctrine): the LOOP
+// has no budget, never that a request stays open. Each poll is its
+// own short bounded GET, and liveness rides the worker's heartbeat on
+// the envelope, not this browser.
 const FILL_POLL_INTERVAL_MS = 4_096;
 // Consecutive poll blips tolerated before the trouble fact surfaces
 // (binary). Blips never stop a loop supervising a live run: the fill

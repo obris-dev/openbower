@@ -10,21 +10,17 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext, override_settings
 
-from agents.models import Agent, AgentTestRun
+from agents.models import Agent
 from agents.providers import ModelUnavailable
-from agents.services import config_fingerprint
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import CellRunResult
 
 from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
     FillStatus,
-    FillTaskStatus,
-    StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask
+from ..models import Fill, FillTask
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -41,7 +37,7 @@ from ..services.fill_admission import (
 )
 from ..services.fills import FillService
 from ..services.lists import ListService
-from .fill_helpers import queued_row_ids, targeted, targeted_positions
+from .fill_helpers import targeted, targeted_positions
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -69,7 +65,7 @@ class AdmissionTestCase(TestCase):
             label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
-        patcher = patch("lists.services.fill_admission.model_for")
+        patcher = patch("lists.services.fill_admission.base.model_for")
         self.model_for = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -366,160 +362,6 @@ class RosterPathTests(AdmissionTestCase):
             self.admit(config=None, agent_id=str(agent.id))
 
 
-class BenchSeedTests(AdmissionTestCase):
-    def _run_for(self, config: AgentConfig, *, row_id: str, cells: dict[str, str]) -> AgentTestRun:
-        return AgentTestRun.objects.create(
-            account_id=ACCOUNT,
-            user_id=USER,
-            status="complete",
-            config_fingerprint=config_fingerprint(config),
-            row_id=row_id,
-            result={"cells": cells, "evidence": ["seen"], "tool_calls": []},
-        )
-
-    def test_config_identical_run_seeds_the_borrowed_row(self) -> None:
-        config = quick_config()
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "seeded"})
-        rows_other = self.lists.rows_page(self.sheet, after_position=0, limit=2)[1]
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        row.refresh_from_db()
-        self.assertEqual(row.data["answer"], "seeded")
-        seeded = FillTask.objects.get(fill_id=str(fill.id), row_id=str(row.id))
-        self.assertEqual(seeded.status, FillTaskStatus.DONE)
-        # Both rows were CONSENTED, so both have a task; only the
-        # unseeded one is queued for a worker. The seed's task carries
-        # the bench run's own result, so the row is never re-billed and
-        # the drawer reads it where it reads every other run.
-        self.assertEqual(len(targeted(str(fill.id))), 2)
-        self.assertEqual(queued_row_ids(str(fill.id)), [str(rows_other.id)])
-
-    def test_a_run_stored_under_retired_causes_is_a_miss_not_a_500(self) -> None:
-        # A bench run written before the cell-state vocabulary changed
-        # can carry a retired cause word, and borrowing it would hand
-        # that word to the landing's strict StoredCellState(). The
-        # economy's own rule covers it (one more miss, the row runs
-        # fresh); FAILS with a ValueError inside admit without the
-        # vocabulary check in _borrowed_row.
-        config = quick_config()
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={})
-        run.result = {**run.result, "declined_cause": "search_throttled"}
-        run.save(update_fields=["result"])
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        row.refresh_from_db()
-        self.assertNotIn("answer", row.data)
-        task = FillTask.objects.get(fill_id=str(fill.id), row_id=str(row.id))
-        self.assertEqual(task.status, FillTaskStatus.QUEUED)
-
-    def test_a_seeded_cell_passes_the_new_columns_type_validator(self) -> None:
-        # The seed used to write before the column was claimed, so
-        # write_cells found no type for the key and stored the value
-        # raw: a number cell kept "1,234" un-normalized and a non-number
-        # was recorded FILLED instead of TYPE_MISMATCH.
-        config = quick_config(outputs=[AgentOutput(key="answer", label="Answer", type="number")])
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "1,234"})
-        self.admit(config=config, test_run_id=str(run.id))
-        row.refresh_from_db()
-        self.assertEqual(row.data["answer"], "1234")
-
-    def test_a_seeded_non_number_is_a_type_mismatch_not_a_fill(self) -> None:
-        config = quick_config(outputs=[AgentOutput(key="answer", label="Answer", type="number")])
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "about $5M"})
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        row.refresh_from_db()
-        self.assertNotIn("answer", row.data)
-        state = FillCellState.objects.get(fill_id=str(fill.id), row_id=str(row.id), column_key="answer")
-        self.assertEqual(state.state, StoredCellState.TYPE_MISMATCH)
-
-    def test_a_fully_seeded_fill_completes_at_admission(self) -> None:
-        # A one-row sheet whose only row seeds from the bench leaves
-        # ZERO claimable rows: no worker would ever visit the fill, so
-        # admission itself must complete it (or the chip spins forever
-        # and the column locks behind a fill that already succeeded).
-        config = quick_config()
-        solo = self.lists.create(
-            label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-        )
-        self.lists.add_rows(solo, [{"company": "acme.com"}])
-        row = self.lists.rows_page(solo, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "seeded"})
-        fill = self.admission.admit(
-            list_id=str(solo.id),
-            config=config,
-            confirmed_row_count=1,
-            test_run_id=str(run.id),
-        )
-        self.assertEqual(fill.status, FillStatus.COMPLETE)
-        # The seed leaves ONE task, already DONE: the row is recorded as
-        # consented and answered, and nothing is queued for a worker.
-        self.assertEqual(queued_row_ids(str(fill.id)), [])
-        row.refresh_from_db()
-        self.assertEqual(row.data["answer"], "seeded")
-
-    def test_a_seeded_row_is_a_resolved_row_everywhere(self) -> None:
-        # A seeded row is RESOLVED, not skipped, so it has to look
-        # resolved from every angle the rest of the feature reads. The
-        # value alone is not enough: absence of a cell state means NEVER
-        # ATTEMPTED, and the counters are what the tracker renders.
-        config = quick_config()
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "seeded"})
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        state = FillCellState.objects.get(list_id=str(self.sheet.id), row_id=str(row.id), column_key="answer")
-        self.assertEqual(state.state, StoredCellState.FILLED)
-        self.assertEqual(state.fill_id, str(fill.id))
-        self.assertEqual((fill.attempted, fill.filled, fill.blank), (1, 1, 0))
-
-    def test_a_seeded_task_stores_the_same_shape_a_run_task_does(self) -> None:
-        # The seed and the worker both write FillTask.result, so a
-        # reader must not have to ask which one produced a record. Both
-        # go through CellRunResult; this pins the seed's half.
-        config = quick_config()
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "seeded"})
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        task = FillTask.objects.get(fill_id=str(fill.id), row_id=str(row.id))
-        stored = CellRunResult.model_validate(task.result)
-        self.assertEqual(stored.cells, {"answer": "seeded"})
-        self.assertEqual(set(task.result), set(CellRunResult.model_fields))
-
-    def test_a_fully_seeded_fill_reports_its_row_as_run(self) -> None:
-        # The tracker reads attempted off the column summary. A COMPLETE
-        # fill whose only row is answered must not read "1 row to fill",
-        # which is both false and unreachable: the row holds a value, so
-        # no refill can target it.
-        config = quick_config()
-        solo = self.lists.create(
-            label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-        )
-        self.lists.add_rows(solo, [{"company": "acme.com"}])
-        row = self.lists.rows_page(solo, after_position=0, limit=1)[0]
-        run = self._run_for(config, row_id=str(row.id), cells={"answer": "seeded"})
-        fill = self.admission.admit(list_id=str(solo.id), config=config, confirmed_row_count=1, test_run_id=str(run.id))
-        self.assertEqual(fill.status, FillStatus.COMPLETE)
-        solo.refresh_from_db()
-        summary = next(s for s in self.fills.column_summaries(solo) if s.column_key == "answer")
-        self.assertEqual((summary.attempted, summary.filled), (1, 1))
-
-    def test_config_drift_skips_the_seed(self) -> None:
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = self._run_for(quick_config(prompt="Different {{company}}"), row_id=str(row.id), cells={"answer": "x"})
-        fill = self.admit(test_run_id=str(run.id))
-        row.refresh_from_db()
-        self.assertNotIn("answer", row.data)
-        # The row runs normally: economy, never a gate.
-        self.assertEqual(len(targeted(str(fill.id))), 2)
-
-    def test_handfed_run_without_row_skips_the_seed(self) -> None:
-        config = quick_config()
-        run = self._run_for(config, row_id="", cells={"answer": "x"})
-        fill = self.admit(config=config, test_run_id=str(run.id))
-        self.assertEqual(len(targeted(str(fill.id))), 2)
-
-
 class AdmissionLockSpanTests(AdmissionTestCase):
     """Where admission takes the List row lock, and for how long.
 
@@ -555,30 +397,6 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             "the queue insert must run BEFORE the List lock is taken, or a large fill blocks "
             "every other sheet-level write for the length of its insert",
         )
-
-    def test_a_seeded_admit_takes_the_list_lock_before_the_row_lock(self) -> None:
-        # The seed writes a ListRow through write_cells, which locks
-        # that row. Every delete path takes List first, then ListRows,
-        # and its comments call the reverse order an ABBA deadlock. So
-        # the seed must settle AFTER the List lock, never before.
-        config = quick_config()
-        row = self.lists.rows_page(self.sheet, after_position=0, limit=1)[0]
-        run = AgentTestRun.objects.create(
-            account_id=ACCOUNT,
-            user_id=USER,
-            status="complete",
-            config_fingerprint=config_fingerprint(config),
-            row_id=str(row.id),
-            result={"cells": {"answer": "seeded"}, "evidence": ["seen"], "tool_calls": []},
-        )
-        with CaptureQueriesContext(connection) as captured:
-            self.admit(config=config, test_run_id=str(run.id))
-        sql = self.sql(captured)
-        # Quoted, because a bare LISTS_LIST also matches LISTS_LISTROW
-        # and would bind both indexes to the same statement.
-        list_lock = self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
-        row_lock = self.index_of(sql, lambda s: '"LISTS_LISTROW"' in s and "FOR UPDATE" in s)
-        self.assertLess(list_lock, row_lock, "the seed's row lock must come AFTER the List lock")
 
     def test_deterministic_refusals_never_build_the_queue(self) -> None:
         # An account at its cap and a sheet at its column cap are both

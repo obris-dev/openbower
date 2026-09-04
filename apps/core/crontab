@@ -1,0 +1,11 @@
+# The cron service's schedule, run by supercronic (see the compose
+# `cron` service and the Dockerfile's pinned binary). One line per
+# scheduled command; supercronic runs jobs independently, so lines
+# never queue behind each other. Every command here must be safe to
+# miss and safe to double (a pure age or idempotent judgement): the
+# schedule is a tick, each command's own baseline is the guarantee.
+# Times read on the container's clock, which is UTC (the image sets
+# no TZ). supercronic parses this file at startup, so a schedule edit
+# needs the cron service restarted (make restart-cron); the COMMANDS
+# hot-reload regardless, since each tick imports off the bind mount.
+0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills

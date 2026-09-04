@@ -22,10 +22,17 @@ LABEL_MAX_LENGTH = 128
 # pathological payloads, not prompt engineering.
 PROMPT_MAX_LENGTH = 262_144
 MAX_AGENT_OUTPUTS = 8
-# The test bench's hand-fed row cap (binary); the server keeps the
-# FIRST this many keys in JSON order, and the bench diagnoses the
-# overflow (silent excess would render blank prompt variables).
+# The test bench's hand-fed row cap (binary). A test admission
+# REFUSES a wider row (never truncates), so the bench cuts to this
+# many FILLED inputs in PROMPT order before sending and diagnoses the
+# cut (silent excess would render blank prompt variables).
 TEST_ROW_MAX_KEYS = 16
+# The bench row's per-key and per-value bounds (binary), WIRE facts:
+# a test-fill admission REFUSES past them (never truncates), so the
+# client must know the bound it can be refused under (bench inputs
+# carry it as maxLength, making the refusal unreachable from the UI).
+TEST_KEY_MAX_LENGTH = 64
+TEST_VALUE_MAX_LENGTH = 512
 # Tool calls per cell run. A WIRE fact, not a runtime internal: the
 # fill consent footer's "up to N searches" is rows times this number,
 # computed client-side off x-constants, so both sides must read one
@@ -242,37 +249,3 @@ class SearchToolCall(BaseModel):
 # union on `kind`, which is why kind exists now, while adding it is a
 # defaulted field instead of a stored-blob migration).
 ToolCall = SearchToolCall
-
-
-TestRunStatus = Literal["pending", "complete", "failed"]
-
-
-class AgentTestResult(BaseModel):
-    """One hand-fed row's outcome: the cells it would write (possibly
-    empty, honestly), the evidence the model saw, and the tool calls
-    that produced it with each call's diagnosis."""
-
-    cells: dict[str, str]
-    evidence: list[str]
-    tool_calls: list[ToolCall]
-    # Tool name to its final door status: what lets the bench render
-    # the same degraded story a sheet cell carries. Defaulted for runs
-    # stored before tools reported statuses.
-    tools: dict[str, str] = {}
-
-
-class AgentTestRun(BaseModel):
-    """The polled test-run envelope: result rides only when complete,
-    and a failed run carries its WHY (every empty result ships its
-    diagnosis; failure is the tier that needs it most)."""
-
-    id: str
-    status: TestRunStatus
-    result: AgentTestResult | None = None
-    error: str | None = None
-    poll_budget_seconds: int = Field(
-        description="The runtime's own worst case for one run: a poller waits "
-        "this long (plus its margin) and no longer. The server presents runs "
-        "still pending past its LARGER stale window as failed, so the loop "
-        "normally ends on a terminal status."
-    )

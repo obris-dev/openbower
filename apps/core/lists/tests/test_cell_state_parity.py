@@ -74,9 +74,9 @@ class CellStateParityTests(SimpleTestCase):
         # to. FATAL (not configured) is written at once (nothing to
         # retry); hazard and transient park. And a retry cause that
         # was also settled would park a row and then never re-run it.
-        from agents.runtime.cell import _TOOL_FAILURE_MODE_STATES
         from agents.tools import registry as tool_registry
         from agents.tools.base import FailureMode
+        from lists.services.cell_run import _TOOL_FAILURE_MODE_STATES
 
         from ..constants import RETRY_CAUSES
 

@@ -60,8 +60,10 @@ class SearchOutcome(ToolOutcome[SearchStatus]):
     discarded: int = 0
 
     def wire(self) -> SearchToolCall:
-        """The ONE constructor for the stored and served diagnosis, so
-        the bench's writer and the fill worker's cannot drift."""
+        """The ONE constructor for the stored and served diagnosis:
+        one shape wherever the record lands (a sheet row's cell truth,
+        a test run's task), so readers never ask which landing wrote
+        it."""
         return SearchToolCall(
             query=self.query,
             hits=len(self.hits),

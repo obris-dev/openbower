@@ -9,15 +9,12 @@ must produce NOTHING, never a value from one attempt wearing a
 diagnosis from another, so a close that misses rolls the value write
 back with it.
 
-Three callers land rows, and before this module each restated the
-writes: the worker's terminal path, the worker's give-up past the
-attempt cap (a run with no cells, its cause the last park's), and the
-bench's borrowed row (a run the bench already answered, closing a
-task it creates rather than one it claimed). What differs between
-them is only HOW the task closes, so that is the one thing a caller
-passes in. Counters are returned, not bumped: the callers fold them
-into their own update (the worker adds pace, the bench adds the row
-count).
+Two callers land rows, and before this module each restated the
+writes: the worker's terminal path, and the worker's give-up past the
+attempt cap (a run with no cells, its cause the last park's). What
+differs between them is only HOW the task closes, so that is the one
+thing a caller passes in. Counters are returned, not bumped: the
+callers fold them into their own update, alongside pace.
 """
 
 from __future__ import annotations
