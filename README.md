@@ -78,8 +78,11 @@ carries the full annotated list):
 - Inference sources (structure AND keys) live in one file,
   `config/providers.toml` (gitignored; copy
   `config/templates/providers.example.toml` and edit, or point
-  `PROVIDERS_CONFIG` at another path). Local runs add a keyless
-  `ollama` source automatically.
+  `PROVIDERS_CONFIG` at another path). Section names are the
+  registered provider specs, validated at boot (a typo'd section
+  refuses startup with the section named). `make up` seeds the file
+  from the template when it is absent, which starts you with a local
+  Ollama entry; edit the file for real sources and keys.
 - Search runs through DuckDuckGo by default (free, keyless). Set
   `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` for metered search:
   contact search requires it, `SEARCH_PROVIDER=dataforseo` routes web

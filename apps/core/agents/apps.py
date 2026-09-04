@@ -5,21 +5,27 @@ class AgentsConfig(AppConfig):
     name = "agents"
 
     def ready(self) -> None:
-        # The provider ROSTER: importing a provider module IS its
-        # registration (each ends in register(SPEC)). Providers first,
-        # then tools; among providers no order is load-bearing (the
-        # settings switch names exactly ONE to serve).
-        from .tools.search.providers import dataforseo, duckduckgo  # noqa: F401  (the imports register)
+        # The rosters: the DIRECTORY is the roster. Walking a package
+        # imports every module in it, and importing a registering
+        # module IS its registration (each ends in register(...)), so
+        # adding a provider or a tool is adding a file here, never
+        # editing this method. ready() is the one point Django
+        # promises runs after every app module is importable, so a
+        # registering module may import anything without re-entering
+        # a half-initialized package. Every load-bearing ordering is
+        # a DECLARED field on its spec (a tool's blame_order), never
+        # the walk order.
+        from . import registration
 
-        # The tool ROSTER: importing a tool module IS its registration
-        # (each ends in register(SPEC)), and ready() is the one point
-        # Django promises runs after every app module is importable,
-        # so a tool module may import anything without re-entering a
-        # half-initialized package. In BLAME order, not alphabetical:
-        # a blank cell's cause is named by the FIRST toggled tool that
-        # closed unserved, and registration order is that order.
-        # isort: off
-        from .tools.search import web_search  # noqa: F401  (the import registers)
-        from .tools.search import find_contacts  # noqa: F401
+        registration.import_submodules("agents.providers")
+        # The toml parser takes any section as written, so a typo'd
+        # providers.toml section refuses HERE, at boot, where the
+        # roster is known; the wire Literal is held to the roster the
+        # same way.
+        from .providers.registry import validate_inference_sources
 
-        # isort: on
+        validate_inference_sources()
+        # One walk covers the tool families AND the search providers
+        # nested inside them (tools/search/providers registers the
+        # same way).
+        registration.import_submodules("agents.tools")

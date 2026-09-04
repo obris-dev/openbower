@@ -12,10 +12,11 @@ fails loud (silent last-wins would route calls to whichever import
 ran last); re-registering the same spec is idempotent, so repeated
 imports are harmless.
 
-Registration order is the registry's ONE ordering, and it is
-load-bearing the way the old enum order was: a blank cell's cause is
-named by the FIRST toggled tool that closed unserved, so the order
-here is the blame order."""
+No ordering rides registration: the rosters are walked off the
+directory (alphabetical, nothing semantic), and the one load-bearing
+order, blame, is a DECLARED field on each spec (`blame_order`), so a
+blank cell's cause is named by the lowest-ordered toggled tool that
+closed unserved wherever the imports happened to run."""
 
 from __future__ import annotations
 
@@ -73,6 +74,8 @@ def _validate(tool: ToolSpec) -> None:
             raise ValueError(f"tool {tool.name!r} error {error.__name__} must declare a non-open code")
         if not isinstance(getattr(error, "mode", None), FailureMode):
             raise ValueError(f"tool {tool.name!r} error {error.__name__} must declare a FailureMode mode")
+    if not isinstance(tool.blame_order, int) or isinstance(tool.blame_order, bool):
+        raise ValueError(f"tool {tool.name!r} must declare an integer blame_order")
     codes = [error.code for error in tool.errors]
     if len(set(codes)) != len(codes):
         raise ValueError(f"tool {tool.name!r} declares duplicate failure codes: {sorted(codes)}")
@@ -99,15 +102,15 @@ def get(name: str) -> ToolSpec:
 
 
 def all_tools() -> list[ToolSpec]:
-    """Every registered tool, in registration (= blame) order."""
-    return list(_REGISTRY.values())
+    """Every registered tool, in blame order (declared per spec;
+    ties break by name)."""
+    return sorted(_REGISTRY.values(), key=lambda tool: (tool.blame_order, tool.name))
 
 
 def toggled_tools(config: AgentConfig) -> list[ToolSpec]:
-    """The tools this config asks for, in registration order. The
-    order is load-bearing: a blank cell's cause is named by the FIRST
-    toggled tool that closed unserved, so reordering the
-    registrations reorders the blame.
+    """The tools this config asks for, in BLAME order (declared per
+    spec, never the import order): a blank cell's cause is named by
+    the first toggled tool in this list that closed unserved.
 
     A toggle naming NO registered tool raises UnknownTool rather than
     being skipped: the wire's closed AgentTools shape and this registry
@@ -117,7 +120,7 @@ def toggled_tools(config: AgentConfig) -> list[ToolSpec]:
     unknown = toggled - set(_REGISTRY)
     if unknown:
         raise UnknownTool(f"config toggles unregistered tool(s) {sorted(unknown)}; registered: {sorted(_REGISTRY)}")
-    return [tool for tool in _REGISTRY.values() if tool.name in toggled]
+    return [tool for tool in all_tools() if tool.name in toggled]
 
 
 def build_tools(config: AgentConfig, deps: CellDeps) -> list[Tool]:

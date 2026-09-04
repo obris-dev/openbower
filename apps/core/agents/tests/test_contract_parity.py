@@ -1,5 +1,5 @@
-"""The wire contract's AgentProvider Literal and the Django enum must
-name the same values, or valid agents fail zod client-side.
+"""The wire contract's AgentProvider Literal and the registry roster
+must name the same values, or valid agents fail zod client-side.
 
 Run: DJANGO_ENV=test uv run python manage.py test agents
 """
@@ -10,14 +10,18 @@ from typing import get_args
 
 from django.test import SimpleTestCase
 
-from agents.constants import AgentProvider
 from openbower_schema.agents import AgentProvider as WireAgentProvider
 from openbower_schema.agents import AgentTools
 
 
-class WireEnumParityTests(SimpleTestCase):
+class WireProviderParityTests(SimpleTestCase):
     def test_provider_parity(self):
-        self.assertEqual(set(get_args(WireAgentProvider)), {p.value for p in AgentProvider})
+        # Registry names, not an enum: the roster registered at
+        # ready() (which the test runner's setup already ran) is the
+        # server truth the wire Literal must mirror.
+        from agents.providers.registry import provider_names
+
+        self.assertEqual(set(get_args(WireAgentProvider)), set(provider_names()))
 
 
 class ToolPropertyParityTests(SimpleTestCase):

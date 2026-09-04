@@ -12,8 +12,8 @@ from ..constants import (
     MODEL_MAX_LENGTH,
     PROVIDER_MAX_LENGTH,
     SOURCE_MAX_LENGTH,
-    AgentProvider,
 )
+from ..providers.registry import provider_names
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class Agent(UserScopedModel):
 
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
     # Bare CharField, validated at the serializer (the lists pattern):
-    # choices= would turn every enum addition into a migration for
+    # choices= would turn every added provider into a migration for
     # zero DB-side enforcement.
     provider = models.CharField(_("provider"), max_length=PROVIDER_MAX_LENGTH)
     # WHICH server of that spec (the env-named source); provider is the
@@ -64,7 +64,7 @@ class Agent(UserScopedModel):
         nothing acts on config() today; any future path that RUNS a
         stored config must check this first and refuse (acting on the
         substituted spec would be a guess)."""
-        return self.provider not in {p.value for p in AgentProvider}
+        return self.provider not in provider_names()
 
     def tools_wire(self) -> dict[str, bool]:
         """Sanitized toggles for EVERY reader (config(), the list wire

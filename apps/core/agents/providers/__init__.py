@@ -1,19 +1,27 @@
-from .anthropic_compatible import TIMEOUT_EXCEPTION as _ANTHROPIC_TIMEOUT
-from .openai_compatible import TIMEOUT_EXCEPTION as _OPENAI_TIMEOUT
-from .registry import ModelUnavailable, catalog_entries, model_for, source_config
+"""The inference providers, as a registry package: `base` is the
+CONTRACT a provider implements (the InferenceProvider ABC plus the
+custody and caching every spec shares), `registry` the guarded index,
+and each spec a module of its own. DELIBERATELY inert beyond the
+registry surface: the roster lives in AgentsConfig.ready(), Django's
+registration point, so importing this package never drags a provider
+SDK in or re-enters a half-initialized module."""
 
-# Every type a model call can raise for running out of time, gathered
-# from the providers so a new provider declares its own beside itself rather
-# than leaving this list to be discovered later. Only the SDK types:
-# no provider calls the transport during a completion, so httpx's own
-# timeout has no writer here, and carrying it would be a member whose
-# comment names a path that does not exist.
-MODEL_TIMEOUT_EXCEPTIONS: tuple[type[Exception], ...] = (_OPENAI_TIMEOUT, _ANTHROPIC_TIMEOUT)
+from .registry import (
+    ModelUnavailable,
+    catalog_entries,
+    model_for,
+    model_timeout_exceptions,
+    provider_names,
+    register,
+    source_config,
+)
 
 __all__ = [
-    "MODEL_TIMEOUT_EXCEPTIONS",
     "ModelUnavailable",
     "catalog_entries",
     "model_for",
+    "model_timeout_exceptions",
+    "provider_names",
+    "register",
     "source_config",
 ]

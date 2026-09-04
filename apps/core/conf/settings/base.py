@@ -6,7 +6,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 from openbower_kernel.env import env_bool, env_list
-from openbower_kernel.provider_config import ProviderConfigError, ProviderSpec, resolve_provider_sources
+from openbower_kernel.provider_config import ProviderConfigError, resolve_provider_sources
 
 # Log timestamps in UTC regardless of the host clock. Python's logging
 # `asctime` uses `time.localtime` by default; the app is TIME_ZONE="UTC",
@@ -150,15 +150,15 @@ DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"
 # rejected at the other.
 OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 
-# Inference providers for agents: two API SPECS, each holding NAMED SOURCES
+# Inference providers for agents: API SPECS, each holding NAMED SOURCES
 # so one deploy can run several servers of the same spec side by side
 # (a local Ollama AND the canonical vendor). The config file
 # (config/providers.toml, operator-owned, gitignored; template in
 # config/templates/) is the ONE custody: structure AND keys, inline,
 # the aws-credentials norm. No env-key mirror and no no-file defaults
 # (two custodies for one fact was two places for it to drift); with
-# no file, only local.py's keyless ollama seed exists for the dev
-# loop. A source is OPEN when its key is set or its base is
+# no file there are no sources, and `make up` seeds the file from the
+# template for the dev loop. A source is OPEN when its key is set or its base is
 # non-canonical; a keyless canonical source is closed.
 # `or`, not get(default): PROVIDERS_CONFIG= (set but empty, the
 # uncommented .env.example line) must fall back, not become Path(".").
@@ -169,8 +169,10 @@ except ProviderConfigError as e:
     # Django's own boot-failure shape: startup machinery prints it as
     # configuration, not a stack of kernel internals.
     raise ImproperlyConfigured(str(e)) from e
-OPENAI_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.OPENAI_COMPATIBLE]
-ANTHROPIC_COMPATIBLE_SOURCES = _SOURCES[ProviderSpec.ANTHROPIC_COMPATIBLE]
+# ONE generic mapping, provider name -> {source name: config}:
+# each registered provider reads its own entry, so a new provider
+# needs no settings line here.
+INFERENCE_SOURCES = _SOURCES
 
 # The search seam behind agents' evidence tools, two providers:
 # DuckDuckGo by DEFAULT: free and keyless, so web search works out of

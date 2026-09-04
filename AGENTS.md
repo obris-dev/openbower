@@ -49,6 +49,15 @@ auth + data services live in a separate private repo.
   deletes its own children in one transaction. A child model added
   without a line in its owner's delete is orphaned forever, invisible
   to every surface that filters by its parent.
+- An extensible roster is a REGISTRY, never an enum: each member is
+  a module that registers itself at its own bottom (register(...)),
+  the roster is a directory walk in the app's AppConfig.ready(),
+  register() validates all-or-nothing before mutating (collisions
+  loud, re-registration idempotent), the wire Literal is held to the
+  roster by a boot gate plus a parity pin, and any load-bearing
+  ordering is a DECLARED field on the member's spec, never import
+  order. Exemplars: agents tools, search providers, inference
+  providers.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
   command over an operation (the fill_worker command/operation

@@ -8,4 +8,6 @@ and edit:
   inference sources agents can run, structure AND keys in this ONE
   file. Keys live INLINE (this directory is gitignored; the
   aws-credentials/npmrc norm for operator-owned config); there is no
-  env mirror.
+  env mirror. Section names are the registered provider specs,
+  validated at boot: a typo'd section refuses startup naming the
+  section and the registered names.

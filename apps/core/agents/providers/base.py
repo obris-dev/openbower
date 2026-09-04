@@ -14,16 +14,68 @@ import time
 from abc import ABC, abstractmethod
 
 import httpx
+from django.conf import settings
 from pydantic_ai.models import Model
 
-from openbower_kernel.provider_config import SourceConfig
+from openbower_kernel.provider_config import RawSource, vendor_host
 
 from ..constants import LIST_TIMEOUT_SECONDS, MODEL_MAX_LENGTH, PROBE_FAILURE_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 
 
+class SourceConfig(RawSource):
+    """One source as the app consumes it: the operator's raw entry
+    plus the provider-derived canonical flag. base_url IS this spec's
+    vendor origin when canonical; keyless canonical sources stay
+    CLOSED, and canonical-ness also decides the fill's fallback
+    ceiling when no concurrency is declared (canonical is elastic,
+    an undeclared self-hosted source stays at one row)."""
+
+    canonical: bool
+
+
+def full_source(raw: RawSource, *, canonical_base: str) -> SourceConfig:
+    """THE SourceConfig constructor: the provider's enrichment of one
+    raw entry, derived per read (rosters are per-process anyway) so
+    the canonical fact has exactly one writer and can never be
+    declared. Host comparison via the kernel's vendor_host predicate:
+    see its docstring for why host ALONE decides vendor-ness."""
+    return SourceConfig(**raw, canonical=vendor_host(raw["base_url"]) == vendor_host(canonical_base))
+
+
 class InferenceProvider(ABC):
+    # The identity a provider DECLARES beside its implementation,
+    # enforced all-or-nothing by registry.register() rather than by
+    # ABC ceremony (a missing declaration must refuse at import with
+    # the registration named, not fail as an abstract-class
+    # TypeError). `canonical_base` is the vendor origin (keyless
+    # sources there stay CLOSED, and it must carry a real host or
+    # every source would read non-canonical and open);
+    # `timeout_exception` is what THIS spec's SDK raises when a call
+    # runs out of time (the SDKs catch httpx's timeout and re-raise
+    # their own, so catching the transport's type alone never fires).
+    canonical_base: str
+    timeout_exception: type[Exception]
+
+    @property
+    def name(self) -> str:
+        """THE identity everywhere the string travels: the registry
+        key, the operator's toml section name (validated against the
+        registry at boot), and the wire Literal's member
+        (parity-pinned). DERIVED from the module's own filename (the
+        tool registry's cascade: a file IS its spec) so a stored
+        address greps straight to its file by construction. A
+        DEFAULT, not a cage: a subclass may shadow it with a plain
+        class attr (ordinary lookup wins over this property), and
+        register() validates whatever resolves either way. Two costs
+        of the binding: renaming or moving a provider module is a
+        DATA MIGRATION (stored Agent.provider rows and operators'
+        toml sections carry the string), and the derivation takes the
+        LEAF module, so a provider that grows into a directory must
+        live in <spec>/__init__.py or it silently renames."""
+        return type(self).__module__.rsplit(".", 1)[-1]
+
     def __init__(self) -> None:
         # Rosters change server-side, not per process: probe once per
         # source and keep the answer (a restart refreshes). ONLY
@@ -35,10 +87,14 @@ class InferenceProvider(ABC):
         self._probe_failed_at: dict[str, float] = {}
 
     @property
-    @abstractmethod
     def configured_sources(self) -> dict[str, SourceConfig]:
-        """The provider's settings entry: {name: SourceConfig}. A property,
-        never cached at init, so test overrides apply."""
+        """This provider's slice of settings.INFERENCE_SOURCES,
+        keyed by its own name and ENRICHED here (settings hold what
+        the operator wrote; canonical-ness is this provider's fact).
+        A property, never cached at init, so test overrides apply;
+        absent entry = no sources, honestly."""
+        raw = settings.INFERENCE_SOURCES.get(self.name, {})
+        return {name: full_source(entry, canonical_base=self.canonical_base) for name, entry in raw.items()}
 
     @abstractmethod
     def _headers(self, source: SourceConfig) -> dict[str, str]:
@@ -102,7 +158,12 @@ class InferenceProvider(ABC):
         return names
 
     def _probe_rows(self, source: SourceConfig, path: str) -> list[dict]:
-        """The shared probe shell: GET the roster path, raise on
+        """The shared probe shell for the OpenAI-style list envelope
+        ({"data": [...]}), which both current specs speak (Anthropic
+        adopted the same convention). A HELPER, not the seam: a spec
+        whose list endpoint wraps differently implements _list_models
+        without this shell, because .get("data") on a foreign envelope
+        would read as an honestly-empty roster, silently. Raises on
         non-200 (distinct from an honestly-empty 200)."""
         response = httpx.get(f"{source['base_url']}{path}", headers=self._headers(source), timeout=LIST_TIMEOUT_SECONDS)
         if response.status_code != 200:

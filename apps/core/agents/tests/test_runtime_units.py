@@ -27,7 +27,7 @@ class ModelForTests(SimpleTestCase):
 
     def test_closed_canonical_source_raises(self):
         with (
-            self.settings(OPENAI_COMPATIBLE_SOURCES=source("openai", "https://api.openai.com/v1")),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": source("openai", "https://api.openai.com/v1")}),
             self.assertRaises(ModelUnavailable) as caught,
         ):
             model_for("openai_compatible", "openai", "gpt-6")
@@ -51,14 +51,14 @@ class ModelForTests(SimpleTestCase):
         self.addCleanup(openai_compatible.PROVIDER._roster_cache.clear)
 
     def test_open_source_yields_a_runnable_model(self):
-        with self.settings(OPENAI_COMPATIBLE_SOURCES=self._LOCAL), self._with_roster(["gemma4:12b"]):
+        with self.settings(INFERENCE_SOURCES={"openai_compatible": self._LOCAL}), self._with_roster(["gemma4:12b"]):
             model = model_for("openai_compatible", "local", "gemma4:12b")
         self.assertIsNotNone(model)
         self.assertEqual(model.model_name, "gemma4:12b")
 
     def test_a_model_off_the_probed_roster_raises(self):
         with (
-            self.settings(OPENAI_COMPATIBLE_SOURCES=self._LOCAL),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": self._LOCAL}),
             self._with_roster(["gemma4:12b"]),
             self.assertRaises(ModelUnavailable),
         ):
@@ -68,7 +68,7 @@ class ModelForTests(SimpleTestCase):
         # Running must not hard-depend on /models uptime: an empty or
         # failed probe defers the wrong-name failure to completion time.
         with (
-            self.settings(OPENAI_COMPATIBLE_SOURCES=self._LOCAL),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": self._LOCAL}),
             patch("agents.providers.base.httpx.get", side_effect=ConnectionError("down")),
         ):
             model = model_for("openai_compatible", "local", "anything")

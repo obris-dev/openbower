@@ -48,7 +48,7 @@ from ...constants import (
     MODEL_RETRIES,
     ToolStatus,
 )
-from ...providers import MODEL_TIMEOUT_EXCEPTIONS, ModelUnavailable, model_for
+from ...providers import ModelUnavailable, model_for, model_timeout_exceptions
 from ...tools import registry as tool_registry
 from ...tools.base import FailureMode
 from ..deps import CellDeps
@@ -257,10 +257,10 @@ class CellAnswerer:
             # a timeout from an unreachable server for the record.
             logger.warning("cell: model transport failed (%s: %s)", type(e.__cause__ or e).__name__, e.message)
             record = self._record(deps)
-            if isinstance(e.__cause__, MODEL_TIMEOUT_EXCEPTIONS):
+            if isinstance(e.__cause__, model_timeout_exceptions()):
                 raise AgentTimeout(record) from e
             raise AgentUnreachable(record) from e
-        except MODEL_TIMEOUT_EXCEPTIONS as e:
+        except model_timeout_exceptions() as e:
             # The tuple comes from the PROVIDERS, not from httpx alone
             # (each SDK re-raises the transport's timeout as its own
             # type). A wrapped path arrives as ModelAPIError above;

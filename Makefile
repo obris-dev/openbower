@@ -38,6 +38,12 @@ apps/core/.env: | apps/core/.env.example
 	@cp $(firstword $|) $@
 	@echo "seeded $@ from .env.example (dev values; edit it for real credentials)"
 
+# Same order-only trick: a pull that touched the template must never
+# overwrite an operator's real sources and keys.
+config/providers.toml: | config/templates/providers.example.toml
+	@cp $(firstword $|) $@
+	@echo "seeded $@ from the template (a local Ollama entry; edit it for real sources and keys)"
+
 # The cross-stack network the IdP and data service share with this stack
 # (see docker-compose.yml). Idempotent, and created by whichever stack
 # comes up first.
@@ -56,7 +62,7 @@ suite-network:
 # A bound above that chain keeps a container stuck RESTARTING from
 # blocking the target forever, without failing a start that is merely
 # slow.
-up: apps/core/.env suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3005, fill workers + cron)
+up: apps/core/.env config/providers.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3005, fill workers + cron)
 	$(COMPOSE) up -d --wait --wait-timeout 900
 	@echo "up: api :8002, app :3003, marketing :3005, fill workers + cron (make logs to tail, make stop to stop)"
 

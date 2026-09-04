@@ -25,7 +25,6 @@ from agents.constants import (
 )
 from agents.providers import anthropic_compatible, openai_compatible
 from common.testing import FakeResponse, login_session
-from openbower_kernel.provider_config import ProviderSpec
 from openbower_schema.agents import CONFIDENCE_SUFFIX
 
 from .sources import source
@@ -58,7 +57,7 @@ _SERP = {
 _LOCAL_SOURCE = source("local", "http://o.test/v1")
 _CANONICAL_SOURCE = source("openai", "https://api.openai.com/v1", api_key="k")
 _TEST_SETTINGS = {
-    "OPENAI_COMPATIBLE_SOURCES": _LOCAL_SOURCE,
+    "INFERENCE_SOURCES": {"openai_compatible": _LOCAL_SOURCE},
     "SEARCH_PROVIDER": "dataforseo",
     "DATAFORSEO_LOGIN": "l",
     "DATAFORSEO_PASSWORD": "p",
@@ -109,7 +108,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(**{**_TEST_SETTINGS, "OPENAI_COMPATIBLE_SOURCES": _CANONICAL_SOURCE}),
+            self.settings(**{**_TEST_SETTINGS, "INFERENCE_SOURCES": {"openai_compatible": _CANONICAL_SOURCE}}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         triples = [(m["provider"], m["source"], m["model"]) for m in body["models"]]
@@ -133,7 +132,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         triples = [(m["provider"], m["source"], m["model"]) for m in body["models"]]
@@ -141,7 +140,7 @@ class CatalogTests(TestCase):
         self.assertNotIn(("openai_compatible", "local", "nomic-embed-text:latest"), triples)
 
     def test_keyless_canonical_source_is_closed(self):
-        with self.settings(OPENAI_COMPATIBLE_SOURCES=source("openai", "https://api.openai.com/v1")):
+        with self.settings(INFERENCE_SOURCES={"openai_compatible": source("openai", "https://api.openai.com/v1")}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m for m in body["models"] if m["provider"] == "openai_compatible"], [])
 
@@ -155,7 +154,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES={**_LOCAL_SOURCE, **_CANONICAL_SOURCE}),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": {**_LOCAL_SOURCE, **_CANONICAL_SOURCE}}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         triples = [(m["provider"], m["source"], m["model"]) for m in body["models"]]
@@ -170,7 +169,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=source("vllm", "http://vllm.test/v1", api_key="k")),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": source("vllm", "http://vllm.test/v1", api_key="k")}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         triples = [(m["provider"], m["source"], m["model"]) for m in body["models"]]
@@ -187,10 +186,12 @@ class CatalogTests(TestCase):
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
             self.settings(
-                OPENAI_COMPATIBLE_SOURCES=_CANONICAL_SOURCE,
-                ANTHROPIC_COMPATIBLE_SOURCES=source(
-                    "anthropic", "https://api.anthropic.com", spec=ProviderSpec.ANTHROPIC_COMPATIBLE, api_key="k"
-                ),
+                INFERENCE_SOURCES={
+                    "openai_compatible": _CANONICAL_SOURCE,
+                    "anthropic_compatible": source(
+                        "anthropic", "https://api.anthropic.com", spec="anthropic_compatible", api_key="k"
+                    ),
+                },
             ),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
@@ -207,7 +208,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=counting_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             self.client.get(reverse("agents_catalog"))
             self.client.get(reverse("agents_catalog"))
@@ -223,7 +224,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertTrue(body["truncated"])
@@ -234,7 +235,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=lambda url, **kw: FakeResponse(500, {})),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["support_followup"], django_settings.SUPPORT_FOLLOWUP)
@@ -248,7 +249,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m["model"] for m in body["models"]], ["gemma4:12b"])
@@ -260,8 +261,9 @@ class CatalogTests(TestCase):
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
             self.settings(
-                OPENAI_COMPATIBLE_SOURCES={},
-                ANTHROPIC_COMPATIBLE_SOURCES=source("gw", "http://gw.test", spec=ProviderSpec.ANTHROPIC_COMPATIBLE),
+                INFERENCE_SOURCES={
+                    "anthropic_compatible": source("gw", "http://gw.test", spec="anthropic_compatible"),
+                },
             ),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
@@ -282,7 +284,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=flaky_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=_LOCAL_SOURCE),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": _LOCAL_SOURCE}),
         ):
             first = self.client.get(reverse("agents_catalog")).json()
             within_ttl = self.client.get(reverse("agents_catalog")).json()
@@ -302,7 +304,7 @@ class CatalogTests(TestCase):
 
         with (
             patch("agents.providers.base.httpx.get", side_effect=fake_get),
-            self.settings(OPENAI_COMPATIBLE_SOURCES=source("vllm", "http://vllm.test/v1", api_key="k")),
+            self.settings(INFERENCE_SOURCES={"openai_compatible": source("vllm", "http://vllm.test/v1", api_key="k")}),
         ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual([m for m in body["models"] if m["provider"] == "openai_compatible"], [])
@@ -389,7 +391,7 @@ class SearchAvailabilityTests(TestCase):
         self.assertEqual((page.status_code, page.hits), (202, []))
 
     def test_credentialed_provider_is_available(self):
-        with self.settings(**{**_TEST_SETTINGS, "OPENAI_COMPATIBLE_SOURCES": {}}):
+        with self.settings(**{**_TEST_SETTINGS, "INFERENCE_SOURCES": {"openai_compatible": {}}}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "open"})
 
