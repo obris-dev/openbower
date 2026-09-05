@@ -12,7 +12,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
@@ -141,6 +141,7 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertEqual(body["error"], "row_count_changed")
         self.assertIn("it now has 2 rows", body["detail"])
 
+    @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_is_400_with_the_envelope(self) -> None:
         # A request-side refusal, not a conflict: the fix is a narrower
         # ask or metered credentials, and waiting changes nothing.
@@ -155,7 +156,7 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body["error"], "free_search_budget")
-        self.assertIn("Switch search to DataForSEO", body["detail"])
+        self.assertIn("Switch search to a metered vendor", body["detail"])
 
     def test_an_existing_column_is_400_with_the_envelope(self) -> None:
         # EXISTENCE, not occupancy: this column is empty and still

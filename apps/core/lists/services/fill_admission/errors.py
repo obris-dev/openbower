@@ -114,16 +114,16 @@ class RefillEmpty(FillRefused):
 
 
 class FreeSearchBudget(FillRefused):
-    """The free provider's admission bound, refusing BEFORE it spends and
-    naming the paid provider."""
+    """The free vendor's admission bound, refusing BEFORE it spends
+    and naming the metered door."""
 
     code = FillErrorCode.FREE_SEARCH_BUDGET
 
     def __init__(self, *, searches: int) -> None:
         super().__init__(
             f"This fill could need up to {searches:,} searches; free search is budgeted for "
-            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to DataForSEO (a deployment setting) for metered"
-            " search."
+            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to a metered vendor (a deployment setting) for"
+            " metered search."
         )
 
 

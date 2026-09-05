@@ -23,7 +23,7 @@
               "type": "null"
             }
           ],
-          "description": "Which provider serves web search on this deployment (the server's SearchProvider, pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot refuses an unset door, so client copy never needs a no-search-door story. Client copy composes it: a rate-limited cell names the paid door only where it is a remedy, never to someone already on it.",
+          "description": "The vendor serving web search on this deployment, only while it is READY to serve (registered, wired, credentialed); null otherwise, so client copy never names a vendor whose searches cannot run. Client copy composes it: a rate-limited cell names the metered door only where it is a remedy, never to someone already on it.",
           "title": "Search Provider"
         },
         "support_followup": {

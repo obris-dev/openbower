@@ -89,7 +89,7 @@ const TOOL_COPY: Record<ToolKey, Partial<Record<ToolStatus, ToolCopy>>> = {
   web_search: {},
   find_contacts: {
     not_configured: {
-      said: "isn't set up: it needs DataForSEO",
+      said: "isn't set up: it needs a metered search vendor",
       fix: "Set it up under the agent's Tools.",
       rowScoped: false,
     },
@@ -110,7 +110,7 @@ export function needsSearchProvider(tools: ToolStatuses): boolean {
 // paid door is a remedy (the free provider refused). A contacts refusal
 // already came from the paid door, and an unknown door claims
 // nothing.
-const PAID_DOOR_NUDGE = "DataForSEO (pay as you go, a deployment setting) gives dedicated throughput.";
+const PAID_DOOR_NUDGE = "A metered search vendor (pay as you go, a deployment setting) gives dedicated throughput.";
 
 /** The tools whose door did not serve this run, in the subject
  * table's order, which mirrors the server's AgentTool declaration

@@ -27,7 +27,10 @@ from .test_catalog_and_runtime import (
     _tool_returned,
 )
 
-_PAID_PROVIDER = {"SEARCH_PROVIDER": "dataforseo", "DATAFORSEO_LOGIN": "l", "DATAFORSEO_PASSWORD": "p"}
+_PAID_PROVIDER = {
+    "TOOL_WIRING": {"web_search": "dataforseo"},
+    "TOOL_VENDOR_KEYS": {"dataforseo": {"login": "l", "password": "p"}},
+}
 
 
 def _config(**tools) -> AgentConfig:
@@ -96,7 +99,7 @@ class RuntimeBehaviorTests(SimpleTestCase):
 
         config = _config(web_search=True, find_contacts=True)
         with (
-            self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""),
+            self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}),
             patch("agents.runtime.answer.answerer.model_for", return_value=_scripted_model(behavior)),
         ):
             run = run_cell(config, {"name": "Acme"})

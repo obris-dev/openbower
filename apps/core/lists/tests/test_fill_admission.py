@@ -228,6 +228,7 @@ class GuardTests(AdmissionTestCase):
         fill = self.admit()
         self.assertEqual(fill.status, FillStatus.PENDING)
 
+    @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_refuses_wide_tool_fills(self) -> None:
         wide = self.lists.create(label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
@@ -240,10 +241,14 @@ class GuardTests(AdmissionTestCase):
         self.assertEqual(
             str(caught.exception),
             f"This fill could need up to {rows * MAX_TOOL_CALLS:,} searches; free search is budgeted for "
-            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to DataForSEO (a deployment setting) for metered search.",
+            f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to a metered vendor (a deployment setting) for"
+            " metered search.",
         )
 
-    @override_settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    @override_settings(
+        TOOL_WIRING={"web_search": "dataforseo"},
+        TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}},
+    )
     def test_paid_provider_lifts_the_free_budget(self) -> None:
         wide = self.lists.create(label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
@@ -252,7 +257,7 @@ class GuardTests(AdmissionTestCase):
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
         self.assertEqual(fill.status, FillStatus.PENDING)
 
-    @override_settings(DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    @override_settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}})
     def test_a_contacts_only_fill_is_never_free_budgeted(self) -> None:
         # Contact search is metered whatever the switch says (it pins
         # the paid provider), so a contacts-only fill spends nothing
@@ -265,11 +270,15 @@ class GuardTests(AdmissionTestCase):
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
         self.assertEqual(fill.status, FillStatus.PENDING)
 
-    @override_settings(DATAFORSEO_LOGIN="login", DATAFORSEO_PASSWORD="secret")
+    @override_settings(
+        TOOL_WIRING={"web_search": "duckduckgo"},
+        TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}},
+    )
     def test_credentials_alone_do_not_lift_the_free_budget(self) -> None:
-        # Credentials route nothing: web search runs SEARCH_PROVIDER
-        # (contact search pins the paid provider regardless), so with
-        # the switch on the free provider the budget must still refuse.
+        # Credentials route nothing: web search runs its WIRED vendor
+        # (contact search runs its own metered roster regardless), so
+        # with the wiring on the free vendor the budget must still
+        # refuse.
         # FAILS if the predicate reads the credential pair again.
         wide = self.lists.create(label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
@@ -334,6 +343,7 @@ class ScopedFillTests(AdmissionTestCase):
         self.assertEqual(fill.confirmed_row_count, 5)
         self.assertEqual(len(targeted(str(fill.id))), 5)
 
+    @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_scope_bounds_the_free_search_budget(self) -> None:
         # The budget reads the TARGET count: a scoped fill on a sheet
         # too wide to run free still admits when N fits the budget.

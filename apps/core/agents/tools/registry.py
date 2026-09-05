@@ -32,6 +32,10 @@ from .harness import wrap
 _REGISTRY: dict[str, ToolSpec] = {}
 
 
+def _blame_key(tool: ToolSpec) -> tuple[int, str]:
+    return (tool.blame_order, tool.name)
+
+
 class UnknownTool(LookupError):
     """A config toggles a tool this registry does not hold. Config
     tier: it fails every row identically, so it must fail loudly, never
@@ -39,14 +43,26 @@ class UnknownTool(LookupError):
 
 
 def register(tool: ToolSpec) -> None:
-    """Register one tool. Raises ValueError on an invalid spec or a
-    name collision; re-registering the same spec object is a no-op."""
+    """Register one tool. Raises ValueError on an invalid spec, a
+    name collision, or a blame_order collision; re-registering the
+    same spec object is a no-op."""
     _validate(tool)
     existing = _REGISTRY.get(tool.name)
     if existing is not None:
         if existing is tool:
             return
         raise ValueError(f"tool name {tool.name!r} is already registered by another spec")
+    # Blame must be a HUMAN'S ranking, never the alphabet's: the
+    # ordering is scattered across the tool modules, so without this
+    # refusal a new tool lands on a taken number and ties decide
+    # blame silently. The message is the ranking's one computed view.
+    taken = {t.blame_order: t.name for t in _REGISTRY.values()}
+    if tool.blame_order in taken:
+        ranking = ", ".join(f"{t.name}={t.blame_order}" for t in sorted(_REGISTRY.values(), key=_blame_key))
+        raise ValueError(
+            f"tool {tool.name!r} declares blame_order {tool.blame_order}, already held by "
+            f"{taken[tool.blame_order]!r} (current ranking: {ranking})"
+        )
     _REGISTRY[tool.name] = tool
 
 
@@ -102,9 +118,11 @@ def get(name: str) -> ToolSpec:
 
 
 def all_tools() -> list[ToolSpec]:
-    """Every registered tool, in blame order (declared per spec;
-    ties break by name)."""
-    return sorted(_REGISTRY.values(), key=lambda tool: (tool.blame_order, tool.name))
+    """Every registered tool, in blame order (declared per spec,
+    UNIQUE by the register guard; the name term only keeps sorts
+    deterministic for registries assembled outside register(), as
+    test patches are)."""
+    return sorted(_REGISTRY.values(), key=_blame_key)
 
 
 def toggled_tools(config: AgentConfig) -> list[ToolSpec]:
@@ -129,3 +147,62 @@ def build_tools(config: AgentConfig, deps: CellDeps) -> list[Tool]:
     availability) is simply not offered; its status already says
     why."""
     return [Tool(wrap(tool)) for tool in toggled_tools(config) if deps.tool_open(tool.name, tool.closers)]
+
+
+def validate_tool_config() -> None:
+    """The tools-config boot gate, called from AgentsConfig.ready()
+    AFTER the agents.tools walk (which registers the tools AND the
+    search vendors), where every roster is known. The kernel parser
+    takes names as written, so every naming mistake refuses HERE,
+    naming the valid options. An ABSENT vendor table is not a mistake
+    (the vendor gates honestly at runtime as not configured); a
+    PRESENT table with wrong or empty keys is, because the operator
+    plainly meant to configure it. This gate also carries the roster
+    membership check spec construction cannot: a tool's vendors
+    tuple is declared before the vendors register."""
+    from django.conf import settings
+    from django.core.exceptions import ImproperlyConfigured
+
+    from .search.machinery import SearchToolSpec
+    from .search.providers.registry import all_providers
+
+    vendors = {p.name: p for p in all_providers()}
+    unknown = set(settings.TOOL_VENDOR_KEYS) - set(vendors)
+    if unknown:
+        raise ImproperlyConfigured(
+            f"unknown vendor section(s) in the tools config: {', '.join(sorted(unknown))} "
+            f"(registered vendors: {', '.join(sorted(vendors))})"
+        )
+    for name, spec in vendors.items():
+        table = settings.TOOL_VENDOR_KEYS.get(name)
+        if table is None:
+            continue
+        problems = []
+        gap = sorted(key for key in spec.config_keys if not table.get(key))
+        if gap:
+            problems.append(f"missing or empty {', '.join(gap)}")
+        extra = sorted(set(table) - set(spec.config_keys))
+        if extra:
+            problems.append(f"unknown {', '.join(extra)}")
+        if problems:
+            raise ImproperlyConfigured(
+                f"the [{name}] table needs exactly: {', '.join(spec.config_keys)} ({'; '.join(problems)})"
+            )
+    rosters = {tool.name: tool.vendors for tool in _REGISTRY.values() if isinstance(tool, SearchToolSpec)}
+    for tool_name, vendor in settings.TOOL_WIRING.items():
+        roster = rosters.get(tool_name)
+        if roster is None:
+            raise ImproperlyConfigured(
+                f"[tools] wires unknown tool {tool_name!r} (tools that take a vendor: {', '.join(sorted(rosters))})"
+            )
+        if vendor not in roster:
+            raise ImproperlyConfigured(
+                f"[tools] wires {tool_name} to {vendor!r}; {tool_name} supports: {', '.join(roster)}"
+            )
+    for tool_name, roster in rosters.items():
+        unregistered = sorted(set(roster) - set(vendors))
+        if unregistered:
+            raise ImproperlyConfigured(
+                f"{tool_name} declares unregistered vendor(s): {', '.join(unregistered)} "
+                f"(registered vendors: {', '.join(sorted(vendors))})"
+            )

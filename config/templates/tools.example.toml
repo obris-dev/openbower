@@ -1,0 +1,27 @@
+# Tool vendors for agents: copy to config/tools.toml and edit. This
+# ONE file carries the wiring AND the credentials, inline (it is
+# gitignored, like ~/.aws/credentials); there is no env mirror.
+#
+# Without this file the defaults below still apply (make up seeds it
+# from this template when absent). Vendor section names are the
+# registered vendors; [tools] wires each tool to the vendor that
+# serves it.
+
+# WIRING: which vendor serves each tool. The values here are the
+# defaults, so this section only needs editing to switch a tool to a
+# different vendor. What each tool supports (a boot check holds the
+# wiring to these):
+# web_search supports: duckduckgo, dataforseo
+# find_contacts supports: dataforseo
+
+[tools]
+web_search = "duckduckgo"
+find_contacts = "dataforseo"
+
+# VENDOR CREDENTIALS: one table per vendor. A keyless vendor
+# (duckduckgo) needs no table; the others stay gated until their
+# table is filled in.
+
+# [dataforseo]
+# login = "..."
+# password = "..."

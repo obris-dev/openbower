@@ -1,8 +1,10 @@
-"""The shared machinery for SEARCH-PROVIDER-BACKED tools. Such a tool
-composes its spec from the pieces here (the shared failure modes, the
-availability and failure-copy builders) and its function calls
-`run_search`; a tool that talks to something other than a search
-provider needs none of this and builds against `base` alone.
+"""The shared machinery for SEARCH-PROVIDER-BACKED tools, wherever
+their family package lives (web search here, the contacts x-ray next
+door). Such a tool composes its spec from the pieces here (the shared
+failure modes, the availability and failure-copy builders) and its
+function calls `run_search`; a tool that talks to something other
+than a search provider needs none of this and builds against `base`
+alone.
 
 A provider's status is PER TOOL within the run: one tool's provider
 refusing never refuses another, and never discards an answer another
@@ -27,7 +29,7 @@ from ...runtime.outcomes import SearchOutcome
 from ..base import FailureCode, FailureCopy, ToolSpec, result_json
 from .errors import SearchToolError
 from .providers.base import SearchHit
-from .providers.registry import provider_status
+from .providers.registry import get, provider_status
 from .providers.schedule import search
 
 logger = logging.getLogger(__name__)
@@ -42,19 +44,32 @@ STATUS_PHRASE = {
 }
 
 
-def serving_provider(pinned: str) -> str:
-    """The ONE resolution rule for which provider serves a family
-    tool: its pinned provider, else the deploy's configured switch,
-    read at call time (a setting, so never frozen into a spec built
-    at import)."""
-    return pinned or settings.SEARCH_PROVIDER
+def serving_provider(tool_name: str, vendors: tuple[str, ...]) -> str:
+    """The ONE resolution rule for which vendor serves a family tool:
+    the deploy's wiring for the tool, else the tool's declared roster
+    head, read at call time (a setting, so never frozen into a spec
+    built at import). `or`, not get(default): an empty wiring value
+    must fall back, not name nothing."""
+    return settings.TOOL_WIRING.get(tool_name) or vendors[0]
 
 
-def provider_availability(pinned: str = "") -> Callable[[], SearchStatus]:
+def provider_availability(tool_name: str, vendors: tuple[str, ...]) -> Callable[[], SearchStatus]:
     """The availability of a provider-backed tool: what the search seam
-    says, before any call, about the provider that would serve it
+    says, before any call, about the vendor that would serve it
     (resolved by the same rule every call uses)."""
-    return lambda: provider_status(serving_provider(pinned))
+    return lambda: provider_status(serving_provider(tool_name, vendors))
+
+
+def serving_display(tool_name: str, vendors: tuple[str, ...]) -> str:
+    """The serving vendor's name as failure copy prints it: the
+    declared display when it is registered, the raw wiring value when
+    it is not (a misconfigured deploy still deserves a sentence that
+    names what it asked for)."""
+    name = serving_provider(tool_name, vendors)
+    try:
+        return get(name).display
+    except KeyError:
+        return name
 
 
 def provider_failure_copy(
@@ -75,20 +90,38 @@ def provider_failure_copy(
     return copy
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SearchToolSpec(ToolSpec):
     """The FAMILY spec: everything the base contract asks, plus the
-    facts only a search-provider-backed tool has. Which provider
-    serves is SPEC data (a callable, because the configured provider
-    is a setting read at call time; a pinned provider is a constant
-    answer), and a DEMANDED scope travels here too, so `run_search`
-    serves every family tool and a scoped tool never forks the shared
-    path to carry its own facts."""
+    facts only a search-provider-backed tool has. Which vendors may
+    serve is SPEC data (the declared roster below; WHICH of them does
+    is the deploy's wiring, a setting read at call time), and a
+    DEMANDED scope travels here too, so `run_search` serves every
+    family tool and a scoped tool never forks the shared path to
+    carry its own facts.
 
-    # The provider PINNED to this tool's calls, as data; "" (the
-    # default) means the deploy's configured switch serves, read at
-    # call time by serving_provider above.
-    provider: str = ""
+    The base contract's two runtime callables DERIVE from the
+    declared facts at construction, so a family tool passes its
+    facts once: availability asks the seam about the vendor serving
+    THIS tool, and failure_copy names that vendor with an empty
+    remedy (a roster with no free door has no cheaper next step to
+    offer). A tool whose copy says more declares its own, as web
+    search's metered-door nudge does."""
+
+    # Redeclared with defaults so the family may derive them; the
+    # registry still refuses a spec where neither declaration nor
+    # derivation produced a callable.
+    availability: Callable[[], SearchStatus] | None = None
+    failure_copy: Callable[[FailureCode], FailureCopy] | None = None
+
+    # The vendors that may serve this tool, in order, the head being
+    # the default when the deploy's wiring names none. DECLARED, next
+    # to the tool: a vendor joins a roster when its results are known
+    # to work for this tool's job, and the [tools] wiring is held to
+    # the roster at boot. Registry MEMBERSHIP is the boot gate's
+    # check, not construction's: vendors register in the same ready()
+    # walk as the tools themselves.
+    vendors: tuple[str, ...] = ()
     # Look at one potential result and say yes or no: the tool's own
     # test for whether a served hit can answer AT ALL, any criterion
     # over the hit. A rejected hit never pools as evidence and the
@@ -104,11 +137,21 @@ class SearchToolSpec(ToolSpec):
     rejected_note: str = ""
 
     def __post_init__(self) -> None:
-        super().__post_init__()
         # Family completeness at construction, the same loud-early
-        # rule the registry applies to the base contract. No provider
-        # check: "" is a meaningful declaration (the configured switch
-        # serves), so every family tool has a provider by construction.
+        # rule the registry applies to the base contract: every family
+        # tool has a roster by construction, and the derivations below
+        # read it.
+        if not self.vendors or not all(isinstance(v, str) and v.isidentifier() for v in self.vendors):
+            raise ValueError(f"search tool {self.name!r} must declare a vendors roster of identifier names")
+        super().__post_init__()
+        if self.availability is None:
+            object.__setattr__(self, "availability", provider_availability(self.name, self.vendors))
+        if self.failure_copy is None:
+            object.__setattr__(
+                self,
+                "failure_copy",
+                provider_failure_copy(self.display_name, lambda: serving_display(self.name, self.vendors), lambda: ""),
+            )
         if (self.check_hit is None) != (self.rejected_note == ""):
             raise ValueError(f"search tool {self.name!r} must declare check_hit and rejected_note together")
 
@@ -142,7 +185,9 @@ def run_search(deps: CellDeps, query: str, *, spec: SearchToolSpec) -> str:
     the ones this call added. The harness owns the closed-tool
     refusal BEFORE any spend, so the stored calls record only what
     hit the wire."""
-    outcome = ask_provider(deps, query, spec=spec, provider=serving_provider(spec.provider), check_hit=spec.check_hit)
+    outcome = ask_provider(
+        deps, query, spec=spec, provider=serving_provider(spec.name, spec.vendors), check_hit=spec.check_hit
+    )
     if not outcome.hits and outcome.discarded:
         return result_json([], spec.rejected_note)
     return result_json(pool_hits(deps, outcome.hits, label=spec.record_label))
@@ -244,4 +289,6 @@ __all__ = [
     "provider_availability",
     "provider_failure_copy",
     "run_search",
+    "serving_display",
+    "serving_provider",
 ]

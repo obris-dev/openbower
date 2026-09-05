@@ -102,16 +102,16 @@ class TransientBreakerTests(SimpleTestCase):
         for tools, provider, opening, remedy in cases:
             with self.subTest(tools=tools, provider=provider):
                 # The copy reads settings at FAILURE time (each spec's
-                # failure_copy), so the provider rides the settings
+                # failure_copy), so the vendor rides the settings
                 # override, not a constructor argument.
-                self.enterContext(self.settings(SEARCH_PROVIDER=provider))
+                self.enterContext(self.settings(TOOL_WIRING={"web_search": provider}))
                 breakers = _Breakers()
                 for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
                     breakers.row_finished(retry_cause=StoredCellState.TOOL_UNAVAILABLE, tools=tools)
                 code, message = breakers.tripped
                 self.assertEqual(code, FillFailureCode.SEARCH_THROTTLED)
                 self.assertTrue(message.startswith(opening), message)
-                self.assertEqual("Switch search to DataForSEO" in message, remedy, message)
+                self.assertEqual("Switch search to a metered vendor" in message, remedy, message)
 
     def test_a_mixed_streak_reports_its_latest_evidence(self):
         breakers = _Breakers()

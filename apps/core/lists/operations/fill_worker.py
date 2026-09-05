@@ -16,12 +16,12 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from functools import partial
 from typing import NamedTuple
 
-from django.conf import settings
 from django.db import DatabaseError, close_old_connections, connections
 
-from agents.constants import SearchProvider, ToolStatus
+from agents.constants import ToolStatus
 from agents.providers import ModelUnavailable, model_for, source_config
 from agents.tools import registry as tool_registry
+from agents.tools.search.web_search import web_search_is_metered
 from openbower_kernel.adaptive import ConcurrencyController
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import AgentConfig
@@ -78,11 +78,11 @@ def _release_connection() -> None:
 
 
 def paid_search() -> bool:
-    """Whether fill web searches run through the METERED provider: the
-    SEARCH_PROVIDER switch, the same fact the admission budget reads
-    (credentials alone route nothing). Public: the command narrates it
-    at startup."""
-    return settings.SEARCH_PROVIDER == SearchProvider.DATAFORSEO
+    """Whether fill web searches run through a METERED vendor: the
+    web-search wiring read through the tool's own accessor, the same
+    fact the admission budget reads (credentials alone route
+    nothing). Public: the command narrates it at startup."""
+    return web_search_is_metered()
 
 
 class _Window(NamedTuple):

@@ -30,6 +30,7 @@ from .services import (
     AgentsFull,
 )
 from .tools import registry as tool_registry
+from .tools.search import web_search
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,11 @@ class AgentCatalogView(_ScopedView):
             support_followup=settings.SUPPORT_FOLLOWUP,
             truncated=truncated,
             tools={tool.name: tool.availability().value for tool in tool_registry.all_tools()},
-            # The test profile pins every provider shut with an empty
-            # setting; the wire says "none" as null, never as "".
-            search_provider=settings.SEARCH_PROVIDER or None,
+            # The vendor serving web search only when it is READY to
+            # serve (null otherwise, an unwired or credential-less
+            # deploy alike): the web's copy never names a vendor whose
+            # searches cannot run.
+            search_provider=web_search.open_vendor(),
         )
         return Response(wire.model_dump())
 

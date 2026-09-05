@@ -121,7 +121,7 @@ class CellAnswerer:
 
     def _tool_failure(self, deps: CellDeps) -> tuple[str, FailureMode] | None:
         """The BLAMING tool's name and failure mode, when one exists: the first
-        toggled tool (registration = blame order) that failed without
+        toggled tool (by declared blame_order) that failed without
         ever serving. A tool that SERVED cannot take the blame: it
         gave the model real evidence, so a decline over that evidence
         is the model's verdict, not the tool's fault, and blaming the
