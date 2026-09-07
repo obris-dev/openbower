@@ -118,9 +118,9 @@ violation shipped once and got caught).
   reference env files, internal jargon (doors, rosters), or
   code-level concepts in rendered copy. The ONE
   carve-out is a setup walkthrough whose purpose is configuring the
-  deployment (the tools card's DataForSEO steps, the
-  picker's "Self-hosting?" note): env variable names
-  and the .env.example pointer are the actual knobs there, but the
+  deployment (the tools card's vendor steps, the
+  picker's "Self-hosting?" note): the config/tools.toml pointer and
+  its table keys are the actual knobs there, but the
   frame stays "this deployment" and names the hand-off ("if someone
   else runs it, send them this step").
 - Copy names causes and next steps in active voice, never moods.

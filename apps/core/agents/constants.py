@@ -94,14 +94,17 @@ LIST_TIMEOUT_SECONDS = 16
 # boot-race must heal without a restart, but a dead source must not
 # cost a serial probe timeout on EVERY request meanwhile.
 PROBE_FAILURE_TTL_SECONDS = 16
+# The GENERAL search-call budget, quick or dead: the default for every
+# vendor's transport timeout (ProviderSpec.timeout_seconds). A vendor
+# that computes per request declares its own bigger number ON ITS
+# SPEC, in its own module, never here.
 SEARCH_TIMEOUT_SECONDS = 16
-DATAFORSEO_TIMEOUT_SECONDS = 64
 # A rate-limited query is retried, SAME query, on this schedule
 # (binary) before the seam gives up on it. Transport, never the
 # model's budget: a retry of one question is not a new one. The
 # schedule's own waits total 15s, but a provider's Retry-After ask is
 # honored clamped to the LARGEST step, so the true bound per call is
-# len(schedule) * max(schedule) (SEARCH_ATTEMPT_WORST_CASE_SECONDS
+# len(schedule) * max(schedule) (search_attempt_worst_case_seconds
 # carries it into the worst-case derivation).
 SEARCH_BACKOFF_SECONDS = (1, 2, 4, 8)
 # One validation retry per run: the framework re-asks once on an
@@ -117,43 +120,44 @@ MODEL_RETRIES = 1
 COMPLETION_TOKENS_BASE = 256
 COMPLETION_TOKENS_PER_OUTPUT = 256
 
-# One search call's worst case: the provider's timeout, plus every wait
-# the backoff schedule allows AT ITS CLAMP. Not sum(schedule): a provider
-# answering Retry-After above the schedule is honored clamped to the
-# schedule's largest step on EVERY attempt, so each wait can reach
-# max(schedule), not its own step.
-SEARCH_ATTEMPT_WORST_CASE_SECONDS = DATAFORSEO_TIMEOUT_SECONDS + len(SEARCH_BACKOFF_SECONDS) * max(
-    SEARCH_BACKOFF_SECONDS
-)
 # The capped-verdict fallback is a SECOND agent run with its own
 # request budget (answer.py's UsageLimitExceeded leg): one verdict
 # call plus the framework's validation retries, each a completion at
 # the full timeout.
 CAPPED_VERDICT_REQUESTS = 1 + MODEL_RETRIES
-# The runtime's worst case for ONE run, derived, never invented: every
-# completion the request budget allows at the completion timeout,
-# including the capped verdict's own budget, plus every paid search at
-# its clamped worst case (the free provider's timeout is shorter, so the
-# paid provider's bounds both). The NORMAL fill worker's compose
-# stop_grace_period must clear it (a row that runs to the bound still
-# owes its outcome write); the test lane's worker trades that away
-# deliberately, so its short grace kills an in-flight bench row.
-CELL_RUN_WORST_CASE_SECONDS = (
-    MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS
-) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * SEARCH_ATTEMPT_WORST_CASE_SECONDS
+
+
+def search_attempt_worst_case_seconds() -> int:
+    """One search call's worst case: the slowest REGISTERED vendor's
+    declared timeout, plus every wait the backoff schedule allows AT
+    ITS CLAMP. Not sum(schedule): a provider answering Retry-After
+    above the schedule is honored clamped to the schedule's largest
+    step on EVERY attempt, so each wait can reach max(schedule), not
+    its own step. A CALLED accessor over the registry (which fills at
+    ready(), after this module imports), so registering a slower
+    vendor raises the bound by itself; nothing here to remember."""
+    from .tools.search.providers.registry import all_providers
+
+    return max(p.timeout_seconds for p in all_providers()) + len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
+
+
+def cell_run_worst_case_seconds() -> int:
+    """The runtime's worst case for ONE run, derived, never invented:
+    every completion the request budget allows at the completion
+    timeout, including the capped verdict's own budget, plus every
+    search at its clamped worst case. The NORMAL fill worker's compose
+    stop_grace_period must clear it (a row that runs to the bound
+    still owes its outcome write); the test lane's worker trades that
+    away deliberately, so its short grace kills an in-flight bench
+    row. Called, like the search bound it composes."""
+    return (
+        MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS
+    ) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * search_attempt_worst_case_seconds()
+
+
 # The people-profile site find_contacts pins its queries to (the tool
 # injects the site: scope; the model never controls it).
 DEFAULT_PEOPLE_SITE = "linkedin.com/in"
-
-
-class SearchProvider(StrEnum):
-    """The search seam's providers: the free keyless default, and the paid
-    Google-grade provider contact search pins to. Settings mirror these
-    values as literals (settings cannot import app code); a parity
-    test pins the mirror."""
-
-    DUCKDUCKGO = "duckduckgo"
-    DATAFORSEO = "dataforseo"
 
 
 class ToolStatus(StrEnum):

@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from django.conf import settings
 from django.db import models
 
-from agents.constants import SearchProvider
 from agents.runtime.prompts import prompt_variables
+from agents.tools.search.web_search import web_search_is_metered
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 from openbower_schema.fills import SETTLED_CELL_STATES
 
@@ -38,12 +37,12 @@ def row_is_eligible(data: dict, variables: set[str]) -> bool:
 
 
 def search_provider_is_free() -> bool:
-    """Whether fill web searches run through the FREE scraping provider
-    (which is what the budget bounds): the routing fact is the
-    SEARCH_PROVIDER switch, never the paid credentials (contact search
-    pins the paid provider regardless, and credentials alone route
-    nothing)."""
-    return settings.SEARCH_PROVIDER != SearchProvider.DATAFORSEO
+    """Whether fill web searches run through a FREE vendor (which is
+    what the budget bounds): the routing fact is the web-search
+    wiring, read through the tool's own accessor, never the metered
+    credentials (contact search runs its own metered roster
+    regardless, and credentials alone route nothing)."""
+    return not web_search_is_metered()
 
 
 def free_provider_row_cap(config: AgentConfig) -> int:
@@ -51,10 +50,11 @@ def free_provider_row_cap(config: AgentConfig) -> int:
     provider's budget refuses it. A CAP rather than a check on a total,
     because admission counts its rows as it walks them and never
     holds the whole set to measure it. Gated on WEB search alone:
-    the budget bounds the free scraping provider, and contact
-    search is metered (pinned to the paid provider) whatever the
-    switch says, so a contacts-only fill spends nothing free.
-    Unbounded when the provider is metered or no free tool runs."""
+    the budget bounds the free scraping vendor, and contact
+    search is metered (its own roster carries no free vendor)
+    whatever the wiring says, so a contacts-only fill spends nothing
+    free. Unbounded when the vendor is metered or no free tool
+    runs."""
     if config.searches_web and search_provider_is_free():
         return FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS
     return MAX_LIST_ROWS

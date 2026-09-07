@@ -23,7 +23,6 @@ from typing import NamedTuple
 from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import DDGSException
 
-from ....constants import SEARCH_TIMEOUT_SECONDS
 from .base import AttemptThrottled, AttemptUnreachable, ProviderSpec, SearchHit
 from .registry import register
 
@@ -48,7 +47,7 @@ def _fetch(query: str) -> _Page:
     every transport failure in its own exception types (a timeout as
     TimeoutException, a refused or dropped connection as a bare
     DDGSException), which is why both read as UNREACHABLE here."""
-    engine = Duckduckgo(timeout=SEARCH_TIMEOUT_SECONDS)
+    engine = Duckduckgo(timeout=SPEC.timeout_seconds)
     payload = engine.build_payload(query=query, region=_REGION, safesearch=_SAFESEARCH, timelimit=None)
     try:
         response = engine.http_client.request(engine.search_method, engine.search_url, data=payload)
@@ -74,8 +73,10 @@ def duckduckgo(query: str, count: int) -> list[SearchHit]:
 
 SPEC = ProviderSpec(
     run=duckduckgo,
-    # Keyless by design; the public endpoint needs nothing.
-    usable=lambda: True,
+    # Keyless by design (no config schema); the public endpoint
+    # needs nothing.
+    metered=False,
+    display="DuckDuckGo",
 )
 
 register(SPEC)

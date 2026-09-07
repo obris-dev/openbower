@@ -13,12 +13,10 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 # reach a real server, so
 # every provider is pinned shut and each test opens what it mocks.
 INFERENCE_SOURCES = {}
-# Deliberately NOT a valid provider: any test that reaches the search seam
-# without patching it gets a not_configured answer instead of making a
-# live network call. Tests that want a provider set one explicitly.
-SEARCH_PROVIDER = ""
-# The dev .env may hold REAL DataForSEO credentials; contacts gate on
-# them regardless of the provider switch, so they must be pinned shut
-# too or the suite reads the operator's paid provider as available.
-DATAFORSEO_LOGIN = ""
-DATAFORSEO_PASSWORD = ""
+# Hermetic tools: wiring points every tool at a registered vendor
+# whose credentials are pinned absent, so the seam answers
+# not_configured instead of reaching a live engine (the operator's
+# real config/tools.toml may hold live keys); each test opens what
+# it mocks.
+TOOL_VENDOR_KEYS = {}
+TOOL_WIRING = {"web_search": "dataforseo", "find_contacts": "dataforseo"}

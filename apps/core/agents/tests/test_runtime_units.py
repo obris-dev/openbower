@@ -153,7 +153,7 @@ class ToolPoolTests(SimpleTestCase):
         import json
 
         from agents.runtime.deps import CellDeps
-        from agents.tools.search.find_contacts import find_contacts
+        from agents.tools.contacts.find_contacts import find_contacts
         from agents.tools.search.providers.base import SearchHit
 
         hits = [
@@ -183,7 +183,7 @@ class ToolPoolTests(SimpleTestCase):
         import json
 
         from agents.runtime.deps import CellDeps
-        from agents.tools.search.find_contacts import NOTE_OFF_SCOPE, find_contacts
+        from agents.tools.contacts.find_contacts import NOTE_OFF_SCOPE, find_contacts
         from agents.tools.search.providers.base import SearchHit
 
         hits = [SearchHit("D", "https://www.reddit.com/r/jobs/1", "s")]
@@ -198,7 +198,7 @@ class ToolPoolTests(SimpleTestCase):
 
     def test_an_empty_query_never_buys_a_search(self):
         from agents.runtime.deps import CellDeps
-        from agents.tools.search.find_contacts import find_contacts
+        from agents.tools.contacts.find_contacts import find_contacts
         from agents.tools.search.web_search import web_search
 
         deps = CellDeps()
@@ -217,8 +217,8 @@ class ToolPoolTests(SimpleTestCase):
 
         from agents.constants import SearchStatus
         from agents.runtime.deps import CellDeps
+        from agents.tools.contacts.find_contacts import SPEC as CONTACTS_SPEC
         from agents.tools.harness import wrap
-        from agents.tools.search.find_contacts import SPEC as CONTACTS_SPEC
         from agents.tools.search.web_search import SPEC as WEB_SPEC
 
         web_search, find_contacts = wrap(WEB_SPEC), wrap(CONTACTS_SPEC)

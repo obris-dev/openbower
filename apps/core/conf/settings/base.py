@@ -7,6 +7,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from openbower_kernel.env import env_bool, env_list
 from openbower_kernel.provider_config import ProviderConfigError, resolve_provider_sources
+from openbower_kernel.tool_config import ToolConfigError, resolve_tool_config
 
 # Log timestamps in UTC regardless of the host clock. Python's logging
 # `asctime` uses `time.localtime` by default; the app is TIME_ZONE="UTC",
@@ -174,21 +175,27 @@ except ProviderConfigError as e:
 # needs no settings line here.
 INFERENCE_SOURCES = _SOURCES
 
-# The search seam behind agents' evidence tools, two providers:
-# DuckDuckGo by DEFAULT: free and keyless, so web search works out of
-# the box and offloads the paid provider. Contact search PINS DataForSEO
-# regardless (LinkedIn x-rays need Google-grade SERPs) and stays gated
-# until its credentials are set.
-SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")
-# The provider names, mirrored from agents.constants.SearchProvider
-# (settings cannot import app code; a parity test pins the mirror). A
-# typo'd provider is a CONFIG error and refuses at startup, distinct
-# from missing credentials (which gate honestly at runtime).
-_SEARCH_PROVIDER_CHOICES = ("duckduckgo", "dataforseo")
-if SEARCH_PROVIDER not in _SEARCH_PROVIDER_CHOICES:
-    raise ImproperlyConfigured(f"SEARCH_PROVIDER must be one of {_SEARCH_PROVIDER_CHOICES}, not {SEARCH_PROVIDER!r}")
-DATAFORSEO_LOGIN = os.environ.get("DATAFORSEO_LOGIN", "")
-DATAFORSEO_PASSWORD = os.environ.get("DATAFORSEO_PASSWORD", "")
+# Tool vendors for agents: the config file (config/tools.toml,
+# operator-owned, gitignored; template in config/templates/) is the
+# ONE custody, wiring AND credentials: [tools] names the vendor
+# serving each tool, and a table per vendor holds its keys inline,
+# the aws-credentials norm. No env mirror; with no file each tool
+# falls to its declared roster head, and `make up` seeds the file
+# from the template. Names are validated at boot by the agents
+# registry gate, where the vendor and tool rosters are known.
+# `or`, not get(default): TOOLS_CONFIG= (set but empty) must fall
+# back, not become Path(".").
+_TOOLS_CONFIG_PATH = Path(os.environ.get("TOOLS_CONFIG") or REPO_ROOT / "config" / "tools.toml")
+try:
+    _TOOL_CONFIG = resolve_tool_config(_TOOLS_CONFIG_PATH)
+except ToolConfigError as e:
+    raise ImproperlyConfigured(str(e)) from e
+# Two generic mappings, vendor name -> credential table and tool
+# name -> serving vendor: a new vendor or tool needs no settings
+# line here.
+TOOL_VENDOR_KEYS = _TOOL_CONFIG.vendor_keys
+TOOL_WIRING = _TOOL_CONFIG.wiring
+
 
 # Timeout (seconds) for every server-to-IdP HTTP call (token exchange,
 # /me, refresh, revoke), so a hung IdP can't pin a worker.

@@ -153,7 +153,9 @@ class ToolSpec:
     # WHERE this tool stands in the blame walk: a blank cell's cause
     # is named by the LOWEST blame_order among the toggled tools that
     # closed unserved. A DECLARED fact, never the import or walk
-    # order (ties break by name, deterministically).
+    # order, and UNIQUE across the roster (the register guard refuses
+    # a taken number, naming the current ranking, so placing a new
+    # tool means reading it, never guessing).
     blame_order: int
     # The label the model reads on evidence records; defaults to the
     # name, overridden with shorter prose ("web") when the name reads

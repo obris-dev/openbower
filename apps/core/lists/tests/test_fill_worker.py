@@ -502,7 +502,7 @@ class WorkerTestCase(TransactionTestCase):
             # The engine's bot challenge: a 202 with no results in it.
             patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(202, [])),
             patch("agents.tools.search.providers.schedule._sleep"),
-            self.settings(SEARCH_PROVIDER="duckduckgo"),
+            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}),
         ):
             self.run_worker(FunctionModel(fn), passes=1)
             fill.refresh_from_db()

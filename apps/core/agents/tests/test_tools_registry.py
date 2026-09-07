@@ -51,6 +51,17 @@ class RegisterGuardTests(SimpleTestCase):
         with self.assertRaisesMessage(ValueError, "already registered"):
             registry.register(replace(web_search.SPEC, display_name="Other web search"))
 
+    def test_a_taken_blame_order_refuses_naming_the_ranking(self):
+        # The ranking is scattered across the tool modules, so a new
+        # tool landing on a taken number must be told the whole
+        # ranking rather than letting the alphabet decide blame.
+        def zz_probe(ctx, query):
+            return ""
+
+        with self.assertRaisesMessage(ValueError, "already held by 'web_search'") as caught:
+            registry.register(replace(web_search.SPEC, function=zz_probe))
+        self.assertIn("current ranking: web_search=1, find_contacts=2", str(caught.exception))
+
     def test_a_nameless_function_refuses(self):
         # The name IS the function's name; a lambda's "<lambda>" is not
         # a callable name a model could be told to use.
@@ -125,7 +136,7 @@ class RegisterGuardTests(SimpleTestCase):
         # declaration (the configured switch serves).
         from dataclasses import replace
 
-        from agents.tools.search.find_contacts import SPEC as CONTACTS_SPEC
+        from agents.tools.contacts.find_contacts import SPEC as CONTACTS_SPEC
 
         with self.assertRaisesMessage(ValueError, "together"):
             replace(CONTACTS_SPEC, rejected_note="")

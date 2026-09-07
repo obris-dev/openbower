@@ -29,3 +29,10 @@ class AgentsConfig(AppConfig):
         # nested inside them (tools/search/providers registers the
         # same way).
         registration.import_submodules("agents.tools")
+        # The tools config takes names as written too, so a typo'd
+        # vendor section, credential key, or wiring value refuses
+        # HERE, after the walk, where the vendor and tool rosters are
+        # both known.
+        from .tools.registry import validate_tool_config
+
+        validate_tool_config()

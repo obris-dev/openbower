@@ -6,9 +6,9 @@ import type { AgentCatalog, AgentTools } from "@bower/api";
 
 import { AGENT_TOOLS, type AgentToolKey } from "./tools-meta";
 
-// Per-tool providers: web search runs through ANY usable provider; finding
-// contacts requires DataForSEO specifically (LinkedIn profile searches
-// need Google-grade results). Keys and labels come from the ONE tool
+// Per-tool vendors: web search runs through any wired vendor; finding
+// contacts takes only the metered ones (LinkedIn profile searches
+// need real Google results). Keys and labels come from the ONE tool
 // registry; this map adds only what the toggles alone need. A tool is
 // ready when the catalog's status for it is "open"; any other code is
 // the reason it is off.
@@ -28,8 +28,8 @@ function toolReady(catalog: AgentCatalog, tool: AgentToolKey): boolean {
 }
 
 /** Tool toggles with the SETUP WORKFLOW inline: a tool whose search
- * door isn't ready is gated, and the card walks through the DataForSEO
- * setup right there instead of quietly disabling. */
+ * door isn't ready is gated, and the card walks through connecting a
+ * metered vendor right there instead of quietly disabling. */
 export function ToolToggles({
   catalog,
   failed,
@@ -88,8 +88,8 @@ export function ToolToggles({
         <div className="space-y-1.5 rounded-md border border-warning-hairline bg-warning-wash px-3 py-2 text-xs">
           <p className="font-medium text-warning">
             {searchReady
-              ? "Contact search isn't set up yet: finding contacts needs DataForSEO."
-              : `Search is misconfigured on this deployment: the chosen provider is missing its credentials; ${catalog.support_followup}. For contact search, set up DataForSEO:`}
+              ? "Contact search isn't set up yet: finding contacts needs a metered search vendor."
+              : `Search is misconfigured on this deployment: the wired vendor is missing its credentials; ${catalog.support_followup}. For contact search, connect a metered vendor:`}
           </p>
           <ol className="list-decimal space-y-0.5 pl-4 text-muted">
             <li>
@@ -105,8 +105,8 @@ export function ToolToggles({
               ($1 trial credit, pay as you go, no expiry).
             </li>
             <li>
-              Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD to the deployment&rsquo;s environment (the block is in
-              its .env.example); if someone else runs it, send them this step.
+              Fill in that vendor&rsquo;s table in the deployment&rsquo;s config/tools.toml (the template names the
+              keys, and lists which vendors serve which tools); if someone else runs it, send them this step.
             </li>
             <li>Restart the deployment and reload this page.</li>
           </ol>

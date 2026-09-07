@@ -56,15 +56,28 @@ class DuplicatedKnowledgePins(SimpleTestCase):
     """Facts declared in two homes that cannot import each other: each
     pair pins here so drift fails a test instead of shipping."""
 
-    def test_settings_serp_provider_mirror_matches_the_enum(self):
-        from agents.constants import SearchProvider
+    def test_the_wire_provider_literal_mirrors_the_registry(self):
+        # The registry cannot be imported by the schema package, so
+        # the wire Literal restates the vendor names; the registry is
+        # the anchor and this pin is the drift alarm.
         from agents.tools.search.providers.registry import all_providers
-        from conf.settings import base as settings_base
         from openbower_schema.agents import SearchProviderWire
 
-        self.assertEqual({p.name for p in all_providers()}, {p.value for p in SearchProvider})
-        self.assertEqual(set(settings_base._SEARCH_PROVIDER_CHOICES), {p.value for p in SearchProvider})
-        self.assertEqual(set(get_args(SearchProviderWire)), {p.value for p in SearchProvider})
+        self.assertEqual({p.name for p in all_providers()}, set(get_args(SearchProviderWire)))
+
+    def test_every_declared_roster_vendor_is_registered(self):
+        # A tool's vendors tuple is declared at construction, before
+        # the vendors have registered (the same ready() walk brings
+        # both up), so membership pins here and at the boot gate.
+        from agents.tools import registry as tool_registry
+        from agents.tools.search.machinery import SearchToolSpec
+        from agents.tools.search.providers.registry import all_providers
+
+        registered = {p.name for p in all_providers()}
+        for tool in tool_registry.all_tools():
+            if isinstance(tool, SearchToolSpec):
+                with self.subTest(tool=tool.name):
+                    self.assertLessEqual(set(tool.vendors), registered)
 
     def test_the_search_familys_codes_are_search_statuses_with_phrases(self):
         # ask_provider coerces SearchStatus(failure.code) while
@@ -89,20 +102,38 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         # ask up to max(schedule), not up to that attempt's own step).
         # FAILS if either term falls back out of the formula, which
         # the grace test alone cannot catch (it compares compose to
-        # the constant, not the constant to its parts).
+        # the accessor, not the accessor to its parts).
         from agents.constants import (
-            CELL_RUN_WORST_CASE_SECONDS,
             COMPLETION_TIMEOUT_SECONDS,
-            DATAFORSEO_TIMEOUT_SECONDS,
             MODEL_RETRIES,
             SEARCH_BACKOFF_SECONDS,
+            cell_run_worst_case_seconds,
         )
+        from agents.tools.search.providers.registry import all_providers
         from openbower_schema.agents import MAX_TOOL_CALLS
 
+        slowest = max(p.timeout_seconds for p in all_providers())
         floor = (MAX_TOOL_CALLS + 3 + 1 + MODEL_RETRIES) * COMPLETION_TIMEOUT_SECONDS + MAX_TOOL_CALLS * (
-            DATAFORSEO_TIMEOUT_SECONDS + len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
+            slowest + len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
         )
-        self.assertGreaterEqual(CELL_RUN_WORST_CASE_SECONDS, floor)
+        self.assertGreaterEqual(cell_run_worst_case_seconds(), floor)
+
+    def test_a_slower_vendor_raises_the_attempt_bound_by_itself(self):
+        # The bound is a CALLED accessor over the registry, so a new
+        # vendor's bigger declared timeout raises it automatically;
+        # nobody edits a constant. FAILS if the derivation goes back
+        # to a hand list a registration can silently outgrow.
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        from agents.constants import SEARCH_BACKOFF_SECONDS, search_attempt_worst_case_seconds
+        from agents.tools.search.providers import duckduckgo
+        from agents.tools.search.providers import registry as providers_registry
+
+        clamp = len(SEARCH_BACKOFF_SECONDS) * max(SEARCH_BACKOFF_SECONDS)
+        slow = replace(duckduckgo.SPEC, timeout_seconds=999)
+        with patch.dict(providers_registry._REGISTRY, {"zz_slow": slow}):
+            self.assertEqual(search_attempt_worst_case_seconds(), 999 + clamp)
 
     def test_the_cron_sweeps_test_fills(self):
         # The test-fill TTL is a compose cron, never an admission
@@ -131,7 +162,7 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         import re
         from pathlib import Path
 
-        from agents.constants import CELL_RUN_WORST_CASE_SECONDS
+        from agents.constants import cell_run_worst_case_seconds
 
         compose = (Path(__file__).resolve().parents[4] / "docker-compose.yml").read_text()
         services: dict[str, dict[str, str]] = {}
@@ -149,7 +180,7 @@ class DuplicatedKnowledgePins(SimpleTestCase):
                 services.setdefault(current, {})["kinds"] = command.group(1).strip()
         graced = {name: conf for name, conf in services.items() if "grace" in conf}
         self.assertEqual(set(graced), {"worker", "worker-test"})
-        self.assertGreater(int(graced["worker"]["grace"]), CELL_RUN_WORST_CASE_SECONDS)
+        self.assertGreater(int(graced["worker"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["worker"]["kinds"], "--kinds normal")
         self.assertEqual(graced["worker-test"]["kinds"], "--kinds test")
 

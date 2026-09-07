@@ -83,13 +83,14 @@ carries the full annotated list):
   refuses startup with the section named). `make up` seeds the file
   from the template when it is absent, which starts you with a local
   Ollama entry; edit the file for real sources and keys.
-- Search runs through DuckDuckGo by default (free, keyless). Set
-  `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` for metered search:
-  contact search requires it, `SEARCH_PROVIDER=dataforseo` routes web
-  search through it too. Without those credentials a fill still runs
-  on the free door, but it is budgeted: a fill whose search count
-  would exceed that budget is refused before it spends, naming the
-  paid provider.
+- Search vendors and wiring live in `config/tools.toml` (`make up`
+  seeds it from the template, which lists which vendors serve which
+  tools; `manage.py tools` prints the live matrix). Web search runs
+  through DuckDuckGo by default (free, keyless). Contact search needs
+  a metered vendor's table filled in (DataForSEO); wiring
+  `web_search` to it routes web search through it too. On the free door a fill is
+  budgeted: one whose search count would exceed the budget is refused
+  before it spends, naming the metered next step.
 
 Run ONE worker process per FILL KIND per deploy, which is what the
 compose file ships. The row-claim design is multi-worker safe, but

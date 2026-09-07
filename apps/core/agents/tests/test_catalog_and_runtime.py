@@ -58,9 +58,8 @@ _LOCAL_SOURCE = source("local", "http://o.test/v1")
 _CANONICAL_SOURCE = source("openai", "https://api.openai.com/v1", api_key="k")
 _TEST_SETTINGS = {
     "INFERENCE_SOURCES": {"openai_compatible": _LOCAL_SOURCE},
-    "SEARCH_PROVIDER": "dataforseo",
-    "DATAFORSEO_LOGIN": "l",
-    "DATAFORSEO_PASSWORD": "p",
+    "TOOL_WIRING": {"web_search": "dataforseo"},
+    "TOOL_VENDOR_KEYS": {"dataforseo": {"login": "l", "password": "p"}},
 }
 
 _CONFIG = {
@@ -322,20 +321,25 @@ class SearchAvailabilityTests(TestCase):
     def test_the_free_default_provider_is_open_keyless_but_contacts_stay_gated(self):
         # DuckDuckGo is the default: web search works out of the box;
         # contact search still requires the DataForSEO setup.
-        with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
+        with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "not_configured"})
 
     def test_an_explicit_paid_provider_without_credentials_is_unavailable(self):
         # No source override: an open source here would fire a REAL
         # roster probe (this test only concerns search availability).
-        with self.settings(
-            SEARCH_PROVIDER="dataforseo",
-            DATAFORSEO_LOGIN="",
-            DATAFORSEO_PASSWORD="",
-        ):
+        with self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"]["web_search"], "not_configured")
+
+    def test_the_catalog_names_the_web_vendor_only_when_it_can_serve(self):
+        # The slot is null for an unservable vendor (unwired and
+        # credential-less alike), so client copy never names a vendor
+        # whose searches cannot run; a ready keyless vendor is named.
+        with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}):
+            self.assertEqual(self.client.get(reverse("agents_catalog")).json()["search_provider"], "duckduckgo")
+        with self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}):
+            self.assertIsNone(self.client.get(reverse("agents_catalog")).json()["search_provider"])
 
     def test_duckduckgo_hits_map_and_failures_are_diagnosed(self):
         from agents.tools.search.providers.base import SearchHit
@@ -345,7 +349,7 @@ class SearchAvailabilityTests(TestCase):
         hit = SearchHit("Jane Doe | Site", "https://x.test/jane", "VP of Sales.")
         with (
             patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(200, [hit])),
-            self.settings(SEARCH_PROVIDER="duckduckgo"),
+            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}),
         ):
             answer = search("acme", provider="duckduckgo")
         self.assertEqual(answer.hits[0].url, "https://x.test/jane")
@@ -356,7 +360,7 @@ class SearchAvailabilityTests(TestCase):
 
         with (
             patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(500, [])),
-            self.settings(SEARCH_PROVIDER="duckduckgo"),
+            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}),
             self.assertRaises(SearchErrored) as caught,
         ):
             search("acme", provider="duckduckgo")
@@ -398,7 +402,9 @@ class SearchAvailabilityTests(TestCase):
     def test_contacts_pin_their_own_provider_regardless_of_the_switch(self):
         # Web search on the free provider + dataforseo credentials keeps
         # contacts fully available; the switch never gates them.
-        with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"):
+        with self.settings(
+            TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}}
+        ):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "open"})
 
@@ -416,7 +422,7 @@ class SearchAvailabilityTests(TestCase):
             }
         )
         deps = CellDeps()
-        with self.settings(SEARCH_PROVIDER="duckduckgo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""):
+        with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}):
             for tool in tool_registry.all_tools():
                 deps.tool_status[tool.name] = tool.availability()
             offered = [t.name for t in tool_registry.build_tools(config, deps)]
@@ -431,7 +437,7 @@ class SearchAvailabilityTests(TestCase):
         from agents.tools.search.providers.schedule import search
 
         with (
-            self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="", DATAFORSEO_PASSWORD=""),
+            self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}),
             self.assertRaises(SearchNotConfigured) as caught,
         ):
             search("anything", provider="dataforseo")
@@ -483,7 +489,7 @@ class SearchBackoffTests(TestCase):
         sleeps: list[float] = []
         self.enterContext(patch("agents.tools.search.providers.duckduckgo._fetch", side_effect=fetch))
         self.enterContext(patch("agents.tools.search.providers.schedule._sleep", sleeps.append))
-        self.enterContext(self.settings(SEARCH_PROVIDER="duckduckgo"))
+        self.enterContext(self.settings(TOOL_WIRING={"web_search": "duckduckgo"}))
         return sleeps, calls
 
     def test_a_challenged_free_provider_retries_the_same_query_on_the_schedule(self):
@@ -553,8 +559,37 @@ class SearchBackoffTests(TestCase):
 
         self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
         self.enterContext(patch("agents.tools.search.providers.schedule._sleep", sleeps.append))
-        self.enterContext(self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"))
+        self.enterContext(
+            self.settings(
+                TOOL_WIRING={"web_search": "dataforseo"},
+                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
+            )
+        )
         return sleeps, keywords
+
+    def test_the_request_authenticates_with_the_table_credentials(self):
+        # The auth pair must be READ from the vendor table under the
+        # function's own name (run reads vendor_table(__name__), the
+        # same derivation the spec's name uses); a hand-written key
+        # drifting from the name would send empty credentials, which
+        # only this assertion can catch.
+        from agents.tools.search.providers.schedule import search
+
+        auths = []
+
+        def post(url, **kwargs):
+            auths.append(kwargs["auth"])
+            return FakeResponse(200, _SERP)
+
+        self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
+        self.enterContext(
+            self.settings(
+                TOOL_WIRING={"web_search": "dataforseo"},
+                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
+            )
+        )
+        search("acme", provider="dataforseo")
+        self.assertEqual(auths, [("l", "p")])
 
     def test_the_paid_provider_honors_retry_after_clamped_to_the_schedule(self):
         from agents.tools.search.providers.schedule import search
@@ -624,7 +659,12 @@ class SearchBackoffTests(TestCase):
         self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
         from agents.tools.search.errors import SearchUnreachable
 
-        self.enterContext(self.settings(SEARCH_PROVIDER="dataforseo", DATAFORSEO_LOGIN="l", DATAFORSEO_PASSWORD="p"))
+        self.enterContext(
+            self.settings(
+                TOOL_WIRING={"web_search": "dataforseo"},
+                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
+            )
+        )
         with self.assertRaises(SearchUnreachable) as caught:
             search("acme", provider="dataforseo")
         self.assertEqual(caught.exception.attempts, 1)
@@ -882,7 +922,7 @@ class AgenticLoopTests(TestCase):
         )
         ddg.start()
         self.addCleanup(ddg.stop)
-        body = self._run(behavior, serp=serp, settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"})
+        body = self._run(behavior, serp=serp, settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}})
         self.assertEqual(len(serp_keywords), 1)
         self.assertTrue(serp_keywords[0].startswith("site:linkedin.com/in"))
         self.assertNotIn("site:acme.com", serp_keywords[0])
@@ -1122,7 +1162,7 @@ class AgenticLoopTests(TestCase):
             body = self._run(
                 behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}},
             )
         self.assertEqual([s.status for s in body["tool_calls"]], ["unreachable", "unreachable"])
         self.assertEqual(body["declined_cause"], "tool_unavailable")
@@ -1136,7 +1176,7 @@ class AgenticLoopTests(TestCase):
             body = self._run(
                 behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}},
             )
         self.assertEqual([s.status for s in body["tool_calls"]], ["unreachable", "open"])
         self.assertEqual(body["declined_cause"], "no_evidence")
@@ -1192,7 +1232,7 @@ class AgenticLoopTests(TestCase):
             body = self._run(
                 behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}},
             )
         self.assertEqual(body["cells"]["person"], "Jane Doe")
         # The DECLINED cause still names the degraded provider: a column
@@ -1226,9 +1266,8 @@ class AgenticLoopTests(TestCase):
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
                 settings={
                     **_TEST_SETTINGS,
-                    "SEARCH_PROVIDER": "duckduckgo",
-                    "DATAFORSEO_LOGIN": "",
-                    "DATAFORSEO_PASSWORD": "",
+                    "TOOL_WIRING": {"web_search": "duckduckgo"},
+                    "TOOL_VENDOR_KEYS": {},
                 },
             )
         self.assertEqual(body["declined_cause"], "tool_unavailable")
@@ -1243,7 +1282,7 @@ class AgenticLoopTests(TestCase):
         body = self._run(
             behavior,
             config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-            settings={"SEARCH_PROVIDER": "dataforseo", "DATAFORSEO_LOGIN": "", "DATAFORSEO_PASSWORD": ""},
+            settings={"TOOL_WIRING": {"web_search": "dataforseo"}, "TOOL_VENDOR_KEYS": {}},
         )
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["tool_calls"], [])
@@ -1277,7 +1316,7 @@ class AgenticLoopTests(TestCase):
             body = self._run(
                 behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}},
             )
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["declined_cause"], "no_evidence")
@@ -1309,9 +1348,8 @@ class AgenticLoopTests(TestCase):
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True, "find_contacts": True}},
                 settings={
                     **_TEST_SETTINGS,
-                    "SEARCH_PROVIDER": "duckduckgo",
-                    "DATAFORSEO_LOGIN": "",
-                    "DATAFORSEO_PASSWORD": "",
+                    "TOOL_WIRING": {"web_search": "duckduckgo"},
+                    "TOOL_VENDOR_KEYS": {},
                 },
             )
         self.assertEqual(body["cells"], {})
@@ -1342,7 +1380,7 @@ class AgenticLoopTests(TestCase):
             body = self._run(
                 behavior,
                 config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-                settings={**_TEST_SETTINGS, "SEARCH_PROVIDER": "duckduckgo"},
+                settings={**_TEST_SETTINGS, "TOOL_WIRING": {"web_search": "duckduckgo"}},
             )
         self.assertEqual(body["declined_cause"], "transient")
         self.assertEqual(body["tools"], {"web_search": "rate_limited"})

@@ -11,3 +11,9 @@ and edit:
   env mirror. Section names are the registered provider specs,
   validated at boot: a typo'd section refuses startup naming the
   section and the registered names.
+- `tools.toml` (from templates/tools.example.toml): the vendors behind
+  the agents' tools, wiring AND credentials in this ONE file. A
+  `[tools]` section wires each tool to the vendor that serves it; a
+  table per vendor holds its credentials inline. Names are validated
+  at boot against the registered vendors and tools: a typo refuses
+  startup naming the valid options.

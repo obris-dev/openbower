@@ -172,9 +172,9 @@ class CatalogModel(BaseModel):
     model: str
 
 
-# The search seam's providers, mirrored from the server enum (pinned
-# by a parity test). Defined BEFORE AgentCatalog uses it, like every
-# other wire alias.
+# The search seam's vendors, mirrored from the server's provider
+# registry (pinned by a parity test). Defined BEFORE AgentCatalog
+# uses it, like every other wire alias.
 SearchProviderWire = Literal["duckduckgo", "dataforseo"]
 # The providers as DATA for the wire document (x-constants): the
 # client's tolerant catalog read maps any provider outside this set to
@@ -214,11 +214,10 @@ class AgentCatalog(BaseModel):
         "cells)."
     )
     search_provider: SearchProviderWire | None = Field(
-        description="Which provider serves web search on this deployment (the server's SearchProvider, "
-        "pinned by a parity test). Null is the HERMETIC TEST profile's shape only: production boot "
-        "refuses an unset door, so client copy never needs a no-search-door story. Client copy "
-        "composes it: a rate-limited cell names the paid door only where it is a remedy, never to "
-        "someone already on it."
+        description="The vendor serving web search on this deployment, only while it is READY to "
+        "serve (registered, wired, credentialed); null otherwise, so client copy never names a "
+        "vendor whose searches cannot run. Client copy composes it: a rate-limited cell names the "
+        "metered door only where it is a remedy, never to someone already on it."
     )
 
 
