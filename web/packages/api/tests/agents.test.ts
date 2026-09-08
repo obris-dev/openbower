@@ -22,9 +22,9 @@ test("an unknown search provider parses and reads as null; a known one passes th
   assert.equal(knownSearchProvider(parsed.search_provider), null);
   assert.equal(knownSearchProvider(null), null);
   assert.equal(knownSearchProvider("duckduckgo"), "duckduckgo");
-  assert.equal(knownSearchProvider("dataforseo"), "dataforseo");
+  assert.equal(knownSearchProvider("serper"), "serper");
 });
 
 test("the known-provider set comes off the contract, never hand-retyped", () => {
-  assert.deepEqual([...SEARCH_PROVIDER_CHOICES].sort(), ["dataforseo", "duckduckgo"]);
+  assert.deepEqual([...SEARCH_PROVIDER_CHOICES].sort(), ["duckduckgo", "serper"]);
 });

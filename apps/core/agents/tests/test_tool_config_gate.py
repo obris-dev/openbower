@@ -28,16 +28,16 @@ class ToolsCommandTests(SimpleTestCase):
 
         out = StringIO()
         with self.settings(
-            TOOL_WIRING={"web_search": "duckduckgo", "find_contacts": "dataforseo"},
-            TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
+            TOOL_WIRING={"web_search": "duckduckgo", "find_contacts": "serper"},
+            TOOL_VENDOR_KEYS={"serper": {"api_key": "k"}},
         ):
             call_command("tools", stdout=out)
         lines = out.getvalue().splitlines()
         self.assertEqual(
             lines,
             [
-                "web_search: duckduckgo (ready) | supports: duckduckgo (ready), dataforseo (ready)",
-                "find_contacts: dataforseo (ready) | supports: dataforseo (ready)",
+                "web_search: duckduckgo (ready) | supports: duckduckgo (ready), serper (ready)",
+                "find_contacts: serper (ready) | supports: serper (ready)",
             ],
         )
 
@@ -45,8 +45,8 @@ class ToolsCommandTests(SimpleTestCase):
 class ToolConfigGateTests(SimpleTestCase):
     def test_a_passing_config_is_silent(self):
         with self.settings(
-            TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
-            TOOL_WIRING={"web_search": "dataforseo", "find_contacts": "dataforseo"},
+            TOOL_VENDOR_KEYS={"serper": {"api_key": "k"}},
+            TOOL_WIRING={"web_search": "serper", "find_contacts": "serper"},
         ):
             validate_tool_config()
 
@@ -62,11 +62,36 @@ class ToolConfigGateTests(SimpleTestCase):
             self.assertRaisesMessage(ImproperlyConfigured, "mystery") as caught,
         ):
             validate_tool_config()
-        self.assertIn("registered vendors: dataforseo, duckduckgo", str(caught.exception))
+        self.assertIn("registered vendors: duckduckgo, serper", str(caught.exception))
 
-    def test_a_partial_table_refuses_naming_the_declared_keys(self):
+    def test_an_empty_table_refuses_naming_the_declared_keys(self):
+        # Present-but-empty is a mistake (the operator plainly meant
+        # to configure it); absent gates honestly at runtime.
         with (
-            self.settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "l"}}),
+            self.settings(TOOL_VENDOR_KEYS={"serper": {}}),
+            self.assertRaisesMessage(ImproperlyConfigured, "missing or empty api_key") as caught,
+        ):
+            validate_tool_config()
+        self.assertIn("needs exactly: api_key", str(caught.exception))
+
+    def test_a_partial_multi_key_table_names_every_gap(self):
+        # Every registered vendor is one-key today, so the gate's
+        # multi-key joins ("needs exactly: a, b", "missing or empty
+        # b") only stay covered through a synthetic two-key spec.
+        from dataclasses import dataclass, replace
+
+        from agents.tools.search.providers import registry as providers_registry
+        from agents.tools.search.providers import serper
+
+        @dataclass(frozen=True)
+        class TwoKeys:
+            login: str
+            password: str
+
+        two = replace(serper.SPEC, config_schema=TwoKeys)
+        with (
+            patch.dict(providers_registry._REGISTRY, {"serper": two}),
+            self.settings(TOOL_VENDOR_KEYS={"serper": {"login": "l", "password": ""}}),
             self.assertRaisesMessage(ImproperlyConfigured, "missing or empty password") as caught,
         ):
             validate_tool_config()
@@ -74,15 +99,15 @@ class ToolConfigGateTests(SimpleTestCase):
 
     def test_an_empty_credential_reads_as_missing(self):
         with (
-            self.settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": ""}}),
-            self.assertRaisesMessage(ImproperlyConfigured, "missing or empty password"),
+            self.settings(TOOL_VENDOR_KEYS={"serper": {"api_key": ""}}),
+            self.assertRaisesMessage(ImproperlyConfigured, "missing or empty api_key"),
         ):
             validate_tool_config()
 
     def test_a_typoed_credential_key_refuses_naming_it(self):
         with (
-            self.settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p", "pasword": "x"}}),
-            self.assertRaisesMessage(ImproperlyConfigured, "unknown pasword"),
+            self.settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "k", "apikey": "x"}}),
+            self.assertRaisesMessage(ImproperlyConfigured, "unknown apikey"),
         ):
             validate_tool_config()
 
@@ -99,7 +124,7 @@ class ToolConfigGateTests(SimpleTestCase):
         # the refusal is the compatibility documentation.
         with (
             self.settings(TOOL_WIRING={"find_contacts": "duckduckgo"}),
-            self.assertRaisesMessage(ImproperlyConfigured, "find_contacts supports: dataforseo"),
+            self.assertRaisesMessage(ImproperlyConfigured, "find_contacts supports: serper"),
         ):
             validate_tool_config()
 

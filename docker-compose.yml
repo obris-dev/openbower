@@ -177,15 +177,16 @@ services:
     # The worker traps SIGTERM/SIGINT and finishes the rows in flight; a
     # SIGKILL through the grace wastes a metered provider call AND burns
     # one of the row's counted attempts (attempts count at claim). The
-    # grace is the repo's own worst case for one row, the runtime's
-    # CELL_RUN_WORST_CASE_SECONDS (every completion the budget allows,
-    # the capped verdict's own budget included, plus every search at
-    # its clamped worst case; see agents/constants.py for the
-    # derivation), plus headroom for the outcome write: a row that
-    # legitimately runs to the bound still owes its result, and a grace
-    # set exactly AT the maximum would SIGKILL that write. A parity
-    # test holds this value above the constant, so the number here is
-    # never quietly below it. Docker's default 10s would kill through
+    # grace clears the repo's own worst case for one row, the
+    # runtime's cell_run_worst_case_seconds() (every completion the
+    # budget allows, the capped verdict's own budget included, plus
+    # every search at its clamped worst case; see agents/constants.py
+    # for the derivation), with room to spare: the bound follows the
+    # vendor registry and is not re-tightened here when a vendor
+    # leaves, so the slack can be generous, and a grace set exactly
+    # AT the maximum would SIGKILL the outcome write a bounded row
+    # still owes. A parity test holds this value above the bound, so
+    # the number here is never quietly below it. Docker's default 10s would kill through
     # nearly every real row. A stop during an active fill can
     # therefore take minutes; that wait is the point.
     stop_grace_period: 2100s

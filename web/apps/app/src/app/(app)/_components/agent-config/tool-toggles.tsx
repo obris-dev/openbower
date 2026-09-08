@@ -95,14 +95,14 @@ export function ToolToggles({
             <li>
               Create a{" "}
               <a
-                href="https://app.dataforseo.com/register"
+                href="https://serper.dev/signup"
                 target="_blank"
                 rel="noreferrer"
                 className="text-signal hover:underline"
               >
-                DataForSEO account
+                Serper account
               </a>{" "}
-              ($1 trial credit, pay as you go, no expiry).
+              (2,500 free queries, then prepaid credits).
             </li>
             <li>
               Fill in that vendor&rsquo;s table in the deployment&rsquo;s config/tools.toml (the template names the

@@ -30,21 +30,11 @@ from openbower_schema.agents import CONFIDENCE_SUFFIX
 from .sources import source
 
 _SERP = {
-    "tasks": [
+    "organic": [
         {
-            "status_code": 20000,
-            "result": [
-                {
-                    "items": [
-                        {
-                            "type": "organic",
-                            "title": "Jane Doe - VP of Sales - Acme | LinkedIn",
-                            "url": "https://www.linkedin.com/in/janedoe",
-                            "description": "Jane Doe. VP of Sales at Acme.",
-                        }
-                    ]
-                }
-            ],
+            "title": "Jane Doe - VP of Sales - Acme | LinkedIn",
+            "link": "https://www.linkedin.com/in/janedoe",
+            "snippet": "Jane Doe. VP of Sales at Acme.",
         }
     ]
 }
@@ -58,8 +48,8 @@ _LOCAL_SOURCE = source("local", "http://o.test/v1")
 _CANONICAL_SOURCE = source("openai", "https://api.openai.com/v1", api_key="k")
 _TEST_SETTINGS = {
     "INFERENCE_SOURCES": {"openai_compatible": _LOCAL_SOURCE},
-    "TOOL_WIRING": {"web_search": "dataforseo"},
-    "TOOL_VENDOR_KEYS": {"dataforseo": {"login": "l", "password": "p"}},
+    "TOOL_WIRING": {"web_search": "serper"},
+    "TOOL_VENDOR_KEYS": {"serper": {"api_key": "k"}},
 }
 
 _CONFIG = {
@@ -310,7 +300,7 @@ class CatalogTests(TestCase):
 
 
 class SearchAvailabilityTests(TestCase):
-    """The default provider (dataforseo) needs CREDENTIALS to count as
+    """The profile-wired vendor (serper) needs CREDENTIALS to count as
     available: the tools gate off and searches skip honestly until the
     operator sets it up (force real setup over quietly degrading
     through a weak provider)."""
@@ -320,7 +310,7 @@ class SearchAvailabilityTests(TestCase):
 
     def test_the_free_default_provider_is_open_keyless_but_contacts_stay_gated(self):
         # DuckDuckGo is the default: web search works out of the box;
-        # contact search still requires the DataForSEO setup.
+        # contact search still requires the metered vendor setup.
         with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "not_configured"})
@@ -328,7 +318,7 @@ class SearchAvailabilityTests(TestCase):
     def test_an_explicit_paid_provider_without_credentials_is_unavailable(self):
         # No source override: an open source here would fire a REAL
         # roster probe (this test only concerns search availability).
-        with self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}):
+        with self.settings(TOOL_WIRING={"web_search": "serper"}, TOOL_VENDOR_KEYS={}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"]["web_search"], "not_configured")
 
@@ -338,7 +328,7 @@ class SearchAvailabilityTests(TestCase):
         # whose searches cannot run; a ready keyless vendor is named.
         with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}):
             self.assertEqual(self.client.get(reverse("agents_catalog")).json()["search_provider"], "duckduckgo")
-        with self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}):
+        with self.settings(TOOL_WIRING={"web_search": "serper"}, TOOL_VENDOR_KEYS={}):
             self.assertIsNone(self.client.get(reverse("agents_catalog")).json()["search_provider"])
 
     def test_duckduckgo_hits_map_and_failures_are_diagnosed(self):
@@ -354,12 +344,13 @@ class SearchAvailabilityTests(TestCase):
             answer = search("acme", provider="duckduckgo")
         self.assertEqual(answer.hits[0].url, "https://x.test/jane")
 
-        # A status the provider does not classify as a refusal is a
-        # per-query error, RAISED once (typed, with the audit facts).
+        # A status the provider classifies as neither a refusal nor
+        # a server transient is a per-query error, RAISED once
+        # (typed, with the audit facts).
         from agents.tools.search.errors import SearchErrored
 
         with (
-            patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(500, [])),
+            patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(404, [])),
             self.settings(TOOL_WIRING={"web_search": "duckduckgo"}),
             self.assertRaises(SearchErrored) as caught,
         ):
@@ -400,11 +391,9 @@ class SearchAvailabilityTests(TestCase):
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "open"})
 
     def test_contacts_pin_their_own_provider_regardless_of_the_switch(self):
-        # Web search on the free provider + dataforseo credentials keeps
+        # Web search on the free provider + serper credentials keeps
         # contacts fully available; the switch never gates them.
-        with self.settings(
-            TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}}
-        ):
+        with self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={"serper": {"api_key": "k"}}):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["tools"], {"web_search": "open", "find_contacts": "open"})
 
@@ -437,15 +426,15 @@ class SearchAvailabilityTests(TestCase):
         from agents.tools.search.providers.schedule import search
 
         with (
-            self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}),
+            self.settings(TOOL_WIRING={"web_search": "serper"}, TOOL_VENDOR_KEYS={}),
             self.assertRaises(SearchNotConfigured) as caught,
         ):
-            search("anything", provider="dataforseo")
+            search("anything", provider="serper")
         self.assertEqual(caught.exception.attempts, 0)
 
 
 def _serp_response(url, **kwargs):
-    if "dataforseo" in url:
+    if "serper" in url:
         return FakeResponse(200, _SERP)
     return FakeResponse(404, {})
 
@@ -519,6 +508,21 @@ class SearchBackoffTests(TestCase):
         self.assertEqual(caught.exception.attempts, len(SEARCH_BACKOFF_SECONDS) + 1)
         self.assertEqual(sleeps, list(SEARCH_BACKOFF_SECONDS))
 
+    def test_a_free_provider_5xx_outside_the_refusal_set_still_retries(self):
+        # The cross-vendor rule: any 5xx is the server's transient,
+        # even codes the refusal set does not name (502 is an edge
+        # gateway falling over, not a decided answer).
+        from agents.tools.search.providers.base import SearchHit
+        from agents.tools.search.providers.duckduckgo import _Page
+        from agents.tools.search.providers.schedule import search
+
+        hit = SearchHit("Acme", "https://acme.com", "Acme.")
+        sleeps, calls = self._free_provider([_Page(502, []), _Page(200, [hit])])
+        outcome = search("acme", provider="duckduckgo")
+        self.assertEqual(outcome.attempts, 2)
+        self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
+        self.assertEqual(calls, ["acme"] * 2)
+
     def test_an_honest_empty_is_a_200_with_nothing_in_it(self):
         from agents.tools.search.providers.duckduckgo import _Page
         from agents.tools.search.providers.schedule import search
@@ -548,64 +552,42 @@ class SearchBackoffTests(TestCase):
                 self.assertEqual(caught.exception.attempts, 1)
                 self.assertEqual((sleeps, calls), ([], ["acme"]))
 
-    def _paid_provider(self, responses: list) -> tuple[list[float], list[str]]:
+
+class SerperBackoffTests(TestCase):
+    """The metered door speaks the seam's attempt vocabulary: a 429
+    or any 5xx retries on the schedule (Retry-After honored, clamped
+    to its largest step), a 4xx is a decided error, and the organic
+    envelope maps to hits (no organic key = the honest zero)."""
+
+    def _serper(self, responses: list) -> tuple[list[float], list[dict]]:
         sleeps: list[float] = []
-        keywords: list[str] = []
+        requests: list[dict] = []
         queue = list(responses)
 
         def post(url, **kwargs):
-            keywords.append(kwargs["json"][0]["keyword"])
+            requests.append({"json": kwargs["json"], "headers": kwargs["headers"]})
             return queue.pop(0) if len(queue) > 1 else queue[0]
 
-        self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
+        self.enterContext(patch("agents.tools.search.providers.serper.httpx.post", side_effect=post))
         self.enterContext(patch("agents.tools.search.providers.schedule._sleep", sleeps.append))
-        self.enterContext(
-            self.settings(
-                TOOL_WIRING={"web_search": "dataforseo"},
-                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
-            )
-        )
-        return sleeps, keywords
+        self.enterContext(self.settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "k"}}))
+        return sleeps, requests
 
-    def test_the_request_authenticates_with_the_table_credentials(self):
-        # The auth pair must be READ from the vendor table under the
-        # function's own name (run reads vendor_table(__name__), the
-        # same derivation the spec's name uses); a hand-written key
-        # drifting from the name would send empty credentials, which
-        # only this assertion can catch.
+    def test_retry_after_is_honored_clamped_to_the_schedule(self):
         from agents.tools.search.providers.schedule import search
 
-        auths = []
-
-        def post(url, **kwargs):
-            auths.append(kwargs["auth"])
-            return FakeResponse(200, _SERP)
-
-        self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
-        self.enterContext(
-            self.settings(
-                TOOL_WIRING={"web_search": "dataforseo"},
-                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
-            )
-        )
-        search("acme", provider="dataforseo")
-        self.assertEqual(auths, [("l", "p")])
-
-    def test_the_paid_provider_honors_retry_after_clamped_to_the_schedule(self):
-        from agents.tools.search.providers.schedule import search
-
-        sleeps, keywords = self._paid_provider(
+        sleeps, requests = self._serper(
             [
                 _HeaderedResponse(429, {}, {"Retry-After": "3"}),
                 _HeaderedResponse(429, {}, {"Retry-After": "600"}),
                 FakeResponse(200, _SERP),
             ]
         )
-        outcome = search("acme", provider="dataforseo")
+        outcome = search("acme", provider="serper")
         self.assertEqual(outcome.attempts, 3)
-        self.assertEqual(outcome.provider, "dataforseo")
+        self.assertEqual(outcome.provider, "serper")
         self.assertEqual(sleeps, [3, max(SEARCH_BACKOFF_SECONDS)])
-        self.assertEqual(keywords, ["acme"] * 3)
+        self.assertEqual([r["json"]["q"] for r in requests], ["acme"] * 3)
 
     def test_a_hostile_retry_after_takes_the_schedule(self):
         # A negative, NaN, or non-numeric delay is a broken header,
@@ -617,56 +599,90 @@ class SearchBackoffTests(TestCase):
 
         for value in ("-5", "nan", "inf", "soon"):
             with self.subTest(value=value):
-                sleeps, _ = self._paid_provider(
-                    [_HeaderedResponse(429, {}, {"Retry-After": value}), FakeResponse(200, _SERP)]
-                )
-                outcome = search("acme", provider="dataforseo")
+                sleeps, _ = self._serper([_HeaderedResponse(429, {}, {"Retry-After": value}), FakeResponse(200, _SERP)])
+                outcome = search("acme", provider="serper")
                 self.assertEqual(outcome.attempts, 2)
                 self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
 
-    def test_the_paid_providers_own_transient_task_code_is_a_rate_limit(self):
-        from agents.tools.search.providers.dataforseo import SE_ERROR
+    def test_a_5xx_is_the_servers_transient_and_retries(self):
+        # The cross-vendor rule: a 5xx asks for the same query later,
+        # never a decided error that burns the row's attempt.
         from agents.tools.search.providers.schedule import search
 
-        sleeps, _ = self._paid_provider(
-            [
-                FakeResponse(200, {"tasks": [{"status_code": SE_ERROR, "status_message": "SE error"}]}),
-                FakeResponse(200, _SERP),
-            ]
-        )
-        outcome = search("acme", provider="dataforseo")
+        sleeps, requests = self._serper([FakeResponse(502, {}), FakeResponse(200, _SERP)])
+        outcome = search("acme", provider="serper")
         self.assertEqual(outcome.attempts, 2)
         self.assertEqual(sleeps, [SEARCH_BACKOFF_SECONDS[0]])
+        self.assertEqual(len(requests), 2)
 
-    def test_a_paid_provider_task_failure_is_an_error_reported_once(self):
+    def test_an_unauthorized_403_is_an_error_reported_once(self):
+        # Their 403 is a key problem, not quota: the remedy is an
+        # operator, never a retry of the same query.
         from agents.tools.search.errors import SearchErrored
         from agents.tools.search.providers.schedule import search
 
-        sleeps, keywords = self._paid_provider(
-            [FakeResponse(200, {"tasks": [{"status_code": 40201, "status_message": "insufficient balance"}]})]
-        )
-        with self.assertRaises(SearchErrored):
-            search("acme", provider="dataforseo")
+        sleeps, requests = self._serper([FakeResponse(403, {"message": "Unauthorized.", "statusCode": 403})])
+        with self.assertRaises(SearchErrored) as caught:
+            search("acme", provider="serper")
         self.assertEqual(sleeps, [])
-        self.assertEqual(len(keywords), 1)
+        self.assertEqual(len(requests), 1)
+        # The vendor's own explanation reaches the operator log, the
+        # only surface that can name the cause.
+        self.assertIn("Unauthorized", str(caught.exception.__cause__))
 
-    def test_a_paid_provider_transport_failure_is_unreachable(self):
+    def test_the_request_carries_the_table_key_and_the_locale_pin(self):
+        # The api key must be READ from the vendor table under the
+        # function's own name, and the request re-makes the US
+        # English pin rather than floating on a vendor default.
+        from agents.constants import SEARCH_HIT_COUNT
+        from agents.tools.search.providers.base import SearchHit
+        from agents.tools.search.providers.schedule import search
+
+        _, requests = self._serper([FakeResponse(200, _SERP)])
+        outcome = search("acme", provider="serper")
+        self.assertEqual(requests[0]["headers"]["X-API-KEY"], "k")
+        self.assertEqual(requests[0]["json"], {"q": "acme", "num": SEARCH_HIT_COUNT, "gl": "us", "hl": "en"})
+        self.assertEqual(
+            outcome.hits,
+            [
+                SearchHit(
+                    title="Jane Doe - VP of Sales - Acme | LinkedIn",
+                    url="https://www.linkedin.com/in/janedoe",
+                    snippet="Jane Doe. VP of Sales at Acme.",
+                )
+            ],
+        )
+
+    def test_a_bigger_ask_clamps_to_the_one_credit_depth(self):
+        # Above their depth step the same query bills double; only a
+        # direct call can exercise the clamp (the seam always asks
+        # for SEARCH_HIT_COUNT, under the step). FAILS if the clamp
+        # is deleted.
+        from agents.tools.search.providers.serper import serper
+
+        _, requests = self._serper([FakeResponse(200, _SERP)])
+        serper("acme", 50)
+        self.assertEqual(requests[0]["json"]["num"], 10)
+
+    def test_a_response_without_organic_is_the_honest_zero(self):
+        from agents.tools.search.providers.schedule import search
+
+        self._serper([FakeResponse(200, {"searchParameters": {"q": "acme"}, "credits": 1})])
+        outcome = search("acme", provider="serper")
+        self.assertEqual(outcome.hits, [])
+        self.assertEqual(outcome.attempts, 1)
+
+    def test_a_transport_failure_is_unreachable(self):
+        from agents.tools.search.errors import SearchUnreachable
         from agents.tools.search.providers.schedule import search
 
         def post(url, **kwargs):
             raise httpx.ConnectError("connection refused")
 
-        self.enterContext(patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=post))
-        from agents.tools.search.errors import SearchUnreachable
-
-        self.enterContext(
-            self.settings(
-                TOOL_WIRING={"web_search": "dataforseo"},
-                TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": "p"}},
-            )
-        )
+        self.enterContext(patch("agents.tools.search.providers.serper.httpx.post", side_effect=post))
+        self.enterContext(self.settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "k"}}))
         with self.assertRaises(SearchUnreachable) as caught:
-            search("acme", provider="dataforseo")
+            search("acme", provider="serper")
         self.assertEqual(caught.exception.attempts, 1)
 
 
@@ -732,7 +748,7 @@ class RuntimeTests(TestCase):
         model = _scripted_model(behavior or _default_behavior(answer_values))
         with (
             patch("agents.runtime.answer.answerer.model_for", return_value=model),
-            patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=serp or _serp_response),
+            patch("agents.tools.search.providers.serper.httpx.post", side_effect=serp or _serp_response),
             self.settings(**_TEST_SETTINGS),
         ):
             run = run_cell(AgentConfig(**serializer.validated_data), {"name": "Acme", "domain": "acme.com"})
@@ -777,8 +793,8 @@ class RuntimeTests(TestCase):
 
     def test_tools_on_but_no_evidence_writes_nothing(self):
         def dry_serp(url, **kwargs):
-            if "dataforseo" in url:
-                return FakeResponse(200, {"tasks": [{"status_code": 20000, "result": [{"items": []}]}]})
+            if "serper" in url:
+                return FakeResponse(200, {"searchParameters": {"q": "acme"}, "credits": 1})
             return FakeResponse(404, {})
 
         body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=dry_serp)
@@ -793,7 +809,7 @@ class RuntimeTests(TestCase):
         # A throttled/down provider must not read as a bad agent: the
         # cells stay blank, and the searches say WHY.
         def throttled(url, **kwargs):
-            if "dataforseo" in url:
+            if "serper" in url:
                 return _HeaderedResponse(429, {}, {})
             return FakeResponse(404, {})
 
@@ -826,13 +842,13 @@ class RuntimeTests(TestCase):
         self._test_call({"person": "Jane Doe", "profile": ""}, config={**_CONFIG, "tools": {}}, behavior=behavior)
         self.assertTrue(seen and "Use the provided tools" not in seen[0])
 
-    def test_a_failed_task_in_a_200_envelope_is_a_failure(self):
-        # Insufficient balance answers 200 with a failed TASK; reading
-        # it as an honest drought would hide exactly the check-your
-        # -balance guidance the diagnosis system exists to fire.
+    def test_a_drained_balance_is_a_failure_not_a_drought(self):
+        # A drained credit balance answers a non-200; reading it as
+        # an honest drought would hide exactly the check-your-balance
+        # guidance the diagnosis system exists to fire.
         def broke(url, **kwargs):
-            if "dataforseo" in url:
-                return FakeResponse(200, {"tasks": [{"status_code": 40201, "status_message": "insufficient funds"}]})
+            if "serper" in url:
+                return FakeResponse(400, {"message": "Not enough credits"})
             return FakeResponse(404, {})
 
         body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=broke)
@@ -877,7 +893,7 @@ class AgenticLoopTests(TestCase):
 
         with (
             patch("agents.runtime.answer.answerer.model_for", return_value=_scripted_model(behavior)),
-            patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=serp or _serp_response),
+            patch("agents.tools.search.providers.serper.httpx.post", side_effect=serp or _serp_response),
             self.settings(**(settings or _TEST_SETTINGS)),
         ):
             run = run_cell(AgentConfig(**(config or self._TYPED_CONFIG)), row or {"name": "Acme"})
@@ -891,12 +907,12 @@ class AgenticLoopTests(TestCase):
 
     def test_model_drives_the_contacts_tool_with_the_scope_injected(self):
         # The model supplies query TERMS; the tool strips its site:
-        # attempts, injects the people site, and pins dataforseo.
+        # attempts, injects the people site, and routes to serper.
         serp_keywords: list[str] = []
 
         def serp(url, **kwargs):
-            self.assertIn("dataforseo", url)
-            serp_keywords.append(kwargs["json"][0]["keyword"])
+            self.assertIn("serper", url)
+            serp_keywords.append(kwargs["json"]["q"])
             return FakeResponse(200, _SERP)
 
         def behavior(kind, messages, info):
@@ -914,7 +930,7 @@ class AgenticLoopTests(TestCase):
             )
 
         # DuckDuckGo is the configured provider here, tripwired: ONLY the
-        # contacts pin can route this query to dataforseo (under the
+        # contacts roster can route this query to serper (under the
         # paid-provider setting this test would pass with the pin deleted).
         ddg = patch(
             "agents.tools.search.providers.duckduckgo._fetch",
@@ -972,21 +988,11 @@ class AgenticLoopTests(TestCase):
             return FakeResponse(
                 200,
                 {
-                    "tasks": [
+                    "organic": [
                         {
-                            "status_code": 20000,
-                            "result": [
-                                {
-                                    "items": [
-                                        {
-                                            "type": "organic",
-                                            "title": "Rowan Vale - Co-Founder @ Harbor",
-                                            "url": "https://uk.linkedin.com/in/rowanvale",
-                                            "description": "Supported by Harbor Media's marketing engine.",
-                                        }
-                                    ]
-                                }
-                            ],
+                            "title": "Rowan Vale - Co-Founder @ Harbor",
+                            "link": "https://uk.linkedin.com/in/rowanvale",
+                            "snippet": "Supported by Harbor Media's marketing engine.",
                         }
                     ]
                 },
@@ -1059,7 +1065,7 @@ class AgenticLoopTests(TestCase):
 
         def empty(url, **kwargs):
             serp_calls.append(url)
-            return FakeResponse(200, {"tasks": [{"status_code": 20000, "result": [{"items": []}]}]})
+            return FakeResponse(200, {"searchParameters": {"q": "acme"}, "credits": 1})
 
         body = self._run(behavior, serp=empty)
         self.assertEqual(len(serp_calls), MAX_TOOL_CALLS)
@@ -1282,7 +1288,7 @@ class AgenticLoopTests(TestCase):
         body = self._run(
             behavior,
             config={**self._TYPED_CONFIG, "tools": {"web_search": True}},
-            settings={"TOOL_WIRING": {"web_search": "dataforseo"}, "TOOL_VENDOR_KEYS": {}},
+            settings={"TOOL_WIRING": {"web_search": "serper"}, "TOOL_VENDOR_KEYS": {}},
         )
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["tool_calls"], [])
@@ -1477,10 +1483,9 @@ class AgenticLoopTests(TestCase):
 
         def serp(url, **kwargs):
             serp_calls.append(url)
-            # WELL-FORMED empty: a bare {"tasks": []} envelope is a
-            # provider FAILURE under the task-status guard, which
-            # silently turned this into a failure test once.
-            return FakeResponse(200, {"tasks": [{"status_code": 20000, "result": [{"items": []}]}]})
+            # WELL-FORMED empty: the served no-organic body, never a
+            # failure shape, so this stays an honest-drought test.
+            return FakeResponse(200, {"searchParameters": {"q": "acme"}, "credits": 1})
 
         def behavior(kind, messages, info):
             if kind == "agentic" and not _tool_returned(messages):

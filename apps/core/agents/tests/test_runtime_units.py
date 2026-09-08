@@ -163,7 +163,7 @@ class ToolPoolTests(SimpleTestCase):
             SearchHit("D", "https://www.reddit.com/r/jobs/1", "s"),
         ]
         deps = CellDeps()
-        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="dataforseo")):
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="serper")):
             body = json.loads(find_contacts(self._Ctx(deps), "engineer acme"))
         self.assertEqual(
             [r["url"] for r in body["records"]],
@@ -188,7 +188,7 @@ class ToolPoolTests(SimpleTestCase):
 
         hits = [SearchHit("D", "https://www.reddit.com/r/jobs/1", "s")]
         deps = CellDeps()
-        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="dataforseo")):
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(hits, provider="serper")):
             body = json.loads(find_contacts(self._Ctx(deps), "engineer acme"))
         self.assertEqual(body["records"], [])
         self.assertEqual(body["note"], NOTE_OFF_SCOPE)
@@ -231,7 +231,7 @@ class ToolPoolTests(SimpleTestCase):
         self.assertNotIn("answer from", first["note"])
         self.assertEqual(deps.tool_status, {"web_search": SearchStatus.RATE_LIMITED})
         self.assertEqual(deps.outcomes[0].status, SearchStatus.RATE_LIMITED)
-        with patch("agents.tools.search.machinery.search", return_value=self._serve(provider="dataforseo")) as searched:
+        with patch("agents.tools.search.machinery.search", return_value=self._serve(provider="serper")) as searched:
             second = json.loads(web_search(self._Ctx(deps), "acme inc"))
             third = json.loads(find_contacts(self._Ctx(deps), "VP Sales Acme"))
         self.assertIn("do not call it again", second["note"])

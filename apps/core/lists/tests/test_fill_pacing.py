@@ -82,13 +82,13 @@ class TransientBreakerTests(SimpleTestCase):
         # provider is not a remedy for someone already on it).
         cases = [
             (WEB_LIMITED, "duckduckgo", "Web search is being rate-limited by the free search provider", True),
-            (WEB_LIMITED, "dataforseo", "Web search is being rate-limited by DataForSEO", False),
+            (WEB_LIMITED, "serper", "Web search is being rate-limited by Serper", False),
             ({"web_search": "unreachable"}, "duckduckgo", "Web search cannot reach the free search provider", True),
             ({"web_search": "error"}, "duckduckgo", "Web search is failing on the free search provider", True),
             (
                 {"find_contacts": "rate_limited"},
                 "duckduckgo",
-                "Finding contacts is being rate-limited by DataForSEO",
+                "Finding contacts is being rate-limited by Serper",
                 False,
             ),
             # Both tools closed: the first toggled tool names the fill.

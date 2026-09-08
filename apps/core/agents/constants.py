@@ -85,9 +85,7 @@ EVIDENCE_MAX_LINES = MAX_TOOL_CALLS * SEARCH_HIT_COUNT
 # scores persist on the outcome row for exactly that).
 ANSWER_CONFIDENCE_FLOOR = 0.9
 # Timeouts (binary): local models are slow to first token, a roster
-# probe is quick or dead, the free SERP answers fast or not at all,
-# and DataForSEO's live endpoint computes per request (10-20s
-# routinely, spikes beyond).
+# probe is quick or dead, and a SERP answers fast or not at all.
 COMPLETION_TIMEOUT_SECONDS = 128
 LIST_TIMEOUT_SECONDS = 16
 # A failed roster probe retries only after this (binary): the

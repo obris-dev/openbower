@@ -95,9 +95,10 @@ export const SEARCH_PROVIDER_CHOICES = WIRE_CONSTANTS.SEARCH_PROVIDER_CHOICES;
 const KNOWN_SEARCH_PROVIDER_CHOICES = new Set<string>(SEARCH_PROVIDER_CHOICES);
 
 // The catalog's provider is a server-owned enum, so the read is TOLERANT:
-// a strict parse would fail the WHOLE catalog for every deployed
-// bundle the day a third provider ships, and the picker it feeds would
-// render an unloadable catalog with a Retry that can never succeed.
+// a strict parse would fail the WHOLE catalog whenever the vendor
+// roster moves under a deployed bundle (a new vendor, or a bundle
+// outliving one), and the picker it feeds would render an unloadable
+// catalog with a Retry that can never succeed.
 export const TolerantAgentCatalogSchema = AgentCatalogSchema.extend({
   search_provider: z.string().nullable().default(null),
 });

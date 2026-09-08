@@ -286,7 +286,7 @@ export function TestBench({
             // beside empty cells alone.
             <p className="mt-2 text-xs text-warning">
               {rateLimited} of {searches.length} searches were rate-limited even after retrying. In a fill, this row
-              would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.status === "rate_limited") ? "A metered search vendor (pay as you go, a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}
+              would retry later instead of answering; {searches.some((s) => s.provider === "duckduckgo" && s.status === "rate_limited") ? "A metered search vendor (a deployment setting) gives dedicated throughput." : "if it keeps happening, the search provider's limits are the place to look."}
             </p>
           )}
           {failedSearches > rateLimited && (
@@ -314,7 +314,7 @@ export function TestBench({
           {emptyCells && failedSearches === 0 && searches.length > 0 && totalHits === 0 && totalDiscarded === 0 && (
             <p className="mt-2 text-xs text-muted">
               Every search returned nothing. If queries that match on Google keep returning nothing here, the free
-              search provider may be rate-limiting; a metered vendor (pay as you go, a deployment setting) gives
+              search provider may be rate-limiting; a metered vendor (a deployment setting) gives
               dedicated throughput.
             </p>
           )}

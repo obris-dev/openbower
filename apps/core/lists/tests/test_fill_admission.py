@@ -246,8 +246,8 @@ class GuardTests(AdmissionTestCase):
         )
 
     @override_settings(
-        TOOL_WIRING={"web_search": "dataforseo"},
-        TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}},
+        TOOL_WIRING={"web_search": "serper"},
+        TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}},
     )
     def test_paid_provider_lifts_the_free_budget(self) -> None:
         wide = self.lists.create(label="Wide", columns=[], origin="manual")
@@ -257,7 +257,7 @@ class GuardTests(AdmissionTestCase):
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
         self.assertEqual(fill.status, FillStatus.PENDING)
 
-    @override_settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}})
+    @override_settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}})
     def test_a_contacts_only_fill_is_never_free_budgeted(self) -> None:
         # Contact search is metered whatever the switch says (it pins
         # the paid provider), so a contacts-only fill spends nothing
@@ -272,7 +272,7 @@ class GuardTests(AdmissionTestCase):
 
     @override_settings(
         TOOL_WIRING={"web_search": "duckduckgo"},
-        TOOL_VENDOR_KEYS={"dataforseo": {"login": "login", "password": "secret"}},
+        TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}},
     )
     def test_credentials_alone_do_not_lift_the_free_budget(self) -> None:
         # Credentials route nothing: web search runs its WIRED vendor
