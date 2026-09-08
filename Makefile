@@ -66,9 +66,9 @@ suite-network:
 # A bound above that chain keeps a container stuck RESTARTING from
 # blocking the target forever, without failing a start that is merely
 # slow.
-up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3005, fill workers + cron)
+up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill workers + cron)
 	$(COMPOSE) up -d --wait --wait-timeout 900
-	@echo "up: api :8002, app :3003, marketing :3005, fill workers + cron (make logs to tail, make stop to stop)"
+	@echo "up: api :8002, app :3003, marketing :3004, fill workers + cron (make logs to tail, make stop to stop)"
 
 # Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
 # REMOVED with no policy to bring it back, and nothing else drains the

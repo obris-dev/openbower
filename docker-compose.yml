@@ -248,7 +248,8 @@ services:
     # asks before replacing a node_modules laid out by an older major, and
     # an unanswered prompt aborts the start.
     # `pnpm dev` runs every app in parallel (the product app on 3003, the
-    # marketing site on 3005), one install for the whole workspace.
+    # marketing site on 3004; 3005 is reserved for the docs app when it
+    # is rebuilt), one install for the whole workspace.
     command: sh -c "pnpm install --frozen-lockfile --config.confirmModulesPurge=false && pnpm dev"
     environment:
       # Browser-visible origins (NEXT_PUBLIC_* inlines at build/dev time).
@@ -262,7 +263,7 @@ services:
       API_INTERNAL_URL: http://core:8002
     ports:
       - "127.0.0.1:3003:3003"
-      - "127.0.0.1:3005:3005"
+      - "127.0.0.1:3004:3004"
     volumes:
       - ./web:/web
       # One volume per node_modules and per build cache the workspace
