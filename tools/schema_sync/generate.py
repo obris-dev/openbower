@@ -27,8 +27,6 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
-    PatList,
-    PatMinted,
     AgentCatalog,
     AgentsList,
     AgentSummary,
@@ -44,6 +42,8 @@ from openbower_schema import (
     ListsPage,
     ListSummary,
     LookalikeListResponse,
+    PatList,
+    PatMinted,
     RowsAdded,
 )
 from openbower_schema.agents import (
