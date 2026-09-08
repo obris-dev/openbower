@@ -14,6 +14,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from agents.services import AgentNotFound
+from auth_client.authentication import AppSessionAuthentication, PatAuthentication
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
@@ -116,6 +117,13 @@ class _ScopedView(ScopedView):
 
 
 class ListsView(_ScopedView):
+    # The lists collection is the first call a machine producer makes
+    # ("which lists can I push to?"); it is session-free (account/user
+    # scoping only), so a PAT principal is safe here. Every other lists
+    # endpoint keeps the cookie-only default, so this attachment also
+    # proves the per-view scoping.
+    authentication_classes = [PatAuthentication, AppSessionAuthentication]
+
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")

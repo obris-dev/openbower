@@ -17,17 +17,20 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponseRedirect
-from rest_framework import permissions
+from rest_framework import permissions, serializers, status
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from openbower_schema import AuthUser
+from openbower_schema import AuthUser, PatList, PatMinted, PatSummary
 
 from . import idp_urls
+from .authentication import AppSessionAuthentication, PatAuthentication
 from .constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME, AuthErrorCode
 from .cookies import delete_session_cookie, delete_state_cookie, set_session_cookie, set_state_cookie
 from .services import AppSessionService, OAuthClientService, StateMismatch
 from .services.oauth import AuthUpstreamError
+from .services.pats import PatService
 
 logger = logging.getLogger("auth_client")
 
@@ -168,3 +171,60 @@ class LogoutView(APIView):
         )
         delete_session_cookie(response)
         return response
+
+
+def _pat_summary(record) -> PatSummary:
+    return PatSummary(
+        id=record.id,
+        name=record.name,
+        last_four=record.last_four,
+        created_at=record.created_at.isoformat(),
+        last_used_at=record.last_used_at.isoformat() if record.last_used_at else None,
+        expires_at=record.expires_at.isoformat() if record.expires_at else None,
+    )
+
+
+class _MintRequest(serializers.Serializer):
+    name = serializers.CharField(max_length=80)
+    expires_in_days = serializers.IntegerField(min_value=1, max_value=3650, required=False, default=0)
+
+
+class TokensView(APIView):
+    """/v1/auth/tokens: mint (POST) and list (GET) the caller's
+    personal access tokens. Accepts both credentials so a machine can
+    list its own, but minting refuses a PAT: a leaked key must not
+    bootstrap credentials outliving its own revocation."""
+
+    authentication_classes = [PatAuthentication, AppSessionAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _pats(self, request) -> PatService:
+        return PatService(account_id=request.user.account_id, user_id=request.user.id)
+
+    def post(self, request):
+        if request.auth == "pat":
+            raise PermissionDenied("a personal access token cannot mint another token")
+        body = _MintRequest(data=request.data)
+        body.is_valid(raise_exception=True)
+        record, raw = self._pats(request).mint(
+            name=body.validated_data["name"], expires_in_days=body.validated_data["expires_in_days"]
+        )
+        return Response(PatMinted(token=raw, pat=_pat_summary(record)).model_dump(), status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        tokens = [_pat_summary(r) for r in self._pats(request).list_tokens()]
+        return Response(PatList(tokens=tokens).model_dump())
+
+
+class TokenDetailView(APIView):
+    """DELETE /v1/auth/tokens/{id}: revoke one of the caller's tokens.
+    Owner-scoped, so a foreign id reads as absent (404), never
+    forbidden."""
+
+    authentication_classes = [PatAuthentication, AppSessionAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, id: str):
+        if not PatService(account_id=request.user.account_id, user_id=request.user.id).revoke(id):
+            raise NotFound("no such token")
+        return Response(status=status.HTTP_204_NO_CONTENT)

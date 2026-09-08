@@ -27,6 +27,8 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
+    PatList,
+    PatMinted,
     AgentCatalog,
     AgentsList,
     AgentSummary,
@@ -66,6 +68,8 @@ from openbower_schema.fills import (
 # they are never listed here; a client-side standalone use (a draft
 # validating a nested shape) needs no listing either.
 CONTRACT_MODELS: list[type[Any]] = [
+    PatList,
+    PatMinted,
     AgentCatalog,
     AgentsList,
     AgentSummary,

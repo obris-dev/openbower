@@ -69,6 +69,9 @@ export type LookalikeItem = z.infer<typeof LookalikeItemSchema>;
 export const LookalikeListResponseSchema = z.object({ "detail": z.union([z.string(), z.null()]).describe("Failure detail when status is failed.").default(null), "engine": z.string().describe("Which engine ranked these, e.g. embedding_v1."), "groups": z.array(z.lazy(() => LookalikeGroupSchema)).describe("The run's seed-group breakdown; single unlabeled entry for homogeneous cohorts.").default([]), "items": z.array(z.lazy(() => LookalikeItemSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("Opaque cursor for the next page.").default(null), "outlier_domains": z.array(z.string()).describe("Seeds set aside by clustering as misfits (excluded from generation, shown to the user).").default([]), "result_count": z.union([z.number().int(), z.null()]).describe("TOTAL results in the completed run (the full lead-list size, independent of page size).").default(null), "run_id": z.union([z.string(), z.null()]).describe("The run to poll; null only when no run exists (e.g. an empty cohort).").default(null), "status": z.enum(["pending","running","complete","failed","canceled"]).describe("Run lifecycle. Terminal: complete | failed | canceled; keep polling: pending | running.").default("complete"), "unresolved_domains": z.array(z.string()).describe("Inline seed domains that are not in the universe.").default([]) }).describe("The look-alike envelope (data service and app proxy alike), for both\nthe query POST and the run-status poll.\n\n`status` drives the async lifecycle: \"complete\" carries the page in\n`items`; \"pending\"/\"running\" mean poll the run (HTTP 202, empty items);\n\"failed\" carries `detail`; \"canceled\" is terminal by request (a fresh\nquery revives the run). The engine computes in a worker, so a cold\ncohort answers pending first and is polled by `run_id`; a cached cohort\nanswers complete inline.");
 export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
 
+export const PatSummarySchema = z.object({ "created_at": z.string(), "expires_at": z.union([z.string(), z.null()]).default(null), "id": z.string(), "last_four": z.string().describe("The raw token's last four characters, display only."), "last_used_at": z.union([z.string(), z.null()]).default(null), "name": z.string() }).describe("One personal access token as the owner's list shows it: the\nraw is unrecoverable by design, so display leans on name and\nlast_four.");
+export type PatSummary = z.infer<typeof PatSummarySchema>;
+
 export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
@@ -104,6 +107,12 @@ export type FillRunPage = z.infer<typeof FillRunPageSchema>;
 
 export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
 export type ImportResult = z.infer<typeof ImportResultSchema>;
+
+export const PatListSchema = z.object({ "tokens": z.array(z.lazy(() => PatSummarySchema)) });
+export type PatList = z.infer<typeof PatListSchema>;
+
+export const PatMintedSchema = z.object({ "pat": z.lazy(() => PatSummarySchema), "token": z.string().describe("The raw bearer token (obw_ prefixed). Shown once, unrecoverable after.") }).describe("The mint receipt: the ONE appearance of the raw token. It is\nshown here and never again; only its hash is stored.");
+export type PatMinted = z.infer<typeof PatMintedSchema>;
 
 export const WIRE_BOUNDS = {
   "AgentOutput": {

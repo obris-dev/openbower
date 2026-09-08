@@ -15,7 +15,7 @@ from .agents import (
     AgentTools,
     CatalogModel,
 )
-from .auth import AuthUser
+from .auth import AuthUser, PatList, PatMinted, PatSummary
 from .discover import (
     Company,
     LookalikeGroup,
@@ -76,5 +76,8 @@ __all__ = [
     "LookalikeGroup",
     "LookalikeItem",
     "LookalikeListResponse",
+    "PatList",
+    "PatMinted",
+    "PatSummary",
     "RowsAdded",
 ]

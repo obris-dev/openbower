@@ -37,3 +37,16 @@ def login_session(client, identity: dict | None = None) -> None:
         ),
     ):
         client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
+
+
+def mint_pat(identity: dict | None = None, *, expires_in_days: int = 0) -> str:
+    """A core-local PAT for the test identity, returned as the raw
+    bearer value. No IdP mock: a PAT is not an upstream credential.
+    Pass it as HTTP_AUTHORIZATION=f"Bearer {raw}"."""
+    from auth_client.services.pats import PatService
+
+    who = identity or TEST_IDENTITY
+    _, raw = PatService(account_id=who["account_id"], user_id=who["id"]).mint(
+        name="test", expires_in_days=expires_in_days
+    )
+    return raw

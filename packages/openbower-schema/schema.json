@@ -1426,6 +1426,95 @@
       "title": "LookalikeListResponse",
       "type": "object"
     },
+    "PatList": {
+      "properties": {
+        "tokens": {
+          "items": {
+            "$ref": "#/$defs/PatSummary"
+          },
+          "title": "Tokens",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tokens"
+      ],
+      "title": "PatList",
+      "type": "object"
+    },
+    "PatMinted": {
+      "description": "The mint receipt: the ONE appearance of the raw token. It is\nshown here and never again; only its hash is stored.",
+      "properties": {
+        "pat": {
+          "$ref": "#/$defs/PatSummary"
+        },
+        "token": {
+          "description": "The raw bearer token (obw_ prefixed). Shown once, unrecoverable after.",
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "pat"
+      ],
+      "title": "PatMinted",
+      "type": "object"
+    },
+    "PatSummary": {
+      "description": "One personal access token as the owner's list shows it: the\nraw is unrecoverable by design, so display leans on name and\nlast_four.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "last_four": {
+          "description": "The raw token's last four characters, display only.",
+          "title": "Last Four",
+          "type": "string"
+        },
+        "last_used_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Used At"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "last_four",
+        "created_at"
+      ],
+      "title": "PatSummary",
+      "type": "object"
+    },
     "RowsAdded": {
       "description": "The manual-append receipt.",
       "properties": {
