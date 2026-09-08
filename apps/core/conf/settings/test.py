@@ -19,4 +19,4 @@ INFERENCE_SOURCES = {}
 # real config/tools.toml may hold live keys); each test opens what
 # it mocks.
 TOOL_VENDOR_KEYS = {}
-TOOL_WIRING = {"web_search": "dataforseo", "find_contacts": "dataforseo"}
+TOOL_WIRING = {"web_search": "serper", "find_contacts": "serper"}

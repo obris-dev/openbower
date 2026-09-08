@@ -11,7 +11,10 @@ honest-looking empty can mean "Yahoo has not indexed it". The engine
 class exposes the raw status, which is the one fact a rate limit
 needs: html.duckduckgo.com answers a bot challenge as 202 (a page
 with no results in it), and a plain refusal as 403, 429, or 503. A
-200 with nothing in it is an honest empty."""
+200 with nothing in it is an honest empty.
+
+`duckduckgo` below is this module's VendorRun (the contract, with
+every vendor's shared rules, lives in providers/base.py)."""
 
 from __future__ import annotations
 
@@ -64,7 +67,10 @@ def duckduckgo(query: str, count: int) -> list[SearchHit]:
         page = _fetch(query)
     except DDGSException as e:
         raise AttemptUnreachable(str(e)) from e
-    if page.status_code in _REFUSALS:
+    if page.status_code in _REFUSALS or page.status_code >= 500:
+        # The refusal set carries the codes that mean slow-down on
+        # THIS wire (202 the bot challenge, 403 a plain refusal); the
+        # 5xx leg is the contract's own rule (providers/base.py).
         raise AttemptThrottled(f"duckduckgo returned {page.status_code}")
     if page.status_code != 200:
         raise ValueError(f"duckduckgo returned {page.status_code}")

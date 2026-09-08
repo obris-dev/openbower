@@ -15,7 +15,7 @@
             {
               "enum": [
                 "duckduckgo",
-                "dataforseo"
+                "serper"
               ],
               "type": "string"
             },
@@ -1506,7 +1506,7 @@
     "ROW_LEASE_STALE_SECONDS": 256,
     "SEARCH_PROVIDER_CHOICES": [
       "duckduckgo",
-      "dataforseo"
+      "serper"
     ],
     "SETTLED_CELL_STATES": [
       "no_evidence",

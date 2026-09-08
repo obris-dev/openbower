@@ -27,7 +27,7 @@ from .machinery import (
 from .providers.registry import get, provider_status
 
 # The vendors that may serve web search, the keyless default first.
-VENDORS = ("duckduckgo", "dataforseo")
+VENDORS = ("duckduckgo", "serper")
 
 
 def web_search(ctx: RunContext[CellDeps], query: str) -> str:

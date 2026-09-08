@@ -135,6 +135,32 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         with patch.dict(providers_registry._REGISTRY, {"zz_slow": slow}):
             self.assertEqual(search_attempt_worst_case_seconds(), 999 + clamp)
 
+    def test_the_walkthrough_names_every_metered_vendors_display(self):
+        # The tools card's setup steps are the ONE client home of a
+        # vendor fact (name, signup link) the server declares as
+        # ProviderSpec.display; this grep is what fails when a vendor
+        # swap forgets the walkthrough.
+        from pathlib import Path
+
+        from agents.tools.search.providers.registry import all_providers
+
+        walkthrough = (
+            Path(__file__).resolve().parents[4]
+            / "web"
+            / "apps"
+            / "app"
+            / "src"
+            / "app"
+            / "(app)"
+            / "_components"
+            / "agent-config"
+            / "tool-toggles.tsx"
+        ).read_text()
+        for spec in all_providers():
+            if spec.metered:
+                with self.subTest(vendor=spec.name):
+                    self.assertIn(spec.display, walkthrough)
+
     def test_the_cron_sweeps_test_fills(self):
         # The test-fill TTL is a compose cron, never an admission
         # preflight (a bench click must not pay a sweep, and an idle

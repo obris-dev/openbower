@@ -14,10 +14,10 @@ from dataclasses import replace
 from django.test import SimpleTestCase, override_settings
 
 from agents.constants import SearchStatus
-from agents.tools.search.providers import dataforseo, duckduckgo
+from agents.tools.search.providers import duckduckgo, serper
 from agents.tools.search.providers.registry import provider_status, register
 
-_TABLE = {"dataforseo": {"login": "l", "password": "p"}}
+_TABLE = {"serper": {"api_key": "k"}}
 
 
 class RegistrationGuardTests(SimpleTestCase):
@@ -41,7 +41,7 @@ class RegistrationGuardTests(SimpleTestCase):
         # The operator's table keys exist ONCE, as the shape's fields;
         # the derived tuple is what the gate, the status derivation,
         # and the template pins all read.
-        self.assertEqual(dataforseo.SPEC.config_keys, ("login", "password"))
+        self.assertEqual(serper.SPEC.config_keys, ("api_key",))
         self.assertEqual(duckduckgo.SPEC.config_keys, ())
 
     def test_metered_must_be_a_bool(self):
@@ -76,7 +76,7 @@ class FamilySpecDerivationTests(SimpleTestCase):
         from agents.tools.contacts.find_contacts import SPEC
 
         copy = SPEC.failure_copy(SearchStatus.NOT_CONFIGURED)
-        self.assertEqual(copy.problem, "Finding contacts isn't set up on DataForSEO")
+        self.assertEqual(copy.problem, "Finding contacts isn't set up on Serper")
         self.assertEqual(copy.remedy, "")
 
 
@@ -86,17 +86,33 @@ class DerivedUsabilityTests(SimpleTestCase):
     what it declares."""
 
     def test_a_keyed_vendor_flips_on_its_table_alone(self):
-        self.assertEqual(provider_status(dataforseo.SPEC.name), SearchStatus.NOT_CONFIGURED)
+        self.assertEqual(provider_status(serper.SPEC.name), SearchStatus.NOT_CONFIGURED)
         with override_settings(TOOL_VENDOR_KEYS=_TABLE):
-            self.assertEqual(provider_status(dataforseo.SPEC.name), SearchStatus.OPEN)
+            self.assertEqual(provider_status(serper.SPEC.name), SearchStatus.OPEN)
 
-    def test_a_partial_table_stays_gated(self):
-        with override_settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "l"}}):
-            self.assertEqual(provider_status(dataforseo.SPEC.name), SearchStatus.NOT_CONFIGURED)
+    def test_a_partial_multi_key_table_stays_gated(self):
+        # One missing key of several must gate; a one-key roster
+        # cannot express "partial", so the spec is synthetic.
+        from dataclasses import dataclass, replace
+        from unittest.mock import patch
+
+        from agents.tools.search.providers import registry as providers_registry
+
+        @dataclass(frozen=True)
+        class TwoKeys:
+            login: str
+            password: str
+
+        two = replace(serper.SPEC, config_schema=TwoKeys)
+        with (
+            patch.dict(providers_registry._REGISTRY, {"serper": two}),
+            override_settings(TOOL_VENDOR_KEYS={"serper": {"login": "l"}}),
+        ):
+            self.assertEqual(provider_status(serper.SPEC.name), SearchStatus.NOT_CONFIGURED)
 
     def test_a_blank_credential_never_opens_a_vendor(self):
-        with override_settings(TOOL_VENDOR_KEYS={"dataforseo": {"login": "l", "password": ""}}):
-            self.assertEqual(provider_status(dataforseo.SPEC.name), SearchStatus.NOT_CONFIGURED)
+        with override_settings(TOOL_VENDOR_KEYS={"serper": {"api_key": ""}}):
+            self.assertEqual(provider_status(serper.SPEC.name), SearchStatus.NOT_CONFIGURED)
 
     def test_a_keyless_vendor_needs_no_table(self):
         self.assertEqual(provider_status(duckduckgo.SPEC.name), SearchStatus.OPEN)

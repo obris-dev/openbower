@@ -110,7 +110,7 @@ export function needsSearchProvider(tools: ToolStatuses): boolean {
 // paid door is a remedy (the free provider refused). A contacts refusal
 // already came from the paid door, and an unknown door claims
 // nothing.
-const PAID_DOOR_NUDGE = "A metered search vendor (pay as you go, a deployment setting) gives dedicated throughput.";
+const PAID_DOOR_NUDGE = "A metered search vendor (a deployment setting) gives dedicated throughput.";
 
 /** The tools whose door did not serve this run, in the subject
  * table's order, which mirrors the server's AgentTool declaration

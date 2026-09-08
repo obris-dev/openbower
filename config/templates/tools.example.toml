@@ -11,17 +11,18 @@
 # defaults, so this section only needs editing to switch a tool to a
 # different vendor. What each tool supports (a boot check holds the
 # wiring to these):
-# web_search supports: duckduckgo, dataforseo
-# find_contacts supports: dataforseo
+# web_search supports: duckduckgo, serper
+# find_contacts supports: serper
 
 [tools]
 web_search = "duckduckgo"
-find_contacts = "dataforseo"
+find_contacts = "serper"
 
 # VENDOR CREDENTIALS: one table per vendor. A keyless vendor
 # (duckduckgo) needs no table; the others stay gated until their
 # table is filled in.
 
-# [dataforseo]
-# login = "..."
-# password = "..."
+# Serper (serper.dev): real Google SERPs on prepaid credits (2,500
+# free queries to start). Create the key at serper.dev/signup.
+# [serper]
+# api_key = "..."

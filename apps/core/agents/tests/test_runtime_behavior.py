@@ -28,8 +28,8 @@ from .test_catalog_and_runtime import (
 )
 
 _PAID_PROVIDER = {
-    "TOOL_WIRING": {"web_search": "dataforseo"},
-    "TOOL_VENDOR_KEYS": {"dataforseo": {"login": "l", "password": "p"}},
+    "TOOL_WIRING": {"web_search": "serper"},
+    "TOOL_VENDOR_KEYS": {"serper": {"api_key": "k"}},
 }
 
 
@@ -69,7 +69,7 @@ class RuntimeBehaviorTests(SimpleTestCase):
         # the script rides a model_for patch at the seam the suite
         # already owns.
         with (
-            patch("agents.tools.search.providers.dataforseo.httpx.post", side_effect=serp or _serp_response),
+            patch("agents.tools.search.providers.serper.httpx.post", side_effect=serp or _serp_response),
             patch("agents.tools.search.providers.schedule._sleep"),
             self.settings(**_PAID_PROVIDER),
             patch("agents.runtime.answer.answerer.model_for", return_value=_scripted_model(behavior)),
@@ -99,7 +99,7 @@ class RuntimeBehaviorTests(SimpleTestCase):
 
         config = _config(web_search=True, find_contacts=True)
         with (
-            self.settings(TOOL_WIRING={"web_search": "dataforseo"}, TOOL_VENDOR_KEYS={}),
+            self.settings(TOOL_WIRING={"web_search": "serper"}, TOOL_VENDOR_KEYS={}),
             patch("agents.runtime.answer.answerer.model_for", return_value=_scripted_model(behavior)),
         ):
             run = run_cell(config, {"name": "Acme"})

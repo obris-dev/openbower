@@ -10,13 +10,13 @@ registering it in `providers.registry`, the same shape a tool takes:
 adding a provider is adding a module and one register() call. Its
 `run` speaks in ATTEMPT signals, one try's story only: whether a
 refusal becomes a retry or a decided failure is the harness's call,
-never the provider's."""
+never the provider's. The rules every vendor's run follows live on
+the VendorRun contract below, stated once, never per module."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, fields
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 from ....constants import SEARCH_TIMEOUT_SECONDS
 
@@ -28,7 +28,7 @@ PROVIDER_NAME_MAX_LENGTH = 64
 
 class AttemptThrottled(Exception):
     """ONE try was told to slow down. `retry_after` is the provider's
-    own ask in seconds when it made one (DataForSEO's header); the
+    own ask in seconds when it made one (a Retry-After header); the
     harness honors it clamped to the schedule's longest step, and
     takes the schedule's step otherwise."""
 
@@ -65,6 +65,26 @@ class SearchHit(NamedTuple):
     snippet: str
 
 
+class VendorRun(Protocol):
+    """ONE query against the live vendor, one try's story only.
+
+    Speaks in attempt signals: AttemptThrottled for a refusal the
+    schedule should retry (any 5xx, plus whatever means slow-down on
+    THIS vendor's wire), AttemptUnreachable (or httpx's transport
+    errors) for a vendor it could not reach; anything else it raises
+    is a per-query decided error. A served response with no evidence
+    rows returns [], the honest zero-hit answer, never an error.
+    Credentials come from the vendor table at CALL time, never
+    cached, so a settings override or an operator's edit is always
+    live. The function's __name__ IS the vendor's registered name
+    (the config section, the wiring value, the name every stored
+    call records); the registry refuses one it cannot use."""
+
+    __name__: str
+
+    def __call__(self, query: str, count: int) -> list[SearchHit]: ...
+
+
 class ProviderAnswer(NamedTuple):
     """What one SERVED query came back with: the hits (empty being an
     honest zero-hit answer), which provider, and how many tries this
@@ -90,12 +110,9 @@ class ProviderSpec:
     tuple declares keyless), so a new provider can never fall through
     to keyless-by-default."""
 
-    # ONE query against the live provider: (query, count) -> hits.
-    # Raises AttemptThrottled for a refusal the harness should retry
-    # and AttemptUnreachable (or httpx's transport errors) for a
-    # provider it could not reach; anything else it raises is a
-    # per-query error.
-    run: Callable[[str, int], list[SearchHit]]
+    # The live call, one try's story: the VendorRun contract above
+    # carries its rules.
+    run: VendorRun
     # The SCHEMA of the vendor's config table: a frozen dataclass
     # of str fields declared in the vendor's own module beside run
     # (None declares keyless). The operator-facing key names derive

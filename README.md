@@ -87,7 +87,7 @@ carries the full annotated list):
   seeds it from the template, which lists which vendors serve which
   tools; `manage.py tools` prints the live matrix). Web search runs
   through DuckDuckGo by default (free, keyless). Contact search needs
-  a metered vendor's table filled in (DataForSEO); wiring
+  a metered vendor's table filled in (Serper, serper.dev); wiring
   `web_search` to it routes web search through it too. On the free door a fill is
   budgeted: one whose search count would exceed the budget is refused
   before it spends, naming the metered next step.

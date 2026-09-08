@@ -28,9 +28,9 @@ class ToolConfigParseTests(SimpleTestCase):
         text = """
 [tools]
 web_search = "duckduckgo"
-find_contacts = "dataforseo"
+find_contacts = "acme_search"
 
-[dataforseo]
+[acme_search]
 login = "l"
 password = "p"
 """
@@ -38,8 +38,8 @@ password = "p"
         self.assertEqual(
             config,
             ToolConfig(
-                vendor_keys={"dataforseo": {"login": "l", "password": "p"}},
-                wiring={"web_search": "duckduckgo", "find_contacts": "dataforseo"},
+                vendor_keys={"acme_search": {"login": "l", "password": "p"}},
+                wiring={"web_search": "duckduckgo", "find_contacts": "acme_search"},
             ),
         )
 
@@ -64,11 +64,11 @@ password = "p"
             parse_tool_config('login = "l"\n')
         self.assertIn("must be a table", str(caught.exception))
         with self.assertRaises(ToolConfigError) as caught:
-            parse_tool_config("[dataforseo]\nlogin = 3\n")
+            parse_tool_config("[acme_search]\nlogin = 3\n")
         self.assertIn("must be a string", str(caught.exception))
         with self.assertRaises(ToolConfigError):
             # A nested table under a vendor is a non-string value too.
-            parse_tool_config('[dataforseo.extra]\ntoken = "t"\n')
+            parse_tool_config('[acme_search.extra]\ntoken = "t"\n')
         with self.assertRaises(ToolConfigError) as caught:
             parse_tool_config("[tools]\nweb_search = 3\n")
         self.assertIn("web_search must be a string", str(caught.exception))
@@ -84,8 +84,8 @@ class ResolveToolConfigTests(SimpleTestCase):
     def test_the_file_is_the_one_credential_custody(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "tools.toml"
-            path.write_text('[dataforseo]\nlogin = "l"\npassword = "p"\n')
-            self.assertEqual(resolve_tool_config(path).vendor_keys["dataforseo"]["password"], "p")
+            path.write_text('[acme_search]\nlogin = "l"\npassword = "p"\n')
+            self.assertEqual(resolve_tool_config(path).vendor_keys["acme_search"]["password"], "p")
 
     def test_a_directory_path_names_the_problem_not_a_raw_oserror(self):
         # TOOLS_CONFIG= (set but empty) must resolve to the repo

@@ -175,12 +175,12 @@ class CatalogModel(BaseModel):
 # The search seam's vendors, mirrored from the server's provider
 # registry (pinned by a parity test). Defined BEFORE AgentCatalog
 # uses it, like every other wire alias.
-SearchProviderWire = Literal["duckduckgo", "dataforseo"]
+SearchProviderWire = Literal["duckduckgo", "serper"]
 # The providers as DATA for the wire document (x-constants): the
 # client's tolerant catalog read maps any provider outside this set to
 # null instead of failing the whole parse (a strict enum would brick
-# the model picker for every deployed bundle the day a third one
-# ships).
+# the model picker for every deployed bundle the day the roster moves
+# in either direction, a new vendor or a bundle outliving one).
 SEARCH_PROVIDER_CHOICES: tuple[str, ...] = get_args(SearchProviderWire)
 # The BASE tool status codes (the server's ToolStatus, pinned): what
 # a tool's call did. Each tool's own vocabulary contains these and may

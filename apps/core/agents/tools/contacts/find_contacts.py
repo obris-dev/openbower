@@ -25,7 +25,7 @@ from ..search.machinery import SearchToolSpec, run_search, scope_test
 # The vendors whose SERPs are known to serve profile x-rays, the
 # default first; the free engine is deliberately absent (it relaxes
 # scoped queries into off-scope noise).
-VENDORS = ("dataforseo",)
+VENDORS = ("serper",)
 
 # Why the pool gained nothing when the provider DID serve: everything
 # it served was off-scope. Distinct from an honest zero-hit drought
