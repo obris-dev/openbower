@@ -77,15 +77,25 @@ class RowsAddRequest(serializers.Serializer):
     )
 
 
-class IngestRequest(RowsAddRequest):
-    """A webhook push: the same rows, plus an OPTIONAL caller-supplied
-    idempotency key. Absent -> the endpoint mints one; present -> used as
-    given (and, once the durable backend lands, deduped on). A present but
-    blank key is a client bug, so it is rejected rather than silently
-    minted over."""
+class IngestRequest(serializers.Serializer):
+    """A webhook push: rows plus an OPTIONAL caller-supplied idempotency key.
+    Absent -> the endpoint mints a ULID; present -> used verbatim (a blank
+    key is a client bug, rejected). A flat serializer, NOT a subclass of
+    RowsAddRequest: the async path never runs RowsAddRequest's oversize-cell
+    clamp (that lives in ListService.add_rows), so it must not inherit the
+    'no per-cell cap because add_rows clamps' tradeoff. The byte bound sized
+    to the bus message limit is a durable-backend decision (see
+    ingest.get_ingest_publisher)."""
 
+    rows = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),
+        min_length=1,
+        max_length=MAX_ROWS_PER_ADD,
+    )
+    # Taken VERBATIM (trim_whitespace=False): stripping would mutate a key
+    # the caller dedupes on.
     event_id = serializers.CharField(
-        required=False, allow_blank=False, max_length=MAX_INGEST_EVENT_ID_LENGTH, trim_whitespace=True
+        required=False, allow_blank=False, max_length=MAX_INGEST_EVENT_ID_LENGTH, trim_whitespace=False
     )
 
 

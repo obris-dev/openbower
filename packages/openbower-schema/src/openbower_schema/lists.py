@@ -180,11 +180,11 @@ class RowsAdded(BaseModel):
 
 
 class IngestAccepted(BaseModel):
-    """The webhook accept receipt. The rows are queued for asynchronous
-    append, NOT yet in the sheet on return; `event_id` correlates them."""
+    """The webhook accept receipt. Rows are accepted for asynchronous
+    append, not applied on the response; `event_id` correlates them."""
 
-    event_id: str = Field(description="ULID of the accepted push, for correlation.")
-    accepted: int = Field(description="Rows accepted onto the ingest bus.")
+    event_id: str = Field(description="The push's idempotency key (caller-supplied, else a minted ULID).")
+    accepted: int = Field(description="Number of rows accepted.")
 
 
 class ImportResult(BaseModel):

@@ -19,7 +19,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from common.testing import login_session
-from lists.constants import ListOrigin
+from lists.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, ListOrigin
 from lists.services.lists import ListService
 
 _CORE_AUD = "openbower-core"
@@ -148,6 +148,14 @@ class IngestMachineTests(TestCase):
 
     def test_empty_batch_is_400(self):
         resp = self._ingest({"rows": []})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_over_cap_batch_is_400(self):
+        resp = self._ingest({"rows": [{"domain": "x"}] * (MAX_ROWS_PER_ADD + 1)})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_over_length_event_id_is_400(self):
+        resp = self._ingest({"rows": [{"domain": "x"}], "event_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
         self.assertEqual(resp.status_code, 400)
 
 

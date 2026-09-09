@@ -1025,15 +1025,15 @@
       "type": "object"
     },
     "IngestAccepted": {
-      "description": "The webhook accept receipt. The rows are queued for asynchronous\nappend, NOT yet in the sheet on return; `event_id` correlates them.",
+      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.",
       "properties": {
         "accepted": {
-          "description": "Rows accepted onto the ingest bus.",
+          "description": "Number of rows accepted.",
           "title": "Accepted",
           "type": "integer"
         },
         "event_id": {
-          "description": "ULID of the accepted push, for correlation.",
+          "description": "The push's idempotency key (caller-supplied, else a minted ULID).",
           "title": "Event Id",
           "type": "string"
         }
