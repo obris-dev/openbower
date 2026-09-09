@@ -9,6 +9,7 @@ urlpatterns = [
     api_path("folders/<str:id>", views.FolderDetailView.as_view(), name="lists_folder_detail"),
     api_path("<str:id>", views.ListDetailView.as_view(), name="lists_detail"),
     api_path("<str:id>/rows", views.ListRowsView.as_view(), name="lists_rows"),
+    api_path("<str:id>/ingest", views.ListIngestView.as_view(), name="lists_ingest"),
     api_path("<str:id>/columns", views.ColumnsView.as_view(), name="lists_columns"),
     api_path("<str:id>/columns/ai", views.AiColumnView.as_view(), name="lists_columns_ai"),
     api_path("<str:id>/column-order", views.ColumnOrderView.as_view(), name="lists_columns_order"),

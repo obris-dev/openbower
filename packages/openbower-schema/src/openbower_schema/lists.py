@@ -179,6 +179,14 @@ class RowsAdded(BaseModel):
     row_count: int
 
 
+class IngestAccepted(BaseModel):
+    """The webhook accept receipt. The rows are queued for asynchronous
+    append, NOT yet in the sheet on return; `event_id` correlates them."""
+
+    event_id: str = Field(description="ULID of the accepted push, for correlation.")
+    accepted: int = Field(description="Rows accepted onto the ingest bus.")
+
+
 class ImportResult(BaseModel):
     """What a CSV upload produced."""
 

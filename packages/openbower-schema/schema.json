@@ -1024,6 +1024,27 @@
       "title": "ImportResult",
       "type": "object"
     },
+    "IngestAccepted": {
+      "description": "The webhook accept receipt. The rows are queued for asynchronous\nappend, NOT yet in the sheet on return; `event_id` correlates them.",
+      "properties": {
+        "accepted": {
+          "description": "Rows accepted onto the ingest bus.",
+          "title": "Accepted",
+          "type": "integer"
+        },
+        "event_id": {
+          "description": "ULID of the accepted push, for correlation.",
+          "title": "Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "accepted"
+      ],
+      "title": "IngestAccepted",
+      "type": "object"
+    },
     "ListColumn": {
       "properties": {
         "fill": {

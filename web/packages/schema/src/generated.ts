@@ -45,6 +45,9 @@ export type FolderSummary = z.infer<typeof FolderSummarySchema>;
 export const FoldersListSchema = z.object({ "items": z.array(z.lazy(() => FolderSummarySchema)) });
 export type FoldersList = z.infer<typeof FoldersListSchema>;
 
+export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Rows accepted onto the ingest bus."), "event_id": z.string().describe("ULID of the accepted push, for correlation.") }).describe("The webhook accept receipt. The rows are queued for asynchronous\nappend, NOT yet in the sheet on return; `event_id` correlates them.");
+export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
+
 export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
 export type ListColumn = z.infer<typeof ListColumnSchema>;
 
