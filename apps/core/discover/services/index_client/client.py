@@ -34,5 +34,5 @@ class IndexClientService:
     @staticmethod
     def for_session(session) -> SessionIndexClient:
         """A client acting as the session's user (the discover views' entry
-        point: `IndexClientService.for_session(request.user.session)`)."""
+        point: `IndexClientService.for_session(request.auth)`)."""
         return SessionIndexClient(session)

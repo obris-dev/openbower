@@ -188,7 +188,7 @@ class LookalikesView(ScopedView):
         # session's access token and, if the data service rejects it as
         # expired/revoked, refreshes once and retries, so an in-flight
         # token lapse never surfaces to the user.
-        client = IndexClientService.for_session(request.user.session)
+        client = IndexClientService.for_session(request.auth)
         return client.lookalikes(payload=payload)
 
 
@@ -267,7 +267,7 @@ class LookalikeRunSaveListView(ScopedView):
         label = serializer.validated_data["label"]
         wanted = serializer.validated_data.get("limit")
         excluded = {d for d in (normalize_domain(v) for v in serializer.validated_data["exclude"]) if d}
-        client = IndexClientService.for_session(request.user.session)
+        client = IndexClientService.for_session(request.auth)
         service = ListService(account_id=request.user.account_id, user_id=request.user.id)
         target = service.create(label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id)
         added = 0
@@ -350,7 +350,7 @@ class LookalikeRunCancelView(ScopedView):
 
     @proxy_view
     def post(self, request, id: str) -> LookalikeListResponse:
-        client = IndexClientService.for_session(request.user.session)
+        client = IndexClientService.for_session(request.auth)
         return client.cancel_run(run_id=id)
 
 
@@ -367,5 +367,5 @@ class LookalikeRunView(ScopedView):
         limit = None
         if raw_limit is not None:
             limit = serializers.IntegerField(min_value=1, max_value=MAX_LIMIT).run_validation(raw_limit)
-        client = IndexClientService.for_session(request.user.session)
+        client = IndexClientService.for_session(request.auth)
         return client.run_status(run_id=id, limit=limit)

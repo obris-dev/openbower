@@ -21,21 +21,36 @@ from .services import AppSessionService
 
 
 class AppUser:
-    """The request principal: a thin projection of the IdP identity carried
-    by the session record. NOT a Django model user; the app holds no
-    account authority (the cloud mints identities, the app borrows them).
+    """The request principal: a uniform projection of the IdP identity,
+    the SAME shape whichever credential carried it (id, email,
+    account_id, always all three). NOT a Django model user; the app
+    holds no account authority (the cloud mints identities, the app
+    borrows them). How the request authenticated is NOT here: the
+    credential (the session, or a machine token's introspection
+    claims) rides request.auth, DRF's slot for exactly that, so
+    identity and mechanism never entangle.
     """
 
     is_authenticated = True
 
-    def __init__(self, session: AppSession) -> None:
-        self.id = session.user_id
-        self.email = session.email
-        self.account_id = session.account_id
-        self.session = session
+    def __init__(self, *, id: str, email: str, account_id: str) -> None:
+        self.id = id
+        self.email = email
+        self.account_id = account_id
+
+    @classmethod
+    def from_session(cls, session: AppSession) -> AppUser:
+        return cls(id=session.user_id, email=session.email, account_id=session.account_id)
+
+    @classmethod
+    def from_tokeninfo(cls, claims: dict) -> AppUser:
+        # Identity FROM AUTHORITY: the hub's tokeninfo response, whose
+        # `username` claim is the user's email (the auth service's
+        # USERNAME_FIELD). No local projection, no derivation.
+        return cls(id=claims["sub"], email=claims.get("username", ""), account_id=claims["account_id"])
 
     def __str__(self) -> str:
-        return self.email
+        return self.id
 
 
 class AppSessionAuthentication(BaseAuthentication):
@@ -46,7 +61,7 @@ class AppSessionAuthentication(BaseAuthentication):
         session = AppSessionService.Global.resolve(raw)
         if session is None:
             raise AuthenticationFailed("session expired or revoked")
-        return (AppUser(session), session)
+        return (AppUser.from_session(session), session)
 
     def authenticate_header(self, request):
         # Returning a challenge makes DRF answer an unauthenticated/failed
