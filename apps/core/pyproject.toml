@@ -24,6 +24,10 @@ dependencies = [
     # there kills the whole agents app at import time, so the pin is
     # deliberately tight and bumps are a reviewed change.
     "ddgs>=9.15,<9.16",
+    # The recommended production Kafka client (librdkafka under the hood);
+    # ships self-contained manylinux/musllinux wheels, so no system
+    # librdkafka is needed in the image. The ingest bus producer + worker.
+    "confluent-kafka>=2.11",
 ]
 
 [dependency-groups]

@@ -44,6 +44,12 @@ x-core-env: &core_env
   # the sibling dev stack's service names.
   OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-http://auth:8001}
   OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-http://data:8003}
+  # The ingest bus, by service name over this stack's default network. Set
+  # here (not in local.py's localhost seeds) because only the containers
+  # reach the broker; a host-run process without it falls back to the
+  # log-and-drop publisher. The web (producer) and ingest-worker (consumer)
+  # both read it.
+  INGEST_KAFKA_BOOTSTRAP_SERVERS: ${INGEST_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
 
 x-host-gateway: &host_gateway
   # For the genuinely HOST-run process (Ollama). Docker Desktop maps
@@ -82,6 +88,43 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # The ingest bus: single-node Kafka in KRaft mode (no ZooKeeper). The
+  # webhook (in core) produces accepted row batches here; ingest-worker
+  # consumes them. EPHEMERAL in the local profile on purpose: the durable
+  # ingest state is the inbox table in Postgres (dedupe), so a dev bus needs
+  # no volume and a `make down` may drop in-flight messages; a deployment
+  # persists log.dirs. Reached only by sibling containers as `kafka:9092`.
+  kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      # Single broker, so every replication factor is 1 (the defaults assume
+      # a cluster and would leave the internal topics under-replicated).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # The broker half of the one-message-per-batch sizing: MUST be >= the
+      # app's INGEST_MAX_MESSAGE_BYTES (4 MiB), which drives the topic,
+      # producer, and consumer limits.
+      KAFKA_MESSAGE_MAX_BYTES: "4194304"
+      # Topics are declared, not guessed: kafka-setup provisions them from the
+      # catalog with the right partitions/retention/size, so a stray produce
+      # must NOT auto-create a default-configured topic.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   # One-shot pre-start setup, run once per `up` and gated before core,
   # both fill workers, and the cron start (all four depend_on it:
@@ -214,6 +257,59 @@ services:
         condition: service_completed_successfully
     volumes: *core_volumes
     stop_grace_period: 32s
+
+  # One-shot: reconcile the broker to the ingest topic catalog (declared
+  # partitions/retention/size), so topics are explicit rather than
+  # auto-created with defaults. Idempotent, gated on kafka healthy + the
+  # built image (core-setup). The web producer does NOT depend on this: a
+  # produce before topics exist is a retryable 503, not a reason to block
+  # web startup on the bus.
+  kafka-setup:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py provision_topics
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+    volumes: *core_volumes
+
+  # The ingest worker: consumes accepted row-push events off the bus,
+  # dedupes them against the inbox, and applies (a log for now). Waits for
+  # the topics to exist (kafka-setup) and the inbox migration (core-setup).
+  # No restart policy, matching the fill workers: a crash is a signal in the
+  # local profile, and the loop already idles-and-retries a DatabaseError.
+  # The poll wakes every second, so SIGTERM stops it promptly (default grace).
+  ingest-worker:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py ingest_worker
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the consume loop touches /tmp/ingest_worker.heartbeat each
+    # iteration, so a marker older than 30s means the loop WEDGED (not merely
+    # idle on an empty bus, which still loops). Compose only SURFACES this as
+    # unhealthy in `docker ps`; it does not restart an unhealthy container.
+    # Acting on it is the deploy's job (a Swarm restart_policy, an autoheal
+    # sidecar, or a Kubernetes liveness probe reading the same signal); local
+    # keeps the fill workers' crash-is-a-signal convention (no restart policy).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/ingest_worker.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
   # The suite's cron: supercronic (pinned in the core Dockerfile; the
   # image ships no crond) running the schedule in apps/core/crontab.

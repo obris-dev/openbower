@@ -217,6 +217,21 @@ CORE_AUDIENCE = (os.environ.get("CORE_AUDIENCE") or "openbower-core").rstrip("/"
 TOKENINFO_CACHE_SECONDS = int(os.environ.get("TOKENINFO_CACHE_SECONDS", "60"))
 TOKENINFO_MISS_LIMIT_PER_MINUTE = int(os.environ.get("TOKENINFO_MISS_LIMIT_PER_MINUTE", "60"))
 
+# Ingest bus (Kafka): the row-push webhook publishes accepted batches here
+# and the ingest worker consumes + dedupes them. An EMPTY bootstrap means
+# no bus is configured, so the publisher falls back to the log-and-drop
+# stub (a dev stack without Kafka, and every test). The worker refuses to
+# start without a bootstrap. Topic NAMES, partitions, retention, and
+# consumer groups are declared per topic in the catalog
+# (lists.ingest.topics), not scattered here.
+INGEST_KAFKA_BOOTSTRAP_SERVERS = os.environ.get("INGEST_KAFKA_BOOTSTRAP_SERVERS", "")
+# Bus message ceiling: a whole accepted batch rides as ONE message, so this
+# must exceed the endpoint's accept bound (today Django's body limit). The
+# topic, producer, and consumer limits are all driven from this one value
+# (lists.ingest.topics + the two clients), and the broker's message.max.bytes
+# must match it (the compose kafka env).
+INGEST_MAX_MESSAGE_BYTES = int(os.environ.get("INGEST_MAX_MESSAGE_BYTES", str(4 * 1024 * 1024)))
+
 # Early-refresh buffer (seconds): the session rotates the access token this
 # long BEFORE its real expiry, so a token handed to a downstream resource
 # server (introspected there a beat later) still has comfortable life and does
