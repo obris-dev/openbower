@@ -45,5 +45,14 @@ class LoggingIngestPublisher:
 def get_ingest_publisher() -> IngestPublisher:
     """The publisher seam. Returns the configured ingest publisher; swap the
     durable backend in here (selected by settings once one exists) without
-    touching the endpoint that calls it."""
+    touching the endpoint that calls it.
+
+    Sizing invariant for that durable backend: a whole accepted batch must
+    ride as ONE bus message (no chunking here), so the bus message limit
+    must exceed the ingest accept byte cap, with headroom. On Kafka that is
+    FOUR settings that must agree or produce/consume fails silently: topic
+    max.message.bytes, broker message.max.bytes, producer max.request.size,
+    and consumer max.partition.fetch.bytes. Drive them from one value and
+    keep it >= the accept cap; a batch is bounded at accept, never split
+    here or rescued by catching an oversize error."""
     return LoggingIngestPublisher()
