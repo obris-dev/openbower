@@ -28,6 +28,7 @@ from . import idp_urls
 from .authentication import AppSessionAuthentication, PatAuthentication
 from .constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME, AuthErrorCode
 from .cookies import delete_session_cookie, delete_state_cookie, set_session_cookie, set_state_cookie
+from .models import PersonalAccessToken
 from .services import AppSessionService, OAuthClientService, StateMismatch
 from .services.oauth import AuthUpstreamError
 from .services.pats import PatService
@@ -202,14 +203,12 @@ class TokensView(APIView):
         return PatService(account_id=request.user.account_id, user_id=request.user.id)
 
     def post(self, request):
-        if request.auth == "pat":
+        if isinstance(request.auth, PersonalAccessToken):
             raise PermissionDenied("a personal access token cannot mint another token")
         body = _MintRequest(data=request.data)
         body.is_valid(raise_exception=True)
         record, raw = self._pats(request).mint(
-            email=request.user.email,
-            name=body.validated_data["name"],
-            expires_in_days=body.validated_data["expires_in_days"],
+            name=body.validated_data["name"], expires_in_days=body.validated_data["expires_in_days"]
         )
         return Response(PatMinted(token=raw, pat=_pat_summary(record)).model_dump(), status=status.HTTP_201_CREATED)
 

@@ -26,7 +26,7 @@ class Command(BaseCommand):
         if session is None:
             raise CommandError(f"no login on record for {options['email']!r}; the owner must sign in once first")
         _, raw = PatService(account_id=session.account_id, user_id=session.user_id).mint(
-            email=session.email, name=options["name"], expires_in_days=options["expires_in_days"]
+            name=options["name"], expires_in_days=options["expires_in_days"]
         )
         # The raw token, printed once: this is the only time it exists
         # outside its own hash.

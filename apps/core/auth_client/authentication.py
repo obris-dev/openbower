@@ -23,6 +23,8 @@ for its index-client token) must never accept one.
 
 from __future__ import annotations
 
+from functools import cached_property
+
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
@@ -43,21 +45,33 @@ class AppUser:
 
     is_authenticated = True
 
-    def __init__(self, *, id: str, email: str, account_id: str) -> None:
+    def __init__(self, *, id: str, account_id: str) -> None:
         self.id = id
-        self.email = email
         self.account_id = account_id
 
     @classmethod
     def from_session(cls, session: AppSession) -> AppUser:
-        return cls(id=session.user_id, email=session.email, account_id=session.account_id)
+        return cls(id=session.user_id, account_id=session.account_id)
 
     @classmethod
     def from_pat(cls, pat: PersonalAccessToken) -> AppUser:
-        return cls(id=pat.user_id, email=pat.email, account_id=pat.account_id)
+        return cls(id=pat.user_id, account_id=pat.account_id)
+
+    @cached_property
+    def email(self) -> str:
+        # Display only, and DERIVED, never stored per-credential: the
+        # email is a projection of the IdP's /me whose one local home
+        # is the login record, so resolve it from the freshest login
+        # for this user (absent when they have logged out everywhere,
+        # which only display would ever notice). Lazy: the query runs
+        # only when something actually renders the email.
+        session = AppSession.objects.filter(user_id=self.id).order_by("-id").first()
+        return session.email if session else ""
 
     def __str__(self) -> str:
-        return self.email
+        # The stable identifier, never the derived email: __str__ runs
+        # in log lines, and neither a DB query nor PII belongs there.
+        return self.id
 
 
 class AppSessionAuthentication(BaseAuthentication):
@@ -92,10 +106,12 @@ class PatAuthentication(BaseAuthentication):
         record = pats.resolve(raw)
         if record is None:
             raise AuthenticationFailed("invalid or revoked token")
-        # request.auth = "pat": the credential marker, never the secret.
-        # Consumers test WHICH credential authenticated (the mint
-        # endpoint refuses PATs); the raw must not ride the request.
-        return (AppUser.from_pat(record), "pat")
+        # request.auth = the PAT record: DRF's credential slot, typed,
+        # so consumers test the credential by ITS TYPE (the mint
+        # endpoint refuses a PAT) rather than a magic string, and the
+        # raw secret never rides the request. Mirrors the cookie path,
+        # whose request.auth is the AppSession record.
+        return (AppUser.from_pat(record), record)
 
     def authenticate_header(self, request):
         return "Bearer"

@@ -47,6 +47,6 @@ def mint_pat(identity: dict | None = None, *, expires_in_days: int = 0) -> str:
 
     who = identity or TEST_IDENTITY
     _, raw = PatService(account_id=who["account_id"], user_id=who["id"]).mint(
-        email=who["email"], name="test", expires_in_days=expires_in_days
+        name="test", expires_in_days=expires_in_days
     )
     return raw

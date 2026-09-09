@@ -24,7 +24,7 @@ class PatServiceTests(TestCase):
         return pats.PatService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
 
     def test_mint_returns_raw_once_and_stores_only_the_hash(self):
-        record, raw = self._svc().mint(email="user@example.com", name="webhook")
+        record, raw = self._svc().mint(name="webhook")
         self.assertTrue(raw.startswith("obw_"))
         self.assertEqual(record.last_four, raw[-4:])
         # The raw is nowhere in the row; only its hash is.
@@ -32,25 +32,25 @@ class PatServiceTests(TestCase):
         self.assertEqual(pats.resolve(raw).id, record.id)
 
     def test_resolve_rejects_revoked_and_expired(self):
-        record, raw = self._svc().mint(email="user@example.com", name="k")
+        record, raw = self._svc().mint(name="k")
         self._svc().revoke(record.id)
         self.assertIsNone(pats.resolve(raw))
 
-        _, raw2 = self._svc().mint(email="user@example.com", name="k2", expires_in_days=1)
+        _, raw2 = self._svc().mint(name="k2", expires_in_days=1)
         PersonalAccessToken.objects.filter(token_hash=pats.hash_token(raw2)).update(
             expires_at=timezone.now() - timedelta(seconds=1)
         )
         self.assertIsNone(pats.resolve(raw2))
 
     def test_revoke_is_owner_scoped(self):
-        record, _ = self._svc().mint(email="user@example.com", name="mine")
+        record, _ = self._svc().mint(name="mine")
         other = pats.PatService(account_id="01JQ" + "C" * 22, user_id="01JQ" + "D" * 22)
         self.assertFalse(other.revoke(record.id))
         self.assertTrue(self._svc().revoke(record.id))
 
     def test_list_shows_only_live_tokens_newest_first(self):
-        a, _ = self._svc().mint(email="user@example.com", name="a")
-        b, _ = self._svc().mint(email="user@example.com", name="b")
+        a, _ = self._svc().mint(name="a")
+        b, _ = self._svc().mint(name="b")
         self._svc().revoke(a.id)
         self.assertEqual([t.id for t in self._svc().list_tokens()], [b.id])
 
@@ -137,3 +137,35 @@ class PatBearerAuthTests(TestCase):
         raw = mint_pat()
         resp = self.client.get(reverse("auth_tokens"), HTTP_AUTHORIZATION=f"Bearer {raw}")
         self.assertEqual(resp.status_code, 200)
+
+
+class PatPrincipalTests(TestCase):
+    """The PAT principal is a uniform identity: id and account_id off
+    the token, email DERIVED from the owner's login projection, never
+    stored on the token."""
+
+    def test_email_derives_from_the_login_projection(self):
+        from auth_client.authentication import AppUser
+        from auth_client.models import AppSession
+        from auth_client.services.pats import PatService
+
+        AppSession.objects.create(
+            token_hash="deadbeef",
+            user_id=TEST_IDENTITY["id"],
+            account_id=TEST_IDENTITY["account_id"],
+            email=TEST_IDENTITY["email"],
+            access_token="a",
+            refresh_token="r",
+            access_expires_at=timezone.now(),
+        )
+        record, _ = PatService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).mint(name="k")
+        self.assertEqual(AppUser.from_pat(record).email, TEST_IDENTITY["email"])
+
+    def test_email_is_blank_when_no_login_projection_exists(self):
+        # A machine principal for a user who has logged out everywhere
+        # resolves no email; display-only, and no reader on the PAT
+        # path serializes it (MeView is cookie-only).
+        from auth_client.authentication import AppUser
+
+        user = AppUser(id="01JQ" + "Z" * 22, account_id="01JQ" + "Y" * 22)
+        self.assertEqual(user.email, "")
