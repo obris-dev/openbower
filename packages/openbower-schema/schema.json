@@ -1024,6 +1024,27 @@
       "title": "ImportResult",
       "type": "object"
     },
+    "IngestAccepted": {
+      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.",
+      "properties": {
+        "accepted": {
+          "description": "Number of rows accepted.",
+          "title": "Accepted",
+          "type": "integer"
+        },
+        "event_id": {
+          "description": "The push's idempotency key (caller-supplied, else a minted ULID).",
+          "title": "Event Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "accepted"
+      ],
+      "title": "IngestAccepted",
+      "type": "object"
+    },
     "ListColumn": {
       "properties": {
         "fill": {

@@ -31,6 +31,10 @@ MAX_LIST_ROWS = 50_000
 # exported CSV lands back in those tools.
 CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
+# Idempotency key a webhook caller may supply on an ingest push (else one
+# is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
+# UUID, their own event id), bounded so it can key a store cheaply.
+MAX_INGEST_EVENT_ID_LENGTH = 255
 DEFAULT_ROWS_PAGE = 50
 MAX_ROWS_PAGE = 200
 DEFAULT_INDEX_PAGE = 50

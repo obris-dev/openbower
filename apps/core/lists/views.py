@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from functools import cached_property
 
+import ulid
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -19,7 +21,7 @@ from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
-from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
+from openbower_schema.lists import FoldersList, ImportResult, IngestAccepted, ListRowsPage, ListsPage, RowsAdded
 from resource_server import MachineTokenAuthentication
 
 from .constants import (
@@ -33,6 +35,7 @@ from .constants import (
     FillErrorCode,
     ListOrigin,
 )
+from .ingest import IngestEvent, get_ingest_publisher
 from .models import Folder, List
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .serializers import (
@@ -43,6 +46,7 @@ from .serializers import (
     ColumnRefillRequest,
     ColumnRenameRequest,
     FolderRequest,
+    IngestRequest,
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
@@ -195,6 +199,41 @@ class ListRowsView(_ScopedView):
             raise NotFound("no list with that id") from e
         target_list.refresh_from_db()
         return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
+
+
+class ListIngestView(_ScopedView):
+    """POST /v1/lists/{id}/ingest: the ASYNC row push (the webhook).
+
+    A minted machine key (or a session) pushes rows; we validate them and
+    the target list (account-scoped, so a key only reaches its owner's
+    lists), publish the batch to the ingest bus, and return 202. The rows
+    are NOT in the sheet on return: a worker appends them off the bus.
+
+    INTERIM: the current publisher logs and drops (see lists.ingest); the
+    durable backend (outbox, then Kafka) and the append worker are
+    follow-ups. Same auth pair and order as the lists collection.
+    """
+
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def post(self, request: Request, id: str) -> Response:
+        target_list = self._list_or_404(id)
+        serializer = IngestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rows = serializer.validated_data["rows"]
+        # The caller's idempotency key if they sent one, else a fresh ULID.
+        # Carried through the bus so a re-delivery dedupes to one append once
+        # the durable backend enforces it (the interim publisher only logs).
+        event = IngestEvent(
+            event_id=serializer.validated_data.get("event_id") or str(ulid.ulid()),
+            list_id=str(target_list.id),
+            account_id=self.request.user.account_id,
+            user_id=self.request.user.id,
+            rows=rows,
+            received_at=timezone.now(),
+        )
+        get_ingest_publisher().publish(event)
+        return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
 
 
 class ColumnsView(_ScopedView):
