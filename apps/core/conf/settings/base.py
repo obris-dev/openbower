@@ -201,6 +201,22 @@ TOOL_WIRING = _TOOL_CONFIG.wiring
 # /me, refresh, revoke), so a hung IdP can't pin a worker.
 AUTH_HTTP_TIMEOUT_SECONDS = int(os.environ.get("AUTH_HTTP_TIMEOUT_SECONDS", "10"))
 
+# Core as a RESOURCE SERVER for machine tokens (webhooks, CLI). Core holds
+# NO client secret: it is distributed software, so it verifies a token by
+# relaying it to the hub's tokeninfo endpoint (self-introspection, the
+# presented token is the only credential), never by introspecting as a
+# confidential client. CORE_AUDIENCE is what a machine token must name in
+# its RFC 8707 resource indicator to reach core. It is a LOGICAL name, not
+# a URL: core is distributed (self-hosters run it at any host), so it
+# identifies by what it is, not where it runs, and every core shares the
+# one value. Not a secret (an audience is a public identifier; its job is
+# to keep a token minted for some other service off this lane, which needs
+# no obscurity). The two knobs bound the verify cache and the pre-auth miss
+# flood (see resource_server.authentication).
+CORE_AUDIENCE = os.environ.get("CORE_AUDIENCE") or "openbower-core"
+TOKENINFO_CACHE_SECONDS = int(os.environ.get("TOKENINFO_CACHE_SECONDS", "60"))
+TOKENINFO_MISS_LIMIT_PER_MINUTE = int(os.environ.get("TOKENINFO_MISS_LIMIT_PER_MINUTE", "60"))
+
 # Early-refresh buffer (seconds): the session rotates the access token this
 # long BEFORE its real expiry, so a token handed to a downstream resource
 # server (introspected there a beat later) still has comfortable life and does

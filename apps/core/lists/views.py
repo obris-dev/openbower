@@ -14,11 +14,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from agents.services import AgentNotFound
+from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.lists import FoldersList, ImportResult, ListRowsPage, ListsPage, RowsAdded
+from resource_server import MachineTokenAuthentication
 
 from .constants import (
     DEFAULT_INDEX_PAGE,
@@ -116,6 +118,13 @@ class _ScopedView(ScopedView):
 
 
 class ListsView(_ScopedView):
+    # The lists collection is the first call a machine producer makes
+    # ("which lists can I push to?"); it is session-free (account/user
+    # scoping only), so a machine token is safe here. Every other lists
+    # endpoint keeps the cookie-only default, which also proves the
+    # per-view scoping.
+    authentication_classes = [MachineTokenAuthentication, AppSessionAuthentication]
+
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
