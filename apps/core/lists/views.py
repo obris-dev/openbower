@@ -118,12 +118,16 @@ class _ScopedView(ScopedView):
 
 
 class ListsView(_ScopedView):
-    # The lists collection is the first call a machine producer makes
-    # ("which lists can I push to?"); it is session-free (account/user
-    # scoping only), so a machine token is safe here. Every other lists
-    # endpoint keeps the cookie-only default, which also proves the
-    # per-view scoping.
-    authentication_classes = [MachineTokenAuthentication, AppSessionAuthentication]
+    # The lists collection is where a machine producer both enumerates
+    # ("which lists can I push to?") and creates a list to push into, so
+    # BOTH methods ride the machine lane; account/user scoping (no session
+    # state) makes a machine token safe on either. Every other lists
+    # endpoint keeps the cookie-only default, which also proves the per-view
+    # scoping. Cookie auth is listed FIRST so a browser's 401 (an expired
+    # session) carries the `Cookie` challenge, not `Bearer`; the machine
+    # class returns None without a Bearer header, so it still authenticates
+    # a real machine token.
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
 
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
