@@ -1,11 +1,11 @@
 """The consume half of the ingest bus, collocated with the publish half: a
 worker consumes accepted row-push events, dedupes them against the inbox, and
-applies.
+appends the rows to the sheet.
 
-Applying is a LOG for now; the row append (ListService.add_rows) lands here
-next. The loop lifecycle (subscribe, poll, commit, stop) lives here; the
-management command owns only signals. `handle_ingest_event` is separable and
-tested without a broker.
+Enriching the appended rows (running the sheet's AI columns) is NOT done
+here: that is a reconciler, a separate work stream. The loop lifecycle
+(subscribe, poll, commit, stop) lives here; the management command owns only
+signals. `handle_ingest_event` is separable and tested without a broker.
 """
 
 from __future__ import annotations
@@ -13,11 +13,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import NamedTuple
 
 from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
+from ..services.lists import ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
 
@@ -42,12 +44,37 @@ def _touch_heartbeat() -> None:
         logger.warning("ingest heartbeat write failed: %s", e)
 
 
+class AppendResult(NamedTuple):
+    """The side effect's report back to the orchestrator. `applied` False is
+    a terminal DROP (a deleted or full list, nothing a retry fixes), with
+    its `reason`; True carries the `added` count. A TRANSIENT failure raises
+    instead of returning, so the caller rolls back and redelivers."""
+
+    applied: bool
+    added: int = 0
+    reason: str = ""
+
+
+def _append_rows(event: IngestEvent) -> AppendResult:
+    """The side effect: append the pushed rows to the sheet, owning its own
+    terminal-error handling (a deleted or full list is a drop, reported for
+    the caller to log). Only transient failures (a DatabaseError) raise."""
+    lists = ListService(account_id=event.account_id, user_id=event.user_id)
+    try:
+        target = lists.get(event.list_id)
+        added = lists.add_rows(target, event.rows)
+    except (ListNotFound, ListsFull) as e:
+        return AppendResult(applied=False, reason=str(e))
+    return AppendResult(applied=True, added=added)
+
+
 def handle_ingest_event(event: IngestEvent) -> str:
-    """Dedupe on (account_id, event_id) and apply, in ONE transaction (the
-    inbox row and the apply commit together, which is what makes dedup
-    correct under at-least-once delivery). Returns "applied" for a first
-    delivery, "skipped" for a redelivery. Apply is a log for now;
-    ListService.add_rows lands here next."""
+    """Process an event exactly once: dedupe on (account_id, event_id) and
+    run the side effect, in ONE transaction so a redelivery cannot
+    double-apply. Returns "applied", "skipped" (a redelivery), or "dropped"
+    (a terminal failure the inbox row records, so it is not redelivered
+    forever). A transient failure from the side effect propagates, rolling
+    the whole unit back for a clean retry."""
     with transaction.atomic():
         _, created = ProcessedIngestEvent.objects.get_or_create(
             account_id=event.account_id,
@@ -57,13 +84,16 @@ def handle_ingest_event(event: IngestEvent) -> str:
         if not created:
             logger.info("ingest skip duplicate event=%s account=%s", event.event_id, event.account_id)
             return "skipped"
-        # APPLY: ListService.add_rows lands here; for now, log the effect.
+        result = _append_rows(event)
+        if not result.applied:
+            logger.warning("ingest dropped event=%s list=%s: %s", event.event_id, event.list_id, result.reason)
+            return "dropped"
         logger.info(
-            "ingest apply (stub: not appended) event=%s list=%s account=%s rows=%d",
+            "ingest applied event=%s list=%s account=%s rows=%d",
             event.event_id,
             event.list_id,
             event.account_id,
-            len(event.rows),
+            result.added,
         )
         return "applied"
 
