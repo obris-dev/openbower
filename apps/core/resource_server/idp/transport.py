@@ -13,17 +13,13 @@ else."""
 
 from __future__ import annotations
 
-import logging
-
 import httpx
 from django.conf import settings
 
 from . import urls
 
-logger = logging.getLogger("resource_server")
 
-
-class AuthUpstreamUnavailable(Exception):
+class TokeninfoUnavailable(Exception):
     """The hub could not answer, so this request's token cannot be
     verified. Rendered as 503 (retryable, not the caller's fault),
     distinct from 401 (the token itself was judged invalid)."""
@@ -41,15 +37,15 @@ def verify_token(token: str) -> dict:
             timeout=settings.AUTH_HTTP_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as e:
-        raise AuthUpstreamUnavailable(f"tokeninfo unreachable: {type(e).__name__}") from e
+        raise TokeninfoUnavailable(f"tokeninfo unreachable: {type(e).__name__}") from e
     if response.status_code != 200:
         # tokeninfo answers 200 for valid AND invalid tokens (the body's
         # `active` carries that); any non-200 is the hub itself in trouble.
-        raise AuthUpstreamUnavailable(f"tokeninfo returned {response.status_code}")
+        raise TokeninfoUnavailable(f"tokeninfo returned {response.status_code}")
     try:
         claims = response.json()
     except ValueError as e:
-        raise AuthUpstreamUnavailable("tokeninfo returned a non-JSON body") from e
+        raise TokeninfoUnavailable("tokeninfo returned a non-JSON body") from e
     if not isinstance(claims, dict):
-        raise AuthUpstreamUnavailable("tokeninfo returned a non-object body")
+        raise TokeninfoUnavailable("tokeninfo returned a non-object body")
     return claims

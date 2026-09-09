@@ -213,7 +213,7 @@ AUTH_HTTP_TIMEOUT_SECONDS = int(os.environ.get("AUTH_HTTP_TIMEOUT_SECONDS", "10"
 # to keep a token minted for some other service off this lane, which needs
 # no obscurity). The two knobs bound the verify cache and the pre-auth miss
 # flood (see resource_server.authentication).
-CORE_AUDIENCE = os.environ.get("CORE_AUDIENCE") or "openbower-core"
+CORE_AUDIENCE = (os.environ.get("CORE_AUDIENCE") or "openbower-core").rstrip("/")
 TOKENINFO_CACHE_SECONDS = int(os.environ.get("TOKENINFO_CACHE_SECONDS", "60"))
 TOKENINFO_MISS_LIMIT_PER_MINUTE = int(os.environ.get("TOKENINFO_MISS_LIMIT_PER_MINUTE", "60"))
 
@@ -288,7 +288,9 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 REST_FRAMEWORK = {
     # The app session cookie (opaque id -> server-side record holding the
-    # user's IdP tokens) is the only credential on this API in Phase 1.
+    # user's IdP tokens) is the DEFAULT credential on this API. The machine
+    # Bearer lane (resource_server.MachineTokenAuthentication) is opt-in per
+    # view, not global (see lists.ListsView).
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "auth_client.authentication.AppSessionAuthentication",
     ],
@@ -300,7 +302,8 @@ REST_FRAMEWORK = {
 
 # Cache. Django's db cache: zero deps, survives process restart. Holds the
 # short-lived OAuth state -> PKCE-verifier bags during the login redirect.
-# Run `manage.py createcachetable` once on a cold db (the make targets do).
+# Run `manage.py createcachetable` once on a cold db (the make targets do,
+# and it creates a table for EVERY alias below).
 CACHE_BACKEND = os.environ.get("CACHE_BACKEND", "django.core.cache.backends.db.DatabaseCache")
 CACHE_LOCATION = os.environ.get("CACHE_LOCATION", "openbower_cache")
 # MAX_ENTRIES is raised well above DatabaseCache's default 300 because this
@@ -308,8 +311,19 @@ CACHE_LOCATION = os.environ.get("CACHE_LOCATION", "openbower_cache")
 # mid-handshake under a burst and fail legitimate logins with
 # state_mismatch. Matches the identity service's setting.
 CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", "10000"))
+# Machine-token verify results live in a SEPARATE table so their churn (one
+# entry per distinct token, plus negative + per-IP-miss entries under a
+# flood) can never trigger a cull of the default cache's pending login
+# states. Its own MAX_ENTRIES bounds the verify cache's own footprint.
+TOKENINFO_CACHE_LOCATION = os.environ.get("TOKENINFO_CACHE_LOCATION", "openbower_tokeninfo_cache")
+TOKENINFO_CACHE_MAX_ENTRIES = int(os.environ.get("TOKENINFO_CACHE_MAX_ENTRIES", "10000"))
 CACHES = {
     "default": {"BACKEND": CACHE_BACKEND, "LOCATION": CACHE_LOCATION, "OPTIONS": {"MAX_ENTRIES": CACHE_MAX_ENTRIES}},
+    "tokeninfo": {
+        "BACKEND": CACHE_BACKEND,
+        "LOCATION": TOKENINFO_CACHE_LOCATION,
+        "OPTIONS": {"MAX_ENTRIES": TOKENINFO_CACHE_MAX_ENTRIES},
+    },
 }
 
 # App loggers are configured explicitly so warnings surface predictably
@@ -346,11 +360,15 @@ LOGGING = {
         },
     },
     "loggers": {
+        # LOCAL_APPS plus non-app importable packages that own a logger
+        # (resource_server is not an INSTALLED_APP, but its security
+        # warnings must land on the console handler, not Python's
+        # lastResort, like every other capability's logger).
         app: {
             "handlers": ["console"],
             "level": _app_log_level(app),
             "propagate": False,
         }
-        for app in LOCAL_APPS
+        for app in [*LOCAL_APPS, "resource_server"]
     },
 }

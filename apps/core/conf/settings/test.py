@@ -6,7 +6,12 @@ state store needs no db cache table and never leaks across tests.
 
 from .local import *  # noqa: F403
 
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    # Separate store (distinct LOCATION) mirroring the base "tokeninfo"
+    # alias the resource server uses, so verify-cache tests are hermetic.
+    "tokeninfo": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "tokeninfo"},
+}
 
 # Hermetic inference + search: local.py seeds the dev loop's live providers
 # (a running Ollama; DuckDuckGo needs no config); tests must never

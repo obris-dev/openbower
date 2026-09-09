@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.core.cache import cache
+from django.core.cache import caches
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -44,7 +44,10 @@ class FakeResponse:
 @override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=100000)
 class MachineTokenAuthTests(TestCase):
     def setUp(self) -> None:
-        cache.clear()
+        # The verify cache and its per-IP miss counters live in the
+        # "tokeninfo" alias; clear both so tests don't bleed hits/budget.
+        caches["default"].clear()
+        caches["tokeninfo"].clear()
 
     def _get_lists(self, token="obw_live", claims=None):
         with patch(
@@ -91,6 +94,33 @@ class MachineTokenAuthTests(TestCase):
             self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_same")
             self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_same")
         self.assertEqual(get.call_count, 1)
+
+    def test_a_dead_token_is_relayed_once_then_negative_cached(self):
+        # A repeated invalid token must not re-hit the hub each time.
+        with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, {"active": False})) as get:
+            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
+            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
+        self.assertEqual(get.call_count, 1)
+
+    def test_bare_string_audience_is_exact_not_substring(self):
+        # `aud` as a bare string must normalize to one value, not be
+        # char-substring matched: a superstring CONTAINING the audience 401s...
+        resp, _ = self._get_lists(token="obw_super", claims=_claims(aud="openbower-core-not-really"))
+        self.assertEqual(resp.status_code, 401)
+        # ...while a bare-string EXACT match authenticates.
+        resp2, _ = self._get_lists(token="obw_exact", claims=_claims(aud=_CORE_AUD))
+        self.assertEqual(resp2.status_code, 200)
+
+    @override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=2)
+    def test_miss_budget_throttles_a_token_flood(self):
+        # Distinct unknown tokens each miss the cache and spend the per-IP
+        # budget; past the limit the pre-auth guard trips to 429.
+        with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, {"active": False})):
+            statuses = [
+                self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION=f"Bearer obw_flood{i}").status_code
+                for i in range(4)
+            ]
+        self.assertEqual(statuses, [401, 401, 429, 429])
 
     def test_the_principal_is_built_from_authority(self):
         from auth_client.authentication import AppUser

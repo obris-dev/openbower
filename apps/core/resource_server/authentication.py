@@ -7,15 +7,18 @@ hub's /v1/auth/tokeninfo endpoint (self-introspection: the presented
 token is the only credential). This is the machine lane (webhooks,
 CLI/MCP); the browser lane stays on the session cookie
 (AppSessionAuthentication). Both build the same AppUser and compose in a
-per-view authentication_classes list; this class is attached only where
-machines act, never globally (discover reads request.auth as a session,
-and a machine token there is refused by the audience check).
+per-view authentication_classes list; this class is opt-in per view,
+never global. A view that does not attach it (discover, everything but
+the lists collection) never runs the machine lane at all, so a Bearer
+token there is simply unauthenticated under the cookie-only default, not
+audience-checked.
 
-Verified results cache (default cache, keyed by token fingerprint) for
-TOKENINFO_CACHE_SECONDS bounded by the token's expiry, so a burst costs
-one upstream round-trip; negative results cache briefly so a dead token
-cannot make core a verify amplifier, and a per-IP miss-budget guards the
-pre-auth flood the DRF throttles run too late to stop. Core gates on
+Verified results cache (a dedicated cache alias, keyed by token
+fingerprint) for TOKENINFO_CACHE_SECONDS bounded by the token's expiry,
+so a burst costs one upstream round-trip; negative results cache briefly
+so a dead token cannot make core a verify amplifier, and a per-IP
+miss-budget guards the pre-auth flood the DRF throttles run too late to
+stop. Core gates on
 AUDIENCE, not a scope: an authenticated app user is by definition allowed
 to use core (it is the app's backend), so unlike the data leaf there is
 no scope predicate; the audience check is what keeps a token minted for
@@ -29,7 +32,7 @@ import logging
 import time
 
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import caches
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied, Throttled
 from rest_framework.request import Request
@@ -38,9 +41,13 @@ from auth_client.authentication import AppUser
 from openbower_kernel.hashing import hash_token
 
 from .idp import verify_token
-from .idp.transport import AuthUpstreamUnavailable
+from .idp.transport import TokeninfoUnavailable
 
-logger = logging.getLogger("resource_server")
+logger = logging.getLogger(__name__)
+
+# A dedicated cache alias (its own table): verify churn must never cull the
+# default cache's pending OAuth login states.
+_cache = caches["tokeninfo"]
 
 _CACHE_PREFIX = "tokeninfo:"
 _MISS_PREFIX = "tokeninfo-miss:"
@@ -72,7 +79,7 @@ class MachineTokenAuthentication(BaseAuthentication):
 
         try:
             claims = self._verify_cached(token, request)
-        except AuthUpstreamUnavailable as e:
+        except TokeninfoUnavailable as e:
             # The token may be perfectly valid; a 503 tells a machine to
             # retry rather than discard a live credential on a hub blip.
             raise AuthServiceUnavailable() from e
@@ -97,21 +104,29 @@ class MachineTokenAuthentication(BaseAuthentication):
         return AppUser.from_tokeninfo(claims), token
 
     def authenticate_header(self, request: Request) -> str:
-        return 'Bearer realm="openbower-core"'
+        # Realm = the audience a token must name to be accepted here, so a
+        # deploy that overrides CORE_AUDIENCE keeps the challenge truthful.
+        return f'Bearer realm="{settings.CORE_AUDIENCE}"'
 
     @staticmethod
     def _check_miss_budget(request: Request) -> None:
-        """Per-IP budget on verify CACHE MISSES, before the upstream call:
-        DRF throttles run after auth, so they cannot stop a
-        fresh-random-bearer flood from becoming a 1:1 verify amplifier.
-        Legitimate callers miss only on token rotation, so the budget is
-        generous and invisible."""
+        """Budget on verify CACHE MISSES, before the upstream call: DRF
+        throttles run after auth, so they cannot stop a fresh-random-bearer
+        flood from becoming a 1:1 verify amplifier. Legitimate callers miss
+        only on token rotation, so the budget is generous and invisible.
+
+        Keyed on REMOTE_ADDR, the un-spoofable floor (a forgeable
+        X-Forwarded-For would let an attacker rotate the key freely).
+        Behind a reverse proxy REMOTE_ADDR is the proxy, so this degrades
+        to a coarse global limiter rather than per-client; that is the safe
+        direction to fail, and edge rate-limiting is the real per-client
+        control."""
         ip = request.META.get("REMOTE_ADDR", "") or "unknown"
         key = f"{_MISS_PREFIX}{ip}"
         try:
-            count = cache.incr(key)
+            count = _cache.incr(key)
         except ValueError:
-            cache.add(key, 1, timeout=_MISS_WINDOW_SECONDS)
+            _cache.add(key, 1, timeout=_MISS_WINDOW_SECONDS)
             count = 1
         if count > settings.TOKENINFO_MISS_LIMIT_PER_MINUTE:
             logger.warning("tokeninfo miss budget exceeded for %s", ip)
@@ -120,7 +135,7 @@ class MachineTokenAuthentication(BaseAuthentication):
     @staticmethod
     def _verify_cached(token: str, request: Request) -> dict:
         cache_key = f"{_CACHE_PREFIX}{hash_token(token)}"
-        cached = cache.get(cache_key)
+        cached = _cache.get(cache_key)
         if cached is not None:
             return cached
         MachineTokenAuthentication._check_miss_budget(request)
@@ -133,5 +148,5 @@ class MachineTokenAuthentication(BaseAuthentication):
         else:
             ttl = _NEGATIVE_TTL_SECONDS
         if ttl > 0:
-            cache.set(cache_key, claims, timeout=ttl)
+            _cache.set(cache_key, claims, timeout=ttl)
         return claims

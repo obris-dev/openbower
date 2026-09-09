@@ -1,8 +1,11 @@
-"""Every openbower-auth (IdP) URL this app calls or redirects to.
+"""The openbower-auth (IdP) URLs the BROWSER/SESSION flow uses (authorize,
+token, revoke, logout, /me).
 
-One module owns the upstream URL shapes, so a path change on the IdP is a
-one-place edit here, and no call site hand-builds an endpoint from
-settings.
+One module owns these upstream URL shapes, so a path change on the IdP is
+a one-place edit here, and no call site in the session flow hand-builds an
+endpoint from settings. The resource-server verify path owns its one
+upstream URL separately (resource_server/idp/urls.py), mirroring how the
+data client packages its own (discover/services/index_client/urls.py).
 
 TWO bases, by who dials the URL. OPENBOWER_AUTH_URL is the IdP's
 identity, the origin the BROWSER navigates to (authorize, logout) and the
