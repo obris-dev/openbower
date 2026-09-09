@@ -24,7 +24,7 @@ class PatServiceTests(TestCase):
         return pats.PatService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
 
     def test_mint_returns_raw_once_and_stores_only_the_hash(self):
-        record, raw = self._svc().mint(name="webhook")
+        record, raw = self._svc().mint(email="user@example.com", name="webhook")
         self.assertTrue(raw.startswith("obw_"))
         self.assertEqual(record.last_four, raw[-4:])
         # The raw is nowhere in the row; only its hash is.
@@ -32,25 +32,25 @@ class PatServiceTests(TestCase):
         self.assertEqual(pats.resolve(raw).id, record.id)
 
     def test_resolve_rejects_revoked_and_expired(self):
-        record, raw = self._svc().mint(name="k")
+        record, raw = self._svc().mint(email="user@example.com", name="k")
         self._svc().revoke(record.id)
         self.assertIsNone(pats.resolve(raw))
 
-        _, raw2 = self._svc().mint(name="k2", expires_in_days=1)
+        _, raw2 = self._svc().mint(email="user@example.com", name="k2", expires_in_days=1)
         PersonalAccessToken.objects.filter(token_hash=pats.hash_token(raw2)).update(
             expires_at=timezone.now() - timedelta(seconds=1)
         )
         self.assertIsNone(pats.resolve(raw2))
 
     def test_revoke_is_owner_scoped(self):
-        record, _ = self._svc().mint(name="mine")
+        record, _ = self._svc().mint(email="user@example.com", name="mine")
         other = pats.PatService(account_id="01JQ" + "C" * 22, user_id="01JQ" + "D" * 22)
         self.assertFalse(other.revoke(record.id))
         self.assertTrue(self._svc().revoke(record.id))
 
     def test_list_shows_only_live_tokens_newest_first(self):
-        a, _ = self._svc().mint(name="a")
-        b, _ = self._svc().mint(name="b")
+        a, _ = self._svc().mint(email="user@example.com", name="a")
+        b, _ = self._svc().mint(email="user@example.com", name="b")
         self._svc().revoke(a.id)
         self.assertEqual([t.id for t in self._svc().list_tokens()], [b.id])
 

@@ -20,6 +20,11 @@ class PersonalAccessToken(UserScopedModel):
     null expiry means the owner chose no timer.
     """
 
+    # The owner's email, captured at mint: a cached projection of the
+    # IdP identity (the AppSession pattern), so the principal a PAT
+    # authenticates is a complete identity, not a session-shaped
+    # partial. Display only, and frozen at mint, so it may lag /me.
+    email = models.EmailField(_("email"))
     name = models.CharField(_("name"), max_length=80)
     # SHA-256 hex of the raw token; unique doubles as the lookup index.
     token_hash = models.CharField(_("token hash"), max_length=64, unique=True)

@@ -41,13 +41,15 @@ class PatService:
         self.account_id = account_id
         self.user_id = user_id
 
-    def mint(self, *, name: str, expires_in_days: int = 0) -> tuple[PersonalAccessToken, str]:
+    def mint(self, *, email: str, name: str, expires_in_days: int = 0) -> tuple[PersonalAccessToken, str]:
         """Returns `(record, raw_token)`; the raw exists only in this
-        return value. 0 days means no expiry timer."""
+        return value. `email` is the owner's, captured so the token's
+        principal is a complete identity. 0 days means no expiry."""
         raw = TOKEN_PREFIX + secrets.token_urlsafe(_TOKEN_NBYTES)
         record = PersonalAccessToken.objects.create(
             account_id=self.account_id,
             user_id=self.user_id,
+            email=email,
             name=name,
             token_hash=hash_token(raw),
             last_four=raw[-4:],

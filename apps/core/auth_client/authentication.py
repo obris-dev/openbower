@@ -16,8 +16,9 @@ PAT: a bearer carrying the PAT prefix is ALWAYS judged as a PAT; an
 unknown, revoked, or expired one raises rather than falling through,
 so a dead key can never silently downgrade to some other credential.
 PatAuthentication is attached per-view on machine-facing endpoints
-only, never globally: a session-less principal must never reach a
-view that reads request.user.session (discover does).
+only, never globally: a PAT sets request.auth to a marker, not a
+session, so a view that reads request.auth as a session (discover,
+for its index-client token) must never accept one.
 """
 
 from __future__ import annotations
@@ -26,29 +27,34 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
 from .constants import SESSION_COOKIE_NAME
-from .models import AppSession
+from .models import AppSession, PersonalAccessToken
 from .services import AppSessionService, pats
 
 
 class AppUser:
-    """The request principal: a thin projection of the IdP identity,
-    whichever credential carried it. NOT a Django model user; the app
+    """The request principal: a uniform projection of the IdP identity,
+    the SAME shape whichever credential carried it (id, email,
+    account_id, always all three). NOT a Django model user; the app
     holds no account authority (the cloud mints identities, the app
-    borrows them). `session` is None for machine credentials, and any
-    view that reads it must therefore never accept one.
+    borrows them). How the request authenticated is NOT here: the
+    credential (a session, a PAT) rides request.auth, DRF's slot for
+    exactly that, so identity and mechanism never entangle.
     """
 
     is_authenticated = True
 
-    def __init__(self, *, id: str, email: str, account_id: str, session: AppSession | None = None) -> None:
+    def __init__(self, *, id: str, email: str, account_id: str) -> None:
         self.id = id
         self.email = email
         self.account_id = account_id
-        self.session = session
 
     @classmethod
     def from_session(cls, session: AppSession) -> AppUser:
-        return cls(id=session.user_id, email=session.email, account_id=session.account_id, session=session)
+        return cls(id=session.user_id, email=session.email, account_id=session.account_id)
+
+    @classmethod
+    def from_pat(cls, pat: PersonalAccessToken) -> AppUser:
+        return cls(id=pat.user_id, email=pat.email, account_id=pat.account_id)
 
     def __str__(self) -> str:
         return self.email
@@ -86,11 +92,10 @@ class PatAuthentication(BaseAuthentication):
         record = pats.resolve(raw)
         if record is None:
             raise AuthenticationFailed("invalid or revoked token")
-        principal = AppUser(id=record.user_id, email="", account_id=record.account_id)
-        # A marker, never the secret: consumers test WHICH credential
-        # authenticated (the mint endpoint refuses PATs), and the raw
-        # must not ride the request object.
-        return (principal, "pat")
+        # request.auth = "pat": the credential marker, never the secret.
+        # Consumers test WHICH credential authenticated (the mint
+        # endpoint refuses PATs); the raw must not ride the request.
+        return (AppUser.from_pat(record), "pat")
 
     def authenticate_header(self, request):
         return "Bearer"

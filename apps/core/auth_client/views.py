@@ -207,7 +207,9 @@ class TokensView(APIView):
         body = _MintRequest(data=request.data)
         body.is_valid(raise_exception=True)
         record, raw = self._pats(request).mint(
-            name=body.validated_data["name"], expires_in_days=body.validated_data["expires_in_days"]
+            email=request.user.email,
+            name=body.validated_data["name"],
+            expires_in_days=body.validated_data["expires_in_days"],
         )
         return Response(PatMinted(token=raw, pat=_pat_summary(record)).model_dump(), status=status.HTTP_201_CREATED)
 
