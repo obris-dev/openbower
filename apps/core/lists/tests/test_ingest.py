@@ -106,6 +106,27 @@ class IngestMachineTests(TestCase):
         self.assertEqual([r["domain"] for r in event.rows], ["acme.com", "example.io"])
         self.assertEqual(event.event_id, body["event_id"])
 
+    def test_a_caller_supplied_event_id_is_used_as_the_idempotency_key(self):
+        captured: list = []
+        with patch("lists.views.get_ingest_publisher", return_value=_Capture(captured)):
+            resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": "caller-key-123"})
+        self.assertEqual(resp.status_code, 202)
+        self.assertEqual(resp.json()["event_id"], "caller-key-123")
+        self.assertEqual(captured[0].event_id, "caller-key-123")
+
+    def test_a_minted_ulid_is_used_when_none_supplied(self):
+        captured: list = []
+        with patch("lists.views.get_ingest_publisher", return_value=_Capture(captured)):
+            resp = self._ingest({"rows": [{"domain": "acme.com"}]})
+        minted = resp.json()["event_id"]
+        self.assertEqual(len(minted), 26)  # a ULID
+        self.assertEqual(captured[0].event_id, minted)
+
+    def test_a_blank_event_id_is_rejected_400(self):
+        # A present-but-empty key is a client bug, not a request to mint.
+        resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": ""})
+        self.assertEqual(resp.status_code, 400)
+
     def test_interim_publisher_does_not_append_rows_yet(self):
         # Honest about async: accepted, but the sheet is unchanged until the
         # worker consumes the bus (a follow-up).

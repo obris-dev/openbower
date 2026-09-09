@@ -46,6 +46,7 @@ from .serializers import (
     ColumnRefillRequest,
     ColumnRenameRequest,
     FolderRequest,
+    IngestRequest,
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
@@ -217,11 +218,14 @@ class ListIngestView(_ScopedView):
 
     def post(self, request: Request, id: str) -> Response:
         target_list = self._list_or_404(id)
-        serializer = RowsAddRequest(data=request.data)
+        serializer = IngestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         rows = serializer.validated_data["rows"]
+        # The caller's idempotency key if they sent one, else a fresh ULID.
+        # Carried through the bus so a re-delivery dedupes to one append once
+        # the durable backend enforces it (the interim publisher only logs).
         event = IngestEvent(
-            event_id=str(ulid.ulid()),
+            event_id=serializer.validated_data.get("event_id") or str(ulid.ulid()),
             list_id=str(target_list.id),
             account_id=self.request.user.account_id,
             user_id=self.request.user.id,

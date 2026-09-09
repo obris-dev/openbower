@@ -14,9 +14,11 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class IngestEvent:
-    # A ULID minted at accept time: returned to the caller as the receipt
-    # and carried through the bus so the eventual rows can be correlated
-    # back to this push (and, later, shown as pending in the sheet).
+    # The idempotency key: the caller's own event id if they sent one, else
+    # a ULID minted at accept time. Returned as the receipt and carried
+    # through the bus so a re-delivery dedupes to one append (once the
+    # durable backend enforces it) and the rows can be correlated back to
+    # this push (and, later, shown as pending in the sheet).
     event_id: str
     list_id: str
     account_id: str

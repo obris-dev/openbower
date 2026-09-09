@@ -23,6 +23,7 @@ from .constants import (
     COLUMN_KEY_MAX_LENGTH,
     COLUMN_LABEL_MAX_LENGTH,
     LABEL_MAX_LENGTH,
+    MAX_INGEST_EVENT_ID_LENGTH,
     MAX_LIST_COLUMNS,
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
@@ -73,6 +74,18 @@ class RowsAddRequest(serializers.Serializer):
         child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),
         min_length=1,
         max_length=MAX_ROWS_PER_ADD,
+    )
+
+
+class IngestRequest(RowsAddRequest):
+    """A webhook push: the same rows, plus an OPTIONAL caller-supplied
+    idempotency key. Absent -> the endpoint mints one; present -> used as
+    given (and, once the durable backend lands, deduped on). A present but
+    blank key is a client bug, so it is rejected rather than silently
+    minted over."""
+
+    event_id = serializers.CharField(
+        required=False, allow_blank=False, max_length=MAX_INGEST_EVENT_ID_LENGTH, trim_whitespace=True
     )
 
 
