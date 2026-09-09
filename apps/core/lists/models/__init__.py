@@ -4,5 +4,6 @@ from .fill_task import FillTask
 from .folder import Folder
 from .list import List
 from .list_row import ListRow
+from .processed_ingest import ProcessedIngestEvent
 
-__all__ = ["Fill", "FillCellState", "FillTask", "Folder", "List", "ListRow"]
+__all__ = ["Fill", "FillCellState", "FillTask", "Folder", "List", "ListRow", "ProcessedIngestEvent"]

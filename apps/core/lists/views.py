@@ -6,6 +6,7 @@ endpoint on purpose: exports build client-side from the rows pages."""
 
 from __future__ import annotations
 
+import logging
 from functools import cached_property
 
 import ulid
@@ -35,7 +36,7 @@ from .constants import (
     FillErrorCode,
     ListOrigin,
 )
-from .ingest import IngestEvent, get_ingest_publisher
+from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, List
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .serializers import (
@@ -59,6 +60,8 @@ from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
+
+logger = logging.getLogger(__name__)
 
 # Refusal codes that answer 409 (a conflict with live state: the same
 # request succeeds once the world changes, with nothing for the caller
@@ -232,7 +235,14 @@ class ListIngestView(_ScopedView):
             rows=rows,
             received_at=timezone.now(),
         )
-        get_ingest_publisher().publish(event)
+        try:
+            get_ingest_publisher().publish(event)
+        except IngestPublishError as e:
+            # The batch never reached the bus, so it was NOT accepted: 503
+            # (retryable), never a 202 that silently dropped it. Dedupe makes
+            # the caller's retry safe.
+            logger.warning("ingest publish failed for list %s: %s", event.list_id, e)
+            return Response({"error": "ingest_unavailable", "detail": "ingest bus unavailable; retry"}, status=503)
         return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
 
 

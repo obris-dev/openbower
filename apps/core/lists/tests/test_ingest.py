@@ -158,6 +158,17 @@ class IngestMachineTests(TestCase):
         resp = self._ingest({"rows": [{"domain": "x"}], "event_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
         self.assertEqual(resp.status_code, 400)
 
+    def test_a_publish_failure_is_503_not_a_dropped_202(self):
+        from lists.ingest import IngestPublishError
+
+        class _Boom:
+            def publish(self, event):
+                raise IngestPublishError("bus down")
+
+        with patch("lists.views.get_ingest_publisher", return_value=_Boom()):
+            resp = self._ingest({"rows": [{"domain": "acme.com"}]})
+        self.assertEqual(resp.status_code, 503)
+
 
 class IngestSessionTests(TestCase):
     def setUp(self) -> None:
