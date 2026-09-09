@@ -36,7 +36,7 @@ hot-reload without a rebuild.
 | worker  | `manage.py fill_worker --kinds normal`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
 | worker-test | the same binary serving only test-kind fills (the bench's one-row diagnostics), so bench latency never queues behind a wide fill | `make logs-worker` |
 | cron    | supercronic over `apps/core/crontab`: scheduled maintenance, today the hourly purge of test fills older than a day | `make logs-cron` |
-| web     | the Next.js apps: the product app on :3003, the marketing site on :3005 | `make logs-web` |
+| web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `make logs-web` |
 
 `make stop` halts the stack in place and `make up` resumes it;
 `make down` removes the containers; the database and the web
