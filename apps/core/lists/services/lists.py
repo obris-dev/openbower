@@ -165,13 +165,16 @@ class ListService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: List, rows: list[dict[str, str]]) -> int:
+    def add_rows(self, target: List, rows: list[dict[str, str]]) -> list[ListRow]:
         """Append rows (each a data dict keyed by column keys). Positions
         are dense and 1-based; the count ceiling AND the cell clamp live
         here so every entry path (import, snapshot, manual) hits one
-        writer's rules (authored values clamp, never reject)."""
+        writer's rules (authored values clamp, never reject). Returns the
+        created rows (WITH ids, a ULID assigned before insert): a caller
+        that only wants a count takes len(), and the push path needs the
+        ids to enqueue autofill against them."""
         if not rows:
-            return 0
+            return []
         rows = [{key: _clamp_cell(key, value, where="add_rows") for key, value in data.items()} for data in rows]
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
@@ -191,7 +194,7 @@ class ListService:
             ListRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
-        return len(created)
+        return created
 
     def write_cells(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
         """THE cell writer for machine answers: write-if-blank per key,

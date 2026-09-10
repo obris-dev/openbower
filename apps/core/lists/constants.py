@@ -317,6 +317,9 @@ RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
 # The worker's idle heartbeat (binary): how long it sleeps when no fill
 # has claimable work before scanning again.
 FILL_WORKER_IDLE_SECONDS = 4
+# The autofill worker's idle heartbeat (binary): how long it sleeps when
+# the automatic queue is empty before scanning again.
+AUTOFILL_WORKER_IDLE_SECONDS = 4
 # A parked task's backoff base (binary): multiplied by the attempt so
 # a provider under pressure is asked less often each time, and long enough
 # that a retry never lands inside the same rate window it just hit.

@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-cron logs-web sweep local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -141,6 +141,9 @@ logs-worker: ## Tail both fill workers' logs
 
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
 	$(COMPOSE) logs -f ingest-worker
+
+logs-autofill: ## Tail the autofill worker's logs (run pushed rows' AI columns)
+	$(COMPOSE) logs -f autofill-worker
 
 logs-cron: ## Tail the maintenance cron's logs
 	$(COMPOSE) logs -f cron

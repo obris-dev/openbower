@@ -195,7 +195,7 @@ class ListRowsView(_ScopedView):
         serializer = RowsAddRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            added = self.lists.add_rows(target_list, serializer.validated_data["rows"])
+            added = len(self.lists.add_rows(target_list, serializer.validated_data["rows"]))
         except ListsFull as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:

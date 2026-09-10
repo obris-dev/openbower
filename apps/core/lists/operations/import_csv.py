@@ -166,7 +166,7 @@ class ImportCsvOperation:
         columns, rows, skipped = parse_csv(self.raw)
         service = ListService(account_id=self.account_id, user_id=self.user_id)
         target = service.create(label=self.label, columns=columns, origin=ListOrigin.CSV)
-        added = service.add_rows(target, rows)
+        added = len(service.add_rows(target, rows))
         target.refresh_from_db()
         logger.info("csv import: list=%s rows=%d skipped=%d", target.id, added, skipped)
         return ImportStats(target=target, rows=added, skipped=skipped)

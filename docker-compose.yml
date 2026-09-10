@@ -1,7 +1,7 @@
 # The full local stack for the open app: db, the Django api, the two
-# fill workers (normal and test), the maintenance cron, and the web
-# dev servers. `make up` runs it; the containers
-# bind-mount the checkout, so edits hot-reload without a rebuild.
+# fill workers (normal and test), the ingest and autofill workers, the
+# maintenance cron, and the web dev servers. `make up` runs it; the
+# containers bind-mount the checkout, so edits hot-reload without a rebuild.
 #
 # The project name is PINNED so every checkout of this repo (a worktree,
 # a renamed clone) resolves to ONE project instead of a rival stack whose
@@ -306,6 +306,35 @@ services:
       test:
         - CMD-SHELL
         - "test $(( $(date +%s) - $(stat -c %Y /tmp/ingest_worker.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # Drains the automatic path: the ingest worker enqueues a null-run
+  # FillTask per pushed row, this worker runs each row's AI columns and
+  # lands them. A plain DB queue (no bus), so it depends only on
+  # core-setup. No restart policy (crash-is-a-signal, matching the fill
+  # workers); the loop idles-and-retries a DatabaseError, and the poll
+  # wakes every few seconds so SIGTERM stops it promptly (default grace).
+  autofill-worker:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py autofill_worker
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the loop touches /tmp/autofill_worker.heartbeat each pass,
+    # so a marker older than 30s means it WEDGED (not merely idle on an
+    # empty queue, which still loops). Compose only SURFACES this; acting
+    # on it is the deploy's job, exactly as for the ingest worker.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/autofill_worker.heartbeat 2>/dev/null || echo 0) )) -lt 30"
       interval: 10s
       timeout: 5s
       retries: 3

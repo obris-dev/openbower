@@ -104,6 +104,42 @@ class FillQueueService:
             task.attempts += 1
         return ClaimedBatch(fill=fill, tasks=tasks)
 
+    def _claimable_autofill(self, now: datetime.datetime):
+        """The automatic path's claimables: QUEUED null-run tasks (no
+        Fill), same lease-open + due rules as _claimable but not scoped
+        to a fill."""
+        lease_open = models.Q(leased_at__isnull=True) | models.Q(leased_at__lt=self._stale_before(now))
+        due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
+        return FillTask.objects.filter(lease_open & due, fill_run_id__isnull=True, status=FillTaskStatus.QUEUED)
+
+    def claim_autofill_batch(self, *, free_slots: int) -> list[FillTask]:
+        """Claim up to min(FILL_CLAIM_BATCH, free_slots) null-run tasks
+        in one short transaction, OLDEST FIRST (autofill tasks carry no
+        sheet position, so id is their arrival order). No Fill to flip:
+        an autofill task belongs to no run. Otherwise identical to
+        claim_batch: skip_locked, the lease stamp, attempts++ at claim."""
+        limit = max(0, min(FILL_CLAIM_BATCH, free_slots))
+        if limit == 0:
+            return []
+        now = timezone.now()
+        with transaction.atomic():
+            tasks = list(
+                self._claimable_autofill(now).defer("result").order_by("id").select_for_update(skip_locked=True)[:limit]
+            )
+            ids = [task.id for task in tasks]
+            if ids:
+                FillTask.objects.filter(id__in=ids).update(
+                    leased_at=now,
+                    leased_by=self.worker_id,
+                    attempts=models.F("attempts") + 1,
+                    not_before=None,
+                )
+        for task in tasks:
+            task.leased_at = now
+            task.leased_by = self.worker_id
+            task.attempts += 1
+        return tasks
+
     @staticmethod
     def exhausted(task: FillTask) -> bool:
         """Whether this claim is one too many. Read AFTER the claim
@@ -172,6 +208,26 @@ class FillQueueService:
                 status=FillTaskStatus.QUEUED,
             ).update(
                 status=FillTaskStatus.ROW_MISSING,
+                result={},
+                leased_at=None,
+                leased_by="",
+            )
+            == 1
+        )
+
+    def mark_list_missing(self, task: FillTask) -> bool:
+        """Close an autofill task whose LIST is gone (deleted after the
+        row was pushed): terminal, nothing to diagnose. A fill-backed
+        task never reaches this (its Fill was swept with the list); it
+        is the autofill worker's answer to an orphaned task instead of a
+        delete-cascade off the list. Same CAS as the other terminals."""
+        return (
+            FillTask.objects.filter(
+                id=task.id,
+                leased_by=self.worker_id,
+                status=FillTaskStatus.QUEUED,
+            ).update(
+                status=FillTaskStatus.LIST_MISSING,
                 result={},
                 leased_at=None,
                 leased_by="",
