@@ -315,7 +315,7 @@ class LookalikeRunSaveListView(ScopedView):
                     # on that staying true.
                     if normalize_domain(item.company.domain) not in excluded
                 ]
-                added += service.add_rows(target, rows)
+                added += len(service.add_rows(target, rows))
                 # The advance guard the client export also carries: a
                 # stuck cursor must not walk forever.
                 if result.next_cursor == cursor:

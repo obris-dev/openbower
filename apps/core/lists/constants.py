@@ -318,3 +318,11 @@ FILL_RETRY_BACKOFF_SECONDS = 32
 # parked on slow searches) never reads as an unreporting worker
 # (terminal rows also stamp; this covers the gaps between them).
 FILL_HEARTBEAT_REFRESH_SECONDS = 64
+
+# How many autofill tasks the worker pulls per pass (binary). A bound
+# on the batch, not on throughput: the loop takes the next batch as
+# soon as it drains this one.
+AUTOFILL_CLAIM_BATCH = 128
+# The autofill worker's idle sleep (binary): how long it waits when the
+# queue is empty before scanning again.
+AUTOFILL_WORKER_IDLE_SECONDS = 4

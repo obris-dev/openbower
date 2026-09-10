@@ -15,7 +15,7 @@ from agents.services import AgentService
 from openbower_schema.cell_types import CellTypeMismatch, validate_cell
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
-from ..models import Fill, FillTask, Folder, List, ListRow
+from ..models import AutofillTask, Fill, FillTask, Folder, List, ListRow
 from . import cell_truth
 
 logger = logging.getLogger(__name__)
@@ -165,13 +165,16 @@ class ListService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: List, rows: list[dict[str, str]]) -> int:
+    def add_rows(self, target: List, rows: list[dict[str, str]]) -> list[ListRow]:
         """Append rows (each a data dict keyed by column keys). Positions
         are dense and 1-based; the count ceiling AND the cell clamp live
         here so every entry path (import, snapshot, manual) hits one
-        writer's rules (authored values clamp, never reject)."""
+        writer's rules (authored values clamp, never reject). Returns the
+        created rows (WITH ids, since the pk is a ULID assigned before
+        insert): a caller that only wants a count takes len(), and the
+        push path needs the ids to enqueue autofill against them."""
         if not rows:
-            return 0
+            return []
         rows = [{key: _clamp_cell(key, value, where="add_rows") for key, value in data.items()} for data in rows]
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
@@ -191,7 +194,7 @@ class ListService:
             ListRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
-        return len(created)
+        return created
 
     def write_cells(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
         """THE cell writer for machine answers: write-if-blank per key,
@@ -314,5 +317,9 @@ class ListService:
                 [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
             )
             cell_truth.purge_list(str(target.id))
+            # The autofill queue is list-keyed, so a deleted list takes
+            # its pending tasks with it (no cascades): a task left behind
+            # would point the worker at a row that no longer exists.
+            AutofillTask.objects.filter(list_id=str(target.id)).delete()
             fills.delete()
             List.objects.filter(id=target.id, account_id=self.account_id).delete()

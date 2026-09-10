@@ -18,7 +18,7 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import transaction
 
-from ..models import ProcessedIngestEvent
+from ..models import AutofillTask, ProcessedIngestEvent
 from ..services.lists import ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
@@ -56,16 +56,32 @@ class AppendResult(NamedTuple):
 
 
 def _append_rows(event: IngestEvent) -> AppendResult:
-    """The side effect: append the pushed rows to the sheet, owning its own
-    terminal-error handling (a deleted or full list is a drop, reported for
-    the caller to log). Only transient failures (a DatabaseError) raise."""
+    """The side effect: append the pushed rows to the sheet AND enqueue an
+    autofill task per appended row, owning its own terminal-error handling
+    (a deleted or full list is a drop, reported for the caller to log).
+    Only transient failures (a DatabaseError) raise.
+
+    The enqueue rides the caller's transaction (handle_ingest_event's
+    atomic), so a row and its autofill work commit together or not at all:
+    a row can never land visible with no work queued to fill it."""
     lists = ListService(account_id=event.account_id, user_id=event.user_id)
     try:
         target = lists.get(event.list_id)
-        added = lists.add_rows(target, event.rows)
+        created = lists.add_rows(target, event.rows)
     except (ListNotFound, ListsFull) as e:
         return AppendResult(applied=False, reason=str(e))
-    return AppendResult(applied=True, added=added)
+    AutofillTask.objects.bulk_create(
+        [
+            AutofillTask(
+                account_id=event.account_id,
+                user_id=event.user_id,
+                list_id=event.list_id,
+                row_id=str(row.id),
+            )
+            for row in created
+        ]
+    )
+    return AppendResult(applied=True, added=len(created))
 
 
 def handle_ingest_event(event: IngestEvent) -> str:
