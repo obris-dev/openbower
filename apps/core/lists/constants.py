@@ -199,12 +199,20 @@ class FillTaskStatus(StrEnum):
     ROW_MISSING is the one task outcome that has no cell to carry it:
     the row was gone when the task came up, so there is nothing to
     diagnose and nothing a resume could owe (unlike ABANDONED, which a
-    resume re-targets). The fill goes on without it."""
+    resume re-targets). The fill goes on without it.
+
+    LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
+    path: the whole list was gone when the task came up (deleted after
+    the row was pushed), so the task settles terminally with nothing to
+    diagnose. A fill-backed task never sees it (its Fill was swept with
+    the list); it is the autofill worker's way to retire an orphaned
+    task instead of a delete-cascade off the list."""
 
     QUEUED = "queued"
     DONE = "done"
     ABANDONED = "abandoned"
     ROW_MISSING = "row_missing"
+    LIST_MISSING = "list_missing"
 
 
 class FillKind(StrEnum):

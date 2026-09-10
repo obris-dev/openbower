@@ -20,6 +20,11 @@ class FillTask(AccountScopedModel):
     only honest answer to "what did this still owe", which a queue
     holding only what a planner had reached could not give.
 
+    A task with NO fill run (`fill_run_id` NULL) is the automatic path
+    (autofill): the same queue and the same worker, minus the consent a
+    Fill records. It has no Fill to read its list, user, or agent off,
+    so it carries its own `agent_id` and resolves the rest from its row.
+
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on FillCellState. No word appears in
     both vocabularies, which is what keeps them from reading as copies
@@ -33,8 +38,17 @@ class FillTask(AccountScopedModel):
     id). Carrying the account makes an unscoped query a thing you have
     to write on purpose."""
 
-    fill_run_id = models.CharField(_("fill run id"), max_length=26)
+    # NULL on the automatic path (autofill): a task with no fill run has
+    # no Fill to read its list, user, or agent off, so it is
+    # self-describing (it carries `agent_id`; list and user resolve from
+    # the row). A fill-backed task sets this to its Fill's id.
+    fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
     row_id = models.CharField(_("row id"), max_length=26)
+    # The agent whose column set this task runs, in ONE run (an agent
+    # produces all its outputs together). Set on the automatic path
+    # (autofill), which has no Fill to read it from; NULL on a
+    # fill-backed task, which reads its agent off the Fill.
+    agent_id = models.CharField(_("agent id"), max_length=26, null=True, blank=True)
     # WHERE this task's row lives, by kind. NORMAL: the row's sheet
     # position, 1-based and snapshot-coherent (positions are
     # append-only), so claims ordered by it march TOP TO BOTTOM down
@@ -81,8 +95,18 @@ class FillTask(AccountScopedModel):
         verbose_name_plural = _("fill tasks")
         constraints = [
             # The idempotency key: enqueueing the same row twice is a
-            # no-op. Also the row drawer's lookup.
+            # no-op. Also the row drawer's lookup. NULL fill_run_ids are
+            # distinct in SQL, so this only binds fill-backed tasks; the
+            # automatic path is deduped by its own key below.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="fill_task_fill_row_uniq"),
+            # The automatic path's idempotency: one autofill task per row
+            # per agent (one run fills that agent's whole column set), so
+            # re-enqueueing a row's autofill is a no-op.
+            models.UniqueConstraint(
+                fields=["row_id", "agent_id"],
+                condition=models.Q(fill_run_id__isnull=True),
+                name="fill_task_autofill_uniq",
+            ),
         ]
         indexes = [
             # The claim scan, and the completion probe. PARTIAL on
