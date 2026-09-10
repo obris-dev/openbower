@@ -27,16 +27,29 @@ _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
 _UPSERT_FIELDS = ["state", "fill_run_id", "config_fingerprint", "tools", "updated_at"]
 
 
-def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools: dict[str, str]) -> None:
+def write(
+    *,
+    account_id: str,
+    list_id: str,
+    row_id: str,
+    fill_run_id: str | None,
+    config_fingerprint: str,
+    states: dict[str, StoredCellState],
+    tools: dict[str, str],
+) -> None:
     """One row's cell states, written inside the terminal transaction
     that also writes the sheet row and closes the task.
+
+    Takes the identity pieces, not a Fill: the fill-backed caller passes
+    its Fill's, and the automatic path (autofill) passes the task's, with
+    `fill_run_id` NULL (an autofilled cell belongs to no run).
 
     Per COLUMN, because a run answers outputs independently: a run that
     answered one output of three settles that column FILLED and leaves
     the other two carrying their own cause, so an unanswered column
     stays targetable instead of reading as answered.
 
-    Every column the fill owns gets a record, including the answered
+    Every column the run owns gets a record, including the answered
     ones. That is what keeps the per-column counts an indexed read
     rather than a scan of the sheet, and it is why absence means
     NEVER ATTEMPTED and nothing else. `tools` is the run's per-tool
@@ -47,13 +60,13 @@ def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools:
     FillCellState.objects.bulk_create(
         [
             FillCellState(
-                account_id=fill.account_id,
-                list_id=fill.list_id,
+                account_id=account_id,
+                list_id=list_id,
                 row_id=row_id,
                 column_key=column_key,
                 state=state,
-                fill_run_id=str(fill.id),
-                config_fingerprint=fill.config_fingerprint,
+                fill_run_id=fill_run_id,
+                config_fingerprint=config_fingerprint,
                 tools=tools,
             )
             for column_key, state in states.items()

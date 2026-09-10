@@ -76,7 +76,15 @@ def settle(
             )
         landed = queue.complete_task(task, result={"tools": tools or {}})
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
-        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
+        cell_truth.write(
+            account_id=fill.account_id,
+            list_id=fill.list_id,
+            row_id=row_id,
+            fill_run_id=str(fill.id),
+            config_fingerprint=fill.config_fingerprint,
+            states=states,
+            tools=tools or {},
+        )
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:

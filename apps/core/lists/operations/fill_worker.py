@@ -42,7 +42,7 @@ from ..models import Fill, FillTask, List, ListRow
 from ..services import fill_progress
 from ..services.cell_run import run_cell
 from ..services.fill_queue import FillQueueService
-from ..services.landing import Landed, land_row
+from ..services.landing import Landed, LandingContext, land_row
 from ..services.lists import ListNotFound, RowNotFound
 
 logger = logging.getLogger(__name__)
@@ -627,7 +627,9 @@ class FillWorkerOperation:
             if self.queue.complete_task(task, run.model_dump()):
                 state.row_landed_on_task(was_parked=task.parked)
             return
-        landed = land_row(state.fill, task.row_id, run, close=partial(self.queue.complete_task, task))
+        landed = land_row(
+            LandingContext.from_fill(state.fill), task.row_id, run, close=partial(self.queue.complete_task, task)
+        )
         state.row_given_up(task, landed)
 
     def _run_row(self, fill: Fill, state: FillState, task: FillTask) -> None:
@@ -746,7 +748,9 @@ class FillWorkerOperation:
         # The three terminal writes (value, cell truth, close) are ONE
         # landing (services/landing.py); a reclaimed lease lands nothing.
         try:
-            landed = land_row(fill, task.row_id, result, close=partial(self.queue.complete_task, task))
+            landed = land_row(
+                LandingContext.from_fill(fill), task.row_id, result, close=partial(self.queue.complete_task, task)
+            )
         except (ListNotFound, RowNotFound):
             # Same as the missing-row leg above: a user deletion
             # resolves cancelled, never failed.

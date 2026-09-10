@@ -32,6 +32,32 @@ from . import cell_truth
 from .lists import ListService
 
 
+class LandingContext(NamedTuple):
+    """Who a run lands for, without a Fill: the identity a row's writes
+    need. A fill-backed caller builds it from its Fill (`from_fill`); the
+    automatic path (autofill) builds it from the task plus the agent's
+    resolved column set, with `fill_run_id` NULL (the cell belongs to no
+    run)."""
+
+    account_id: str
+    user_id: str
+    list_id: str
+    column_keys: tuple[str, ...]
+    fill_run_id: str | None
+    config_fingerprint: str
+
+    @classmethod
+    def from_fill(cls, fill: Fill) -> LandingContext:
+        return cls(
+            account_id=fill.account_id,
+            user_id=fill.user_id,
+            list_id=fill.list_id,
+            column_keys=tuple(fill.column_keys),
+            fill_run_id=str(fill.id),
+            config_fingerprint=fill.config_fingerprint,
+        )
+
+
 class ClaimLost(Exception):
     """The task's close missed (the lease was reclaimed mid-run):
     raised inside the landing's transaction so everything staged
@@ -62,17 +88,17 @@ def _declined_cause(run: CellRunResult) -> StoredCellState:
     return StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
 
 
-def _unanswered(fill: Fill, declined: StoredCellState) -> dict[str, StoredCellState]:
-    """The starting state of every column the fill owns: UNANSWERED,
+def _unanswered(column_keys: tuple[str, ...], declined: StoredCellState) -> dict[str, StoredCellState]:
+    """The starting state of every column the run owns: UNANSWERED,
     carrying the run's declined cause. The sheet write then moves the
     columns it filled to FILLED and the ones it refused to
     TYPE_MISMATCH; the rest keep the cause, which is what keeps them
     targetable by Continue."""
-    return dict.fromkeys(fill.column_keys, declined)
+    return dict.fromkeys(column_keys, declined)
 
 
 def land_row(
-    fill: Fill,
+    ctx: LandingContext,
     row_id: str,
     run: CellRunResult,
     *,
@@ -94,15 +120,15 @@ def land_row(
     ListService's ListNotFound / RowNotFound as they are: a deleted
     sheet is the caller's story to resolve."""
     declined = _declined_cause(run)
-    states = _unanswered(fill, declined)
+    states = _unanswered(ctx.column_keys, declined)
     answered: set[str] = set()
     try:
         with transaction.atomic():
             if run.cells:
-                keys = set(fill.column_keys)
+                keys = set(ctx.column_keys)
                 mapped = {key: value for key, value in run.cells.items() if key in keys}
-                writer = lists or ListService(account_id=fill.account_id, user_id=fill.user_id)
-                written = writer.write_cells(fill.list_id, row_id, mapped)
+                writer = lists or ListService(account_id=ctx.account_id, user_id=ctx.user_id)
+                written = writer.write_cells(ctx.list_id, row_id, mapped)
                 answered = {*written.written, *written.occupied}
                 for column_key in answered:
                     states[column_key] = StoredCellState.FILLED
@@ -116,7 +142,15 @@ def land_row(
             # before any ledger write.
             if not close(run.model_dump()):
                 raise ClaimLost()
-            cell_truth.write(fill, row_id=row_id, states=states, tools=run.tools)
+            cell_truth.write(
+                account_id=ctx.account_id,
+                list_id=ctx.list_id,
+                row_id=row_id,
+                fill_run_id=ctx.fill_run_id,
+                config_fingerprint=ctx.config_fingerprint,
+                states=states,
+                tools=run.tools,
+            )
     except ClaimLost:
         return None
     return Landed(frozenset(answered), declined)

@@ -25,7 +25,7 @@ from ..models import Fill, FillCellState, FillTask
 from ..services import fill_progress
 from ..services.fill_queue import FillQueueService
 from ..services.fills import FillNotFound, FillService
-from ..services.landing import land_row
+from ..services.landing import LandingContext, land_row
 from ..services.lists import CellWriteResult
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
@@ -157,7 +157,13 @@ def land(queue, fill, task, *, state=None):
     else:
         run = CellRunResult(declined_cause=state)
     return (
-        land_row(fill, task.row_id, run, close=partial(queue.complete_task, task), lists=_SheetThatTakesEverything())
+        land_row(
+            LandingContext.from_fill(fill),
+            task.row_id,
+            run,
+            close=partial(queue.complete_task, task),
+            lists=_SheetThatTakesEverything(),
+        )
         is not None
     )
 
