@@ -216,7 +216,9 @@ class WorkerTestCase(TransactionTestCase):
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.assertEqual(rows[0].data["answer"], "found: acme.com")
         self.assertEqual(rows[1].data["answer"], "found: example.io")
-        self.assertEqual({t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}, {FillTaskStatus.DONE})
+        self.assertEqual(
+            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.DONE}
+        )
         # An answered cell carries a FILLED record beside its value:
         # that record is what makes the per-column count an indexed
         # read instead of a scan of the sheet.
@@ -245,7 +247,7 @@ class WorkerTestCase(TransactionTestCase):
         for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
             self.assertNotIn("answer", row.data)
         self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.UNVERIFIED})
-        for task in FillTask.objects.filter(fill_id=str(self.fill.id)):
+        for task in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
             self.assertEqual(
                 task.result["assessments"]["answer"],
                 {"confidence": 0.62, "reason": "no record states the parent", "dropped": "Acme Holdings"},
@@ -265,7 +267,7 @@ class WorkerTestCase(TransactionTestCase):
 
     def test_a_landed_answer_records_its_score_without_a_dropped_value(self) -> None:
         self.run_worker(answering_model(lambda prompt: "found"))
-        for outcome in FillTask.objects.filter(fill_id=str(self.fill.id)):
+        for outcome in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
             self.assertEqual(outcome.result["assessments"]["answer"]["confidence"], 0.95)
             # "" is the LANDED value on the typed judgement (the wire
             # shape is fixed; key-absence was the storage-era spelling).
@@ -278,7 +280,7 @@ class WorkerTestCase(TransactionTestCase):
         self.run_worker(throttling_model())
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.RUNNING)
-        parked = FillTask.objects.filter(fill_id=str(self.fill.id), status=FillTaskStatus.QUEUED)
+        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), status=FillTaskStatus.QUEUED)
         self.assertTrue(parked.exists())
         self.assertTrue(all(task.not_before is not None for task in parked.filter(attempts__gt=0)))
         self.assertFalse(FillCellState.objects.exists())
@@ -311,7 +313,7 @@ class WorkerTestCase(TransactionTestCase):
         # record a later resume reads, and diagnoses nothing: a parked
         # cell was never answered, so there is no verdict to write.
         self.assertEqual(
-            {t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}, {FillTaskStatus.ABANDONED}
+            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.ABANDONED}
         )
         self.assertFalse(FillCellState.objects.exists())
 
@@ -323,7 +325,9 @@ class WorkerTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
-        self.assertEqual({t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}, {FillTaskStatus.DONE})
+        self.assertEqual(
+            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.DONE}
+        )
 
     def test_cancelling_a_fill_releases_its_parked_rows(self) -> None:
         # The abandon sweep is the THIRD terminal writer. A parked task
@@ -335,7 +339,7 @@ class WorkerTestCase(TransactionTestCase):
         # precisely when they are.
         self.run_worker(throttling_model(), passes=1)
         self.fill.refresh_from_db()
-        parked = FillTask.objects.filter(fill_id=str(self.fill.id), parked=True).count()
+        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), parked=True).count()
         self.assertGreater(parked, 0)
         self.assertEqual(self.fill.transient, parked)
 
@@ -378,7 +382,7 @@ class WorkerTestCase(TransactionTestCase):
         for _ in range(FILL_ROW_ATTEMPTS):
             claimed = queue.claim_batch(fill, free_slots=1)
             queue.release_lease(claimed.tasks[0])
-        task = FillTask.objects.get(fill_id=str(fill.id))
+        task = FillTask.objects.get(fill_run_id=str(fill.id))
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS)
         self.assertFalse(task.parked)
 
@@ -432,8 +436,8 @@ class WorkerTestCase(TransactionTestCase):
         queue = FillQueueService(worker_id="probe")
         claimed = queue.claim_batch(fill, free_slots=1)
         queue.release_lease(claimed.tasks[0])
-        self.assertEqual(FillTask.objects.get(fill_id=str(fill.id)).attempts, 1)
-        self.assertIsNone(FillTask.objects.get(fill_id=str(fill.id)).not_before)
+        self.assertEqual(FillTask.objects.get(fill_run_id=str(fill.id)).attempts, 1)
+        self.assertIsNone(FillTask.objects.get(fill_run_id=str(fill.id)).not_before)
 
         # Now let the worker run it to a clean terminal write.
         self.run_worker(answering_model(lambda prompt: "answered"), passes=1)
@@ -460,7 +464,7 @@ class WorkerTestCase(TransactionTestCase):
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
-        task = FillTask.objects.get(fill_id=str(fill.id))
+        task = FillTask.objects.get(fill_run_id=str(fill.id))
         # Given up on at the cap, by the claim that read one attempt
         # too many. TRANSIENT, not model_error: attempts only climb
         # through parks and lost leases, so reaching the cap means the
@@ -506,7 +510,7 @@ class WorkerTestCase(TransactionTestCase):
         ):
             self.run_worker(FunctionModel(fn), passes=1)
             fill.refresh_from_db()
-            task = FillTask.objects.get(fill_id=str(fill.id))
+            task = FillTask.objects.get(fill_run_id=str(fill.id))
             self.assertEqual(fill.status, FillStatus.RUNNING)
             self.assertEqual(fill.transient, 1)
             self.assertTrue(task.parked)
@@ -550,7 +554,7 @@ class WorkerTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(self.fill), {"attempted": 1, "filled": 1})
-        statuses = {t.row_id: t.status for t in FillTask.objects.filter(fill_id=str(self.fill.id))}
+        statuses = {t.row_id: t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}
         self.assertEqual(statuses[str(gone.id)], FillTaskStatus.ROW_MISSING)
         self.assertEqual(set(statuses.values()), {FillTaskStatus.ROW_MISSING, FillTaskStatus.DONE})
         self.assertFalse(FillCellState.objects.filter(row_id=str(gone.id)).exists())
@@ -571,7 +575,7 @@ class WorkerTestCase(TransactionTestCase):
         # with every row terminal: the next pass must flip it
         # COMPLETE, never skip it forever.
         Fill.objects.filter(id=self.fill.id).update(status=FillStatus.RUNNING)
-        FillTask.objects.filter(fill_id=str(self.fill.id)).update(status=FillTaskStatus.DONE)
+        FillTask.objects.filter(fill_run_id=str(self.fill.id)).update(status=FillTaskStatus.DONE)
         self.run_worker(answering_model(lambda prompt: "unused"))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
@@ -699,7 +703,7 @@ class OccupiedAnswerTests(WorkerTestCase):
 
         self.run_worker(answering_model(lambda prompt: "what the model found"))
 
-        task = FillTask.objects.get(fill_id=str(self.fill.id), row_id=str(rows[0].id))
+        task = FillTask.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
         # The user's value stands, untouched.
         row = ListRow.objects.get(id=rows[0].id)
         self.assertEqual(row.data["answer"], "mine, typed by hand")
@@ -712,5 +716,5 @@ class OccupiedAnswerTests(WorkerTestCase):
         # The row's own value IS the record when the write lands; a
         # copy beside it would be two records of one fact.
         self.run_worker(answering_model(lambda prompt: "found"))
-        for task in FillTask.objects.filter(fill_id=str(self.fill.id)):
+        for task in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
             self.assertNotIn("occupied", task.result.get("assessments", {}).get("answer", {}))

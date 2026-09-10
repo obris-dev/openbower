@@ -30,11 +30,11 @@ class FillService:
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
 
-    def get(self, fill_id: str) -> Fill:
+    def get(self, fill_run_id: str) -> Fill:
         try:
-            return Fill.objects.get(id=fill_id, account_id=self.account_id)
+            return Fill.objects.get(id=fill_run_id, account_id=self.account_id)
         except Fill.DoesNotExist as e:
-            raise FillNotFound(fill_id) from e
+            raise FillNotFound(fill_run_id) from e
 
     def test_result(self, fill: Fill) -> CellRunResult | None:
         """A test run's stored result: its one task's record, read
@@ -47,7 +47,7 @@ class FillService:
         kind=normal (a normal fill's results live on the sheet)."""
         if fill.kind != FillKind.TEST:
             return None
-        task = FillTask.objects.filter(fill_id=str(fill.id)).order_by("position").first()
+        task = FillTask.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
         if task is None or task.status != FillTaskStatus.DONE or not task.result:
             return None
         return CellRunResult.model_validate(task.result)
@@ -74,7 +74,7 @@ class FillService:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
 
-    def cancel(self, fill_id: str) -> Fill:
+    def cancel(self, fill_run_id: str) -> Fill:
         """CAS from live states; the worker's per-row liveness check
         sees the flip between rows (in-flight spend is sunk cost). A
         fill already terminal cancels to a no-op, not an error: the
@@ -83,9 +83,9 @@ class FillService:
         # Account-scoped FIRST (a foreign id reads as not found), then
         # the SHARED transition, so the user's cancel and the worker's
         # cannot order their writes differently.
-        self.get(fill_id)
-        stop_fill(fill_id, FillStatus.CANCELLED)
-        return self.get(fill_id)
+        self.get(fill_run_id)
+        stop_fill(fill_run_id, FillStatus.CANCELLED)
+        return self.get(fill_run_id)
 
     def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, CellStateWire]]:
         """row id -> {column key: CellStateWire} for one page of rows.
@@ -134,8 +134,8 @@ class FillService:
                 continue
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         live = {
-            str(fill_id): [key for key in (keys or ()) if key in fill_keys]
-            for fill_id, keys in Fill.objects.filter(
+            str(fill_run_id): [key for key in (keys or ()) if key in fill_keys]
+            for fill_run_id, keys in Fill.objects.filter(
                 account_id=self.account_id,
                 list_id=str(target_list.id),
                 status__in=LIVE_FILL_STATUSES,
@@ -145,12 +145,12 @@ class FillService:
             return states
         queued = FillTask.objects.filter(
             account_id=self.account_id,
-            fill_id__in=list(live),
+            fill_run_id__in=list(live),
             row_id__in=row_ids,
             status=FillTaskStatus.QUEUED,
-        ).values_list("fill_id", "row_id")
-        for fill_id, row_id in queued:
-            for column_key in live[fill_id]:
+        ).values_list("fill_run_id", "row_id")
+        for fill_run_id, row_id in queued:
+            for column_key in live[fill_run_id]:
                 states.setdefault(row_id, {})[column_key] = CellStateWire(state=PENDING)
         return states
 
@@ -202,11 +202,11 @@ class FillService:
             column["key"]: (column.get("fill") or {}).get("current_fill_id", "") for column in fill_columns
         }
         runs_by_id = {
-            str(fill_id): (status, code, message)
-            for fill_id, status, code, message in Fill.objects.filter(
+            str(fill_run_id): (status, code, message)
+            for fill_run_id, status, code, message in Fill.objects.filter(
                 account_id=self.account_id,
                 list_id=str(target_list.id),
-                id__in=[fill_id for fill_id in current_by_key.values() if fill_id],
+                id__in=[fill_run_id for fill_run_id in current_by_key.values() if fill_run_id],
             ).values_list("id", "status", "error_code", "error_message")
         }
         summaries: list[ColumnFillSummary] = []

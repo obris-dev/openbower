@@ -135,7 +135,7 @@ class FillAdmissionService(AdmissionBase):
                 locked,
                 config=resolved,
                 agent_id=str(agent.id),
-                fill_id=str(fill.id),
+                fill_run_id=str(fill.id),
                 account_id=self.account_id,
             )
         return fill
@@ -282,7 +282,7 @@ class FillAdmissionService(AdmissionBase):
                 locked,
                 config=resolved,
                 agent_id=str(agent.id),
-                fill_id=str(fill.id),
+                fill_run_id=str(fill.id),
                 account_id=self.account_id,
                 owned=owned_keys(locked, str(agent.id)),
             )
@@ -347,7 +347,7 @@ class FillAdmissionService(AdmissionBase):
                 if consented > cap:
                     raise FreeSearchBudget(searches=MAX_TOOL_CALLS * consented)
                 tasks.append(
-                    FillTask(account_id=self.account_id, fill_id=str(fill.id), row_id=row_id, position=position)
+                    FillTask(account_id=self.account_id, fill_run_id=str(fill.id), row_id=row_id, position=position)
                 )
             # No ignore_conflicts: the fill id is minted just above, so
             # nothing else can hold a task under it and a duplicate

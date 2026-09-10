@@ -38,9 +38,9 @@ class _ScopedView(ScopedView):
     def test_admission(self) -> TestFillAdmission:
         return TestFillAdmission(account_id=self.request.user.account_id, user_id=self.request.user.id)
 
-    def _fill_or_404(self, fill_id: str) -> Fill:
+    def _fill_or_404(self, fill_run_id: str) -> Fill:
         try:
-            return self.fills.get(fill_id)
+            return self.fills.get(fill_run_id)
         except FillNotFound as e:
             raise NotFound("no run with that id") from e
 

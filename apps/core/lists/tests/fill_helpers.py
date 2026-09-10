@@ -34,7 +34,7 @@ def _claim(fill: Fill, row_id: str) -> FillTask:
     """Lease the row's task the way claim_batch does (attempt counted
     at claim included), so the terminal CAS, which filters on the
     claimant's own stamp, can land."""
-    task = FillTask.objects.get(fill_id=str(fill.id), row_id=row_id)
+    task = FillTask.objects.get(fill_run_id=str(fill.id), row_id=row_id)
     FillTask.objects.filter(id=task.id).update(
         leased_by=WORKER_ID, leased_at=timezone.now(), attempts=task.attempts + 1, not_before=None
     )
@@ -43,7 +43,7 @@ def _claim(fill: Fill, row_id: str) -> FillTask:
 
 
 def settle(
-    fill_id: str,
+    fill_run_id: str,
     row_id: str,
     cause: StoredCellState | None = None,
     causes: dict | None = None,
@@ -57,11 +57,11 @@ def settle(
     `tools` is the run's per-tool provider statuses (empty by default).
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
-    fill = Fill.objects.get(id=fill_id)
+    fill = Fill.objects.get(id=fill_run_id)
     queue = FillQueueService(worker_id=WORKER_ID)
     task = _claim(fill, row_id)
     if cause == StoredCellState.TRANSIENT:
-        assert queue.park_task(task, backoff_seconds=0, result={}), f"park missed for {fill_id}/{row_id}"
+        assert queue.park_task(task, backoff_seconds=0, result={}), f"park missed for {fill_run_id}/{row_id}"
         return
     per_column = causes if causes is not None else ({} if cause is None else cell_truth.uniform(fill, cause))
     states = {key: per_column.get(key, StoredCellState.FILLED) for key in fill.column_keys}
@@ -75,46 +75,48 @@ def settle(
                 fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
             )
         landed = queue.complete_task(task, result={"tools": tools or {}})
-        assert landed, f"seam write missed for {fill_id}/{row_id}"
+        assert landed, f"seam write missed for {fill_run_id}/{row_id}"
         cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
 
 
-def settle_all(fill_id: str, cause: StoredCellState | None = None) -> None:
+def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:
     """Every row the fill still owes, in sheet order."""
-    for row_id in queued_row_ids(fill_id):
-        settle(fill_id, row_id, cause)
+    for row_id in queued_row_ids(fill_run_id):
+        settle(fill_run_id, row_id, cause)
 
 
-def queued_row_ids(fill_id: str) -> list[str]:
+def queued_row_ids(fill_run_id: str) -> list[str]:
     """The rows still owed, in sheet order: the QUEUE, which is what
     the fill will actually run next."""
     return [
         str(row_id)
-        for row_id in FillTask.objects.filter(fill_id=fill_id, status=FillTaskStatus.QUEUED)
+        for row_id in FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.QUEUED)
         .order_by("position")
         .values_list("row_id", flat=True)
     ]
 
 
-def targeted(fill_id: str) -> set[str]:
+def targeted(fill_run_id: str) -> set[str]:
     """The row ids a fill targets, read from its QUEUE.
 
     The queue IS the consent record: one task per row the user agreed
     to, written at admission and never re-derived, so counting tasks is
     exactly what these assertions always meant."""
-    return {str(row_id) for row_id in FillTask.objects.filter(fill_id=fill_id).values_list("row_id", flat=True)}
+    return {str(row_id) for row_id in FillTask.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)}
 
 
-def targeted_positions(fill_id: str) -> list[int]:
+def targeted_positions(fill_run_id: str) -> list[int]:
     """Those rows' sheet positions, in sheet order."""
-    return list(FillTask.objects.filter(fill_id=fill_id).order_by("position").values_list("position", flat=True))
+    return list(
+        FillTask.objects.filter(fill_run_id=fill_run_id).order_by("position").values_list("position", flat=True)
+    )
 
 
-def targeted_pairs(fill_id: str) -> list[tuple[str, int]]:
+def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
     """(row id, position) for the rows a fill targets, in sheet order."""
     return [
         (str(row_id), position)
-        for row_id, position in FillTask.objects.filter(fill_id=fill_id)
+        for row_id, position in FillTask.objects.filter(fill_run_id=fill_run_id)
         .order_by("position")
         .values_list("row_id", "position")
     ]

@@ -302,7 +302,7 @@ class ListService:
             # copy of it is blank would outlive the list forever, and
             # the fills queryset that produced these ids is already
             # list-scoped under an account-scoped lock.
-            FillTask.objects.filter(fill_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
+            FillTask.objects.filter(fill_run_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
             # The columns' ephemeral agents die with the columns that
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,

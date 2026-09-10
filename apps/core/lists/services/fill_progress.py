@@ -28,7 +28,7 @@ from ..models import Fill, FillTask
 def live_fills(kinds: tuple[str, ...] = ()) -> list[Fill]:
     """Every live fill, oldest first; `kinds` narrows to the named
     operating modes (empty = all), the ONE isolation point the
-    two-worker topology rests on (the queue claims by fill_id, so a
+    two-worker topology rests on (the queue claims by fill_run_id, so a
     worker that never enumerates a kind never touches its tasks).
     A READ, not a claim: the
     task-level skip_locked claim is what arbitrates between
@@ -46,13 +46,13 @@ def live_fills(kinds: tuple[str, ...] = ()) -> list[Fill]:
     return list(qs.order_by("id"))
 
 
-def is_live(fill_id: str) -> bool:
+def is_live(fill_run_id: str) -> bool:
     """The worker's pre-task liveness check (cancel granularity is
     between tasks; in-flight spend is sunk cost, stated openly)."""
-    return Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).exists()
+    return Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists()
 
 
-def bump(fill_id: str, **deltas: int) -> None:
+def bump(fill_run_id: str, **deltas: int) -> None:
     """Per-task progress plus the heartbeat stamp: ONE unlocked
     UPDATE with F() expressions. Counters are integer columns
     precisely so 64 threads can increment them without meeting on
@@ -62,32 +62,32 @@ def bump(fill_id: str, **deltas: int) -> None:
 
     Delta keys: attempted, filled, blank, transient, row_seconds,
     search_wait_seconds."""
-    Fill.objects.filter(id=fill_id).update(
+    Fill.objects.filter(id=fill_run_id).update(
         heartbeat_at=timezone.now(),
         updated_at=timezone.now(),
         **{key: models.F(key) + delta for key, delta in deltas.items()},
     )
 
 
-def set_concurrency_point(fill_id: str, point: int) -> None:
+def set_concurrency_point(fill_run_id: str, point: int) -> None:
     """The AIMD gauge OVERWRITES (it is the operating point right
     now, not a sum), so it cannot ride the F() bump above."""
-    Fill.objects.filter(id=fill_id).update(concurrency_point=point, heartbeat_at=timezone.now())
+    Fill.objects.filter(id=fill_run_id).update(concurrency_point=point, heartbeat_at=timezone.now())
 
 
-def cancel(fill_id: str) -> bool:
+def cancel(fill_run_id: str) -> bool:
     """The worker's list-gone resolution: a user deletion reads as
     CANCELLED, never failed (failed is config-tier and carries an
     error the UI dresses as a failure story). Same transition as the
     user cancel; a fill already terminal stays put."""
-    return stop_fill(fill_id, FillStatus.CANCELLED)
+    return stop_fill(fill_run_id, FillStatus.CANCELLED)
 
 
-def fail(fill_id: str, *, code: str, message: str) -> bool:
+def fail(fill_run_id: str, *, code: str, message: str) -> bool:
     """The breaker path (config-tier: a dead or throttling provider
     fails the whole fill loudly). From live states only; a cancel
     that already landed stays cancelled."""
-    return stop_fill(fill_id, FillStatus.FAILED, code=code, message=message)
+    return stop_fill(fill_run_id, FillStatus.FAILED, code=code, message=message)
 
 
 def live_fill_count(account_id: str) -> int:
@@ -98,7 +98,7 @@ def live_fill_count(account_id: str) -> int:
     return Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).count()
 
 
-def try_finish(fill_id: str) -> bool:
+def try_finish(fill_run_id: str) -> bool:
     """THE completion rule, shared by the worker's drain and its
     per-row landings, so the two cannot disagree about when a fill is
     done: a fill flips COMPLETE when no QUEUED task remains.
@@ -111,17 +111,17 @@ def try_finish(fill_id: str) -> bool:
     Module level rather than a queue method because it reads no worker
     identity: a fill is finished or it is not, whoever is asking."""
     with transaction.atomic():
-        fill = Fill.objects.select_for_update().filter(id=fill_id, status__in=LIVE_FILL_STATUSES).first()
+        fill = Fill.objects.select_for_update().filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).first()
         if fill is None:
             return False
-        if FillTask.objects.filter(fill_id=fill_id, status=FillTaskStatus.QUEUED).exists():
+        if FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.QUEUED).exists():
             return False
         fill.status = FillStatus.COMPLETE
         fill.save(update_fields=["status", "updated_at"])
         return True
 
 
-def stop_fill(fill_id: str, status: FillStatus, *, code: str = "", message: str = "") -> bool:
+def stop_fill(fill_run_id: str, status: FillStatus, *, code: str = "", message: str = "") -> bool:
     """THE terminal transition, shared by the worker's paths and the
     user's cancel, so the two cannot order their writes differently.
 
@@ -137,13 +137,13 @@ def stop_fill(fill_id: str, status: FillStatus, *, code: str = "", message: str 
     state to sweep back.
     """
     with transaction.atomic():
-        if not Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).exists():
+        if not Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists():
             return False
-        released = _abandon_queued(fill_id)
+        released = _abandon_queued(fill_run_id)
         # The released rows ride the SAME update as the status, so the
         # queue-then-fill lock order the docstring above depends on is
         # one write per table, not two.
-        flipped = Fill.objects.filter(id=fill_id, status__in=LIVE_FILL_STATUSES).update(
+        flipped = Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).update(
             status=status,
             error_code=code,
             error_message=message,
@@ -153,7 +153,7 @@ def stop_fill(fill_id: str, status: FillStatus, *, code: str = "", message: str 
     return flipped == 1
 
 
-def _abandon_queued(fill_id: str) -> int:
+def _abandon_queued(fill_run_id: str) -> int:
     """Consent granted and not spent, recorded rather than deleted: it
     is the only honest answer to what a stopped fill still owed, and a
     later resume reads it instead of reconstructing it.
@@ -177,7 +177,7 @@ def _abandon_queued(fill_id: str) -> int:
     the ids BEFORE the sweep would not hold: a row parked between the
     read and the sweep would be abandoned without ever being
     released."""
-    FillTask.objects.filter(fill_id=fill_id, status=FillTaskStatus.QUEUED).update(
+    FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.QUEUED).update(
         status=FillTaskStatus.ABANDONED, leased_at=None, leased_by="", updated_at=timezone.now()
     )
-    return FillTask.objects.filter(fill_id=fill_id, status=FillTaskStatus.ABANDONED, parked=True).count()
+    return FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.ABANDONED, parked=True).count()

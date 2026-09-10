@@ -24,7 +24,7 @@ from ..constants import FILL_WRITE_BATCH, StoredCellState
 from ..models import Fill, FillCellState
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
-_UPSERT_FIELDS = ["state", "fill_id", "config_fingerprint", "tools", "updated_at"]
+_UPSERT_FIELDS = ["state", "fill_run_id", "config_fingerprint", "tools", "updated_at"]
 
 
 def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools: dict[str, str]) -> None:
@@ -52,7 +52,7 @@ def write(fill: Fill, *, row_id: str, states: dict[str, StoredCellState], tools:
                 row_id=row_id,
                 column_key=column_key,
                 state=state,
-                fill_id=str(fill.id),
+                fill_run_id=str(fill.id),
                 config_fingerprint=fill.config_fingerprint,
                 tools=tools,
             )

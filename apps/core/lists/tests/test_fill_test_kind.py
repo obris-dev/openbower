@@ -68,7 +68,7 @@ def _test_fill() -> Fill:
         confirmed_row_count=1,
         status=FillStatus.RUNNING,
     )
-    FillTask.objects.create(account_id=ACCOUNT, fill_id=str(fill.id), row_id="", position=0)
+    FillTask.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id="", position=0)
     return fill
 
 
@@ -127,8 +127,8 @@ class TestAdmissionTests(TestCase):
         self.assertEqual(fill.row_data, [{"company": "acme.com"}])
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertTrue(fill.config_fingerprint)
-        task = FillTask.objects.get(fill_id=str(fill.id))
-        # A MINTED row id, never "": the queue's (fill_id, row_id)
+        task = FillTask.objects.get(fill_run_id=str(fill.id))
+        # A MINTED row id, never "": the queue's (fill_run_id, row_id)
         # uniqueness would cap a blank-id lane at one task, against the
         # row_data list's grow-to-N shape. FAILS if the mint reverts.
         from openbower_kernel.fields import is_valid_ulid
@@ -141,7 +141,7 @@ class TestAdmissionTests(TestCase):
         second = self._admit()
         first.refresh_from_db()
         self.assertEqual(first.status, FillStatus.CANCELLED)
-        self.assertEqual(FillTask.objects.get(fill_id=str(first.id)).status, FillTaskStatus.ABANDONED)
+        self.assertEqual(FillTask.objects.get(fill_run_id=str(first.id)).status, FillTaskStatus.ABANDONED)
         self.assertEqual(second.status, FillStatus.PENDING)
 
     def test_a_teammates_fresh_test_refuses_with_its_code(self):
@@ -171,7 +171,7 @@ class TestAdmissionTests(TestCase):
         from openbower_kernel.fields import min_ulid_at
 
         old_id = min_ulid_at(timezone.now() - timedelta(seconds=TEST_FILL_MAX_AGE_SECONDS * 2))
-        FillTask.objects.filter(fill_id=str(old.id)).update(fill_id=old_id)
+        FillTask.objects.filter(fill_run_id=str(old.id)).update(fill_run_id=old_id)
         Fill.objects.filter(id=str(old.id)).update(id=old_id)
         # An equally old NORMAL fill must survive: the sweep's kind
         # fence is the guard under test, and a count of exactly one
@@ -191,7 +191,7 @@ class TestAdmissionTests(TestCase):
         keeper = self._admit()
         self.assertEqual(SweepTestFillsOperation().run(), 1)
         self.assertFalse(Fill.objects.filter(id=old_id).exists())
-        self.assertFalse(FillTask.objects.filter(fill_id=old_id).exists())
+        self.assertFalse(FillTask.objects.filter(fill_run_id=old_id).exists())
         self.assertTrue(Fill.objects.filter(id=normal_id).exists())
         self.assertTrue(Fill.objects.filter(id=str(keeper.id)).exists())
 

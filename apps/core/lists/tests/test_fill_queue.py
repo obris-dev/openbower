@@ -46,7 +46,7 @@ def make_run(*, status: str = FillStatus.PENDING, rows: int = 3) -> Fill:
     # The queue is materialized at admission, so a fill under test has
     # its whole consented set of tasks from the start.
     for n in range(rows):
-        FillTask.objects.create(account_id=ACCOUNT, fill_id=str(fill.id), row_id=f"01ROW{n:021d}", position=n + 1)
+        FillTask.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id=f"01ROW{n:021d}", position=n + 1)
     return fill
 
 
@@ -204,7 +204,7 @@ class TerminalWriteTests(TestCase):
         self.assertTrue(self._complete(other, fill, reclaimed, state=StoredCellState.NO_EVIDENCE))
         cell = FillCellState.objects.get()
         self.assertEqual(
-            (cell.list_id, cell.row_id, cell.column_key, cell.state, cell.fill_id),
+            (cell.list_id, cell.row_id, cell.column_key, cell.state, cell.fill_run_id),
             (fill.list_id, task.row_id, "answer", StoredCellState.NO_EVIDENCE, str(fill.id)),
         )
 
@@ -217,7 +217,7 @@ class TerminalWriteTests(TestCase):
         self._complete(self.queue, fill, task, state=StoredCellState.NO_EVIDENCE)
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.NO_EVIDENCE)
         later = make_run(rows=1)
-        FillTask.objects.filter(fill_id=str(later.id)).update(row_id=task.row_id)
+        FillTask.objects.filter(fill_run_id=str(later.id)).update(row_id=task.row_id)
         second = self.queue.claim_batch(later, free_slots=1).tasks[0]
         self.assertTrue(self._complete(self.queue, later, second))
         self.assertEqual(FillCellState.objects.count(), 1)
@@ -315,7 +315,7 @@ class CompletionTests(TestCase):
         land(self.queue, fill, claimed)
         self.assertTrue(fill_progress.cancel(str(fill.id)))
         by_status = dict(
-            FillTask.objects.filter(fill_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))
+            FillTask.objects.filter(fill_run_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))
         )
         self.assertEqual(by_status, {FillTaskStatus.DONE: 1, FillTaskStatus.ABANDONED: 2})
         # ONE cell state, from the task that actually ran. The two the
