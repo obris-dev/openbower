@@ -17,5 +17,5 @@ urlpatterns = [
     api_path("<str:id>/columns/<str:key>/refill", views.ColumnRefillView.as_view(), name="lists_column_refill"),
     api_path("<str:id>/columns/<str:key>/prompt", views.ColumnPromptView.as_view(), name="lists_column_prompt"),
     api_path("<str:id>/fills", views.ListFillsView.as_view(), name="lists_fills"),
-    api_path("<str:id>/fills/<str:fill_id>/cancel", views.FillCancelView.as_view(), name="lists_fill_cancel"),
+    api_path("<str:id>/fills/<str:fill_run_id>/cancel", views.FillCancelView.as_view(), name="lists_fill_cancel"),
 ]

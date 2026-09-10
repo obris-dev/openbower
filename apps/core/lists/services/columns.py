@@ -232,12 +232,12 @@ class ColumnService:
             # together), so a live sibling is stopped too rather than
             # left writing into a column that no longer exists; the
             # sibling refills.
-            for fill_id in Fill.objects.filter(
+            for fill_run_id in Fill.objects.filter(
                 list_id=str(target_list.id),
                 status__in=LIVE_FILL_STATUSES,
                 column_keys__contains=[key],
             ).values_list("id", flat=True):
-                stop_fill(str(fill_id), FillStatus.CANCELLED)
+                stop_fill(str(fill_run_id), FillStatus.CANCELLED)
 
             cell_truth.purge_column(str(target_list.id), key)
             target_list.columns = columns

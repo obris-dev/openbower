@@ -71,12 +71,14 @@ class TestFillAdmission(AdmissionBase):
                 # lists tomorrow.
                 row_data=[row],
             )
-            # A MINTED id, not "": the queue's (fill_id, row_id)
+            # A MINTED id, not "": the queue's (fill_run_id, row_id)
             # uniqueness would cap a blank-id lane at one task forever,
             # and the row_data list is shaped to grow to N inline rows
             # without a backfill. Minting keeps the idempotency key
             # meaningful from the first row.
-            FillTask.objects.create(account_id=self.account_id, fill_id=str(fill.id), row_id=ulid.ulid(), position=0)
+            FillTask.objects.create(
+                account_id=self.account_id, fill_run_id=str(fill.id), row_id=ulid.ulid(), position=0
+            )
         return fill
 
     @staticmethod

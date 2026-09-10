@@ -34,14 +34,14 @@ class SweepTestFillsOperation:
         purged = 0
         while True:
             page = [
-                str(fill_id)
-                for fill_id in Fill.objects.filter(kind=FillKind.TEST, id__lt=cutoff)
+                str(fill_run_id)
+                for fill_run_id in Fill.objects.filter(kind=FillKind.TEST, id__lt=cutoff)
                 .order_by("id")
                 .values_list("id", flat=True)[:FILL_WRITE_BATCH]
             ]
             if not page:
                 return purged
             with transaction.atomic():
-                FillTask.objects.filter(fill_id__in=page).delete()
+                FillTask.objects.filter(fill_run_id__in=page).delete()
                 Fill.objects.filter(id__in=page).delete()
             purged += len(page)

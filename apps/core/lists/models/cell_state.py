@@ -43,7 +43,7 @@ class FillCellState(AccountScopedModel):
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
     # The fill that wrote it: the row drawer's link to that run's
     # FillTask.result, which holds what the model actually said.
-    fill_id = models.CharField(_("fill id"), max_length=26)
+    fill_run_id = models.CharField(_("fill run id"), max_length=26)
     config_fingerprint = models.CharField(
         _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
     )

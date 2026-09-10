@@ -231,7 +231,7 @@ class RefillTargets:
             str(row_id)
             for row_id in FillTask.objects.filter(
                 account_id=self.account_id,
-                fill_id=self.owed_by,
+                fill_run_id=self.owed_by,
                 status=FillTaskStatus.ABANDONED,
                 row_id__in=ids,
             ).values_list("row_id", flat=True)

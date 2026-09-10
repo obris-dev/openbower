@@ -437,17 +437,17 @@ class ListFillsView(_ScopedView):
 
 
 class FillCancelView(_ScopedView):
-    def post(self, request: Request, id: str, fill_id: str) -> Response:
+    def post(self, request: Request, id: str, fill_run_id: str) -> Response:
         target_list = self._list_or_404(id)
         try:
-            fill = self.fills.get(fill_id)
+            fill = self.fills.get(fill_run_id)
         except FillNotFound as e:
             raise NotFound("no fill with that id") from e
         # The route nests under a list; a fill of another sheet must not
         # be addressable through this one's URL.
         if fill.list_id != str(target_list.id):
             raise NotFound("no fill with that id")
-        return Response(fill_run_wire(self.fills.cancel(fill_id)))
+        return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
 
 
 def _column_prompt_wire(config: AgentConfig) -> dict:

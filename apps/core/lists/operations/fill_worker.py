@@ -455,9 +455,9 @@ class FillWorkerOperation:
         """Forget a fill the moment it leaves the live states. Rows of
         it still in flight keep running (their spend is sunk) and land
         through the CAS, which refuses a terminal fill's rows anyway."""
-        for fill_id in list(self._states):
-            if fill_id not in live_ids and not self._states[fill_id].in_flight:
-                del self._states[fill_id]
+        for fill_run_id in list(self._states):
+            if fill_run_id not in live_ids and not self._states[fill_run_id].in_flight:
+                del self._states[fill_run_id]
 
     def _free_slots(self) -> int:
         return MAX_FILL_CONCURRENCY - sum(len(s.in_flight) for s in self._states.values())
@@ -555,7 +555,7 @@ class FillWorkerOperation:
         rows = [row for state in self._states.values() for row in state.in_flight.values()]
         if rows:
             self.queue.renew_leases(rows)
-        for fill_id, state in self._states.items():
+        for fill_run_id, state in self._states.items():
             if not state.in_flight or time.monotonic() - state.last_beat < FILL_HEARTBEAT_REFRESH_SECONDS:
                 continue
             # The heartbeat for the UI's warning, and the SATURATION
@@ -565,7 +565,7 @@ class FillWorkerOperation:
             # the claims lag).
             logger.info(
                 "fill_worker: fill %s | %d/%d rows in flight | point %d of ceiling %d | %d fills live | %d threads",
-                fill_id,
+                fill_run_id,
                 len(state.in_flight),
                 state.controller.current(),
                 state.controller.current(),

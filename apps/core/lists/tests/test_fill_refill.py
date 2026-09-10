@@ -60,8 +60,10 @@ class RefillTestCase(TestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         return resp.json()
 
-    def cancel(self, fill_id: str) -> None:
-        resp = self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_id": fill_id}))
+    def cancel(self, fill_run_id: str) -> None:
+        resp = self.client.post(
+            reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id})
+        )
         self.assertEqual(resp.status_code, 200, resp.content)
 
     def refill(self, list_id: str = "", key: str = "answer", rows: int = 0):
@@ -280,9 +282,9 @@ class MultiColumnResumeTests(RefillTestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         return resp.json()
 
-    def _resume(self, fill_id: str, key: str):
+    def _resume(self, fill_run_id: str, key: str):
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": key})
-        return self.client.post(url, {"resume_fill": fill_id}, content_type="application/json")
+        return self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
 
     def test_continue_owes_an_abandoned_row_whose_first_column_is_answered(self) -> None:
         # The case the tray's first-column Continue used to drop: a row
@@ -335,9 +337,9 @@ class ResumeTests(RefillTestCase):
         # The stopped 1-row fill left exactly its one pending row.
         self.assertEqual(body["confirmed_row_count"], 1)
 
-    def refill_with_resume(self, fill_id: str):
+    def refill_with_resume(self, fill_run_id: str):
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
-        return self.client.post(url, {"resume_fill": fill_id}, content_type="application/json")
+        return self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
 
     def test_continue_refuses_after_a_prompt_edit(self) -> None:
         # The config a fill consented under is part of the consent:
@@ -453,10 +455,10 @@ class ResumeScopeTests(RefillTestCase):
     through its fill, which does. Resolving the named fill against THIS
     sheet is what scopes the read."""
 
-    def _refill_resuming(self, fill_id: str):
+    def _refill_resuming(self, fill_run_id: str):
         return self.client.post(
             reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}),
-            {"resume_fill": fill_id},
+            {"resume_fill": fill_run_id},
             content_type="application/json",
         )
 
@@ -643,11 +645,11 @@ class OutputDriftTests(RefillTestCase):
     output the new fill owns has to be a real column by the time it
     opens."""
 
-    def _agent_for(self, fill_id: str):
+    def _agent_for(self, fill_run_id: str):
         from agents.models import Agent
         from lists.models import Fill
 
-        return Agent.objects.get(id=Fill.objects.get(id=fill_id).agent_id)
+        return Agent.objects.get(id=Fill.objects.get(id=fill_run_id).agent_id)
 
     def test_an_output_added_since_the_last_fill_becomes_a_column(self):
         from agents.services import AgentService
@@ -699,7 +701,7 @@ class ChildAccountTests(RefillTestCase):
         account = TEST_IDENTITY["account_id"]
         fill = self.admit()
         settle_all(fill["id"], StoredCellState.NO_EVIDENCE)
-        outcomes = FillTask.objects.filter(fill_id=fill["id"])
+        outcomes = FillTask.objects.filter(fill_run_id=fill["id"])
         cells = FillCellState.objects.filter(list_id=str(self.sheet.id))
         self.assertTrue(outcomes.exists() and cells.exists())
         self.assertEqual({o.account_id for o in outcomes}, {account})

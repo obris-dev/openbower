@@ -33,7 +33,7 @@ class FillTask(AccountScopedModel):
     id). Carrying the account makes an unscoped query a thing you have
     to write on purpose."""
 
-    fill_id = models.CharField(_("fill id"), max_length=26)
+    fill_run_id = models.CharField(_("fill run id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
     # WHERE this task's row lives, by kind. NORMAL: the row's sheet
     # position, 1-based and snapshot-coherent (positions are
@@ -82,7 +82,7 @@ class FillTask(AccountScopedModel):
         constraints = [
             # The idempotency key: enqueueing the same row twice is a
             # no-op. Also the row drawer's lookup.
-            models.UniqueConstraint(fields=["fill_id", "row_id"], name="fill_task_fill_row_uniq"),
+            models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="fill_task_fill_row_uniq"),
         ]
         indexes = [
             # The claim scan, and the completion probe. PARTIAL on
@@ -90,11 +90,11 @@ class FillTask(AccountScopedModel):
             # 24,900 of 25,000 costs what claiming row 1 did, and
             # "is this fill done" is an empty-index check.
             models.Index(
-                fields=["fill_id", "position"],
+                fields=["fill_run_id", "position"],
                 name="fill_task_claim_idx",
                 condition=models.Q(status=FillTaskStatus.QUEUED),
             ),
         ]
 
     def __str__(self) -> str:
-        return f"{self.fill_id}/{self.row_id} ({self.status})"
+        return f"{self.fill_run_id}/{self.row_id} ({self.status})"

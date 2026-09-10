@@ -33,7 +33,7 @@ def claim_columns(
     *,
     config: AgentConfig,
     agent_id: str,
-    fill_id: str,
+    fill_run_id: str,
     account_id: str,
     owned: frozenset[str] = frozenset(),
 ) -> list[str]:
@@ -62,19 +62,19 @@ def claim_columns(
     # claimed columns record as current. One REQUIRED parameter,
     # because a default here would stamp current_fill_id="" (the
     # contract's "column predates the write") silently.
-    check_columns_free(target_list, column_keys=[output.key for output in config.outputs], opening=fill_id)
+    check_columns_free(target_list, column_keys=[output.key for output in config.outputs], opening=fill_run_id)
     column_keys = resolve_columns(target_list, config=config, owned=owned)
     # The account cap before the column arithmetic (an account at both
     # caps must hear fills_full, the refusal waiting fixes); both run
     # AGAIN here under the lock because the preview judged an unlocked
     # read, and this is the judgement that counts.
-    check_account_cap(account_id, opening=fill_id)
+    check_account_cap(account_id, opening=fill_run_id)
     check_column_cap(target_list, column_keys=column_keys)
     # No retype set and no occupancy probe: a column that exists
     # keeps the type it was created with, and resolution above has
     # already refused both an existing key we do not own and an
     # owned one whose output changed shape.
-    append_columns(target_list, column_keys=column_keys, config=config, agent_id=agent_id, fill_id=fill_id)
+    append_columns(target_list, column_keys=column_keys, config=config, agent_id=agent_id, fill_run_id=fill_run_id)
     return column_keys
 
 
@@ -227,7 +227,7 @@ def check_columns_free(target_list: List, *, column_keys: list[str], opening: st
 
 
 def append_columns(
-    target_list: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_id: str
+    target_list: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_run_id: str
 ) -> None:
     """THE one columns write of an admission: new columns append
     with the fill link and the output's type, an existing one gains
@@ -252,7 +252,7 @@ def append_columns(
     for column in columns:
         output = outputs_by_key.get(column["key"])
         if output is not None and column["key"] in column_keys:
-            column["fill"] = {"agent_id": agent_id, "current_fill_id": fill_id}
+            column["fill"] = {"agent_id": agent_id, "current_fill_id": fill_run_id}
     for key in column_keys:
         if key in existing:
             continue
@@ -266,7 +266,7 @@ def append_columns(
                 "key": key,
                 "label": output.label[:COLUMN_LABEL_MAX_LENGTH],
                 "type": output.type,
-                "fill": {"agent_id": agent_id, "current_fill_id": fill_id},
+                "fill": {"agent_id": agent_id, "current_fill_id": fill_run_id},
             }
         )
     target_list.columns = columns

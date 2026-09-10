@@ -45,7 +45,7 @@ class FillQueueService:
     def _stale_before(now: datetime.datetime) -> datetime.datetime:
         return now - datetime.timedelta(seconds=ROW_LEASE_STALE_SECONDS)
 
-    def _claimable(self, fill_id: str, now: datetime.datetime):
+    def _claimable(self, fill_run_id: str, now: datetime.datetime):
         """Tasks a claim may take: QUEUED, not freshly leased (a fresh
         lease is a running task; silence past the window means the
         claimant is dead), and DUE (a parked task backs off in TIME
@@ -57,7 +57,7 @@ class FillQueueService:
         instead, where one more claim turns it terminal."""
         lease_open = models.Q(leased_at__isnull=True) | models.Q(leased_at__lt=self._stale_before(now))
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
-        return FillTask.objects.filter(lease_open & due, fill_id=fill_id, status=FillTaskStatus.QUEUED)
+        return FillTask.objects.filter(lease_open & due, fill_run_id=fill_run_id, status=FillTaskStatus.QUEUED)
 
     def claim_batch(self, fill: Fill, *, free_slots: int) -> ClaimedBatch:
         """Claim up to min(FILL_CLAIM_BATCH, free_slots) tasks in one

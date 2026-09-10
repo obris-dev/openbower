@@ -62,14 +62,14 @@ class RetiredStateRemapTests(TestCase):
         )
         stale = FillTask.objects.create(
             account_id=account,
-            fill_id=str(fill.id),
+            fill_run_id=str(fill.id),
             row_id="01ROW" + "0" * 21,
             position=1,
             result={"blank_cause": "search_throttled", "declined_cause": "no_tools_door", "cells": {}},
         )
         clean = FillTask.objects.create(
             account_id=account,
-            fill_id=str(fill.id),
+            fill_run_id=str(fill.id),
             row_id="01ROW" + "1" * 21,
             position=2,
             result={"blank_cause": "no_evidence"},
