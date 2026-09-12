@@ -401,7 +401,7 @@ services:
   # poll wakes every second so SIGTERM stops it promptly (default grace).
   autofill-consumer:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic autofill
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
@@ -413,10 +413,11 @@ services:
     volumes: *core_volumes
     # Liveness: the consume loop touches the heartbeat each poll, but a
     # single claimed run BLOCKS it for up to the worst-case row time, so
-    # the window clears that bound (a tighter one would read a normal slow
-    # row as WEDGED, not merely idle on an empty bus, which still loops).
-    # A parity test holds it above cell_run_worst_case_seconds(). Compose
-    # only SURFACES this; acting on it is the deploy's job.
+    # the window clears that same bound the stop_grace below clears (a
+    # tighter one would read a normal slow row as WEDGED, not merely idle
+    # on an empty bus, which still loops). A parity test holds it above
+    # cell_run_worst_case_seconds(). Compose only SURFACES this; acting on
+    # it is the deploy's job.
     healthcheck:
       test:
         - CMD-SHELL
@@ -425,6 +426,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+    # An autofill run is a real metered row (a pushed row's AI columns), so
+    # a stop must finish the message in flight rather than SIGKILL it mid
+    # provider call (wasting the call AND burning one of the row's
+    # attempts), exactly like the manual consumer.
+    stop_grace_period: 2100s
 
   # The suite's cron: supercronic (pinned in the core Dockerfile; the
   # image ships no crond) running the schedule in apps/core/crontab.

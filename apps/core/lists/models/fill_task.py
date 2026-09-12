@@ -70,8 +70,8 @@ class FillTask(AccountScopedModel):
     # When a parked task becomes claimable again: real backoff, rather
     # than waiting out a lease the task never held.
     not_before = models.DateTimeField(_("not before"), null=True, blank=True)
-    # Whether a park has ever counted this task into its fill's
-    # `transient` gauge. STORED, because both proxies for it are wrong
+    # Whether a park has ever counted this task into its fill's derived
+    # TRANSIENT count. STORED, because both proxies for it are wrong
     # in opposite directions: `attempts` climbs at CLAIM, so a released
     # lease or a stale reclaim raises it with no park behind it, and
     # `not_before` is cleared by the next claim, so a task that parked
@@ -79,10 +79,10 @@ class FillTask(AccountScopedModel):
     # that goes negative, the other one that never comes back down.
     # Set once, never cleared: it means counted, not currently waiting.
     parked = models.BooleanField(_("parked"), default=False)
-    # The lease is a STAMP, never a held lock: the worker's supervising
-    # loop renews every claimed task in bulk, so silence past
-    # ROW_LEASE_STALE_SECONDS means the claimant is DEAD, not slow.
-    leased_at = models.DateTimeField(_("leased at"), null=True, blank=True)
+    # The claiming consumer's id, stamped at claim: the terminal CAS
+    # (settle / park) matches on it, so only the owner closes a task and a
+    # reclaimed task's original consumer loses the CAS silently. Liveness
+    # is last_state_change_at + PROCESSING_STALE_SECONDS, not a held lease.
     leased_by = models.CharField(_("leased by"), max_length=LEASED_BY_MAX_LENGTH, blank=True, default="")
     # The serialized CellRun the runtime returned, verbatim: cells the
     # model answered, the evidence it saw, each search and whether it

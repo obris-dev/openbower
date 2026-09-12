@@ -52,6 +52,7 @@ from .serializers import (
     ListPatchRequest,
     RowsAddRequest,
     fill_run_wire,
+    fill_runs_wire,
     folder_wire,
     ingest_schema_wire,
     list_wire,
@@ -437,9 +438,9 @@ class ListFillsView(_ScopedView):
         target_list = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        runs = self.fills.page_for_list(str(target_list.id), after_id=after, limit=limit)
+        runs = list(self.fills.page_for_list(str(target_list.id), after_id=after, limit=limit))
         page = FillRunPage(
-            runs=[fill_run_wire(run) for run in runs],
+            runs=fill_runs_wire(runs),
             columns=self.fills.column_summaries(target_list),
             next_cursor=next_cursor_from(runs, limit=limit),
         )

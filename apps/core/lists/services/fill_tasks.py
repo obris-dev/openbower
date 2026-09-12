@@ -77,12 +77,23 @@ class FillTaskFlow:
 
     @staticmethod
     def mark_queued(task: FillTask) -> bool:
-        """READY -> QUEUED, after the provisioner has published it. CAS on
-        READY so a task the consumer already grabbed (READY -> PROCESSING,
-        the consumer accepts either) is not dragged back."""
+        """READY -> QUEUED, after the provisioner has published it. The CAS
+        matches status READY AND the `last_state_change_at` token the page
+        was read with, so a task that moved during the publish is left
+        alone: the consumer accepts READY too, so it can claim
+        (-> PROCESSING, token bumped) and even PARK back to READY (token
+        bumped again) before this mark runs. Status alone cannot tell that
+        re-READY task from a never-published one; marking it QUEUED would
+        strand it, because the park already consumed its message and
+        nothing re-drives QUEUED (reclaim touches only PROCESSING, the
+        provisioner re-picks only READY)."""
         now = timezone.now()
         return (
-            FillTask.objects.filter(id=task.id, status=FillTaskStatus.READY).update(
+            FillTask.objects.filter(
+                id=task.id,
+                status=FillTaskStatus.READY,
+                last_state_change_at=task.last_state_change_at,
+            ).update(
                 status=FillTaskStatus.QUEUED,
                 queued_at=now,
                 last_state_change_at=now,

@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 
 from django.conf import settings
+from django.db import DatabaseError, connection
 
 from ..constants import FillTaskStatus
 from ..ingest.topics import AUTOFILL_TASKS
@@ -120,7 +121,21 @@ class FillTaskConsumer:
                     logger.error("consume_fill_tasks: undecodable message skipped: %s", e)
                     consumer.commit(message=msg)
                     continue
-                handle_fill_task(task_id, self.worker_id)
-                consumer.commit(message=msg)
+                try:
+                    handle_fill_task(task_id, self.worker_id)
+                    consumer.commit(message=msg)
+                except DatabaseError as e:
+                    # Transient (a DB restart, a reset socket, a lock
+                    # timeout): the one process draining the queue must not
+                    # die over a bounce (compose sets no restart policy). Drop
+                    # the broken connection so the next query reopens, and
+                    # leave the offset uncommitted; a task left PROCESSING is
+                    # recovered by the reclaim cron. Mirrors the provisioner's
+                    # DatabaseError branch.
+                    logger.warning("consume_fill_tasks hit a database error, recovering: %s", e)
+                    connection.close()
+                    if once:
+                        return
+                    continue
         finally:
             consumer.close()

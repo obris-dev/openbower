@@ -219,11 +219,12 @@ class FillBackedTask(ProcessFillTask):
         # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
         # hours later re-resolves against the current world). A config-tier
         # refusal fails EVERY row identically, so it fails the whole fill
-        # loudly rather than burning attempts; this is the surviving
-        # config-tier FAILED writer.
+        # loudly rather than burning attempts. A retired TOOL surfaces only
+        # inside run_cell (model_for does not resolve tools), so the same
+        # config-tier fail guards that call below.
         try:
             model_for(self.config.provider, self.config.source, self.config.model)
-        except (ModelUnavailable, tool_registry.UnknownTool) as e:
+        except ModelUnavailable as e:
             fill_progress.fail(str(self.fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             self._settle_done()
             return "done"
@@ -246,7 +247,15 @@ class FillBackedTask(ProcessFillTask):
                 self.finish()
                 return "row_missing"
             row_data = row.data
-        run = run_cell(self.config, row_data)
+        try:
+            run = run_cell(self.config, row_data)
+        except (ModelUnavailable, tool_registry.UnknownTool) as e:
+            # A retired tool (or model) surfaces here, not at the claim gate:
+            # the same config-tier fail, loud on the fill rather than
+            # crash-looping the row to its attempt cap.
+            fill_progress.fail(str(self.fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            self._settle_done()
+            return "done"
         result = to_result(run)
         if self._park_if_retriable(run, result):
             return "parked"

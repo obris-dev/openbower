@@ -29,10 +29,10 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.providers import ModelUnavailable
+from agents.tools.registry import UnknownTool
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
 from ..constants import (
-    FILL_QUEUE_DEPTH,
     FILL_ROW_ATTEMPTS,
     FillFailureCode,
     FillStatus,
@@ -299,6 +299,32 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertIn("source closed", self.fill.error_message)
         self.assertFalse(FillCellState.objects.exists())
 
+    def test_a_retired_tool_fails_the_fill_at_run_not_crash_loops(self) -> None:
+        # A retired tool surfaces only inside run_cell (model_for does not
+        # resolve tools), so the claim-time model gate cannot catch it. The
+        # run_cell wrap treats it as the same config-tier fail: the WHOLE
+        # fill fails loudly and the task settles, instead of the row
+        # crash-looping to its attempt cap on every reclaim.
+        with (
+            patch("lists.services.fill_processing.processor.model_for"),  # model resolves; the tool is the problem
+            patch(
+                "lists.services.fill_processing.processor.run_cell",
+                side_effect=UnknownTool("web_search retired"),
+            ),
+        ):
+            first_task = (
+                FillTask.objects.filter(fill_run_id=str(self.fill.id))
+                .order_by("position")
+                .values_list("id", flat=True)[0]
+            )
+            outcome = handle_fill_task(str(first_task), WORKER)
+        self.assertEqual(outcome, "done")
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.FAILED)
+        self.assertEqual(self.fill.error_code, FillFailureCode.MODEL_UNRUNNABLE)
+        self.assertIn("web_search retired", self.fill.error_message)
+        self.assertEqual(FillTask.objects.get(id=first_task).status, FillTaskStatus.DONE)
+
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
         gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
         ListRow.objects.filter(id=gone.id).delete()
@@ -393,11 +419,20 @@ class ProvisionerTests(ManualFillTestCase):
             self.assertEqual(task.status, FillTaskStatus.READY)
             self.assertIsNone(task.queued_at)
 
-    def test_per_fill_depth_bounds_one_pass(self) -> None:
-        # The provisioner never publishes more than FILL_QUEUE_DEPTH of a
-        # fill's tasks in one pass (the fairness bound).
-        self.assertLessEqual(2, FILL_QUEUE_DEPTH)
+    def test_a_pass_publishes_at_most_the_batch_and_leaves_the_rest_ready(self) -> None:
+        # The per-pass batch bounds how many of a fill's READY tasks ONE
+        # pass publishes: batch 1 against 2 READY tasks publishes exactly
+        # one and leaves the other READY for the next pass. FAILS if the
+        # limit is dropped (both would publish in the pass).
         producer = MagicMock()
         producer.flush.return_value = 0
-        self._run_provisioner(producer)
-        self.assertLessEqual(producer.produce.call_count, FILL_QUEUE_DEPTH)
+        with (
+            patch("confluent_kafka.Producer", return_value=producer),
+            patch("lists.operations.provision.fill.FILL_PUBLISH_BATCH", 1),
+        ):
+            FillProvisionOperation(worker_id="test:prov", stop=threading.Event())._one_pass()
+        self.assertEqual(producer.produce.call_count, 1)
+        self.assertEqual(
+            sorted(FillTask.objects.filter(fill_run_id=str(self.fill.id)).values_list("status", flat=True)),
+            [FillTaskStatus.QUEUED, FillTaskStatus.READY],
+        )

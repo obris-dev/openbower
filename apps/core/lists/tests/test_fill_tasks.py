@@ -183,6 +183,34 @@ class ProvisionerTests(AutofillHarness):
         self.assertEqual(task.status, FillTaskStatus.READY)
         self.assertIsNone(task.queued_at)
 
+    def test_mark_queued_no_ops_when_the_task_moved_since_the_page_read(self) -> None:
+        # The park race: the provisioner reads a READY task into its page
+        # and publishes it, but before the mark runs a consumer claims it
+        # and PARKS it (a fast retriable blank). The park returns it to
+        # READY, bumps last_state_change_at, AND consumes its message.
+        # Marking it QUEUED now would strand it (no message; reclaim skips
+        # QUEUED; the provisioner re-picks only READY). The token guard
+        # makes the stale mark a no-op, leaving it READY for the next pass.
+        sheet, _, _ = self._ai_sheet()
+        before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
+        self._push(sheet, [{"company": "target.co"}])
+        [row_id] = self._new_row_ids(sheet, before)
+        page_task = self._null_run_tasks().get(row_id=row_id)  # the object the provisioner holds
+
+        # A consumer claims then parks it; the real transitions bump the token.
+        flow = FillTaskFlow(worker_id="test:consumer")
+        self.assertIsNotNone(flow.claim(str(page_task.id)))
+        self.assertTrue(flow.park(str(page_task.id), backoff_seconds=60, result={}))
+        parked = self._null_run_tasks().get(id=page_task.id)
+        self.assertEqual(parked.status, FillTaskStatus.READY)
+        self.assertGreater(parked.last_state_change_at, page_task.last_state_change_at)  # transition re-stamped
+
+        # The provisioner's stale mark carries the old token: it must not fire.
+        self.assertFalse(FillTaskFlow.mark_queued(page_task))
+        parked.refresh_from_db()
+        self.assertEqual(parked.status, FillTaskStatus.READY)
+        self.assertIsNone(parked.queued_at)
+
 
 class ReaperTests(AutofillHarness):
     def test_it_reclaims_a_stale_processing_task_and_leaves_a_fresh_one(self) -> None:

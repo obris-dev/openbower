@@ -206,6 +206,24 @@ class FillsPageTests(FillViewsTestCase):
         )
         self.assertEqual(self.client.get(reverse("lists_fills", kwargs={"id": str(foreign.id)})).status_code, 404)
 
+    def test_the_poll_query_count_does_not_scale_with_run_count(self) -> None:
+        # The poll reads a PAGE of runs' progress in a FIXED number of
+        # grouped queries, not derive_counters + derive_heartbeat per run.
+        # So the query count for one live run equals the count for three.
+        # FAILS if the per-run reads return (the 3+4N walk on a 4s poll).
+        url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
+        self.post_ai()  # one live fill
+        self.client.get(url)  # warm any one-time caches so the compare isolates run-count
+        with CaptureQueriesContext(connection) as one_run:
+            self.assertEqual(self.client.get(url).status_code, 200)
+        self.post_ai(config=config_with("Second"))
+        self.post_ai(config=config_with("Third"))  # three live fills now
+        with CaptureQueriesContext(connection) as three_runs:
+            resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(FillRunPage(**resp.json()).runs), 3)  # all three really on the page
+        self.assertEqual(len(three_runs.captured_queries), len(one_run.captured_queries))
+
 
 class ColumnSummaryTests(FillViewsTestCase):
     """The per-column story: the page carries LIVE runs only, and the

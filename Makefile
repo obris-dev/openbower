@@ -99,8 +99,8 @@ restart: ## Restart all services in place (compose-file edits need make up, whic
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
 
-restart-worker: ## Restart the fill provisioner + consumer (what a change to their code needs; no reloader)
-	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer
+restart-worker: ## Restart the fill + autofill provisioners and consumers (what a change to their shared code needs; no reloader)
+	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer autofill-provisioner autofill-consumer
 
 restart-cron: ## Restart the cron (a crontab schedule edit needs it; supercronic parses at startup)
 	$(COMPOSE) restart cron

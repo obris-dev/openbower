@@ -12,11 +12,18 @@ Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_consume_fill_
 
 from __future__ import annotations
 
+import json
+import threading
+from unittest.mock import MagicMock, patch
+
+from django.db import DatabaseError
+from django.test import TestCase, override_settings
+
 from openbower_schema.fills import CellRunResult
 
 from ..constants import FILL_ROW_ATTEMPTS, FillTaskStatus, StoredCellState
 from ..models import FillCellState, FillTask, List, ListRow
-from ..operations.consume_fill_tasks import handle_fill_task
+from ..operations.consume_fill_tasks import FillTaskConsumer, handle_fill_task
 from ..services.fill_processing import ProcessFillTask
 from .test_fill_tasks import AutofillHarness
 from .test_fill_worker import _patches, answering_model, throttling_model
@@ -144,3 +151,31 @@ class ProcessFillTaskTests(AutofillHarness):
         self.assertEqual(blank.blamed_tool, "web_search")
         self.assertEqual(blank.declined_cause, StoredCellState.TRANSIENT)
         self.assertEqual(blank.tools, {"web_search": "rate_limited"})
+
+
+@override_settings(INGEST_KAFKA_BOOTSTRAP_SERVERS="kafka:9092")
+class ConsumeLoopResilienceTests(TestCase):
+    def test_a_database_error_recovers_the_connection_and_does_not_crash(self) -> None:
+        # The one process draining the queue must survive a DB bounce
+        # (compose sets no restart policy). A DatabaseError out of the work
+        # recovers the connection and, in once mode, returns cleanly rather
+        # than propagating; the offset is left uncommitted so the message
+        # redelivers and the reclaim cron recovers any PROCESSING task.
+        msg = MagicMock()
+        msg.error.return_value = None
+        msg.value.return_value = json.dumps({"task_id": "01TASKAAAAAAAAAAAAAAAAAAAA"}).encode()
+        consumer = MagicMock()
+        consumer.poll.return_value = msg
+        with (
+            patch("confluent_kafka.Consumer", return_value=consumer),
+            patch(
+                "lists.operations.consume_fill_tasks.handle_fill_task",
+                side_effect=DatabaseError("server closed the connection unexpectedly"),
+            ),
+            patch("lists.operations.consume_fill_tasks.connection.close") as close,
+            patch("lists.operations.consume_fill_tasks._touch_heartbeat"),
+        ):
+            FillTaskConsumer(worker_id=WORKER, stop=threading.Event()).run(once=True)  # must not raise
+        close.assert_called_once()  # the broken connection was dropped for a fresh one
+        consumer.commit.assert_not_called()  # offset left uncommitted -> redelivers
+        consumer.close.assert_called_once()

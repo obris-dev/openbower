@@ -84,10 +84,12 @@ class ColumnType(StrEnum):
 # amortizes the broker round-trip over, not how many run at once. Matches
 # the manual lane's per-fill depth.
 AUTOFILL_PUBLISH_BATCH = 1000
-# Manual fill tasks the provisioner publishes per fill per pass (binary):
-# a flat depth per live fill IS the fairness point, so a wide fill
-# cannot flood the bus ahead of a smaller one beside it.
-FILL_QUEUE_DEPTH = 1000
+# Manual fill tasks the provisioner publishes per fill PER PASS (binary):
+# offering every live fill the same per-pass batch is the fairness point,
+# so a wide fill cannot flood the bus ahead of a smaller one beside it in
+# a pass. It bounds a PASS, not the standing QUEUED depth (the consumers
+# drain at their own rate; Kafka buffers between).
+FILL_PUBLISH_BATCH = 1000
 # Live fills per ACCOUNT (binary). Every kind COUNTS into it (a live
 # test spends like any fill), but only NORMAL admissions run the
 # guard: the test admission is deliberately uncapped (the bench must
@@ -235,8 +237,8 @@ class FillKind(StrEnum):
     purpose: every bench click regression-tests the machinery fills
     depend on. A MODE, deliberately not a priority: it decides where
     results land, which surfaces see the run, and its lifecycle; the
-    worker's --kinds flag selecting on it is the scheduling
-    side-effect, not the concept."""
+    provisioner routing a TEST fill to its isolated topic is the
+    scheduling side-effect, not the concept."""
 
     NORMAL = "normal"
     TEST = "test"

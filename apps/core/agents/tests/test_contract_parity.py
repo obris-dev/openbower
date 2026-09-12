@@ -177,14 +177,14 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         self.assertIn("manage.py sweep_test_fills", crontab)
 
     def test_the_worker_topology_and_graces_hold(self):
-        # Compose cannot import the constant, so the fill CONSUMER's
+        # Compose cannot import the constant, so each graced CONSUMER's
         # stop_grace_period restates the worst case by hand (a grace
         # below it SIGKILLs a legitimately slow row through its outcome
-        # write). The consumer is the ONE graced fill service: it runs
-        # real, user-consented rows, so a stop finishes the message in
-        # flight; the provisioner only publishes ids and needs no grace.
-        # The manual lane is pinned by its --topic, the seam that keeps
-        # it off the autofill firehose.
+        # write). The two REAL-ROW consumers are graced: the manual and
+        # autofill consumers both drain user-consented rows, so a stop
+        # finishes the message in flight; the provisioners only publish
+        # ids and need no grace. Each consumer is pinned to its --topic,
+        # the seam that keeps the lanes off each other.
         import re
         from pathlib import Path
 
@@ -208,13 +208,15 @@ class DuplicatedKnowledgePins(SimpleTestCase):
             if window and current:
                 services.setdefault(current, {})["window"] = window.group(1)
         graced = {name: conf for name, conf in services.items() if "grace" in conf}
-        # Two lanes carry a grace: the manual consumer drains a bounded
-        # real row (grace ABOVE the worst case), the isolated bench-TEST
-        # consumer kills its quick diagnostic fast (grace BELOW it, the
-        # user is waiting). Each is pinned to its own --topic.
-        self.assertEqual(set(graced), {"fill-consumer", "test-consumer"})
+        # Three consumers carry a grace: the manual and autofill consumers
+        # drain bounded real rows (grace ABOVE the worst case), the isolated
+        # bench-TEST consumer kills its quick diagnostic fast (grace BELOW
+        # it, the user is waiting). Each is pinned to its own --topic.
+        self.assertEqual(set(graced), {"fill-consumer", "autofill-consumer", "test-consumer"})
         self.assertGreater(int(graced["fill-consumer"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["fill-consumer"]["flags"], "--topic manual")
+        self.assertGreater(int(graced["autofill-consumer"]["grace"]), cell_run_worst_case_seconds())
+        self.assertEqual(graced["autofill-consumer"]["flags"], "--topic autofill")
         self.assertLess(int(graced["test-consumer"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["test-consumer"]["flags"], "--topic test")
         # Every fill-family CONSUMER (each runs consume_fill_tasks, so each

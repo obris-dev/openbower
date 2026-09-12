@@ -41,12 +41,6 @@ def iter_live_fills(kinds: tuple[str, ...] = ()) -> Iterator[Fill]:
     yield from qs.order_by("id").iterator()
 
 
-def is_live(fill_run_id: str) -> bool:
-    """The consumer's pre-run liveness check (cancel granularity is
-    between tasks; in-flight spend is sunk cost, stated openly)."""
-    return Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists()
-
-
 def cancel(fill_run_id: str) -> bool:
     """The worker's list-gone resolution: a user deletion reads as
     CANCELLED, never failed (failed is config-tier and carries an
@@ -129,11 +123,12 @@ def _abandon_queued(fill_run_id: str) -> None:
     later resume reads it instead of reconstructing it.
 
     Sweeps the READY and QUEUED tasks to ABANDONED, deliberately NOT
-    PROCESSING: a task a consumer already owns is left to its own
-    terminal CAS (which, finding the fill terminal, lands nothing on
-    the sheet). This preserves the queue-before-fill lock order the
-    caller depends on. The transient count is DERIVED now, so nothing
-    is released here."""
+    PROCESSING: a task a consumer already owns runs to its own terminal
+    CAS and LANDS its cell (the settle keys on the task's status, not the
+    fill's), so in-flight spend is sunk cost, cancel granularity is
+    between tasks. Leaving PROCESSING untouched also keeps the
+    queue-before-fill lock order the caller depends on. The transient
+    count is DERIVED now, so nothing is released here."""
     FillTask.objects.filter(fill_run_id=fill_run_id, status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED)).update(
-        status=FillTaskStatus.ABANDONED, leased_at=None, leased_by="", updated_at=timezone.now()
+        status=FillTaskStatus.ABANDONED, leased_by="", updated_at=timezone.now()
     )

@@ -233,11 +233,10 @@ class RunControlTests(TestCase):
         self.assertEqual(cancelled.status, FillStatus.CANCELLED)
         self.assertEqual(service.cancel(str(fill.id)).status, FillStatus.CANCELLED)
 
-    def test_cancelled_run_stops_the_worker_gate(self) -> None:
+    def test_a_cancelled_run_leaves_no_live_fill(self) -> None:
         fill = make_run(rows=1)
-        self.assertTrue(fill_progress.is_live(str(fill.id)))
+        self.assertEqual([f.id for f in fill_progress.iter_live_fills()], [fill.id])
         FillService(account_id=ACCOUNT).cancel(str(fill.id))
-        self.assertFalse(fill_progress.is_live(str(fill.id)))
         self.assertEqual(list(fill_progress.iter_live_fills()), [])
 
     def test_foreign_account_reads_as_not_found(self) -> None:

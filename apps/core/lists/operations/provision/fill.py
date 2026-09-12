@@ -1,15 +1,17 @@
-"""The manual (fill-backed) lane's pick: each live fill's READY tasks at a
-FLAT per-fill depth, one flushed page per fill. That flat depth IS the
-fairness point, a wide fill cannot flood the bus ahead of a smaller one
-beside it, and no per-fill rotation is needed because every pass offers
-every fill the same depth. The shared loop, publish, producer, and
-heartbeat live in `base`; only the pick differs."""
+"""The manual (fill-backed) lane's pick: each live fill's READY tasks in
+one flushed page PER PASS, bounded by FILL_PUBLISH_BATCH. Offering every
+live fill the same per-pass batch is the fairness point, a wide fill
+cannot flood the bus ahead of a smaller one beside it in a pass, and no
+per-fill rotation is needed because every pass offers every fill the same
+batch. It bounds a pass, not the standing queue (the consumers drain at
+their own rate). The shared loop, publish, producer, and heartbeat live
+in `base`; only the pick differs."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ...constants import FILL_PROVISION_IDLE_SECONDS, FILL_QUEUE_DEPTH, FillKind
+from ...constants import FILL_PROVISION_IDLE_SECONDS, FILL_PUBLISH_BATCH, FillKind
 from ...ingest.topics import FILL_TASKS, TEST_TASKS
 from ...services import fill_progress
 from ...services.fill_tasks import FillTaskFlow
@@ -33,7 +35,7 @@ class FillProvisionOperation(ProvisionOperation):
             # Route by kind: a TEST (bench) fill rides its own isolated
             # topic so it never queues behind a wide manual fill.
             topic = TEST_TASKS if fill.kind == FillKind.TEST else FILL_TASKS
-            page = list(FillTaskFlow.iter_ready_for_fill(str(fill.id), limit=FILL_QUEUE_DEPTH))  # bounded by depth
+            page = list(FillTaskFlow.iter_ready_for_fill(str(fill.id), limit=FILL_PUBLISH_BATCH))  # bounded per pass
             if not page:
                 continue
             self._publish_batch(page, topic)  # one flush; durable BEFORE the marks; raises on a blip
