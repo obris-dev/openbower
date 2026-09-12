@@ -1,10 +1,11 @@
 """Enqueue autofill work onto the unified task spine.
 
-A pushed row is owed a fill of its AI columns. This queues that as
-null-run FillTasks (no Fill, so no consent run): one task per (row,
-agent), because an agent produces its whole column set in one run. The
-autofill worker claims them, resolves each agent's config and column
-set live, and runs it.
+A pushed row is owed a fill of its BLANK AI columns. This queues that
+as null-run FillTasks (no Fill, so no consent run): one task per (row,
+agent), because an agent produces its whole column set in one run. An
+agent a push fully overrides (every column it owns already carries a
+sent value) gets no task. The autofill worker claims them, resolves
+each agent's config and column set live, and runs it.
 
 Enqueue rides the caller's transaction (the ingest apply's), so a row
 and its autofill work commit together or not at all: a pushed row can
@@ -21,15 +22,16 @@ from ..constants import FillTaskStatus
 from ..models import FillTask, List
 
 
-def _fill_agent_ids(target_list: List) -> set[str]:
-    """The distinct agents the sheet's AI columns run. Each is one
-    autofill task per row (one run fills that agent's whole column
-    set)."""
-    return {
-        column["fill"]["agent_id"]
-        for column in target_list.columns
-        if column.get("fill") and column["fill"].get("agent_id")
-    }
+def _agent_columns(target_list: List) -> dict[str, list[str]]:
+    """Each AI agent the sheet runs mapped to the column keys it fills
+    (an agent can own several). Autofill is one task per (row, agent):
+    one run fills that agent's whole column set."""
+    mapping: dict[str, list[str]] = {}
+    for column in target_list.columns:
+        fill = column.get("fill")
+        if fill and fill.get("agent_id"):
+            mapping.setdefault(fill["agent_id"], []).append(column["key"])
+    return mapping
 
 
 def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
@@ -38,26 +40,35 @@ def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
     attempted; a re-enqueue of an already-queued (row, agent) is a
     no-op under the idempotency key, so this can over-count a
     redelivery (the sole caller ignores it)."""
-    agent_ids = _fill_agent_ids(target_list)
-    if not agent_ids or not rows:
+    agent_columns = _agent_columns(target_list)
+    if not agent_columns or not rows:
         return 0
     # Born READY (not the QUEUED default): admission's shimmer counts any
     # non-terminal state, and the provisioner moves READY -> QUEUED when
     # it publishes. `last_state_change_at` is stamped at birth so the
     # reclaim scan and audit have a value from the start.
     now = timezone.now()
-    tasks = [
-        FillTask(
-            account_id=account_id,
-            fill_run_id=None,
-            agent_id=agent_id,
-            row_id=str(row.id),
-            list_id=str(target_list.id),
-            status=FillTaskStatus.READY,
-            last_state_change_at=now,
-        )
-        for row in rows
-        for agent_id in agent_ids
-    ]
+    tasks: list[FillTask] = []
+    for row in rows:
+        for agent_id, keys in agent_columns.items():
+            # Skip a fully overridden agent: a push that fills every column
+            # it owns leaves it no work (write-if-blank would keep those
+            # values, so the run only buys a skip). If ANY is blank the
+            # agent still runs, and write-if-blank protects the ones sent.
+            if all((row.data.get(key) or "").strip() for key in keys):
+                continue
+            tasks.append(
+                FillTask(
+                    account_id=account_id,
+                    fill_run_id=None,
+                    agent_id=agent_id,
+                    row_id=str(row.id),
+                    list_id=str(target_list.id),
+                    status=FillTaskStatus.READY,
+                    last_state_change_at=now,
+                )
+            )
+    if not tasks:
+        return 0
     FillTask.objects.bulk_create(tasks, ignore_conflicts=True)
     return len(tasks)

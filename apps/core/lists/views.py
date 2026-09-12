@@ -34,6 +34,7 @@ from .constants import (
     MAX_INDEX_PAGE,
     MAX_ROWS_PAGE,
     FillErrorCode,
+    IngestErrorCode,
     ListOrigin,
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
@@ -57,6 +58,7 @@ from .serializers import (
     ingest_schema_wire,
     list_wire,
     row_wire,
+    validate_ingest_rows,
 )
 from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
@@ -224,17 +226,27 @@ class ListIngestView(_ScopedView):
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
 
     def get(self, request: Request, id: str) -> Response:
-        """GET /v1/lists/{id}/ingest: the pushable row schema, this list's
-        HARD (non-AI) columns with their keys and types, so a producer can
-        build a push without guessing. AI columns are omitted, autofill
-        fills them. Same account-scoped auth as the push."""
+        """GET /v1/lists/{id}/ingest: the pushable row schema, every column
+        with its key and type, so a producer can build a push without
+        guessing. AI columns carry autopopulated=true: a producer may leave
+        them for autofill or send a value to pin its own. Same
+        account-scoped auth as the push."""
         return Response(ingest_schema_wire(self._list_or_404(id)))
 
     def post(self, request: Request, id: str) -> Response:
         target_list = self._list_or_404(id)
         serializer = IngestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rows = serializer.validated_data["rows"]
+        # Validate the push against the sheet's columns BEFORE accepting it:
+        # the append is async (202), so the POST is the only place a
+        # malformed value can reach the producer as a 400 it can fix, rather
+        # than being stored as sent. Tier-1 envelope ({error, detail}). The
+        # returned rows are run through the shared cells_for_storage (the
+        # writers' transform), so the bus carries exactly what add_rows will
+        # store (canonical form, clamped), not the raw push.
+        problems, rows = validate_ingest_rows(target_list, serializer.validated_data["rows"])
+        if problems:
+            return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
         # The caller's idempotency key if they sent one, else a fresh ULID.
         # Carried through the bus so a re-delivery dedupes to one append once
         # the durable backend enforces it (the interim publisher only logs).
@@ -253,7 +265,9 @@ class ListIngestView(_ScopedView):
             # (retryable), never a 202 that silently dropped it. Dedupe makes
             # the caller's retry safe.
             logger.warning("ingest publish failed for list %s: %s", event.list_id, e)
-            return Response({"error": "ingest_unavailable", "detail": "ingest bus unavailable; retry"}, status=503)
+            return Response(
+                {"error": IngestErrorCode.INGEST_UNAVAILABLE, "detail": "ingest bus unavailable; retry"}, status=503
+            )
         return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
 
 

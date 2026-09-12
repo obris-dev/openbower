@@ -12,7 +12,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from agents.services import AgentService
-from openbower_schema.cell_types import CellTypeMismatch, validate_cell
+from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, FillTask, Folder, List, ListRow
@@ -57,6 +57,24 @@ def _clamp_cell(key: str, value: str, *, where: str) -> str:
         return value
     logger.warning("%s: cell %r clamped from %d to %d chars", where, key, len(value), CELL_MAX_LENGTH)
     return value[:CELL_MAX_LENGTH]
+
+
+def cells_for_storage(
+    types: dict[str, str], data: dict[str, str], *, where: str
+) -> tuple[dict[str, str], list[CellTypeMismatch]]:
+    """THE cell transform every write path funnels through, so none
+    restitches it or runs the two steps in a different order: normalize
+    each value to its type's canonical form (the contract's normalize_row)
+    and clamp it to CELL_MAX_LENGTH (logging a clamp). Returns the values
+    to store plus the shape mismatches the caller reacts to per its tier
+    (an authored import tolerates them, a machine answer flags them, the
+    ingest POST rejects them). The ingest POST also runs this to build the
+    rows it publishes, so the bus carries exactly what add_rows will
+    store (re-running it on append is idempotent: a canonical value
+    re-normalizes unchanged and a clamped one is already at the bound)."""
+    normalized, mismatches = normalize_row(types, data)
+    stored = {key: _clamp_cell(key, value, where=where) for key, value in normalized.items()}
+    return stored, mismatches
 
 
 class CellWriteResult(NamedTuple):
@@ -179,7 +197,17 @@ class ListService:
         ids to enqueue autofill against them."""
         if not rows:
             return []
-        rows = [{key: _clamp_cell(key, value, where="add_rows") for key, value in data.items()} for data in rows]
+        # Through the shared write-time transform, so a stored value is its
+        # type's canonical form (a pasted "1,234" -> "1234"), the same shape
+        # the fill write path stores. Authored input TOLERATES a mismatch:
+        # the mismatches are ignored (the raw value stores), because an
+        # import must never fail a whole batch over one bad cell.
+        types = {column["key"]: column.get("type", "") for column in target.columns}
+        stored_rows = []
+        for data in rows:
+            stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
+            stored_rows.append(stored)
+        rows = stored_rows
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
             # appends must serialize on the list row or the second one
@@ -208,8 +236,7 @@ class ListService:
         (authored input clamps, never rejects) and pass the column's
         shape validator before anything writes; a blank value writes
         nothing and reports nothing."""
-        attempted = {key: _clamp_cell(key, value, where="write_cells") for key, value in cells.items() if value.strip()}
-        if not attempted:
+        if not any(value.strip() for value in cells.values()):
             return CellWriteResult((), (), ())
         with transaction.atomic():
             # The hazard this guards is a read-modify-write of ONE
@@ -232,25 +259,43 @@ class ListService:
             except ListRow.DoesNotExist as e:
                 raise RowNotFound(row_id) from e
             types = {column["key"]: column.get("type", "") for column in target.columns}
+            # row.data is the row's stored cell values, keyed by column key.
+            # Work on a mutable copy: this call's writes merge in, keys
+            # outside it carry through, and the whole dict is persisted once.
+            row_cells = dict(row.data)
+            # Write-if-blank (a DB-state decision, not a shape one): only a
+            # non-blank cell whose column is currently blank is a candidate
+            # to write, so a user's value is never destroyed. The candidates
+            # run through the shared write-time transform; this writer's
+            # reaction to a mismatch is to FLAG it (TYPE_MISMATCH), never
+            # reject.
+            candidates = {
+                key: value
+                for key, value in cells.items()
+                if value.strip() and not str(row_cells.get(key, "") or "").strip()
+            }
+            stored, mismatches = cells_for_storage(types, candidates, where="write_cells")
+            why_by_key = {mismatch.key: mismatch.why for mismatch in mismatches}
             written: list[str] = []
             occupied: list[str] = []
             mismatched: list[CellMismatch] = []
-            merged = dict(row.data)
-            for key, value in attempted.items():
-                if str(merged.get(key, "") or "").strip():
+            for key, value in cells.items():  # input order for the verdicts
+                if not value.strip():
+                    continue  # a blank writes nothing and reports nothing
+                if key not in candidates:
                     occupied.append(key)
-                    continue
-                try:
-                    merged[key] = validate_cell(types.get(key, ""), value, key=key)
-                except CellTypeMismatch as e:
-                    mismatched.append(CellMismatch(key=e.key, why=e.why))
-                    continue
-                written.append(key)
+                elif key in why_by_key:
+                    mismatched.append(CellMismatch(key=key, why=why_by_key[key]))
+                else:
+                    row_cells[key] = stored[key]
+                    written.append(key)
             if written:
                 # Only the data column writes, targeted by row id; the
                 # merge base was read under the row's own lock, so keys
                 # outside this call's writes carry through current.
-                ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(data=merged, updated_at=timezone.now())
+                ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(
+                    data=row_cells, updated_at=timezone.now()
+                )
         return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched))
 
     def rows_page(self, target: List, *, after_position: int, limit: int) -> list[ListRow]:

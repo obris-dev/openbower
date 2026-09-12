@@ -13,7 +13,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import CellStateWire
+from openbower_schema.lists import CellStateWire, IngestColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -24,6 +24,7 @@ from .constants import (
     COLUMN_LABEL_MAX_LENGTH,
     LABEL_MAX_LENGTH,
     MAX_INGEST_EVENT_ID_LENGTH,
+    MAX_INGEST_PROBLEMS,
     MAX_LIST_COLUMNS,
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
@@ -80,11 +81,12 @@ class RowsAddRequest(serializers.Serializer):
 class IngestRequest(serializers.Serializer):
     """A webhook push: rows plus an OPTIONAL caller-supplied idempotency key.
     Absent -> the endpoint mints a ULID; present -> used verbatim (a blank
-    key is a client bug, rejected). A flat serializer, NOT a subclass of
-    RowsAddRequest: the async path never runs RowsAddRequest's oversize-cell
-    clamp (that lives in ListService.add_rows), so it must not inherit the
-    'no per-cell cap because add_rows clamps' tradeoff. The byte bound sized
-    to the bus message limit is a durable-backend decision (see
+    key is a client bug, rejected). No per-cell max_length on the field:
+    the per-cell clamp is not the serializer's job, it rides the shared
+    cells_for_storage the POST runs before publishing (so the bus carries
+    the clamped, stored form, not a raw oversized cell) and add_rows runs
+    again on append. The whole-message byte bound sized to the bus message
+    limit is a separate, durable-backend decision (see
     ingest.get_ingest_publisher)."""
 
     rows = serializers.ListField(
@@ -222,11 +224,44 @@ def list_wire(target: List) -> dict[str, Any]:
 
 
 def ingest_schema_wire(target: List) -> dict[str, Any]:
-    """The push schema: the HARD (non-AI) columns a producer fills. A
-    column with a fill linkage is an AI column (autofill owns it) and is
-    omitted, so a producer sees only what it should send."""
-    pushable = [c for c in target.columns if not c.get("fill")]
-    return WireIngestSchema(columns=pushable).model_dump()
+    """The push schema: every column keyed by what a producer sends, with
+    the AI columns marked autopopulated. A producer provides the hard
+    columns and may leave the AI ones blank for autofill, or send a value
+    to pin its own (write-if-blank keeps it)."""
+    columns = [
+        IngestColumn(key=c["key"], label=c["label"], type=c["type"], autopopulated=bool(c.get("fill")))
+        for c in target.columns
+    ]
+    return WireIngestSchema(columns=columns).model_dump()
+
+
+def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list[str], list[dict[str, str]]]:
+    """Validate a push against the sheet's columns BEFORE it is accepted,
+    so a malformed push is refused up front (a 400 the producer can fix)
+    rather than stored as sent. Returns (problems, storable_rows): each
+    problem is one line (row index plus cause, an unknown key or a value
+    the column's type refuses), and when problems is EMPTY the storable
+    rows are what to publish. They run through the SAME cells_for_storage
+    the writers use (normalize to the type's canonical form, then clamp),
+    so the bus carries exactly what add_rows will store on append (a pushed
+    "1,234" is published and stored as "1234", a 70k-char cell clamped once
+    here, not at full size on the bus). This is the push's reaction to a
+    shape mismatch: an unknown key or a type mismatch both become a 400. A
+    blank value is 'not provided', kept as-is (a producer may leave an AI
+    column for autofill). Capped at MAX_INGEST_PROBLEMS."""
+    from .services.lists import cells_for_storage
+
+    types = {column["key"]: column.get("type", "") for column in target.columns}
+    problems: list[str] = []
+    storable_rows: list[dict[str, str]] = []
+    for index, row in enumerate(rows):
+        storable, mismatches = cells_for_storage(types, row, where="ingest")
+        storable_rows.append(storable)
+        problems.extend(f"row {index}: unknown column {key!r}" for key in row if key not in types)
+        problems.extend(f"row {index}: {mismatch}" for mismatch in mismatches)
+        if len(problems) >= MAX_INGEST_PROBLEMS:
+            return problems[:MAX_INGEST_PROBLEMS], storable_rows
+    return problems, storable_rows
 
 
 def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:

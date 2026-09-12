@@ -113,6 +113,61 @@ class EnqueueTests(AutofillHarness):
             self.assertEqual(task.status, FillTaskStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)
 
+    def test_a_push_that_overrides_an_ai_column_skips_that_agent(self) -> None:
+        sheet, agent_id, _ = self._ai_sheet()
+        ai_key = next(c["key"] for c in sheet.columns if c.get("fill"))
+        before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
+
+        # One row pins the AI column (an override), one leaves it blank.
+        self.assertEqual(
+            self._push(sheet, [{"company": "override.com", ai_key: "PINNED"}, {"company": "blank.com"}]),
+            "applied",
+        )
+
+        tasks = list(self._null_run_tasks())
+        # Only the row that left the AI column blank is owed a fill; the
+        # overridden agent gets no task.
+        self.assertEqual(len(tasks), 1)
+        (task,) = tasks
+        blank_row = ListRow.objects.get(list_id=str(sheet.id), data__company="blank.com")
+        self.assertEqual(task.row_id, str(blank_row.id))
+        self.assertEqual(task.agent_id, agent_id)
+
+        # The pushed value persisted as the producer sent it.
+        override_row = ListRow.objects.get(list_id=str(sheet.id), data__company="override.com")
+        self.assertEqual(override_row.data[ai_key], "PINNED")
+        self.assertEqual(self._new_row_ids(sheet, before), {str(blank_row.id), str(override_row.id)})
+
+    def test_a_multi_column_agent_skips_only_when_every_column_is_filled(self) -> None:
+        # An agent owns TWO columns. A row that fills BOTH is skipped (no
+        # work left); a row that leaves one blank STILL enqueues. This pins
+        # the all() semantics a single-column fixture cannot (there
+        # all([x]) == any([x]) == x). A "0" counts as filled (it strips
+        # truthy), never blank.
+        agent_id = "01AG" + "A" * 22
+        sheet = self.lists.create(
+            owner_id=USER,
+            label="Multi",
+            columns=[
+                {"key": "company", "label": "Company", "type": "text"},
+                {"key": "a", "label": "A", "type": "text", "fill": {"agent_id": agent_id}},
+                {"key": "b", "label": "B", "type": "text", "fill": {"agent_id": agent_id}},
+            ],
+            origin="manual",
+        )
+        full, partial = self.lists.add_rows(
+            sheet,
+            [
+                {"company": "full.co", "a": "0", "b": "y"},  # both of the agent's columns filled ("0" counts) -> skip
+                {"company": "partial.co", "a": "x"},  # b blank -> still owes the agent
+            ],
+        )
+        sheet.refresh_from_db()
+        created = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=[full, partial])
+        self.assertEqual(created, 1)  # only the partial row's agent has work
+        self.assertEqual(self._null_run_tasks().filter(row_id=str(partial.id)).count(), 1)
+        self.assertEqual(self._null_run_tasks().filter(row_id=str(full.id)).count(), 0)
+
     def test_a_push_to_a_sheet_with_no_ai_columns_enqueues_nothing(self) -> None:
         plain = self._plain_sheet()
         self.assertEqual(self._push(plain, [{"company": "newco.com"}]), "applied")

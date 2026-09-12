@@ -13,7 +13,7 @@ from django.test.utils import CaptureQueriesContext
 from lists.constants import CELL_MAX_LENGTH, ColumnType, ListOrigin
 from lists.models import ListRow
 from lists.services.lists import ListNotFound, ListService, RowNotFound
-from openbower_schema.cell_types import CellTypeMismatch, validate_cell
+from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
 _COLUMNS = [
     {"key": "name", "label": "Name", "type": "text"},
@@ -187,6 +187,36 @@ class PassThroughTests(TestCase):
     def test_untyped_shapes_pass_untouched(self):
         for column_type in [ColumnType.TEXT, ColumnType.URL, ColumnType.EMAIL]:
             self.assertEqual(validate_cell(column_type, "  as written  "), "  as written  ")
+
+
+class NormalizeRowTests(TestCase):
+    """normalize_row is THE shared shape funnel every write path uses, so
+    it is unit-tested directly like the validators it wraps, not only
+    incidentally through its callers."""
+
+    TYPES = {"score": "number", "when": "date", "name": "text"}
+
+    def test_normalizes_typed_values_and_reports_no_mismatch(self):
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "1,234", "when": "2024/8/3", "name": "Acme"})
+        self.assertEqual(normalized, {"score": "1234", "when": "2024-08-03", "name": "Acme"})
+        self.assertEqual(mismatches, [])
+
+    def test_a_refused_value_is_returned_raw_and_recorded(self):
+        # The raw value stays in the map (so a caller can tolerate or flag
+        # it) AND the mismatch is recorded (so a caller can reject it).
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "banana"})
+        self.assertEqual(normalized["score"], "banana")
+        self.assertEqual([m.key for m in mismatches], ["score"])
+
+    def test_blank_and_unknown_keys_pass_through_without_mismatch(self):
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "", "mystery": "x"})
+        self.assertEqual(normalized, {"score": "", "mystery": "x"})  # blank kept; untyped key untouched
+        self.assertEqual(mismatches, [])
+
+    def test_zero_is_a_value_not_blank(self):
+        # "0" strips truthy, so it is a provided value a number accepts.
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "0"})
+        self.assertEqual((normalized, mismatches), ({"score": "0"}, []))
 
 
 class LockGranularityTests(TransactionTestCase):

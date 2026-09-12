@@ -50,10 +50,10 @@ class ListsViewsTests(TestCase):
         self.assertEqual(gone.status_code, 204)
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": list_id})).status_code, 404)
 
-    def test_ingest_get_returns_the_hard_columns_only(self):
-        # The webhook is self-describing: GET returns the columns a producer
-        # fills (key + type), and OMITS AI columns (fill-owned) so a push
-        # never sends what autofill will.
+    def test_ingest_get_marks_ai_columns_autopopulated(self):
+        # The webhook is self-describing: GET returns every column a producer
+        # can send, with the AI (fill-owned) columns marked autopopulated so a
+        # push can leave them blank for autofill or send a value to pin its own.
         lst = ListService(account_id=TEST_IDENTITY["account_id"]).create(
             owner_id=TEST_IDENTITY["id"],
             label="Push target",
@@ -68,8 +68,9 @@ class ListsViewsTests(TestCase):
         self.assertEqual(
             schema["columns"],
             [
-                {"key": "company", "label": "Company", "type": "url"},
-                {"key": "contact", "label": "Contact", "type": "text"},
+                {"key": "company", "label": "Company", "type": "url", "autopopulated": False},
+                {"key": "contact", "label": "Contact", "type": "text", "autopopulated": False},
+                {"key": "answer", "label": "Answer", "type": "text", "autopopulated": True},
             ],
         )
 

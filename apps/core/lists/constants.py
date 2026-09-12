@@ -34,6 +34,10 @@ MAX_ROWS_PER_ADD = 1000
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
 MAX_INGEST_EVENT_ID_LENGTH = 255
+# How many push problems one ingest 400 lists before truncating: enough
+# to fix a batch in one round, bounded so a wholly-malformed push cannot
+# return a response as large as itself.
+MAX_INGEST_PROBLEMS = 20
 DEFAULT_ROWS_PAGE = 50
 MAX_ROWS_PAGE = 200
 DEFAULT_INDEX_PAGE = 50
@@ -149,6 +153,16 @@ class FillErrorCode(StrEnum):
     # values, or a key or value over its length. Refused, never
     # truncated.
     TEST_ROW_INVALID = "test_row_invalid"
+
+
+# The ingest webhook's wire error codes, its own lane (separate from the
+# column/fill admission refusals above): the machine leg of the
+# {error, detail} envelope the POST answers with, classified by the
+# producer. INVALID is a 400 (a value or key the push must fix);
+# UNAVAILABLE is a 503 (the bus could not accept it; retry).
+class IngestErrorCode(StrEnum):
+    INGEST_INVALID = "ingest_invalid"
+    INGEST_UNAVAILABLE = "ingest_unavailable"
 
 
 # Rows per fetch when a fill service STREAMS the sheet (binary,
