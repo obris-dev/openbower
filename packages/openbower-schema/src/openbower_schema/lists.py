@@ -74,25 +74,41 @@ class ListColumn(BaseModel):
 
 
 class IngestColumn(BaseModel):
-    """One column a producer fills in a push: the key a row dict keys on
-    and the type its value is validated against on append. No fill
-    linkage, these are by definition the non-AI columns."""
+    """One column of the push schema: the key a row dict keys on and the
+    value's type. `autopopulated` marks the AI columns, left blank they
+    are filled by autofill after append, so a producer knows which
+    columns it owns and which it may leave to the system."""
 
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Row data dicts key on this.")
     label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
-    type: ColumnType = Field(description="Shape validator the pushed value must satisfy on append.")
+    type: ColumnType = Field(
+        description="The value's type: drives rendering, and the push is refused (400) when a sent "
+        "value does not satisfy it (number, currency, and date carry shape rules), so send values "
+        "of this type."
+    )
+    # A literal default (not default_factory) so it reaches the JSON
+    # schema and a consumer parsing an older payload without the key reads
+    # a hard column, never refuses it.
+    autopopulated: bool = Field(
+        default=False,
+        description="True on AI columns: left blank, autofill researches and fills this after "
+        "append. A push MAY still send a value to pin its own (write-if-blank keeps it, and "
+        "autofill skips an agent whose columns a row already fills). False on hard columns, which "
+        "a producer provides.",
+    )
 
 
 class IngestSchema(BaseModel):
     """The pushable row shape for POST /v1/lists/{id}/ingest: a row in the
     push is a dict keyed by these columns' keys, each value validated
-    against the column's type on append. ONLY the hard (non-AI) columns
-    appear, a producer sends data and autofill owns the AI columns (which
-    carry a fill linkage and are omitted), so a client builds a push
-    without guessing keys or sending columns the system fills."""
+    against the column's type on append. Hard columns (autopopulated
+    false) are the data a producer sends; AI columns (autopopulated true)
+    autofill owns, a push may leave them blank or send a value to pin its
+    own. A client builds a push off this without guessing keys."""
 
     columns: list[IngestColumn] = Field(
-        default=[], description="Columns a push provides, in display order; AI columns omitted."
+        default=[],
+        description="Columns of the push schema, in display order; AI columns carry autopopulated true.",
     )
 
 

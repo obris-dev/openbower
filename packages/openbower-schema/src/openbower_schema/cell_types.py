@@ -15,6 +15,7 @@ rule."""
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import date
 
 from .lists import ColumnType
@@ -112,3 +113,30 @@ def validate_cell(column_type: ColumnType | str, value: str, *, key: str = "") -
     if validator is None:
         return value
     return validator(value, key)
+
+
+def normalize_row(types: Mapping[str, str], data: Mapping[str, str]) -> tuple[dict[str, str], list[CellTypeMismatch]]:
+    """THE row-level shape application every write path funnels through,
+    so a stored cell is its type's CANONICAL form (validate_cell's return)
+    by construction and no writer can skip normalization. Given a
+    column-key -> type map and a row's cells, returns the cells with each
+    value normalized, plus the mismatches a caller reacts to PER ITS TIER
+    (the push rejects with a 400, an authored import tolerates, an autofill
+    answer flags) without re-deciding the shape rule. A blank value, or a
+    key with no typed column, passes through untouched and raises no
+    mismatch; a value its type refuses is returned RAW in the map AND
+    recorded in `mismatches`, so the caller alone decides whether a refusal
+    stores, rejects, or flags."""
+    normalized: dict[str, str] = {}
+    mismatches: list[CellTypeMismatch] = []
+    for key, value in data.items():
+        column_type = types.get(key, "")
+        if not column_type or not value.strip():
+            normalized[key] = value
+            continue
+        try:
+            normalized[key] = validate_cell(column_type, value, key=key)
+        except CellTypeMismatch as e:
+            normalized[key] = value
+            mismatches.append(e)
+    return normalized, mismatches

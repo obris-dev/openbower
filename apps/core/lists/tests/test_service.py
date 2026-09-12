@@ -115,6 +115,45 @@ class CellClampTests(TestCase):
             service.add_rows(target, [{"a": "x" * CELL_MAX_LENGTH}])
 
 
+class CellNormalizeTests(TestCase):
+    def test_add_rows_normalizes_typed_cells_at_the_writer(self):
+        # add_rows runs through the shared normalize_row, so EVERY entry
+        # path (CSV import, manual append, the push worker) stores a typed
+        # value in its canonical form, the same shape the fill write path
+        # stores. FAILS if add_rows stops normalizing (the drift this
+        # consolidation closed: a pushed "1,234" next to an autofilled
+        # "1234").
+        service = _service()
+        target = service.create(
+            owner_id="01US" + "A" * 22,
+            label="Typed",
+            columns=[
+                {"key": "score", "label": "Score", "type": "number"},
+                {"key": "when", "label": "When", "type": "date"},
+            ],
+            origin=ListOrigin.MANUAL,
+        )
+        service.add_rows(target, [{"score": "1,234", "when": "2026/3/4"}])
+        row = service.rows_page(target, after_position=0, limit=1)[0]
+        self.assertEqual(row.data["score"], "1234")  # commas stripped
+        self.assertEqual(row.data["when"], "2026-03-04")  # date canonicalized
+
+    def test_add_rows_tolerates_a_type_mismatch_and_stores_it_raw(self):
+        # Authored input never fails a batch: a value its type refuses is
+        # stored raw (the producer-facing 400 is the POST's reaction, not
+        # the shared writer's), so a messy CSV still imports.
+        service = _service()
+        target = service.create(
+            owner_id="01US" + "A" * 22,
+            label="Typed",
+            columns=[{"key": "score", "label": "Score", "type": "number"}],
+            origin=ListOrigin.CSV,
+        )
+        service.add_rows(target, [{"score": "banana"}])
+        row = service.rows_page(target, after_position=0, limit=1)[0]
+        self.assertEqual(row.data["score"], "banana")  # tolerated, not rejected
+
+
 class FolderServiceTests(TestCase):
     def test_crud_and_delete_sets_lists_loose(self):
         from lists.services.lists import FolderService
