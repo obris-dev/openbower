@@ -16,6 +16,7 @@ from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
+from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
 
@@ -221,6 +222,14 @@ def list_wire(target: List) -> dict[str, Any]:
         created_at=target.created_at.isoformat(),
         updated_at=target.updated_at.isoformat(),
     ).model_dump()
+
+
+def ingest_schema_wire(target: List) -> dict[str, Any]:
+    """The push schema: the HARD (non-AI) columns a producer fills. A
+    column with a fill linkage is an AI column (autofill owns it) and is
+    omitted, so a producer sees only what it should send."""
+    pushable = [c for c in target.columns if not c.get("fill")]
+    return WireIngestSchema(columns=pushable).model_dump()
 
 
 def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:

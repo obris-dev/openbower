@@ -53,6 +53,7 @@ from .serializers import (
     RowsAddRequest,
     fill_run_wire,
     folder_wire,
+    ingest_schema_wire,
     list_wire,
     row_wire,
 )
@@ -220,6 +221,13 @@ class ListIngestView(_ScopedView):
     """
 
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def get(self, request: Request, id: str) -> Response:
+        """GET /v1/lists/{id}/ingest: the pushable row schema, this list's
+        HARD (non-AI) columns with their keys and types, so a producer can
+        build a push without guessing. AI columns are omitted, autofill
+        fills them. Same account-scoped auth as the push."""
+        return Response(ingest_schema_wire(self._list_or_404(id)))
 
     def post(self, request: Request, id: str) -> Response:
         target_list = self._list_or_404(id)
