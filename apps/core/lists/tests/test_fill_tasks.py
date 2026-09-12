@@ -211,6 +211,27 @@ class ProvisionerTests(AutofillHarness):
         self.assertEqual(parked.status, FillTaskStatus.READY)
         self.assertIsNone(parked.queued_at)
 
+    def test_settle_restamps_last_state_change_at(self) -> None:
+        # Every transition bumps last_state_change_at (the reclaim cursor
+        # and audit). Prove SETTLE does: a task claimed long ago and
+        # settled now must read fresh from its settle, not its claim, or
+        # the reclaim cursor and freshness reads would lag reality.
+        sheet, _, _ = self._ai_sheet()
+        before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
+        self._push(sheet, [{"company": "settle.co"}])
+        [row_id] = self._new_row_ids(sheet, before)
+        task = self._null_run_tasks().get(row_id=row_id)
+
+        flow = FillTaskFlow(worker_id="test:consumer")
+        self.assertIsNotNone(flow.claim(str(task.id)))
+        # Age the claim stamp so the settle's re-stamp is unambiguous.
+        aged = timezone.now() - timedelta(seconds=300)
+        FillTask.objects.filter(id=task.id).update(last_state_change_at=aged)
+        self.assertTrue(flow.settle(str(task.id), {}, status=FillTaskStatus.DONE))
+        task.refresh_from_db()
+        self.assertEqual(task.status, FillTaskStatus.DONE)
+        self.assertGreater(task.last_state_change_at, aged)  # settle re-stamped, not left at the aged claim
+
 
 class ReaperTests(AutofillHarness):
     def test_it_reclaims_a_stale_processing_task_and_leaves_a_fresh_one(self) -> None:
@@ -242,3 +263,20 @@ class ReaperTests(AutofillHarness):
         # The fresh one is a live run, untouched.
         self.assertEqual(fresh.status, FillTaskStatus.PROCESSING)
         self.assertEqual(fresh.leased_by, "live:2")
+
+    def test_reclaim_never_touches_a_stale_queued_task(self) -> None:
+        # Reclaim is PROCESSING-only. A QUEUED task (published, a durable
+        # message still names it) is NOT reclaimed even when aged far past
+        # the window: re-handing it would duplicate present work, and the
+        # consumer's claim CAS already drops a duplicate delivery. FAILS if
+        # the scan ever widens to QUEUED or to an age-only filter.
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "queued.co"}])
+        (task,) = list(self._null_run_tasks())
+        FillTask.objects.filter(id=task.id).update(
+            status=FillTaskStatus.QUEUED,
+            last_state_change_at=timezone.now() - timedelta(seconds=PROCESSING_STALE_SECONDS + 600),
+        )
+        self.assertEqual(FillTaskFlow.reclaim_stale_processing(), 0)  # nothing reclaimed
+        task.refresh_from_db()
+        self.assertEqual(task.status, FillTaskStatus.QUEUED)  # still QUEUED, untouched

@@ -58,7 +58,6 @@ class FillAdmissionService(AdmissionBase):
         config: AgentConfig | None = None,
         agent_id: str = "",
         confirmed_row_count: int,
-        concurrency: int = 0,
         rows: int = 0,
     ) -> Fill:
         """The one transaction. Exactly one of `config` (the quick tab:
@@ -123,7 +122,6 @@ class FillAdmissionService(AdmissionBase):
                 resolved_config=resolved_config,
                 column_keys=column_keys,
                 targets=targets,
-                concurrency=concurrency,
             )
             if not fill.confirmed_row_count:
                 raise NoEligibleRows()
@@ -299,7 +297,6 @@ class FillAdmissionService(AdmissionBase):
         resolved_config: AgentConfig,
         column_keys: list[str],
         targets: Iterator[tuple[str, int]],
-        concurrency: int = 0,
     ) -> Fill:
         """Everything after the DECISION, shared by both admission
         paths: the fill row carrying its frozen config, and the QUEUE.
@@ -331,7 +328,6 @@ class FillAdmissionService(AdmissionBase):
             column_keys=column_keys,
             config_snapshot=resolved_config.model_dump(),
             config_fingerprint=config_fingerprint(resolved_config),
-            concurrency=concurrency,
             confirmed_row_count=0,
         )
         consented = 0

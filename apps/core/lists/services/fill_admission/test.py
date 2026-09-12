@@ -20,11 +20,11 @@ from openbower_schema.agents import (
     TEST_VALUE_MAX_LENGTH,
     AgentConfig,
 )
-from openbower_schema.fills import ROW_LEASE_STALE_SECONDS
 
 from ...constants import LIVE_FILL_STATUSES, FillKind, FillTaskStatus
 from ...models import Fill, FillTask
 from .. import fill_progress
+from ..fill_tasks import PROCESSING_STALE_SECONDS
 from ..fingerprint import config_fingerprint
 from .base import AdmissionBase
 from .errors import TestFillActive, TestRowInvalid
@@ -105,7 +105,7 @@ class TestFillAdmission(AdmissionBase):
     def _supersede_or_refuse_tests(self) -> None:
         """One live test per account, held ADVISORILY. Liveness is the
         tasks' latest state change (or, none moved yet, the ULID birth)
-        within ROW_LEASE_STALE_SECONDS. A FRESH teammate's test refuses;
+        within PROCESSING_STALE_SECONDS. A FRESH teammate's test refuses;
         everything else (your own, or anyone's stale orphan) is
         cancelled and superseded.
 
@@ -116,7 +116,7 @@ class TestFillAdmission(AdmissionBase):
         A Fill row lock here would order Fill before FillTask against
         every other stopper's FillTask-before-Fill and deadlock."""
         now = timezone.now()
-        fresh_cutoff = now - timedelta(seconds=ROW_LEASE_STALE_SECONDS)
+        fresh_cutoff = now - timedelta(seconds=PROCESSING_STALE_SECONDS)
         live = list(
             Fill.objects.filter(account_id=self.account_id, kind=FillKind.TEST, status__in=LIVE_FILL_STATUSES).order_by(
                 "id"
@@ -125,9 +125,14 @@ class TestFillAdmission(AdmissionBase):
         for fill in live:
             if fill.user_id == self.user_id:
                 continue
-            # Liveness DERIVED from the tasks (their last_state_change_at
-            # moves as the consumer runs them), not a stored heartbeat: a
-            # run with no task moved yet falls back to its ULID birth.
+            # Liveness DERIVED from the tasks' latest state change, not a
+            # stored heartbeat. The stamp moves on TRANSITIONS (claim,
+            # park, settle), not mid-run, so the window is
+            # PROCESSING_STALE_SECONDS (the same bound the reclaim calls a
+            # PROCESSING task dead at): a single-task test running its
+            # bounded run_cell stays fresh the whole way, instead of
+            # reading stale and being superseded mid-run. A run with no
+            # task moved yet falls back to its ULID birth.
             heartbeat = FillTask.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=Max("last_state_change_at"))[
                 "latest"
             ]

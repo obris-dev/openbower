@@ -130,5 +130,5 @@ def _abandon_queued(fill_run_id: str) -> None:
     queue-before-fill lock order the caller depends on. The transient
     count is DERIVED now, so nothing is released here."""
     FillTask.objects.filter(fill_run_id=fill_run_id, status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED)).update(
-        status=FillTaskStatus.ABANDONED, leased_by="", updated_at=timezone.now()
+        status=FillTaskStatus.ABANDONED, updated_at=timezone.now()
     )

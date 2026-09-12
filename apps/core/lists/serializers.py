@@ -9,7 +9,6 @@ from typing import Any
 from rest_framework import serializers
 
 from agents.serializers import AgentConfigRequest
-from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
@@ -116,8 +115,6 @@ class AiColumnRequest(serializers.Serializer):
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     confirmed_row_count = serializers.IntegerField(min_value=0)
-    # The optional DOWNWARD-only concurrency override; 0 means unset.
-    concurrency = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_FILL_CONCURRENCY)
     # Scope: fill only the FIRST N eligible rows (0 = all, the absent
     # default; a sent value must be positive).
     rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)

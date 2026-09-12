@@ -55,8 +55,6 @@ class Fill(UserScopedModel):
     config_fingerprint = models.CharField(
         _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
     )
-    # Optional downward override on the AIMD ceiling; 0 = unset.
-    concurrency = models.IntegerField(_("concurrency"), default=0)
     # The row count the user consented to; admission 409s when the
     # count changed (shrinkage included). The progress denominator on
     # every surface that shows one.

@@ -317,7 +317,6 @@ class AiColumnView(_ScopedView):
                 config=config,
                 agent_id=data["agent_id"],
                 confirmed_row_count=data["confirmed_row_count"],
-                concurrency=data["concurrency"],
                 rows=data["rows"],
             )
         except FillRefused as e:

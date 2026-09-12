@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import FillRunDetail
+from openbower_schema.fills import ROW_LEASE_STALE_SECONDS, FillRunDetail
 
 from ..constants import (
     MAX_ACTIVE_FILLS,
@@ -34,6 +34,7 @@ from ..services.fill_admission import (
     TestFillAdmission,
 )
 from ..services.fill_progress import live_fill_count
+from ..services.fill_tasks import PROCESSING_STALE_SECONDS
 from ..services.fills import FillService
 from ..services.lists import ListService
 
@@ -169,6 +170,25 @@ class TestAdmissionTests(TestCase):
         stale.refresh_from_db()
         self.assertEqual(stale.status, FillStatus.CANCELLED)
         self.assertEqual(fresh.status, FillStatus.PENDING)
+
+    def test_a_teammates_running_test_stays_fresh_within_the_processing_window(self) -> None:
+        # A single-task test's last_state_change_at FREEZES while its
+        # run_cell runs (no renewal), so freshness uses the PROCESSING
+        # window (the reclaim's dead bound), not the tighter lease window.
+        # A teammate's test aged past ROW_LEASE_STALE_SECONDS but within
+        # PROCESSING_STALE_SECONDS is still RUNNING: it must refuse, not be
+        # superseded mid-run. FAILS if the window reverts to the lease bound.
+        running = self._admit()
+        aged = ROW_LEASE_STALE_SECONDS + 60  # past the old window, well inside the processing one
+        self.assertLess(aged, PROCESSING_STALE_SECONDS)
+        FillTask.objects.filter(fill_run_id=str(running.id)).update(
+            last_state_change_at=timezone.now() - timedelta(seconds=aged)
+        )
+        teammate = TestFillAdmission(account_id=ACCOUNT, user_id="01USERBBBBBBBBBBBBBBBBBBBB")
+        with self.assertRaises(TestFillActive):
+            self._admit(admission=teammate)
+        running.refresh_from_db()
+        self.assertEqual(running.status, FillStatus.PENDING)  # not superseded
 
     def test_the_cron_sweep_purges_old_test_fills_and_only_those(self):
         old = self._admit()
