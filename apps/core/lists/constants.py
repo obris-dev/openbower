@@ -171,10 +171,7 @@ FILL_WRITE_BATCH = 1000
 # is one fact, whether it is caught at the provider or at claim time.
 class FillFailureCode(StrEnum):
     FILL_UNRUNNABLE = "fill_unrunnable"
-    SOURCE_GONE = "source_gone"
     MODEL_UNRUNNABLE = FillErrorCode.MODEL_UNRUNNABLE
-    PROVIDER_THROTTLED = "provider_throttled"
-    SEARCH_THROTTLED = "search_throttled"
 
 
 class FillTaskStatus(StrEnum):

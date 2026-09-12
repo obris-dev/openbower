@@ -192,10 +192,10 @@ class CompletionTests(TestCase):
 
     def test_fail_fill_is_cas_from_live_states(self) -> None:
         fill = make_run(rows=1)
-        self.assertTrue(fill_progress.fail(str(fill.id), code="provider_throttled", message="why"))
+        self.assertTrue(fill_progress.fail(str(fill.id), code="model_unrunnable", message="why"))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.FAILED)
-        self.assertEqual(fill.error_code, "provider_throttled")
+        self.assertEqual(fill.error_code, "model_unrunnable")
         self.assertFalse(fill_progress.fail(str(fill.id), code="x", message="y"))
 
     def test_stopping_a_fill_abandons_its_queue_and_touches_no_cell(self) -> None:
