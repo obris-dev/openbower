@@ -91,7 +91,7 @@ class PromotionTests(TestCase):
         )
 
     def test_promotion_is_a_flag_flip_with_a_name(self):
-        service = AgentService(**self._IDS)
+        service = AgentService(account_id=self._IDS["account_id"])
         promoted = service.promote(self._ephemeral(), label="Kept")
         self.assertFalse(promoted.ephemeral)
         self.assertEqual(promoted.label, "Kept")
@@ -99,7 +99,7 @@ class PromotionTests(TestCase):
 
     def test_promotion_is_a_roster_admission(self):
         # The cap must hold at the flag flip exactly as at create.
-        service = AgentService(**self._IDS)
+        service = AgentService(account_id=self._IDS["account_id"])
         row = self._ephemeral()
         with patch("agents.services.agents.MAX_AGENTS", 0), self.assertRaises(AgentsFull):
             service.promote(row, label="Over")

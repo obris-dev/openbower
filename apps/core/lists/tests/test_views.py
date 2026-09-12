@@ -89,8 +89,8 @@ class ListsViewsTests(TestCase):
         self.assertIsNone(rest["next_cursor"])
 
     def test_foreign_list_is_404(self):
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin=ListOrigin.MANUAL
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id="01US" + "Z" * 22, label="Not yours", columns=[], origin=ListOrigin.MANUAL
         )
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": str(foreign.id)})).status_code, 404)
 

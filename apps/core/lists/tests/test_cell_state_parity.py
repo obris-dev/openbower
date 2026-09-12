@@ -76,7 +76,7 @@ class CellStateParityTests(SimpleTestCase):
         # was also settled would park a row and then never re-run it.
         from agents.tools import registry as tool_registry
         from agents.tools.base import FailureMode
-        from lists.services.cell_run import _TOOL_FAILURE_MODE_STATES
+        from lists.services.fill_processing.cell_run import _TOOL_FAILURE_MODE_STATES
 
         from ..constants import RETRY_CAUSES
 

@@ -61,27 +61,10 @@ class Fill(UserScopedModel):
     # count changed (shrinkage included). The progress denominator on
     # every surface that shows one.
     confirmed_row_count = models.IntegerField(_("confirmed row count"))
-    # Worker-written progress, never COUNT(*) polling. COLUMNS, not a
-    # JSON dict: these are incremented once per completed task from 64
-    # threads, so they update with F() expressions and no lock. A dict
-    # would need a read-modify-write behind select_for_update on this
-    # single row, which serializes the whole pool.
-    attempted = models.IntegerField(_("attempted"), default=0)
-    filled = models.IntegerField(_("filled"), default=0)
-    blank = models.IntegerField(_("blank"), default=0)
-    transient = models.IntegerField(_("transient"), default=0)
-    # Pace accumulators across terminal tasks: total wall seconds and
-    # the share of it parked on search. "What is slow" is their ratio.
-    row_seconds = models.IntegerField(_("row seconds"), default=0)
-    search_wait_seconds = models.IntegerField(_("search wait seconds"), default=0)
-    # The AIMD operating point at the last write, so a restarted worker
-    # resumes where the fill was instead of re-probing from the start.
-    concurrency_point = models.IntegerField(_("concurrency point"), default=0)
-    # Stamped with each counter write and once per supervisor pass, so
-    # a healthy-but-slow fill never reads as an unreporting worker. The
-    # client judges staleness against the wire's ROW_LEASE_STALE_SECONDS,
-    # warning-role only.
-    heartbeat_at = models.DateTimeField(_("heartbeat at"), null=True, blank=True)
+    # No progress counters or heartbeat column: the wire's counters and
+    # heartbeat DERIVE from the task rows and cell states at read time
+    # (services.fills.derive_counters / derive_heartbeat), so there is
+    # nothing to store here.
     # The two-tier error on FAILED: code is the machine leg, message is
     # server-authored copy the client renders verbatim.
     error_code = models.CharField(_("error code"), max_length=FILL_ERROR_CODE_MAX_LENGTH, blank=True, default="")

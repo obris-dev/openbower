@@ -739,7 +739,7 @@ class RuntimeTests(TestCase):
         behaviors these tests pin are lane-independent, and the test
         lane's own endpoint contract lives with the fills tests."""
         from agents.serializers import AgentConfigRequest
-        from lists.services.cell_run import run_cell
+        from lists.services.fill_processing.cell_run import run_cell
         from openbower_schema.agents import AgentConfig
         from openbower_schema.fills import CellRunResult
 
@@ -888,7 +888,7 @@ class AgenticLoopTests(TestCase):
         config: dict | None = None,
         row: dict | None = None,
     ) -> dict:
-        from lists.services.cell_run import run_cell
+        from lists.services.fill_processing.cell_run import run_cell
         from openbower_schema.agents import AgentConfig
 
         with (

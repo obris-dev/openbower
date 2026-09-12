@@ -11,7 +11,7 @@ from rest_framework import serializers
 from agents.serializers import AgentConfigRequest
 from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
-from openbower_schema.fills import CellRunResult, FillCounters, FillError
+from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
@@ -254,26 +254,28 @@ def fill_run_wire(fill: Fill) -> dict[str, Any]:
     # with no copy would leave the client nothing to render verbatim),
     # gated on the DOCUMENTED predicate exactly as the column summary
     # gates last_error: one fact, one rule, on every wire.
+    from .services.fills import derive_counters, derive_heartbeat
+
     error = (
         FillError(code=fill.error_code, message=fill.error_message)
         if fill.status == FillStatus.FAILED and fill.error_code
         else None
     )
+    # Counters and the heartbeat DERIVE from the task rows and cell
+    # states at read time; nothing writes them onto the fill anymore.
+    heartbeat = derive_heartbeat(fill)
     return WireFillRun(
         id=str(fill.id),
         list_id=fill.list_id,
         agent_id=fill.agent_id,
         status=fill.status,
         column_keys=fill.column_keys or [],
-        # Every declared counter, projected by NAME off the model's own
-        # columns. Enumerating them here by hand is how a counter ships
-        # as a zero while the worker writes it.
-        counters=FillCounters(**{name: getattr(fill, name, 0) for name in FillCounters.model_fields}),
+        counters=derive_counters(fill),
         confirmed_row_count=fill.confirmed_row_count,
         # The base model's attribution field is the wire's started_by;
         # authorization stays account membership.
         started_by=fill.user_id,
-        heartbeat_at=fill.heartbeat_at.isoformat() if fill.heartbeat_at else None,
+        heartbeat_at=heartbeat.isoformat() if heartbeat else None,
         error=error,
         created_at=fill.created_at.isoformat(),
         updated_at=fill.updated_at.isoformat(),

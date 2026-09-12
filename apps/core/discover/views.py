@@ -200,7 +200,7 @@ def _list_seed_domains(request, *, list_id: str, identifier_key: str) -> list[st
     no domains at all)."""
     from .domains_input import normalize_seed_values
 
-    service = ListService(account_id=request.user.account_id, user_id=request.user.id)
+    service = ListService(account_id=request.user.account_id)
     try:
         target = service.get(list_id)
     except ListNotFound:
@@ -268,8 +268,10 @@ class LookalikeRunSaveListView(ScopedView):
         wanted = serializer.validated_data.get("limit")
         excluded = {d for d in (normalize_domain(v) for v in serializer.validated_data["exclude"]) if d}
         client = IndexClientService.for_session(request.auth)
-        service = ListService(account_id=request.user.account_id, user_id=request.user.id)
-        target = service.create(label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id)
+        service = ListService(account_id=request.user.account_id)
+        target = service.create(
+            owner_id=request.user.id, label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id
+        )
         added = 0
         # `wanted` counts ranks WALKED (pre-exclusion), matching the
         # results table: the cutoff decides the set, exclusion then
@@ -315,7 +317,7 @@ class LookalikeRunSaveListView(ScopedView):
                     # on that staying true.
                     if normalize_domain(item.company.domain) not in excluded
                 ]
-                added += service.add_rows(target, rows)
+                added += len(service.add_rows(target, rows))
                 # The advance guard the client export also carries: a
                 # stuck cursor must not walk forever.
                 if result.next_cursor == cursor:

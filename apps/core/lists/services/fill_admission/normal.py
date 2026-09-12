@@ -17,13 +17,14 @@ from collections.abc import Iterator
 from itertools import batched, islice
 
 from django.db import transaction
+from django.utils import timezone
 
 from agents.models import Agent
 from agents.services import AgentNotFound, AgentService
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
-from ...constants import FILL_WRITE_BATCH
+from ...constants import FILL_WRITE_BATCH, FillTaskStatus
 from ...models import Fill, FillTask, List, ListRow
 from ..fingerprint import config_fingerprint
 from ..lists import ListNotFound
@@ -48,7 +49,7 @@ from .targets import RefillTargets, free_provider_row_cap, iter_eligible_rows
 class FillAdmissionService(AdmissionBase):
     def __init__(self, *, account_id: str, user_id: str) -> None:
         super().__init__(account_id=account_id, user_id=user_id)
-        self.agents = AgentService(account_id=account_id, user_id=user_id)
+        self.agents = AgentService(account_id=account_id)
 
     def admit(
         self,
@@ -96,8 +97,8 @@ class FillAdmissionService(AdmissionBase):
         cold roster probe measured 1.9s healthy, and a dead source pays
         the list timeout), and nothing that slow belongs inside a
         transaction at all."""
-        agent, resolved = self._resolve_agent(config=config, agent_id=agent_id)
-        self._check_model(resolved)
+        agent, resolved_config = self._resolve_agent(config=config, agent_id=agent_id)
+        self._check_model(resolved_config)
         with transaction.atomic():
             target_list = self._list_or_raise(list_id)
             self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
@@ -109,15 +110,17 @@ class FillAdmissionService(AdmissionBase):
                 # id and the three steps are one sequence; a refusal
                 # rolls this row back with everything else.
                 agent = self.agents.create_ephemeral(
-                    label=resolved.outputs[0].label[:AGENT_LABEL_MAX_LENGTH], config=resolved
+                    owner_id=self.user_id,
+                    label=resolved_config.outputs[0].label[:AGENT_LABEL_MAX_LENGTH],
+                    config=resolved_config,
                 )
-            column_keys = preview_columns(target_list, config=resolved, account_id=self.account_id)
-            eligible = iter_eligible_rows(target_list, prompt=resolved.prompt)
+            column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id)
+            eligible = iter_eligible_rows(target_list, prompt=resolved_config.prompt)
             targets = islice(eligible, rows) if rows else eligible
             fill = self._open_fill(
                 target_list,
                 agent=agent,
-                resolved=resolved,
+                resolved_config=resolved_config,
                 column_keys=column_keys,
                 targets=targets,
                 concurrency=concurrency,
@@ -133,7 +136,7 @@ class FillAdmissionService(AdmissionBase):
             self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
             claim_columns(
                 locked,
-                config=resolved,
+                config=resolved_config,
                 agent_id=str(agent.id),
                 fill_run_id=str(fill.id),
                 account_id=self.account_id,
@@ -179,8 +182,8 @@ class FillAdmissionService(AdmissionBase):
             raise ColumnAgentMissing() from e
         if agent.provider_retired:
             raise ProviderRetiredRefusal()
-        resolved = agent.config()
-        self._check_model(resolved)
+        resolved_config = agent.config()
+        self._check_model(resolved_config)
         with transaction.atomic():
             # Unlocked while the shape is worked out and the queue is
             # built; the List lock comes at the end, over the claim and
@@ -194,7 +197,7 @@ class FillAdmissionService(AdmissionBase):
             # these columns: a new output has to become a real column
             # here or its answers land nowhere a surface can read.
             owned = owned_keys(target_list, str(agent.id))
-            column_keys = preview_columns(target_list, config=resolved, account_id=self.account_id, owned=owned)
+            column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id, owned=owned)
             if column_key not in column_keys:
                 # The URL names the column; the CONFIG names what the
                 # new fill will write, and an output removed or renamed
@@ -209,7 +212,7 @@ class FillAdmissionService(AdmissionBase):
                 # front of the user, carrying a fill.
                 raise ColumnNoLongerFilled(key=column_key)
 
-            fingerprint = config_fingerprint(resolved)
+            fingerprint = config_fingerprint(resolved_config)
             source: Fill | None = None
             if resume_fill_id:
                 # CONTINUE means finish what THAT fill consented to,
@@ -236,7 +239,7 @@ class FillAdmissionService(AdmissionBase):
                 target_list,
                 column_keys=walked,
                 fingerprint=fingerprint,
-                prompt=resolved.prompt,
+                prompt=resolved_config.prompt,
                 owed_by=resume_fill_id,
             )
             # Eligibility and the resume bound both ride the targeting
@@ -244,7 +247,7 @@ class FillAdmissionService(AdmissionBase):
             # at its N, and nothing behind it has been fetched.
             targets = islice(remaining, rows) if rows else remaining
             fill = self._open_fill(
-                target_list, agent=agent, resolved=resolved, column_keys=column_keys, targets=targets
+                target_list, agent=agent, resolved_config=resolved_config, column_keys=column_keys, targets=targets
             )
             if not fill.confirmed_row_count:
                 # EMPTY is diagnosed first. A finished column consents
@@ -280,7 +283,7 @@ class FillAdmissionService(AdmissionBase):
             require_fill_column(locked, column_key)
             claim_columns(
                 locked,
-                config=resolved,
+                config=resolved_config,
                 agent_id=str(agent.id),
                 fill_run_id=str(fill.id),
                 account_id=self.account_id,
@@ -293,7 +296,7 @@ class FillAdmissionService(AdmissionBase):
         target_list: List,
         *,
         agent: Agent,
-        resolved: AgentConfig,
+        resolved_config: AgentConfig,
         column_keys: list[str],
         targets: Iterator[tuple[str, int]],
         concurrency: int = 0,
@@ -326,13 +329,18 @@ class FillAdmissionService(AdmissionBase):
             list_id=str(target_list.id),
             agent_id=str(agent.id),
             column_keys=column_keys,
-            config_snapshot=resolved.model_dump(),
-            config_fingerprint=config_fingerprint(resolved),
+            config_snapshot=resolved_config.model_dump(),
+            config_fingerprint=config_fingerprint(resolved_config),
             concurrency=concurrency,
             confirmed_row_count=0,
         )
         consented = 0
-        cap = free_provider_row_cap(resolved)
+        cap = free_provider_row_cap(resolved_config)
+        # Tasks are born READY (the manual provisioner moves READY ->
+        # QUEUED when it publishes), stamped for the reclaim scan/audit from
+        # the start, carrying the fill's agent so a fill-backed task is
+        # self-describing like an autofill one.
+        now = timezone.now()
         # strict=False: the last page is short whenever the target count
         # is not a multiple of the batch, which is the normal case.
         for page in batched(targets, FILL_WRITE_BATCH, strict=False):
@@ -347,7 +355,16 @@ class FillAdmissionService(AdmissionBase):
                 if consented > cap:
                     raise FreeSearchBudget(searches=MAX_TOOL_CALLS * consented)
                 tasks.append(
-                    FillTask(account_id=self.account_id, fill_run_id=str(fill.id), row_id=row_id, position=position)
+                    FillTask(
+                        account_id=self.account_id,
+                        fill_run_id=str(fill.id),
+                        agent_id=str(agent.id),
+                        row_id=row_id,
+                        list_id=fill.list_id,
+                        position=position,
+                        status=FillTaskStatus.READY,
+                        last_state_change_at=now,
+                    )
                 )
             # No ignore_conflicts: the fill id is minted just above, so
             # nothing else can hold a task under it and a duplicate

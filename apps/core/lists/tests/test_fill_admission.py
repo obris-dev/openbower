@@ -58,11 +58,14 @@ def quick_config(**overrides) -> AgentConfig:
 
 class AdmissionTestCase(TestCase):
     def setUp(self) -> None:
-        self.lists = ListService(account_id=ACCOUNT, user_id=USER)
+        self.lists = ListService(account_id=ACCOUNT)
         self.admission = FillAdmissionService(account_id=ACCOUNT, user_id=USER)
         self.fills = FillService(account_id=ACCOUNT)
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=USER,
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         patcher = patch("lists.services.fill_admission.base.model_for")
@@ -97,6 +100,8 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertEqual(fill.config_snapshot["model"], "test-model")
         self.assertEqual(len(targeted(str(fill.id))), 2)
+        # Fill-backed tasks denormalize their list off the Fill.
+        self.assertEqual({t.list_id for t in FillTask.objects.filter(fill_run_id=str(fill.id))}, {str(self.sheet.id)})
 
     def test_multi_output_columns_are_the_outputs_own_keys(self) -> None:
         config = quick_config(
@@ -191,7 +196,7 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(fill.confirmed_row_count, 2)
 
     def test_empty_sheet_refuses(self) -> None:
-        empty = self.lists.create(label="Empty", columns=[], origin="manual")
+        empty = self.lists.create(owner_id=USER, label="Empty", columns=[], origin="manual")
         with self.assertRaises(EmptyFill):
             self.admit(list_id=str(empty.id), confirmed_row_count=0)
 
@@ -211,7 +216,7 @@ class GuardTests(AdmissionTestCase):
 
     def test_account_cap_refuses(self) -> None:
         for n in range(MAX_ACTIVE_FILLS):
-            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
         with self.assertRaises(AccountFillsFull):
@@ -221,7 +226,7 @@ class GuardTests(AdmissionTestCase):
         # The cap counts LIVE fills only (the locked count path).
         fills = []
         for n in range(MAX_ACTIVE_FILLS):
-            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             fills.append(self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1))
         Fill.objects.filter(id=fills[0].id).update(status=FillStatus.COMPLETE)
@@ -230,7 +235,7 @@ class GuardTests(AdmissionTestCase):
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_refuses_wide_tool_fills(self) -> None:
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
@@ -250,7 +255,7 @@ class GuardTests(AdmissionTestCase):
         TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}},
     )
     def test_paid_provider_lifts_the_free_budget(self) -> None:
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
@@ -263,7 +268,7 @@ class GuardTests(AdmissionTestCase):
         # the paid provider), so a contacts-only fill spends nothing
         # free and the free budget must not cap it. FAILS if the gate
         # reads uses_tools instead of searches_web.
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(find_contacts=True))
@@ -280,7 +285,7 @@ class GuardTests(AdmissionTestCase):
         # with the wiring on the free vendor the budget must still
         # refuse.
         # FAILS if the predicate reads the credential pair again.
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
@@ -324,7 +329,10 @@ class ScopedFillTests(AdmissionTestCase):
 
     def test_no_eligible_rows_refuses(self) -> None:
         bare = self.lists.create(
-            label="Bare", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=USER,
+            label="Bare",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(bare, [{"company": ""}, {"other": "unrelated"}])
         with self.assertRaises(NoEligibleRows) as caught:
@@ -347,7 +355,7 @@ class ScopedFillTests(AdmissionTestCase):
     def test_scope_bounds_the_free_search_budget(self) -> None:
         # The budget reads the TARGET count: a scoped fill on a sheet
         # too wide to run free still admits when N fits the budget.
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         over = FREE_SEARCH_FILL_BUDGET // 4 + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(over)])
         config = quick_config(tools=AgentTools(web_search=True))
@@ -360,13 +368,13 @@ class ScopedFillTests(AdmissionTestCase):
 
 class RosterPathTests(AdmissionTestCase):
     def test_roster_agent_is_used_not_duplicated(self) -> None:
-        agent = self.admission.agents.create(label="Finder", config=quick_config())
+        agent = self.admission.agents.create(owner_id=USER, label="Finder", config=quick_config())
         fill = self.admit(config=None, agent_id=str(agent.id))
         self.assertEqual(fill.agent_id, str(agent.id))
         self.assertEqual(Agent.objects.count(), 1)
 
     def test_retired_provider_refuses(self) -> None:
-        agent = self.admission.agents.create(label="Old", config=quick_config())
+        agent = self.admission.agents.create(owner_id=USER, label="Old", config=quick_config())
         Agent.objects.filter(id=agent.id).update(provider="legacy_provider")
         with self.assertRaises(ProviderRetiredRefusal):
             self.admit(config=None, agent_id=str(agent.id))
@@ -414,7 +422,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         # to 50,000 FillTask rows would waste the build EVERY time, not
         # on a race.
         for n in range(MAX_ACTIVE_FILLS):
-            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
         with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
@@ -428,10 +436,11 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         # hear the one that waiting actually fixes, the same precedence
         # the locked claim keeps.
         for n in range(MAX_ACTIVE_FILLS):
-            sheet = self.lists.create(label=f"S{n}", columns=[], origin="manual")
+            sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
         wide = self.lists.create(
+            owner_id=USER,
             label="Wide",
             columns=[{"key": f"c{n}", "label": f"C{n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)],
             origin="manual",
@@ -442,6 +451,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
 
     def test_a_full_sheet_refuses_before_building_the_queue(self) -> None:
         wide = self.lists.create(
+            owner_id=USER,
             label="Wide",
             columns=[{"key": f"c{n}", "label": f"C{n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)],
             origin="manual",

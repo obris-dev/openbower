@@ -118,16 +118,20 @@ class FolderService:
 
 
 class ListService:
-    def __init__(self, *, account_id: str, user_id: str) -> None:
+    """Account-scoped: every method here reads or writes within one
+    account. The one owner-stamping op, create, takes the owner as an
+    explicit `owner_id` argument rather than the service carrying a
+    user_id it would ignore everywhere else."""
+
+    def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
-        self.user_id = user_id
 
     def create(
-        self, *, label: str, columns: list[dict], origin: str, origin_ref: str = "", folder_id: str = ""
+        self, *, owner_id: str, label: str, columns: list[dict], origin: str, origin_ref: str = "", folder_id: str = ""
     ) -> List:
         return List.objects.create(
             account_id=self.account_id,
-            user_id=self.user_id,
+            user_id=owner_id,
             label=label,
             columns=columns,
             origin=origin,
@@ -165,13 +169,16 @@ class ListService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: List, rows: list[dict[str, str]]) -> int:
+    def add_rows(self, target: List, rows: list[dict[str, str]]) -> list[ListRow]:
         """Append rows (each a data dict keyed by column keys). Positions
         are dense and 1-based; the count ceiling AND the cell clamp live
         here so every entry path (import, snapshot, manual) hits one
-        writer's rules (authored values clamp, never reject)."""
+        writer's rules (authored values clamp, never reject). Returns the
+        created rows (WITH ids, a ULID assigned before insert): a caller
+        that only wants a count takes len(), and the push path needs the
+        ids to enqueue autofill against them."""
         if not rows:
-            return 0
+            return []
         rows = [{key: _clamp_cell(key, value, where="add_rows") for key, value in data.items()} for data in rows]
         with transaction.atomic():
             # Positions allocate from the current count, so concurrent
@@ -191,7 +198,7 @@ class ListService:
             ListRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
-        return len(created)
+        return created
 
     def write_cells(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
         """THE cell writer for machine answers: write-if-blank per key,
@@ -287,8 +294,8 @@ class ListService:
                 return
             fills = Fill.objects.filter(list_id=str(target.id))
             # ROWS FIRST, then the queue, because that is the order the
-            # worker's terminal write takes them: write_cells locks the
-            # ListRow, then complete_task writes the FillTask, both in
+            # consumer's terminal write takes them: write_cells locks the
+            # ListRow, then the task settle writes the FillTask, both in
             # one transaction. Deleting the other way round is an ABBA
             # deadlock against any fill running on this sheet, and
             # Postgres resolves it by aborting one side: a 500 on the
@@ -310,7 +317,7 @@ class ListService:
             # come from the FILL rows, which are list-scoped and current;
             # the caller's `target` may be a snapshot taken before the
             # column it is about to delete even existed.
-            AgentService(account_id=self.account_id, user_id=self.user_id).delete_ephemeral(
+            AgentService(account_id=self.account_id).delete_ephemeral(
                 [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
             )
             cell_truth.purge_list(str(target.id))

@@ -19,6 +19,7 @@ from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
+from ..services import autofill
 from ..services.lists import ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
@@ -56,16 +57,22 @@ class AppendResult(NamedTuple):
 
 
 def _append_rows(event: IngestEvent) -> AppendResult:
-    """The side effect: append the pushed rows to the sheet, owning its own
-    terminal-error handling (a deleted or full list is a drop, reported for
-    the caller to log). Only transient failures (a DatabaseError) raise."""
-    lists = ListService(account_id=event.account_id, user_id=event.user_id)
+    """The side effect: append the pushed rows to the sheet AND enqueue
+    autofill for them, owning its own terminal-error handling (a deleted
+    or full list is a drop, reported for the caller to log). Only
+    transient failures (a DatabaseError) raise.
+
+    The enqueue rides the caller's transaction (handle_ingest_event's
+    atomic), so rows and their autofill work commit together: a row can
+    never land with no work queued to fill it."""
+    lists = ListService(account_id=event.account_id)
     try:
         target = lists.get(event.list_id)
-        added = lists.add_rows(target, event.rows)
+        created = lists.add_rows(target, event.rows)
     except (ListNotFound, ListsFull) as e:
         return AppendResult(applied=False, reason=str(e))
-    return AppendResult(applied=True, added=added)
+    autofill.enqueue_rows(account_id=event.account_id, target_list=target, rows=created)
+    return AppendResult(applied=True, added=len(created))
 
 
 def handle_ingest_event(event: IngestEvent) -> str:
@@ -141,9 +148,9 @@ class IngestConsumer:
                     # partition forever if left uncommitted; skip it (a
                     # dead-letter topic is a follow-up).
                     logger.error("ingest: undecodable message skipped: %s", e)
-                    consumer.commit(msg)
+                    consumer.commit(message=msg)
                     continue
                 handle_ingest_event(event)
-                consumer.commit(msg)
+                consumer.commit(message=msg)
         finally:
             consumer.close()

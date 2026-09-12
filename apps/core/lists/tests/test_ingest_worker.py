@@ -40,7 +40,8 @@ def _event(event_id="evt-1", account_id=_ACCT, rows=None, list_id=_LIST) -> Inge
 
 
 def _make_list(account_id=_ACCT) -> str:
-    lst = ListService(account_id=account_id, user_id=_USER).create(
+    lst = ListService(account_id=account_id).create(
+        owner_id="01US" + "A" * 22,
         label="ingest target",
         columns=[{"key": "domain", "label": "Domain", "type": "url"}],
         origin=ListOrigin.MANUAL,
@@ -50,7 +51,7 @@ def _make_list(account_id=_ACCT) -> str:
 
 class HandleIngestEventTests(TestCase):
     def setUp(self) -> None:
-        self.svc = ListService(account_id=_ACCT, user_id=_USER)
+        self.svc = ListService(account_id=_ACCT)
         self.list_id = _make_list()
 
     def _rows(self, n):

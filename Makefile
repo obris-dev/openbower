@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-cron logs-web sweep local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -59,16 +59,16 @@ suite-network:
 		     docker network create openbower-suite >/dev/null; exit 1; }
 
 # --wait-timeout covers the SERIAL cold path, not one term of it:
-# core-setup syncs its own venv, then core and both fill workers sync
+# core-setup syncs its own venv, then core and the fill services sync
 # theirs concurrently (separate anonymous volumes each; cron alone
 # never syncs, since supercronic is its command), and `build` renews
 # them by construction.
 # A bound above that chain keeps a container stuck RESTARTING from
 # blocking the target forever, without failing a start that is merely
 # slow.
-up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill workers + cron)
+up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + cron)
 	$(COMPOSE) up -d --wait --wait-timeout 900
-	@echo "up: api :8002, app :3003, marketing :3004, fill workers + cron (make logs to tail, make stop to stop)"
+	@echo "up: api :8002, app :3003, marketing :3004, fill services + cron (make logs to tail, make stop to stop)"
 
 # Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
 # REMOVED with no policy to bring it back, and nothing else drains the
@@ -86,7 +86,7 @@ down: ## Stop and remove the stack's containers (the db's data and installed dep
 reset: ## Remove the stack AND its volumes (wipes the dev database and the installed dependencies)
 	$(COMPOSE) down -v
 
-stop: ## Stop the stack in place; the normal worker finishes rows in flight, the test worker's short grace kills its bench row (make up resumes)
+stop: ## Stop the stack in place; the fill consumer finishes the row in flight before its grace expires (make up resumes)
 	$(COMPOSE) stop
 
 # Compose-file edits are applied by RECREATING a service, which restart
@@ -99,8 +99,8 @@ restart: ## Restart all services in place (compose-file edits need make up, whic
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
 
-restart-worker: ## Restart both fill workers (what a change to worker code needs; no reloader)
-	$(COMPOSE) restart worker worker-test
+restart-worker: ## Restart the fill provisioner + consumer (what a change to their code needs; no reloader)
+	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer
 
 restart-cron: ## Restart the cron (a crontab schedule edit needs it; supercronic parses at startup)
 	$(COMPOSE) restart cron
@@ -136,11 +136,14 @@ logs: ## Tail all container logs
 logs-core: ## Tail the api's logs
 	$(COMPOSE) logs -f core
 
-logs-worker: ## Tail both fill workers' logs
-	$(COMPOSE) logs -f worker worker-test
+logs-worker: ## Tail the fill provisioner + manual/test consumer logs
+	$(COMPOSE) logs -f fill-provisioner fill-consumer test-consumer
 
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
 	$(COMPOSE) logs -f ingest-worker
+
+logs-autofill: ## Tail the autofill provisioner + consumer logs (publish and run pushed rows' AI columns)
+	$(COMPOSE) logs -f autofill-provisioner autofill-consumer
 
 logs-cron: ## Tail the maintenance cron's logs
 	$(COMPOSE) logs -f cron

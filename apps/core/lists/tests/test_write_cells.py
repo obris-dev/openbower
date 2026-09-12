@@ -25,11 +25,11 @@ _COLUMNS = [
 
 
 def _service(account="01AC" + "A" * 22, user="01US" + "A" * 22) -> ListService:
-    return ListService(account_id=account, user_id=user)
+    return ListService(account_id=account)
 
 
 def _sheet(service: ListService, rows: list[dict[str, str]]):
-    target = service.create(label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+    target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
     service.add_rows(target, rows)
     return target, service.rows_page(target, after_position=0, limit=len(rows))
 
@@ -111,7 +111,7 @@ class WriteIfBlankTests(TestCase):
     def test_unknown_row_and_list_read_as_missing(self):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
-        other = service.create(label="Other", columns=_COLUMNS, origin=ListOrigin.MANUAL)
+        other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=ListOrigin.MANUAL)
         with self.assertRaises(RowNotFound):
             service.write_cells(str(target.id), "01RW" + "Z" * 22, {"name": "x"})
         with self.assertRaises(RowNotFound):  # a row outside the list is missing too
@@ -200,8 +200,8 @@ class LockGranularityTests(TransactionTestCase):
     nothing."""
 
     def test_the_write_locks_the_row_and_not_the_list(self) -> None:
-        lists = ListService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22)
-        sheet = lists.create(label="Sheet", columns=_COLUMNS, origin=ListOrigin.MANUAL)
+        lists = ListService(account_id="01AC" + "A" * 22)
+        sheet = lists.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.MANUAL)
         lists.add_rows(sheet, [{"name": "acme"}])
         row = ListRow.objects.get(list_id=str(sheet.id))
         with CaptureQueriesContext(connection) as captured:

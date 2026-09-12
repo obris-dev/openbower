@@ -41,9 +41,11 @@ class FillCellState(AccountScopedModel):
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
-    # The fill that wrote it: the row drawer's link to that run's
-    # FillTask.result, which holds what the model actually said.
-    fill_run_id = models.CharField(_("fill run id"), max_length=26)
+    # The fill run that wrote it: the row drawer's link to that run's
+    # FillTask.result, which holds what the model actually said. NULL on
+    # the automatic path (autofill), which has no fill run; the drawer
+    # follows the writing task by (row, column) instead.
+    fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
     config_fingerprint = models.CharField(
         _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
     )

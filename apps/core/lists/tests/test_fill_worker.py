@@ -1,34 +1,38 @@
-"""The worker end to end: admission -> `fill_worker --once` -> cells
-in the sheet, outcomes diagnosed, fill terminal. The model is a
-scripted FunctionModel through the patched model_for seam (the
-runtime tests' precedent); everything else is real.
-TransactionTestCase, NOT TestCase: the worker's row threads open their
-own DB connections, which would deadlock against a test-wrapping
-transaction's uncommitted rows and held locks."""
+"""The MANUAL fill lane end to end on the shared task state machine:
+admission (tasks born READY) -> the provisioner publishes -> the shared
+consumer's handle_fill_task claims, runs, and lands. The model is a
+scripted FunctionModel through the patched model seam; everything else
+(lists, admission, the state machine, landing, derived counters) is
+real.
+
+This module also HOSTS the shared model fixtures and `_patches` the
+autofill and test-kind suites import, so the one mock boundary (the
+model seam) is defined once.
+
+TransactionTestCase, NOT TestCase: the consumer opens its own DB work
+and admission takes select_for_update, which would deadlock against a
+test-wrapping transaction.
+
+Run: DJANGO_ENV=test uv run python apps/core/manage.py test lists.tests.test_fill_worker
+"""
 
 from __future__ import annotations
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from django.core.management import call_command
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from agents.constants import SEARCH_BACKOFF_SECONDS
-from agents.providers.base import full_source
-from agents.providers.openai_compatible import OpenAICompatibleProvider
-from openbower_kernel.provider_config import make_source
+from agents.providers import ModelUnavailable
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
 from ..constants import (
-    CONSECUTIVE_TRANSIENT_LIMIT,
-    FILL_CONCURRENCY_HOSTED_START,
+    FILL_QUEUE_DEPTH,
     FILL_ROW_ATTEMPTS,
     FillFailureCode,
     FillStatus,
@@ -36,15 +40,15 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, FillCellState, FillTask, List, ListRow
-from ..operations.fill_worker import FillState, FillWorkerOperation
-from ..services import fill_progress
+from ..operations.consume_fill_tasks import handle_fill_task
+from ..operations.provision import FillProvisionOperation
 from ..services.fill_admission import FillAdmissionService
-from ..services.fill_queue import FillQueueService
-from ..services.fills import FillService
+from ..services.fills import FillService, derive_counters
 from ..services.lists import ListService
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
+WORKER = "test:consumer"
 
 
 def _answer(info: AgentInfo, value: str, *, confidence: float = 0.95, reason: str = "") -> ModelResponse:
@@ -102,35 +106,13 @@ def flaky_then_answering_model(value: str) -> FunctionModel:
     return FunctionModel(fn)
 
 
-# The default test source: one row in flight, so row order is
-# deterministic. Built through make_source + full_source, never a
-# SourceConfig literal: `canonical` is DERIVED against the provider's
-# own vendor origin by full_source, and a fixture that hand-passes it
-# is a fixture that can disagree with production.
-PINNED_SOURCE = full_source(
-    make_source(base_url="http://localhost:11434/v1", concurrency=1),
-    canonical_base=OpenAICompatibleProvider.canonical_base,
-)
-# A source the AIMD controller can actually MOVE inside: the vendor
-# origin (so canonical, starting at FILL_CONCURRENCY_HOSTED_START) with
-# no declared ceiling (so it may climb to MAX_FILL_CONCURRENCY). Every
-# other worker test pins the window to (1, 1), where the controller is
-# inert: min(2, 1) and max(1, 0) are both 1, so no climb, no halving,
-# and no epoch is observable.
-WIDE_SOURCE = full_source(
-    make_source(base_url=OpenAICompatibleProvider.canonical_base, api_key="k"),
-    canonical_base=OpenAICompatibleProvider.canonical_base,
-)
-
-
-def _patches(model, *, source=None):
-    """The one mock boundary: the model seam. Rows resolve their OWN
-    model (a run closes its client; sharing one killed sibling rows
-    against real providers), so both seams are patched."""
+def _patches(model):
+    """The one mock boundary: the model seam. The claim-time gate in the
+    fill processor and the runtime's own resolve both read model_for, so
+    both are patched to the scripted model."""
     stack = ExitStack()
-    stack.enter_context(patch("lists.operations.fill_worker.model_for", return_value=model))
+    stack.enter_context(patch("lists.services.fill_processing.processor.model_for", return_value=model))
     stack.enter_context(patch("agents.runtime.answer.answerer.model_for", return_value=model))
-    stack.enter_context(patch("lists.operations.fill_worker.source_config", return_value=source or PINNED_SOURCE))
     return stack
 
 
@@ -145,25 +127,20 @@ def quick_config() -> AgentConfig:
     )
 
 
-COUNTER_KEYS = ("attempted", "filled", "blank", "transient")
-PACE_KEYS = ("row_seconds", "search_wait_seconds", "concurrency_point")
-
-
 def counting(fill: Fill) -> dict:
-    """The deterministic counters, read off the fill's own columns.
-    The pace accumulators carry wall-clock values a pin cannot
-    equal-match, so their SHAPE is asserted here and their values are
-    not."""
-    for key in PACE_KEYS:
-        assert isinstance(getattr(fill, key), int)
-    return {key: getattr(fill, key) for key in COUNTER_KEYS if getattr(fill, key)}
+    """The nonzero DERIVED counters, read the way the wire builds them."""
+    counters = derive_counters(fill)
+    return {key: value for key, value in counters.model_dump().items() if value}
 
 
-class WorkerTestCase(TransactionTestCase):
+class ManualFillTestCase(TransactionTestCase):
     def setUp(self) -> None:
-        self.lists = ListService(account_id=ACCOUNT, user_id=USER)
+        self.lists = ListService(account_id=ACCOUNT)
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=USER,
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         with patch("lists.services.fill_admission.base.model_for"):
@@ -173,75 +150,58 @@ class WorkerTestCase(TransactionTestCase):
                 confirmed_row_count=2,
             )
 
-    def run_worker(self, model, *, passes: int = 1) -> None:
-        """`passes` runs the command repeatedly, making every parked
-        task DUE in between. A retry now backs off in real time, so a
-        single --once pass exits before it comes round; advancing the
-        clock is what a test means by "and then it retried"."""
-        for pass_number in range(passes):
-            if pass_number:
-                FillTask.objects.filter(not_before__isnull=False).update(not_before=timezone.now())
-            self._run_once(model)
-
-    def run_supervisor(self, model, *, passes: int, source=None):
-        """ONE long-lived supervisor across several passes, which is
-        what a deployed worker is. The across-row breakers live in that
-        process, so a test that re-invoked the command each pass would
-        hand the provider a fresh count every time and never trip
-        them."""
-        with self._patched(model, source=source), ThreadPoolExecutor(max_workers=4) as pool:
-            supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
+    def run_fill(self, model, *, fill: Fill | None = None, passes: int = 1) -> None:
+        """Drive a fill's tasks through the shared consumer directly (no
+        broker): each pass claims and runs every non-terminal task in
+        sheet order, making parked tasks DUE between passes so a retry
+        comes round the way advancing the clock means it does."""
+        fill = fill or self.fill
+        with _patches(model):
             for pass_number in range(passes):
                 if pass_number:
-                    FillTask.objects.filter(not_before__isnull=False).update(not_before=timezone.now())
-                supervisor._one_pass(pool)
-                # Drain what this pass submitted before advancing: a
-                # pass that left rows running would leave the counts
-                # depending on how fast the pool happened to be.
-                while any(state.in_flight for state in supervisor._states.values()):
-                    supervisor._harvest()
-            return supervisor
+                    FillTask.objects.filter(fill_run_id=str(fill.id), not_before__isnull=False).update(
+                        not_before=timezone.now()
+                    )
+                ids = list(
+                    FillTask.objects.filter(
+                        fill_run_id=str(fill.id),
+                        status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED),
+                    )
+                    .order_by("position")
+                    .values_list("id", flat=True)
+                )
+                for task_id in ids:
+                    handle_fill_task(str(task_id), WORKER)
 
-    def _patched(self, model, *, source=None):
-        return _patches(model, source=source)
-
-    def _run_once(self, model, *, source=None) -> None:
-        with self._patched(model, source=source):
-            call_command("fill_worker", "--once")
+    def _statuses(self, fill: Fill | None = None) -> set[str]:
+        fill = fill or self.fill
+        return {t.status for t in FillTask.objects.filter(fill_run_id=str(fill.id))}
 
     def test_walks_the_sheet_and_completes(self) -> None:
-        self.run_worker(answering_model(lambda prompt: "found: " + prompt.split()[-1]))
+        self.run_fill(answering_model(lambda prompt: "found: " + prompt.split()[-1]))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.assertEqual(rows[0].data["answer"], "found: acme.com")
         self.assertEqual(rows[1].data["answer"], "found: example.io")
-        self.assertEqual(
-            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.DONE}
-        )
-        # An answered cell carries a FILLED record beside its value:
-        # that record is what makes the per-column count an indexed
-        # read instead of a scan of the sheet.
+        self.assertEqual(self._statuses(), {FillTaskStatus.DONE})
+        # An answered cell carries a FILLED record beside its value, with
+        # this fill's run id (the derived counters read off it).
         self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.FILLED})
+        self.assertEqual({c.fill_run_id for c in FillCellState.objects.all()}, {str(self.fill.id)})
         self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
-        self.assertIsNotNone(self.fill.heartbeat_at)
 
     def test_blank_answers_land_diagnosed_not_written(self) -> None:
-        self.run_worker(answering_model(lambda prompt: ""))
+        self.run_fill(answering_model(lambda prompt: ""))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
-        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
-        for row in rows:
+        for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
             self.assertNotIn("answer", row.data)
         self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.NO_EVIDENCE})
         self.assertEqual(counting(self.fill), {"attempted": 2, "blank": 2})
 
     def test_a_dropped_answer_is_preserved_for_audit(self) -> None:
-        # A blank cell has to stay explicable. The log line that used to
-        # be the only record truncates, is not queryable per row, and
-        # dies with the process; tuning the floor needs the REJECTED
-        # distribution, which exists nowhere else.
-        self.run_worker(unsure_model("Acme Holdings", confidence=0.62, reason="no record states the parent"))
+        self.run_fill(unsure_model("Acme Holdings", confidence=0.62, reason="no record states the parent"))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
@@ -254,303 +214,95 @@ class WorkerTestCase(TransactionTestCase):
             )
 
     def test_a_model_that_omits_a_required_field_is_unparseable_not_silent(self) -> None:
-        # The schema requires every field, so an omission cannot land
-        # as a default. It fails validation, exhausts the one retry,
-        # and diagnoses UNPARSEABLE: the model spoke but never in the
-        # output type, which is a signal to change models rather than
-        # a threshold to tune.
         def fn(messages, info: AgentInfo):
             return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"answer": "found"})])
 
-        self.run_worker(FunctionModel(fn))
+        self.run_fill(FunctionModel(fn))
         self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.UNPARSEABLE})
 
-    def test_a_landed_answer_records_its_score_without_a_dropped_value(self) -> None:
-        self.run_worker(answering_model(lambda prompt: "found"))
-        for outcome in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
-            self.assertEqual(outcome.result["assessments"]["answer"]["confidence"], 0.95)
-            # "" is the LANDED value on the typed judgement (the wire
-            # shape is fixed; key-absence was the storage-era spelling).
-            self.assertEqual(outcome.result["assessments"]["answer"]["dropped"], "")
-
     def test_throttled_rows_park_and_are_owed_until_the_fill_stops(self) -> None:
-        # A 429 is infrastructure, not an answer. The task stays QUEUED
-        # behind a real backoff, nothing is diagnosed, and the cell goes
-        # on shimmering because it is still owed.
-        self.run_worker(throttling_model())
+        # A 429 is infrastructure, not an answer: the task parks back to
+        # READY behind a real backoff, nothing is diagnosed, the cell
+        # goes on shimmering, and the fill reads RUNNING (flipped on the
+        # first claim). transient is a DERIVED count of parked rows.
+        self.run_fill(throttling_model())
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.RUNNING)
-        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), status=FillTaskStatus.QUEUED)
-        self.assertTrue(parked.exists())
-        self.assertTrue(all(task.not_before is not None for task in parked.filter(attempts__gt=0)))
+        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), status=FillTaskStatus.READY, parked=True)
+        self.assertEqual(parked.count(), 2)
+        self.assertTrue(all(task.not_before is not None for task in parked))
         self.assertFalse(FillCellState.objects.exists())
-        # Both rows parked: `transient` is a CURRENT count of rows in
-        # retry, bumped once per row on its first park.
-        self.assertEqual(self.fill.transient, 2)
+        self.assertEqual(derive_counters(self.fill).transient, 2)
 
-    def test_a_tripped_breaker_fails_the_fill_and_abandons_its_queue(self) -> None:
-        # The breaker itself is a pure object (that is why it was split
-        # out); what this pins is the SUPERVISOR's response to it, which
-        # is the part with a fill and a queue to touch.
-        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
-        with self._patched(answering_model(lambda prompt: "found")), ThreadPoolExecutor(max_workers=1) as pool:
-            state = supervisor._admit(self.fill)
-            for _ in range(CONSECUTIVE_TRANSIENT_LIMIT):
-                state.breakers.row_finished(retry_cause=StoredCellState.TRANSIENT, tools={})
-            self.assertIsNotNone(state.breakers.tripped)
-            supervisor._process(self.fill, pool)
+    def test_cancelling_a_fill_abandons_its_parked_rows(self) -> None:
+        # Parked (READY) tasks are swept to ABANDONED on cancel, so the
+        # derived transient count drops to zero and nothing shimmers.
+        self.run_fill(throttling_model())
         self.fill.refresh_from_db()
-        self.assertEqual(self.fill.status, FillStatus.FAILED)
-        self.assertEqual(self.fill.error_code, "provider_throttled")
-        # Rendered verbatim in the chip: names only steps that exist in
-        # this slice (no refill gesture yet), and what was kept.
-        self.assertEqual(
-            self.fill.error_message,
-            "The model provider is throttling this fill; it stopped rather than blanking the column. "
-            "Filled cells are kept.",
-        )
-        # Stopping ABANDONS what the fill never spent, which is the
-        # record a later resume reads, and diagnoses nothing: a parked
-        # cell was never answered, so there is no verdict to write.
-        self.assertEqual(
-            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.ABANDONED}
-        )
-        self.assertFalse(FillCellState.objects.exists())
-
-    def test_retry_then_fill_releases_the_transient_counter(self) -> None:
-        # A row that parks transient and later fills must not read as
-        # "currently parked" forever: the wire's transient field is a
-        # CURRENT count, so the terminal write releases it.
-        self.run_worker(flaky_then_answering_model("found"), passes=2)
-        self.fill.refresh_from_db()
-        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
-        self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
-        self.assertEqual(
-            {t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}, {FillTaskStatus.DONE}
-        )
-
-    def test_cancelling_a_fill_releases_its_parked_rows(self) -> None:
-        # The abandon sweep is the THIRD terminal writer. A parked task
-        # leaves QUEUED either by completing (which decrements) or by
-        # being abandoned here, and try_finish refuses to complete a
-        # fill while anything is queued, so there is no other exit.
-        # Missing it left the gauge stuck high on the fills most likely
-        # to have parked rows: the throttle breaker fails a fill
-        # precisely when they are.
-        self.run_worker(throttling_model(), passes=1)
-        self.fill.refresh_from_db()
-        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), parked=True).count()
-        self.assertGreater(parked, 0)
-        self.assertEqual(self.fill.transient, parked)
-
+        self.assertEqual(derive_counters(self.fill).transient, 2)
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
-        self.assertEqual(self.fill.transient, 0)
+        self.assertEqual(self._statuses(), {FillTaskStatus.ABANDONED})
+        self.assertEqual(derive_counters(self.fill).transient, 0)
 
-    def test_a_failed_fill_releases_them_too(self) -> None:
-        # Same sweep, reached through the breaker rather than a cancel,
-        # which is the likelier provider: PROVIDER_THROTTLED trips when
-        # rows are transient by definition.
-        self.run_worker(throttling_model(), passes=1)
+    def test_retry_then_fill_clears_the_transient_count(self) -> None:
+        self.run_fill(flaky_then_answering_model("found"), passes=2)
         self.fill.refresh_from_db()
-        self.assertGreater(self.fill.transient, 0)
-        fill_progress.fail(str(self.fill.id), code=FillFailureCode.PROVIDER_THROTTLED, message="throttled")
-        self.fill.refresh_from_db()
-        self.assertEqual(self.fill.status, FillStatus.FAILED)
-        self.assertEqual(self.fill.transient, 0)
+        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
+        self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
+        self.assertEqual(self._statuses(), {FillTaskStatus.DONE})
 
-    def test_giving_up_on_a_row_that_never_parked_leaves_transient_alone(self) -> None:
-        # The give-up path is the OTHER terminal writer, and it read
-        # `attempts > 1` to decide whether a park had counted this row.
-        # It is reached only past the attempt cap, so that test could
-        # never be false and it decremented unconditionally: a row
-        # whose thread dies every pass never parks, never increments,
-        # and still got decremented at the cap.
+    def test_exhausted_retries_land_a_diagnosed_terminal_blank(self) -> None:
+        # One row burning every attempt is TERMINAL: the give-up at the
+        # cap lands the last park's cause (TRANSIENT), so the cell reads
+        # transient and the counters reach the consented count.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         with patch("lists.services.fill_admission.base.model_for"):
             solo = self.lists.create(
-                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+                owner_id=USER,
+                label="Solo",
+                columns=[{"key": "company", "label": "Company", "type": "text"}],
+                origin="manual",
             )
             self.lists.add_rows(solo, [{"company": "acme.com"}])
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
             )
-        # Burn every attempt WITHOUT parking: claim and release, the
-        # dead-worker-thread path, which is what a redeploy loop does.
-        queue = FillQueueService(worker_id="probe")
-        for _ in range(FILL_ROW_ATTEMPTS):
-            claimed = queue.claim_batch(fill, free_slots=1)
-            queue.release_lease(claimed.tasks[0])
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
-        self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS)
-        self.assertFalse(task.parked)
-
-        # The next claim is one too many, so the worker gives up.
-        self.run_worker(answering_model(lambda prompt: "answered"), passes=1)
-        fill.refresh_from_db()
-        self.assertEqual(fill.transient, 0)
-        self.assertGreaterEqual(fill.transient, 0)
-
-    def test_a_throttled_burst_halves_a_movable_point_once(self) -> None:
-        # Every other worker test pins the source to concurrency=1,
-        # which makes the window (1, 1) and the controller INERT: no
-        # climb, no halving, no epoch. Nothing here could observe the
-        # per-event shedding, so reverting it would keep the suite
-        # green. This runs against a source the point can move inside.
-        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.base.model_for"):
-            wide = self.lists.create(
-                label="Wide", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-            )
-            self.lists.add_rows(wide, [{"company": f"c{n}.com"} for n in range(4)])
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(wide.id), config=quick_config(), confirmed_row_count=4
-            )
-        supervisor = self.run_supervisor(throttling_model(), passes=1, source=WIDE_SOURCE)
-        controller = supervisor._states[str(fill.id)].controller
-        # The window is movable here, so the point STARTED at the
-        # hosted start; a burst that throttled every row in flight
-        # halved it ONCE, not once per row (which would floor it at 1).
-        self.assertEqual(controller.current(), FILL_CONCURRENCY_HOSTED_START // 2)
-        self.assertGreater(FILL_CONCURRENCY_HOSTED_START // 2, 1)
-
-    def test_a_reclaimed_row_that_never_parked_leaves_transient_alone(self) -> None:
-        # `attempts` increments at CLAIM, so a released lease or a
-        # stale reclaim raises it with no park behind it. Inferring
-        # "was parked" from that number made the terminal write
-        # decrement a gauge nobody had incremented, and transient went
-        # permanently negative. The park marker is not_before, which
-        # only park_task sets.
-        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.base.model_for"):
-            solo = self.lists.create(
-                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-            )
-            self.lists.add_rows(solo, [{"company": "acme.com"}])
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
-            )
-        # Claim once and RELEASE, the dead-worker-thread path: the
-        # attempt is counted, nothing was ever parked.
-        queue = FillQueueService(worker_id="probe")
-        claimed = queue.claim_batch(fill, free_slots=1)
-        queue.release_lease(claimed.tasks[0])
-        self.assertEqual(FillTask.objects.get(fill_run_id=str(fill.id)).attempts, 1)
-        self.assertIsNone(FillTask.objects.get(fill_run_id=str(fill.id)).not_before)
-
-        # Now let the worker run it to a clean terminal write.
-        self.run_worker(answering_model(lambda prompt: "answered"), passes=1)
-        fill.refresh_from_db()
-        self.assertGreaterEqual(fill.transient, 0)
-        self.assertEqual(fill.transient, 0)
-
-    def test_exhausted_retries_count_as_terminal_blanks(self) -> None:
-        # One row burning every attempt is TERMINAL (a transient
-        # blank): it lands in attempted/blank and leaves transient at
-        # zero, so the chip's totals reach the consented count.
-        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        with patch("lists.services.fill_admission.base.model_for"):
-            solo = self.lists.create(
-                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-            )
-            self.lists.add_rows(solo, [{"company": "acme.com"}])
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
-            )
-        # One row, so the across-row breaker never trips: it burns its
-        # own attempts instead, and the claim past the cap gives up.
-        self.run_worker(throttling_model(), passes=FILL_ROW_ATTEMPTS + 1)
+        self.run_fill(throttling_model(), fill=fill, passes=FILL_ROW_ATTEMPTS + 1)
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
         task = FillTask.objects.get(fill_run_id=str(fill.id))
-        # Given up on at the cap, by the claim that read one attempt
-        # too many. TRANSIENT, not model_error: attempts only climb
-        # through parks and lost leases, so reaching the cap means the
-        # provider kept being unreachable, which is what the cell's
-        # copy says. It is retryable either way, so a refill re-targets
-        # it; the difference is whether the user is told the model
-        # failed or the provider did. This is the ONLY writer of the
-        # terminal transient blank.
         self.assertEqual(task.status, FillTaskStatus.DONE)
         self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
         self.assertEqual(FillCellState.objects.get().state, StoredCellState.TRANSIENT)
 
-    def test_a_rate_limited_search_provider_parks_the_row_and_the_cell_names_the_tool(self) -> None:
-        # The model searches, the free provider refuses past its backoff,
-        # and the model answers anyway from nothing: the answer is
-        # discarded, the row parks like a model 429 would (its run
-        # stored, so the refusals are the audit), and once the attempts
-        # are spent the cell lands in the state the TOOL owns, never in
-        # a bare transient and never as "found".
-        from agents.tools.search.providers.duckduckgo import _Page
-
-        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        config = quick_config().model_copy(update={"tools": AgentTools(web_search=True)})
-        with patch("lists.services.fill_admission.base.model_for"):
-            solo = self.lists.create(
-                label="Solo", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-            )
-            self.lists.add_rows(solo, [{"company": "acme.com"}])
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(solo.id), config=config, confirmed_row_count=1
-            )
-
-        def fn(messages, info: AgentInfo):
-            if any(part.part_kind == "tool-return" for m in messages for part in m.parts):
-                return _answer(info, "found")
-            return ModelResponse(parts=[ToolCallPart(tool_name="web_search", args={"query": "acme.com"})])
-
+    def test_an_unrunnable_config_fails_the_fill_and_settles_the_task(self) -> None:
+        # The claim-time model gate is the surviving config-tier FAILED
+        # writer: a run that cannot resolve its model fails the WHOLE
+        # fill (it fails every row identically) and settles the task
+        # without spending.
         with (
-            # The engine's bot challenge: a 202 with no results in it.
-            patch("agents.tools.search.providers.duckduckgo._fetch", return_value=_Page(202, [])),
-            patch("agents.tools.search.providers.schedule._sleep"),
-            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}),
+            patch("lists.services.fill_processing.processor.model_for", side_effect=ModelUnavailable("source closed")),
+            patch("agents.runtime.answer.answerer.model_for"),
         ):
-            self.run_worker(FunctionModel(fn), passes=1)
-            fill.refresh_from_db()
-            task = FillTask.objects.get(fill_run_id=str(fill.id))
-            self.assertEqual(fill.status, FillStatus.RUNNING)
-            self.assertEqual(fill.transient, 1)
-            self.assertTrue(task.parked)
-            self.assertEqual(task.result["declined_cause"], StoredCellState.TOOL_UNAVAILABLE)
-            self.assertEqual(task.result["tools"], {"web_search": "rate_limited"})
-            # The run's own blame verdict rides the record: the breaker
-            # quotes it instead of re-walking the status map.
-            self.assertEqual(task.result["blamed_tool"], "web_search")
-            self.assertEqual(task.result["cells"], {})
-            [search] = task.result["tool_calls"]
-            self.assertEqual(
-                (search["status"], search["provider"], search["tool"]), ("rate_limited", "duckduckgo", "web_search")
+            first_task = (
+                FillTask.objects.filter(fill_run_id=str(self.fill.id))
+                .order_by("position")
+                .values_list("id", flat=True)[0]
             )
-            self.assertEqual(search["attempts"], len(SEARCH_BACKOFF_SECONDS) + 1)
-            self.assertFalse(FillCellState.objects.exists())
-            # The parked task is not yet due, so the first pass here is
-            # idle; the remaining attempts park again, and the claim
-            # past the cap gives up.
-            self.run_worker(FunctionModel(fn), passes=FILL_ROW_ATTEMPTS + 1)
-        fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.COMPLETE)
-        self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
-        cell = FillCellState.objects.get()
-        # The cell carries WHICH tool and WHAT its provider said beside the
-        # base state: the sheet's word is the state, the sentence is
-        # the tool's status.
-        self.assertEqual((cell.state, cell.tools), (StoredCellState.TOOL_UNAVAILABLE, {"web_search": "rate_limited"}))
-        self.assertEqual(ListRow.objects.get(list_id=str(solo.id)).data.get("answer", ""), "")
-        # The wire promises a SHARE of the row's wall seconds: the
-        # per-tool sum is clamped, since sibling tool calls run on
-        # parallel threads and an unclamped sum can exceed it.
-        self.assertLessEqual(fill.search_wait_seconds, fill.row_seconds)
+            handle_fill_task(str(first_task), WORKER)
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.FAILED)
+        self.assertEqual(self.fill.error_code, FillFailureCode.MODEL_UNRUNNABLE)
+        self.assertIn("source closed", self.fill.error_message)
+        self.assertFalse(FillCellState.objects.exists())
 
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
-        # One row gone, the list still here: its task is ROW_MISSING
-        # (nothing to diagnose, nothing a resume could owe), no cell
-        # state is written for it, and the other row fills normally.
         gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
         ListRow.objects.filter(id=gone.id).delete()
-        self.run_worker(answering_model(lambda prompt: "found"))
+        self.run_fill(answering_model(lambda prompt: "found"))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(self.fill), {"attempted": 1, "filled": 1})
@@ -560,161 +312,92 @@ class WorkerTestCase(TransactionTestCase):
         self.assertFalse(FillCellState.objects.filter(row_id=str(gone.id)).exists())
 
     def test_a_purged_list_cancels_the_fill(self) -> None:
-        # The whole list gone is a different fact: nothing is owed to
-        # anyone, and a user deletion is never a failure story.
         ListRow.objects.filter(list_id=str(self.sheet.id)).delete()
         List.objects.filter(id=self.sheet.id).delete()
-        self.run_worker(answering_model(lambda prompt: "found"))
+        self.run_fill(answering_model(lambda prompt: "found"))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
         self.assertFalse(FillCellState.objects.exists())
 
-    def test_a_drained_but_live_run_completes_on_the_next_pass(self) -> None:
-        # A worker killed between its last terminal write and
-        # try_finish (SIGTERM on the final rows) leaves a live fill
-        # with every row terminal: the next pass must flip it
-        # COMPLETE, never skip it forever.
-        Fill.objects.filter(id=self.fill.id).update(status=FillStatus.RUNNING)
-        FillTask.objects.filter(fill_run_id=str(self.fill.id)).update(status=FillTaskStatus.DONE)
-        self.run_worker(answering_model(lambda prompt: "unused"))
-        self.fill.refresh_from_db()
-        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
-
     def test_cancelled_run_stops_without_spending(self) -> None:
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
-        calls = []
-        self.run_worker(answering_model(lambda prompt: calls.append(prompt) or "x"))
+        calls: list[str] = []
+        self.run_fill(answering_model(lambda prompt: calls.append(prompt) or "x"))
         self.assertEqual(calls, [])
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
 
-    def test_type_mismatch_diagnosed_when_shape_refuses(self) -> None:
-        with patch("lists.services.fill_admission.base.model_for"):
-            other = self.lists.create(label="Nums", columns=[], origin="manual")
-            self.lists.add_rows(other, [{"company": "acme.com"}])
-            config = AgentConfig(
-                prompt="Count for {{company}}",
-                provider="openai_compatible",
-                source="ollama",
-                model="scripted",
-                tools=AgentTools(),
-                outputs=[AgentOutput(key="answer", label="Answer", type="number")],
-            )
-            FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(other.id), config=config, confirmed_row_count=1
-            )
-        # Complete the first fill so --once reaches the second.
-        self.run_worker(answering_model(lambda prompt: "not a number" if "Count" in prompt else "fine"))
-        row = self.lists.rows_page(other, after_position=0, limit=1)[0]
-        self.assertNotIn("answer", row.data)
-        self.assertEqual(
-            {c.state for c in FillCellState.objects.filter(row_id=str(row.id))}, {StoredCellState.TYPE_MISMATCH}
-        )
-
-
-class FairnessTests(WorkerTestCase):
-    """Every live fill advances in every pass. A wide fill must not be
-    able to hold the worker for the length of its own run, since the
-    fill next to it belongs to a different account."""
-
-    def _second_sheet(self, account: str, rows: int) -> str:
-        lists = ListService(account_id=account, user_id=USER)
-        sheet = lists.create(
-            label="Theirs", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
-        )
-        lists.add_rows(sheet, [{"company": f"c{n}.io"} for n in range(rows)])
-        with patch("lists.services.fill_admission.base.model_for"):
-            fill = FillAdmissionService(account_id=account, user_id=USER).admit(
-                list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
-            )
-        return str(fill.id)
-
-    def test_a_wide_fill_does_not_starve_a_later_one(self) -> None:
-        # The starvation fix, asserted on INTERLEAVING rather than on
-        # completion: the old loop also finished both fills, but only
-        # one after the other, so a 25k-row fill held the worker for
-        # its entire run. Rows of the two fills must overlap in time.
-        other_run_id = self._second_sheet("01ACCOUNTBBBBBBBBBBBBBBBBB", rows=4)
-        seen: list[str] = []
-
-        def answer(prompt: str) -> str:
-            # Row data carries the sheet apart: setUp's rows are
-            # acme/example, the second sheet's are cN.io.
-            seen.append("theirs" if ".io" in prompt and prompt.rstrip().endswith(".io") and "c" in prompt else "mine")
-            return "found"
-
-        self.run_worker(answering_model(answer))
-
-        self.fill.refresh_from_db()
-        other = Fill.objects.get(id=other_run_id)
-        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
-        self.assertEqual(other.status, FillStatus.COMPLETE)
-        mine = [i for i, who in enumerate(seen) if who == "mine"]
-        theirs = [i for i, who in enumerate(seen) if who == "theirs"]
-        self.assertTrue(mine and theirs, seen)
-        # Neither fill runs entirely before the other: each has a row
-        # that ran after one of the other's. Under one-fill-at-a-time
-        # this is false by construction.
-        self.assertTrue(max(mine) > min(theirs) and max(theirs) > min(mine), seen)
-
-    def test_every_live_fill_is_offered_each_pass(self) -> None:
-        # The interleave itself, at the seam: live_fills hands back BOTH
-        # fills, oldest first, so no fill can be reached only after
-        # another finishes.
-        other_run_id = self._second_sheet("01ACCOUNTCCCCCCCCCCCCCCCCC", rows=1)
-        live = [str(fill.id) for fill in fill_progress.live_fills()]
-        self.assertEqual(live, sorted([str(self.fill.id), other_run_id]))
-
-
-class SourceCeilingTests(WorkerTestCase):
-    """A declared per-source ceiling is a promise about a BOX, not
-    about a fill.
-
-    Each fill runs its own AIMD controller, so two live fills on one
-    self-hosted source, each capped at the declared 1, put 2 in flight
-    against something that said it handles 1. The window docstring
-    defended the multi-WORKER case and never addressed this one, which
-    happens at a single worker."""
-
-    def test_two_fills_on_one_source_share_its_declared_ceiling(self) -> None:
-        supervisor = FillWorkerOperation(worker_id="test:sup", stop=threading.Event())
-        with self._patched(answering_model(lambda prompt: "found")):
-            mine = supervisor._admit(self.fill)
-        self.assertEqual(mine.ceiling, 1)
-        # A second fill on the SAME (provider, source), with a row of
-        # this one already running.
-        theirs = FillState(self.fill, mine.config, mine.controller, mine.breakers, mine.ceiling)
-        supervisor._states["other"] = theirs
-        mine.in_flight[object()] = None
-        self.assertEqual(supervisor._source_free_slots(theirs), 0)
-        mine.in_flight.clear()
-        self.assertEqual(supervisor._source_free_slots(theirs), 1)
-
-
-class OccupiedAnswerTests(WorkerTestCase):
-    """write-if-blank protects a value you already had. The model's
-    answer still happened, and until now it existed nowhere: the cell
-    recorded FILLED as though the fill had written it."""
-
     def test_the_answer_an_occupied_cell_refused_is_kept(self) -> None:
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
-        # A value the user already had, in the column the fill targets.
         self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "mine, typed by hand"})
-
-        self.run_worker(answering_model(lambda prompt: "what the model found"))
-
+        self.run_fill(answering_model(lambda prompt: "what the model found"))
         task = FillTask.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
-        # The user's value stands, untouched.
         row = ListRow.objects.get(id=rows[0].id)
         self.assertEqual(row.data["answer"], "mine, typed by hand")
-        # And the model's answer is recoverable rather than lost.
-        # The model's own answer, kept where every answer lives now,
-        # instead of smuggled into the assessment dict.
         self.assertEqual(task.result["cells"]["answer"], "what the model found")
 
-    def test_a_written_answer_carries_no_occupied_record(self) -> None:
-        # The row's own value IS the record when the write lands; a
-        # copy beside it would be two records of one fact.
-        self.run_worker(answering_model(lambda prompt: "found"))
+
+@override_settings(INGEST_KAFKA_BOOTSTRAP_SERVERS="kafka:9092")
+class ProvisionerTests(ManualFillTestCase):
+    """The manual provisioner: it publishes each live fill's READY tasks
+    to the manual topic and marks them QUEUED. The broker is mocked at
+    its client boundary; everything else is real."""
+
+    def _run_provisioner(self, producer):
+        with patch("confluent_kafka.Producer", return_value=producer):
+            FillProvisionOperation(worker_id="test:prov", stop=threading.Event()).run(once=True)
+
+    def test_it_publishes_each_ready_task_and_marks_it_queued(self) -> None:
+        producer = MagicMock()
+        producer.flush.return_value = 0  # the broker acked
+        tasks = list(FillTask.objects.filter(fill_run_id=str(self.fill.id)).order_by("position"))
+        self.assertEqual({t.status for t in tasks}, {FillTaskStatus.READY})
+
+        self._run_provisioner(producer)
+
+        self.assertEqual(producer.produce.call_count, len(tasks))
+        # ONE flush for the fill's whole page, not one per task: the batched
+        # publish (produce the page, flush once) is what lets a single
+        # provisioner feed the consumer fleet. FAILS if it regresses to a
+        # per-task flush (call_count would be len(tasks)).
+        self.assertEqual(producer.flush.call_count, 1)
+        args, _kwargs = producer.produce.call_args
+        self.assertEqual(args[0], "list.fill.manual")
+        for task in tasks:
+            task.refresh_from_db()
+            self.assertEqual(task.status, FillTaskStatus.QUEUED)
+            self.assertIsNotNone(task.queued_at)
+
+    def test_a_test_fill_routes_to_the_isolated_test_topic(self) -> None:
+        # A bench TEST fill must NOT ride the manual topic (it would queue
+        # behind a wide manual fill the user is not watching); the
+        # provisioner routes it to its own lane by kind.
+        from ..services.fill_admission import TestFillAdmission
+
+        with patch("lists.services.fill_admission.base.model_for"):
+            TestFillAdmission(account_id=ACCOUNT, user_id=USER).admit(
+                config=quick_config(), row={"company": "bench.co"}
+            )
+        producer = MagicMock()
+        producer.flush.return_value = 0
+        self._run_provisioner(producer)
+        topics = {call.args[0] for call in producer.produce.call_args_list}
+        self.assertIn("list.fill.test", topics)  # the bench fill's task, isolated
+        self.assertIn("list.fill.manual", topics)  # setUp's normal fill still on manual
+
+    def test_a_failed_publish_backs_off_and_leaves_the_tasks_ready(self) -> None:
+        producer = MagicMock()
+        producer.flush.return_value = 1  # the ack never arrived
+        self._run_provisioner(producer)  # backs off, does not raise
         for task in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
-            self.assertNotIn("occupied", task.result.get("assessments", {}).get("answer", {}))
+            self.assertEqual(task.status, FillTaskStatus.READY)
+            self.assertIsNone(task.queued_at)
+
+    def test_per_fill_depth_bounds_one_pass(self) -> None:
+        # The provisioner never publishes more than FILL_QUEUE_DEPTH of a
+        # fill's tasks in one pass (the fairness bound).
+        self.assertLessEqual(2, FILL_QUEUE_DEPTH)
+        producer = MagicMock()
+        producer.flush.return_value = 0
+        self._run_provisioner(producer)
+        self.assertLessEqual(producer.produce.call_count, FILL_QUEUE_DEPTH)

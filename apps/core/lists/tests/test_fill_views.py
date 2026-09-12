@@ -73,9 +73,12 @@ def wire_config() -> AgentConfig:
 class FillViewsTestCase(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=TEST_IDENTITY["id"],
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         patcher = patch("lists.services.fill_admission.base.model_for")
@@ -114,16 +117,16 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertEqual(len(targeted(body["id"])), 2)
 
     def test_agent_id_path_uses_the_roster_agent(self) -> None:
-        agent = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).create(
-            label="Finder", config=wire_config()
+        agent = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
+            owner_id=TEST_IDENTITY["id"], label="Finder", config=wire_config()
         )
         resp = self.post_ai(config=None, agent_id=str(agent.id))
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(resp.json()["agent_id"], str(agent.id))
 
     def test_config_and_agent_id_are_exclusive(self) -> None:
-        agent = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).create(
-            label="Finder", config=wire_config()
+        agent = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
+            owner_id=TEST_IDENTITY["id"], label="Finder", config=wire_config()
         )
         self.assertEqual(self.post_ai(agent_id=str(agent.id)).status_code, 400)
         self.assertEqual(self.post_ai(config=None).status_code, 400)
@@ -146,7 +149,7 @@ class AiColumnPostTests(FillViewsTestCase):
         # A request-side refusal, not a conflict: the fix is a narrower
         # ask or metered credentials, and waiting changes nothing.
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
-        wide = self.lists.create(label="Wide", columns=[], origin="manual")
+        wide = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Wide", columns=[], origin="manual")
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         resp = self.post_ai(
             list_id=str(wide.id),
@@ -172,12 +175,14 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertIn("already has a answer column", body["detail"])
 
     def test_foreign_list_and_foreign_agent_read_as_missing(self) -> None:
-        foreign_lists = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22)
-        foreign_sheet = foreign_lists.create(label="Not yours", columns=[], origin="manual")
+        foreign_lists = ListService(account_id="01AC" + "Z" * 22)
+        foreign_sheet = foreign_lists.create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
+        )
         foreign_lists.add_rows(foreign_sheet, [{"company": "acme.com"}])
         self.assertEqual(self.post_ai(list_id=str(foreign_sheet.id), confirmed_row_count=1).status_code, 404)
-        foreign_agent = AgentService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Theirs", config=wire_config()
+        foreign_agent = AgentService(account_id="01AC" + "Z" * 22).create(
+            owner_id=TEST_IDENTITY["id"], label="Theirs", config=wire_config()
         )
         self.assertEqual(self.post_ai(config=None, agent_id=str(foreign_agent.id)).status_code, 404)
 
@@ -196,8 +201,8 @@ class FillsPageTests(FillViewsTestCase):
         self.assertIsNone(rest.next_cursor)
 
     def test_foreign_list_is_404(self) -> None:
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin="manual"
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
         self.assertEqual(self.client.get(reverse("lists_fills", kwargs={"id": str(foreign.id)})).status_code, 404)
 
@@ -334,7 +339,7 @@ class FillCancelTests(FillViewsTestCase):
 
     def test_a_run_of_another_sheet_is_not_addressable_here(self) -> None:
         fill_run_id = self.post_ai().json()["id"]
-        other = self.lists.create(label="Other sheet", columns=[], origin="manual")
+        other = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Other sheet", columns=[], origin="manual")
         url = reverse("lists_fill_cancel", kwargs={"id": str(other.id), "fill_run_id": fill_run_id})
         self.assertEqual(self.client.post(url).status_code, 404)
         self.assertEqual(Fill.objects.get(id=fill_run_id).status, FillStatus.PENDING)
@@ -448,7 +453,7 @@ class CellStatesTests(FillViewsTestCase):
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": stale["id"]}))
         # The settled blank re-targets once the prompt changes, which
         # is what a user does after cancelling.
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(stale["agent_id"])
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
@@ -510,8 +515,8 @@ class CellStatesTests(FillViewsTestCase):
 
 class ListDeleteTests(FillViewsTestCase):
     def test_the_purge_takes_locks_in_the_worker_s_order(self) -> None:
-        # The worker's terminal write is ONE transaction taking the
-        # ListRow (write_cells) and then the FillTask (complete_task).
+        # The consumer's terminal write is ONE transaction taking the
+        # ListRow (write_cells) and then the FillTask (the task settle).
         # A purge that took them the other way round was an ABBA
         # deadlock against any fill running on this sheet, resolved by
         # Postgres aborting one side: a 500 on the delete, or a burned
@@ -546,8 +551,8 @@ class ListDeleteTests(FillViewsTestCase):
     def test_a_roster_agents_column_never_takes_the_agent_with_it(self) -> None:
         # The same delete must not touch a ROSTER agent a column
         # happened to point at: that one outlives every sheet.
-        roster = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).create(
-            label="Finder", config=wire_config()
+        roster = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
+            owner_id=TEST_IDENTITY["id"], label="Finder", config=wire_config()
         )
         self.post_ai(config=None, agent_id=str(roster.id))
         self.lists.delete(self.sheet)
@@ -627,8 +632,8 @@ class FillColumnSummaryTests(FillViewsTestCase):
         self.assertEqual(counts(), (1, 2))
 
     def test_foreign_list_is_404(self) -> None:
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin="manual"
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
         url = reverse("lists_fills", kwargs={"id": str(foreign.id)})
         self.assertEqual(self.client.get(url).status_code, 404)

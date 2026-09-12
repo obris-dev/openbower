@@ -10,6 +10,7 @@ from datetime import timedelta
 
 import ulid
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from openbower_kernel.fields import min_ulid_at
@@ -21,7 +22,7 @@ from openbower_schema.agents import (
 )
 from openbower_schema.fills import ROW_LEASE_STALE_SECONDS
 
-from ...constants import LIVE_FILL_STATUSES, FillKind
+from ...constants import LIVE_FILL_STATUSES, FillKind, FillTaskStatus
 from ...models import Fill, FillTask
 from .. import fill_progress
 from ..fingerprint import config_fingerprint
@@ -77,7 +78,13 @@ class TestFillAdmission(AdmissionBase):
             # without a backfill. Minting keeps the idempotency key
             # meaningful from the first row.
             FillTask.objects.create(
-                account_id=self.account_id, fill_run_id=str(fill.id), row_id=ulid.ulid(), position=0
+                account_id=self.account_id,
+                fill_run_id=str(fill.id),
+                row_id=ulid.ulid(),
+                list_id=fill.list_id,  # "" by construction: a bench fill points at no sheet
+                position=0,
+                status=FillTaskStatus.READY,
+                last_state_change_at=timezone.now(),
             )
         return fill
 
@@ -97,10 +104,10 @@ class TestFillAdmission(AdmissionBase):
 
     def _supersede_or_refuse_tests(self) -> None:
         """One live test per account, held ADVISORILY. Liveness is the
-        wire's one deadness vocabulary: a heartbeat (or, never beaten,
-        the ULID birth) within ROW_LEASE_STALE_SECONDS. A FRESH
-        teammate's test refuses; everything else (your own, or
-        anyone's stale orphan) is cancelled and superseded.
+        tasks' latest state change (or, none moved yet, the ULID birth)
+        within ROW_LEASE_STALE_SECONDS. A FRESH teammate's test refuses;
+        everything else (your own, or anyone's stale orphan) is
+        cancelled and superseded.
 
         The scan is UNLOCKED, deliberately: stop_fill's CAS makes a
         double cancel a no-op, and two simultaneous admissions that
@@ -118,11 +125,13 @@ class TestFillAdmission(AdmissionBase):
         for fill in live:
             if fill.user_id == self.user_id:
                 continue
-            fresh = (
-                fill.heartbeat_at >= fresh_cutoff
-                if fill.heartbeat_at is not None
-                else str(fill.id) >= min_ulid_at(fresh_cutoff)
-            )
+            # Liveness DERIVED from the tasks (their last_state_change_at
+            # moves as the consumer runs them), not a stored heartbeat: a
+            # run with no task moved yet falls back to its ULID birth.
+            heartbeat = FillTask.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=Max("last_state_change_at"))[
+                "latest"
+            ]
+            fresh = heartbeat >= fresh_cutoff if heartbeat is not None else str(fill.id) >= min_ulid_at(fresh_cutoff)
             if fresh:
                 raise TestFillActive()
         for fill in live:

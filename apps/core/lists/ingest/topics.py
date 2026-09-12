@@ -43,5 +43,20 @@ class TopicSpec:
 
 LIST_ROWS_INGESTED = TopicSpec(name="list.rows.ingested", consumer_group="ingest-append-worker")
 
+# Fill-task work on TWO topics, one per lane, so the automatic firehose
+# and the UI-driven fills cannot starve each other (separate consumer
+# lag, separate scaling). A provisioner publishes a task id; the shared
+# consumer claims and runs it, routing on the task's own fill_run_id.
+# Keyed by row id at produce time.
+AUTOFILL_TASKS = TopicSpec(name="list.fill.autofill", consumer_group="fill-task-worker-autofill")
+# The manual (fill-backed) lane: the provisioner publishes a live NORMAL
+# fill's READY tasks here; its consumer claims, runs, and lands them.
+FILL_TASKS = TopicSpec(name="list.fill.manual", consumer_group="fill-task-worker-manual")
+# The TEST (bench) lane, ISOLATED from the manual firehose on purpose: a
+# one-row diagnostic a user is watching must not queue behind a wide
+# manual fill, so it rides its own topic + consumer (the old worker-test
+# lane, on the shared spine). The provisioner routes a fill here by kind.
+TEST_TASKS = TopicSpec(name="list.fill.test", consumer_group="fill-task-worker-test")
+
 # What provision_topics walks. A new topic appends an entry.
-TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED,)
+TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED, AUTOFILL_TASKS, FILL_TASKS, TEST_TASKS)

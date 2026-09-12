@@ -41,9 +41,12 @@ def _config() -> AgentConfig:
 class ColumnsViewTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=TEST_IDENTITY["id"],
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
 
     def post_column(self, list_id: str = "", **overrides):
@@ -95,8 +98,8 @@ class ColumnsViewTests(TestCase):
         )
 
     def test_foreign_list_reads_as_missing(self) -> None:
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin="manual"
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
         self.assertEqual(self.post_column(list_id=str(foreign.id)).status_code, 404)
 
@@ -111,8 +114,9 @@ class ColumnOrderTests(TestCase):
 
     def setUp(self) -> None:
         login_session(self.client)
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
         self.sheet = self.lists.create(
+            owner_id=TEST_IDENTITY["id"],
             label="Prospects",
             # Labels deliberately NOT derivable from their keys, and
             # one carrying a fill member: this is what proves the
@@ -206,8 +210,11 @@ class ColumnOrderTests(TestCase):
         self.assertEqual([c["key"] for c in self.sheet.columns], ["company", "contact", "notes"])
 
     def test_a_foreign_sheet_reads_as_missing(self) -> None:
-        other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB", user_id="01OTHERUSERBBBBBBBBBBBBBBB").create(
-            label="Theirs", columns=[{"key": "a", "label": "A", "type": "text"}], origin="manual"
+        other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB").create(
+            owner_id=TEST_IDENTITY["id"],
+            label="Theirs",
+            columns=[{"key": "a", "label": "A", "type": "text"}],
+            origin="manual",
         )
         self.assertEqual(self.reorder(["a"], list_id=str(other.id)).status_code, 404)
 
@@ -218,10 +225,11 @@ class ColumnDeleteTests(TestCase):
 
     def setUp(self) -> None:
         login_session(self.client)
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        self.agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        self.agent = self.agents.create_ephemeral(label="Contact", config=_config())
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
+        self.agents = AgentService(account_id=TEST_IDENTITY["account_id"])
+        self.agent = self.agents.create_ephemeral(owner_id=TEST_IDENTITY["id"], label="Contact", config=_config())
         self.sheet = self.lists.create(
+            owner_id=TEST_IDENTITY["id"],
             label="Prospects",
             columns=[
                 {"key": "company", "label": "Company", "type": "text"},
@@ -308,8 +316,11 @@ class ColumnDeleteTests(TestCase):
         self.assertEqual(self.client.delete(self.url("nope")).status_code, 404)
 
     def test_a_foreign_sheet_reads_as_missing(self) -> None:
-        other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB", user_id="01OTHERUSERBBBBBBBBBBBBBBB").create(
-            label="Theirs", columns=[{"key": "a", "label": "A", "type": "text"}], origin="manual"
+        other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB").create(
+            owner_id=TEST_IDENTITY["id"],
+            label="Theirs",
+            columns=[{"key": "a", "label": "A", "type": "text"}],
+            origin="manual",
         )
         self.assertEqual(self.client.delete(self.url("a", list_id=str(other.id))).status_code, 404)
 

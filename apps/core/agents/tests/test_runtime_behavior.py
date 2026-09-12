@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
 from lists.constants import StoredCellState
-from lists.services.cell_run import run_cell
+from lists.services.fill_processing.cell_run import run_cell
 from openbower_schema.agents import AgentConfig
 
 from .test_catalog_and_runtime import (

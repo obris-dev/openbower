@@ -39,9 +39,12 @@ CONFIG = {
 class RefillTestCase(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=TEST_IDENTITY["id"],
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         patcher = patch("lists.services.fill_admission.base.model_for")
@@ -180,7 +183,7 @@ class SettledBlankTests(RefillTestCase):
         self.assertIn(str(rows[1].id), owed)
 
     def _edit_prompt(self, agent_id: str, prompt: str) -> None:
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(agent_id)
         agents.update(agent, config=agent.config().model_copy(update={"prompt": prompt}))
 
@@ -258,7 +261,7 @@ class PartialAnswerTests(RefillTestCase):
         self.assertEqual(states[(str(rows[0].id), "beta")], StoredCellState.NO_EVIDENCE)
         self.assertEqual(row_value(str(self.sheet.id), str(rows[0].id), "alpha"), FILLED_VALUE)
         # And the blank column is reachable again once the ask changes.
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(fill["agent_id"])
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
         refill = self.refill(key="beta")
@@ -348,7 +351,7 @@ class ResumeTests(RefillTestCase):
         # widening gestures (which run the new prompt).
         scoped = self.admit(confirmed_row_count=1, rows=1)
         self.cancel(scoped["id"])
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(scoped["agent_id"])
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
         resp = self.refill_with_resume(scoped["id"])
@@ -413,8 +416,10 @@ class RefillNotFoundTests(RefillTestCase):
     def test_foreign_list_reads_as_missing(self) -> None:
         foreign_account = "01AC" + "Z" * 22
         foreign_user = "01US" + "Z" * 22
-        foreign_lists = ListService(account_id=foreign_account, user_id=foreign_user)
-        foreign_sheet = foreign_lists.create(label="Not yours", columns=[], origin="manual")
+        foreign_lists = ListService(account_id=foreign_account)
+        foreign_sheet = foreign_lists.create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
+        )
         foreign_lists.add_rows(foreign_sheet, [{"company": "acme.com"}])
         FillAdmissionService(account_id=foreign_account, user_id=foreign_user).admit(
             list_id=str(foreign_sheet.id),
@@ -463,9 +468,12 @@ class ResumeScopeTests(RefillTestCase):
         )
 
     def test_a_resume_run_from_another_account_is_refused(self):
-        theirs = ListService(account_id="01ACCTOTHERBBBBBBBBBBBBBBB", user_id=TEST_IDENTITY["id"])
+        theirs = ListService(account_id="01ACCTOTHERBBBBBBBBBBBBBBB")
         sheet = theirs.create(
-            label="Theirs", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=TEST_IDENTITY["id"],
+            label="Theirs",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         theirs.add_rows(sheet, [{"company": "secret.io"}, {"company": "private.io"}])
         config = AgentConfig(
@@ -592,7 +600,7 @@ class OrphanedColumnTests(RefillTestCase):
 
         fill = self.admit()
         self.cancel(fill["id"])
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(fill["agent_id"])
         config = AgentConfig(**agent.config().model_dump())
         config.outputs = [AgentOutput(key="renamed", label="Renamed", type="text")]
@@ -619,7 +627,7 @@ class ColumnShapeTests(RefillTestCase):
 
         fill = self.admit()
         self.cancel(fill["id"])
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(fill["agent_id"])
         config = AgentConfig(**agent.config().model_dump())
         config.outputs = [AgentOutput(key="answer", label="Answer", type="number")]
@@ -660,7 +668,7 @@ class OutputDriftTests(RefillTestCase):
         agent = self._agent_for(fill["id"])
         config = AgentConfig(**agent.config().model_dump())
         config.outputs = [*config.outputs, AgentOutput(key="phantom", label="Phantom", type="text")]
-        AgentService(account_id=agent.account_id, user_id=agent.user_id).update(agent, config=config)
+        AgentService(account_id=agent.account_id).update(agent, config=config)
 
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
