@@ -18,14 +18,14 @@ _COLUMNS = [{"key": "domain", "label": "Domain", "type": "url"}, {"key": "name",
 
 
 def _service(account="01AC" + "A" * 22, user="01US" + "A" * 22) -> ListService:
-    return ListService(account_id=account, user_id=user)
+    return ListService(account_id=account)
 
 
 class ListServiceTests(TestCase):
     def test_create_page_get_rename_delete(self):
         service = _service()
-        a = service.create(label="First", columns=_COLUMNS, origin=ListOrigin.CSV)
-        b = service.create(label="Second", columns=[], origin=ListOrigin.MANUAL)
+        a = service.create(owner_id="01US" + "A" * 22, label="First", columns=_COLUMNS, origin=ListOrigin.CSV)
+        b = service.create(owner_id="01US" + "A" * 22, label="Second", columns=[], origin=ListOrigin.MANUAL)
         # Same-millisecond ULIDs do not order by creation; assert against
         # the id order the keyset contract actually promises.
         newest, oldest = sorted((a, b), key=lambda x: str(x.id), reverse=True)
@@ -41,7 +41,7 @@ class ListServiceTests(TestCase):
         self.assertEqual(ListRow.objects.filter(list_id=str(a.id)).count(), 0)  # child cleanup
 
     def test_foreign_account_reads_as_missing(self):
-        mine = _service().create(label="Mine", columns=[], origin=ListOrigin.MANUAL)
+        mine = _service().create(owner_id="01US" + "A" * 22, label="Mine", columns=[], origin=ListOrigin.MANUAL)
         theirs = _service(account="01AC" + "Z" * 22)
         with self.assertRaises(ListNotFound):
             theirs.get(str(mine.id))
@@ -49,7 +49,7 @@ class ListServiceTests(TestCase):
 
     def test_rows_are_dense_and_page_by_position(self):
         service = _service()
-        target = service.create(label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
         service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(5)])
         service.add_rows(target, [{"domain": "later.com", "name": "later"}])  # appends continue the sequence
         rows = service.rows_page(target, after_position=0, limit=10)
@@ -61,7 +61,7 @@ class ListServiceTests(TestCase):
 
     def test_row_cap_is_enforced(self):
         service = _service()
-        target = service.create(label="Full", columns=[], origin=ListOrigin.MANUAL)
+        target = service.create(owner_id="01US" + "A" * 22, label="Full", columns=[], origin=ListOrigin.MANUAL)
         # A patched cap, not 50k real inserts: the policy under test is
         # the arithmetic, not bulk_create's throughput.
         with patch("lists.services.lists.MAX_LIST_ROWS", 5):
@@ -74,7 +74,7 @@ class ListServiceTests(TestCase):
 
     def test_column_values_in_position_order_skipping_blanks(self):
         service = _service()
-        target = service.create(label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
         service.add_rows(
             target,
             [
@@ -99,7 +99,10 @@ class CellClampTests(TestCase):
 
         service = _service()
         target = service.create(
-            label="Sheet", columns=[{"key": "a", "label": "A", "type": "text"}], origin=ListOrigin.MANUAL
+            owner_id="01US" + "A" * 22,
+            label="Sheet",
+            columns=[{"key": "a", "label": "A", "type": "text"}],
+            origin=ListOrigin.MANUAL,
         )
         # And the clamp is LOGGED: a cut value is data the sheet no
         # longer holds in full, so silence would hide it.
@@ -122,8 +125,10 @@ class FolderServiceTests(TestCase):
         folders.rename(bucket, label="Customers")
         self.assertEqual(folders.get(str(bucket.id)).label, "Customers")
 
-        inside = lists.create(label="Inside", columns=[], origin=ListOrigin.MANUAL, folder_id=str(bucket.id))
-        loose = lists.create(label="Loose", columns=[], origin=ListOrigin.MANUAL)
+        inside = lists.create(
+            owner_id="01US" + "A" * 22, label="Inside", columns=[], origin=ListOrigin.MANUAL, folder_id=str(bucket.id)
+        )
+        loose = lists.create(owner_id="01US" + "A" * 22, label="Loose", columns=[], origin=ListOrigin.MANUAL)
         folders.delete(bucket)
         inside.refresh_from_db()
         loose.refresh_from_db()
@@ -136,7 +141,7 @@ class FolderServiceTests(TestCase):
         from lists.services.lists import FolderService
 
         lists = _service()
-        target = lists.create(label="Sheet", columns=[], origin=ListOrigin.MANUAL)
+        target = lists.create(owner_id="01US" + "A" * 22, label="Sheet", columns=[], origin=ListOrigin.MANUAL)
         mine = FolderService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22).create(label="Mine")
         theirs = FolderService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(label="Theirs")
 

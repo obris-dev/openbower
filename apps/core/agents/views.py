@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class _ScopedView(ScopedView):
     @cached_property
     def agents(self) -> AgentService:
-        return AgentService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+        return AgentService(account_id=self.request.user.account_id)
 
     def _agent_or_404(self, agent_id: str) -> Agent:
         try:
@@ -57,7 +57,9 @@ class AgentsView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            agent = self.agents.create(label=data["label"], config=AgentConfig(**data["config"]))
+            agent = self.agents.create(
+                owner_id=self.request.user.id, label=data["label"], config=AgentConfig(**data["config"])
+            )
         except AgentsFull as e:
             raise ValidationError(str(e)) from e
         return Response(agent_wire(agent), status=201)

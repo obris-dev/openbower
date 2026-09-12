@@ -254,14 +254,14 @@ class ColumnService:
             return
         if any((column.get("fill") or {}).get("agent_id") == agent_id for column in target_list.columns):
             return
-        AgentService(account_id=self.account_id, user_id=self.user_id).delete_ephemeral([agent_id])
+        AgentService(account_id=self.account_id).delete_ephemeral([agent_id])
 
     def fill_config(self, target_list_id: str, *, column_key: str) -> AgentConfig:
         """The CURRENT config filling a column (what a refill would
         run), read through the column's custody path. A retired
         provider still reads (peeking is not acting); only the writes
         below refuse it."""
-        agents = AgentService(account_id=self.account_id, user_id=self.user_id)
+        agents = AgentService(account_id=self.account_id)
         return self._fill_agent(target_list_id, column_key=column_key, agents=agents).config()
 
     def update_fill_prompt(self, target_list_id: str, *, column_key: str, prompt: str) -> AgentConfig:
@@ -273,7 +273,7 @@ class ColumnService:
         lands on the agent row, and running fills hold their frozen
         snapshot, so the edit reaches the NEXT admission by
         construction. Returns the stored config."""
-        agents = AgentService(account_id=self.account_id, user_id=self.user_id)
+        agents = AgentService(account_id=self.account_id)
         agent = self._fill_agent(target_list_id, column_key=column_key, agents=agents)
         # update() persists the whole config, so a coerced substitute
         # spec would silently overwrite the stored provider here; the

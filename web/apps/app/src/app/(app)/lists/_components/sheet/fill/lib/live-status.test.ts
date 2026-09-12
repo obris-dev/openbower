@@ -11,7 +11,7 @@ function run(status: FillRunWire["status"], id = "01RUN"): FillRunWire {
     agent_id: "01AGENT",
     status,
     column_keys: ["answer"],
-    counters: { attempted: 0, filled: 0, blank: 0, transient: 0, row_seconds: 0, search_wait_seconds: 0, concurrency_point: 0 },
+    counters: { attempted: 0, filled: 0, blank: 0, transient: 0 },
     confirmed_row_count: 10,
     started_by: "01USER",
     heartbeat_at: null,

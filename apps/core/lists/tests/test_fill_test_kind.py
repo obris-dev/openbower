@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.fills import FillRunDetail
+from openbower_schema.fills import ROW_LEASE_STALE_SECONDS, FillRunDetail
 
 from ..constants import (
     MAX_ACTIVE_FILLS,
@@ -25,8 +25,8 @@ from ..constants import (
     FillStatus,
     FillTaskStatus,
 )
-from ..models import Fill, FillTask
-from ..operations.fill_worker import FillWorkerOperation
+from ..models import Fill, FillTask, ListRow
+from ..operations.consume_fill_tasks import handle_fill_task
 from ..operations.sweep_test_fills import SweepTestFillsOperation
 from ..services.fill_admission import (
     FillAdmissionService,
@@ -34,6 +34,7 @@ from ..services.fill_admission import (
     TestFillAdmission,
 )
 from ..services.fill_progress import live_fill_count
+from ..services.fill_tasks import PROCESSING_STALE_SECONDS
 from ..services.fills import FillService
 from ..services.lists import ListService
 
@@ -134,7 +135,11 @@ class TestAdmissionTests(TestCase):
         from openbower_kernel.fields import is_valid_ulid
 
         self.assertTrue(is_valid_ulid(task.row_id))
-        self.assertEqual((task.position, task.status), (0, FillTaskStatus.QUEUED))
+        # Born READY (the manual provisioner moves it to QUEUED on publish).
+        self.assertEqual((task.position, task.status), (0, FillTaskStatus.READY))
+        # list_id "" by construction: a bench fill points at no sheet, so
+        # its task inherits the blank (mirrors fill.list_id above).
+        self.assertEqual(task.list_id, "")
 
     def test_your_own_live_test_is_superseded_never_refused(self):
         first = self._admit()
@@ -155,13 +160,35 @@ class TestAdmissionTests(TestCase):
 
     def test_a_teammates_stale_test_is_cancelled_and_superseded(self):
         stale = self._admit()
-        # A heartbeat well past the lease window: observably dead.
-        Fill.objects.filter(id=str(stale.id)).update(heartbeat_at=timezone.now() - timedelta(seconds=4096))
+        # Freshness now derives from the tasks' last state change; aging
+        # them past the lease window makes the run observably dead.
+        FillTask.objects.filter(fill_run_id=str(stale.id)).update(
+            last_state_change_at=timezone.now() - timedelta(seconds=4096)
+        )
         teammate = TestFillAdmission(account_id=ACCOUNT, user_id="01USERBBBBBBBBBBBBBBBBBBBB")
         fresh = self._admit(admission=teammate)
         stale.refresh_from_db()
         self.assertEqual(stale.status, FillStatus.CANCELLED)
         self.assertEqual(fresh.status, FillStatus.PENDING)
+
+    def test_a_teammates_running_test_stays_fresh_within_the_processing_window(self) -> None:
+        # A single-task test's last_state_change_at FREEZES while its
+        # run_cell runs (no renewal), so freshness uses the PROCESSING
+        # window (the reclaim's dead bound), not the tighter lease window.
+        # A teammate's test aged past ROW_LEASE_STALE_SECONDS but within
+        # PROCESSING_STALE_SECONDS is still RUNNING: it must refuse, not be
+        # superseded mid-run. FAILS if the window reverts to the lease bound.
+        running = self._admit()
+        aged = ROW_LEASE_STALE_SECONDS + 60  # past the old window, well inside the processing one
+        self.assertLess(aged, PROCESSING_STALE_SECONDS)
+        FillTask.objects.filter(fill_run_id=str(running.id)).update(
+            last_state_change_at=timezone.now() - timedelta(seconds=aged)
+        )
+        teammate = TestFillAdmission(account_id=ACCOUNT, user_id="01USERBBBBBBBBBBBBBBBBBBBB")
+        with self.assertRaises(TestFillActive):
+            self._admit(admission=teammate)
+        running.refresh_from_db()
+        self.assertEqual(running.status, FillStatus.PENDING)  # not superseded
 
     def test_the_cron_sweep_purges_old_test_fills_and_only_those(self):
         old = self._admit()
@@ -309,9 +336,11 @@ class TestFillEndpointTests(TestCase):
 
 
 class TestKindWorkerTests(TransactionTestCase):
-    """The test lane end to end through the REAL worker machinery:
-    claim, run, task-borne landing, drain. TransactionTestCase for the
-    worker's own thread connections (the fill worker tests' rule)."""
+    """The test lane end to end through the REAL consumer machinery:
+    claim, run, task-borne landing, completion. One shared consumer
+    handles both kinds (it branches on the task's fill), so the test
+    kind lands on its task and never on a sheet. TransactionTestCase for
+    the consumer's own DB work (the fill worker tests' rule)."""
 
     def setUp(self) -> None:
         self.admission = FillAdmissionService(account_id=ACCOUNT, user_id=USER)
@@ -320,33 +349,33 @@ class TestKindWorkerTests(TransactionTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _run_worker(self, model, *, kinds=("test",), passes: int = 1) -> None:
-        import threading
-        from concurrent.futures import ThreadPoolExecutor
-
-        from django.utils import timezone as tz
-
+    def _run_fill(self, fill, model) -> None:
         from .test_fill_worker import _patches
 
-        with _patches(model), ThreadPoolExecutor(max_workers=2) as pool:
-            supervisor = FillWorkerOperation(worker_id="test:kind", stop=threading.Event(), kinds=kinds)
-            for pass_number in range(passes):
-                if pass_number:
-                    FillTask.objects.filter(not_before__isnull=False).update(not_before=tz.now())
-                supervisor._one_pass(pool)
-                while any(state.in_flight for state in supervisor._states.values()):
-                    supervisor._harvest()
-            for state in supervisor._states.values():
-                state.try_finish()
+        with _patches(model):
+            ids = list(
+                FillTask.objects.filter(
+                    fill_run_id=str(fill.id),
+                    status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED),
+                )
+                .order_by("position")
+                .values_list("id", flat=True)
+            )
+            for task_id in ids:
+                handle_fill_task(str(task_id), "test:kind")
 
     def test_an_inline_test_runs_end_to_end_landing_on_its_task(self):
+        from ..services.fills import derive_counters
         from .test_fill_worker import answering_model
 
         fill = self.tests.admit(config=quick_config(), row={"company": "acme.com"})
-        self._run_worker(answering_model(lambda prompt: "found: " + prompt.split()[-1]))
+        self._run_fill(fill, answering_model(lambda prompt: "found: " + prompt.split()[-1]))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
-        self.assertEqual((fill.attempted, fill.filled, fill.blank), (1, 0, 0))
+        # The one task settled DONE; attempted DERIVES from it (a test
+        # fill writes no sheet cell, so filled stays 0).
+        counters = derive_counters(fill)
+        self.assertEqual((counters.attempted, counters.filled), (1, 0))
         result = FillService(account_id=ACCOUNT).test_result(fill)
         self.assertIsNotNone(result)
         self.assertEqual(result.cells["answer"], "found: acme.com")
@@ -355,22 +384,25 @@ class TestKindWorkerTests(TransactionTestCase):
 
         self.assertFalse(FillCellState.objects.exists())
 
-    def test_kinds_isolate_the_two_workers(self):
-        # FAILS if live_fills loses its kinds filter: each instance
-        # must touch only its own lane's tasks.
+    def test_the_shared_consumer_runs_both_kinds(self):
+        # One consumer serves the manual lane and routes on the task's
+        # own fill: a NORMAL fill lands on its sheet, a TEST fill on its
+        # task, both driven through the same handle_fill_task.
         from .test_fill_worker import answering_model
 
-        lists = ListService(account_id=ACCOUNT, user_id=USER)
+        lists = ListService(account_id=ACCOUNT)
         sheet = lists.create(
-            label="P", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=USER, label="P", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
         )
         lists.add_rows(sheet, [{"company": "acme.com"}])
         real = self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
         test = self.tests.admit(config=quick_config(), row={"company": "acme.com"})
-        self._run_worker(answering_model(lambda prompt: "x"), kinds=("test",))
+        self._run_fill(real, answering_model(lambda prompt: "x"))
+        self._run_fill(test, answering_model(lambda prompt: "x"))
         real.refresh_from_db()
         test.refresh_from_db()
-        self.assertEqual((real.status, test.status), (FillStatus.PENDING, FillStatus.COMPLETE))
-        self._run_worker(answering_model(lambda prompt: "x"), kinds=("normal",))
-        real.refresh_from_db()
-        self.assertEqual(real.status, FillStatus.COMPLETE)
+        self.assertEqual((real.status, test.status), (FillStatus.COMPLETE, FillStatus.COMPLETE))
+        # The test fill's result lands on its task; the normal fill's on
+        # the sheet.
+        self.assertIsNotNone(FillService(account_id=ACCOUNT).test_result(test))
+        self.assertEqual(ListRow.objects.get(list_id=str(sheet.id)).data["answer"], "x")

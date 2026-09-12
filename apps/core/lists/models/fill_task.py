@@ -6,6 +6,7 @@ from openbower_kernel.models import AccountScopedModel
 from ..constants import (
     FILL_TASK_STATUS_MAX_LENGTH,
     LEASED_BY_MAX_LENGTH,
+    NON_TERMINAL_FILL_TASK_STATES,
     FillTaskStatus,
 )
 
@@ -20,6 +21,11 @@ class FillTask(AccountScopedModel):
     only honest answer to "what did this still owe", which a queue
     holding only what a planner had reached could not give.
 
+    A task with NO fill run (`fill_run_id` NULL) is the automatic path
+    (autofill): the same queue and the same worker, minus the consent a
+    Fill records. It has no Fill to read its list, user, or agent off,
+    so it carries its own `agent_id` and resolves the rest from its row.
+
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on FillCellState. No word appears in
     both vocabularies, which is what keeps them from reading as copies
@@ -33,8 +39,23 @@ class FillTask(AccountScopedModel):
     id). Carrying the account makes an unscoped query a thing you have
     to write on purpose."""
 
-    fill_run_id = models.CharField(_("fill run id"), max_length=26)
+    # NULL on the automatic path (autofill): a task with no fill run has
+    # no Fill to read its list, user, or agent off, so it is
+    # self-describing (it carries `agent_id`; list and user resolve from
+    # the row). A fill-backed task sets this to its Fill's id.
+    fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
     row_id = models.CharField(_("row id"), max_length=26)
+    # The list this task's row lives in, DENORMALIZED from the fill
+    # (fill-backed) or the target sheet (autofill), so per-list
+    # distribution and account scoping never need a join back to find it.
+    # BLANK for a bench TEST fill, which points at no sheet by
+    # construction, exactly as its Fill.list_id is.
+    list_id = models.CharField(_("list id"), max_length=26, blank=True, default="")
+    # The agent whose column set this task runs, in ONE run (an agent
+    # produces all its outputs together). Set on the automatic path
+    # (autofill), which has no Fill to read it from; NULL on a
+    # fill-backed task, which reads its agent off the Fill.
+    agent_id = models.CharField(_("agent id"), max_length=26, null=True, blank=True)
     # WHERE this task's row lives, by kind. NORMAL: the row's sheet
     # position, 1-based and snapshot-coherent (positions are
     # append-only), so claims ordered by it march TOP TO BOTTOM down
@@ -49,8 +70,8 @@ class FillTask(AccountScopedModel):
     # When a parked task becomes claimable again: real backoff, rather
     # than waiting out a lease the task never held.
     not_before = models.DateTimeField(_("not before"), null=True, blank=True)
-    # Whether a park has ever counted this task into its fill's
-    # `transient` gauge. STORED, because both proxies for it are wrong
+    # Whether a park has ever counted this task into its fill's derived
+    # TRANSIENT count. STORED, because both proxies for it are wrong
     # in opposite directions: `attempts` climbs at CLAIM, so a released
     # lease or a stale reclaim raises it with no park behind it, and
     # `not_before` is cleared by the next claim, so a task that parked
@@ -58,10 +79,10 @@ class FillTask(AccountScopedModel):
     # that goes negative, the other one that never comes back down.
     # Set once, never cleared: it means counted, not currently waiting.
     parked = models.BooleanField(_("parked"), default=False)
-    # The lease is a STAMP, never a held lock: the worker's supervising
-    # loop renews every claimed task in bulk, so silence past
-    # ROW_LEASE_STALE_SECONDS means the claimant is DEAD, not slow.
-    leased_at = models.DateTimeField(_("leased at"), null=True, blank=True)
+    # The claiming consumer's id, stamped at claim: the terminal CAS
+    # (settle / park) matches on it, so only the owner closes a task and a
+    # reclaimed task's original consumer loses the CAS silently. Liveness
+    # is last_state_change_at + PROCESSING_STALE_SECONDS, not a held lease.
     leased_by = models.CharField(_("leased by"), max_length=LEASED_BY_MAX_LENGTH, blank=True, default="")
     # The serialized CellRun the runtime returned, verbatim: cells the
     # model answered, the evidence it saw, each search and whether it
@@ -75,24 +96,74 @@ class FillTask(AccountScopedModel):
     # its diagnoses, and the difference between them is the audit story
     # (a value write-if-blank refused, an answer the floor dropped).
     result = models.JSONField(_("result"), default=dict)
+    # The state machine's timestamps. The per-state stamps are the
+    # HISTORY (when the task entered each state, null until it does);
+    # `last_state_change_at` is the UNIFIED cursor, bumped on EVERY
+    # transition, so it is what "stuck in a state too long" reads. It is
+    # deliberately not `updated_at`, which a result stash also bumps and
+    # so would blur stuck-detection.
+    queued_at = models.DateTimeField(_("queued at"), null=True, blank=True)
+    processing_at = models.DateTimeField(_("processing at"), null=True, blank=True)
+    settled_at = models.DateTimeField(_("settled at"), null=True, blank=True)
+    last_state_change_at = models.DateTimeField(_("last state change at"), null=True, blank=True)
 
     class Meta:
         verbose_name = _("fill task")
         verbose_name_plural = _("fill tasks")
         constraints = [
             # The idempotency key: enqueueing the same row twice is a
-            # no-op. Also the row drawer's lookup.
+            # no-op. Also the row drawer's lookup. NULL fill_run_ids are
+            # distinct in SQL, so this only binds fill-backed tasks; the
+            # automatic path is deduped by its own key below.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="fill_task_fill_row_uniq"),
+            # The automatic path's idempotency: one autofill task per row
+            # per agent (one run fills that agent's whole column set), so
+            # re-enqueueing a row's autofill is a no-op.
+            models.UniqueConstraint(
+                fields=["row_id", "agent_id"],
+                condition=models.Q(fill_run_id__isnull=True),
+                name="fill_task_autofill_uniq",
+            ),
         ]
         indexes = [
-            # The claim scan, and the completion probe. PARTIAL on
-            # queued so it SHRINKS as the fill drains: claiming row
-            # 24,900 of 25,000 costs what claiming row 1 did, and
-            # "is this fill done" is an empty-index check.
+            # The provisioner's READY pick, SPLIT by lane: a fill-backed
+            # pick filters fill_run_id by equality, but the autofill
+            # firehose filters it IS NULL, and IS NULL cannot give a btree
+            # the ordering pathkey an equality does (it sorts the whole
+            # READY set instead of stopping at the LIMIT). So each lane
+            # gets a partial index holding only its rows. In both, status
+            # leads (one equality opens it); the position/id tail lets the
+            # LIMIT stop early; not_before rides the leaf (INCLUDE) so a
+            # parked task is rejected without a heap fetch, never a seek
+            # key (below the ordering columns it cannot be one).
+            #
+            # Fill-backed: fill_run_id = :f seeks the fill's tasks. A fill
+            # is single-list, so list_id earns no place here.
             models.Index(
-                fields=["fill_run_id", "position"],
-                name="fill_task_claim_idx",
-                condition=models.Q(status=FillTaskStatus.QUEUED),
+                fields=["status", "fill_run_id", "position", "id"],
+                include=["not_before"],
+                name="fill_task_fill_idx",
+                condition=models.Q(fill_run_id__isnull=False),
+            ),
+            # Autofill firehose: partial on the null-run rows, so status
+            # leads straight into the (list_id, position, id) order with no
+            # IS NULL in the key. list_id sits BEFORE the sort columns, so a
+            # per-list or set-sharded pick (list_id = ANY(...)) SEEKS its
+            # lists rather than scanning.
+            models.Index(
+                fields=["status", "list_id", "position", "id"],
+                include=["not_before"],
+                name="fill_task_autofill_idx",
+                condition=models.Q(fill_run_id__isnull=True),
+            ),
+            # The reclaim scan's access path: find tasks stuck in a
+            # non-terminal state too long, oldest first. PARTIAL on the
+            # non-terminal states so it SHRINKS as tasks settle, holding
+            # only the in-flight tail rather than the settled history.
+            models.Index(
+                fields=["status", "last_state_change_at"],
+                name="fill_task_reclaim_idx",
+                condition=models.Q(status__in=NON_TERMINAL_FILL_TASK_STATES),
             ),
         ]
 

@@ -34,10 +34,13 @@ CONFIG = {
 class ColumnPromptTestCase(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.agents = AgentService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
-        self.lists = ListService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
+        self.agents = AgentService(account_id=TEST_IDENTITY["account_id"])
+        self.lists = ListService(account_id=TEST_IDENTITY["account_id"])
         self.sheet = self.lists.create(
-            label="Prospects", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=TEST_IDENTITY["id"],
+            label="Prospects",
+            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         patcher = patch("lists.services.fill_admission.base.model_for")
@@ -95,6 +98,7 @@ class ColumnPromptTests(ColumnPromptTestCase):
         # The column is the custody path either way; the builder stays
         # the roster's full editor.
         roster = self.agents.create(
+            owner_id=TEST_IDENTITY["id"],
             label="Answerer",
             config=AgentConfig(
                 prompt=CONFIG["prompt"],
@@ -147,6 +151,8 @@ class ColumnPromptTests(ColumnPromptTestCase):
         self.assertEqual(self.put_prompt("x", key="missing").status_code, 404)
 
     def test_foreign_list_reads_as_missing(self) -> None:
-        foreign_lists = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22)
-        foreign_sheet = foreign_lists.create(label="Not yours", columns=[], origin="manual")
+        foreign_lists = ListService(account_id="01AC" + "Z" * 22)
+        foreign_sheet = foreign_lists.create(
+            owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
+        )
         self.assertEqual(self.put_prompt("x", list_id=str(foreign_sheet.id)).status_code, 404)

@@ -52,7 +52,9 @@ from .serializers import (
     ListPatchRequest,
     RowsAddRequest,
     fill_run_wire,
+    fill_runs_wire,
     folder_wire,
+    ingest_schema_wire,
     list_wire,
     row_wire,
 )
@@ -93,7 +95,7 @@ def _column_refusal_status(e: ColumnRefused) -> int:
 class _ScopedView(ScopedView):
     @cached_property
     def lists(self) -> ListService:
-        return ListService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+        return ListService(account_id=self.request.user.account_id)
 
     @cached_property
     def folders(self) -> FolderService:
@@ -147,7 +149,9 @@ class ListsView(_ScopedView):
         serializer = ListCreateRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        target_list = self.lists.create(label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL)
+        target_list = self.lists.create(
+            owner_id=self.request.user.id, label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL
+        )
         return Response(list_wire(target_list), status=201)
 
 
@@ -195,7 +199,7 @@ class ListRowsView(_ScopedView):
         serializer = RowsAddRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            added = self.lists.add_rows(target_list, serializer.validated_data["rows"])
+            added = len(self.lists.add_rows(target_list, serializer.validated_data["rows"]))
         except ListsFull as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
@@ -218,6 +222,13 @@ class ListIngestView(_ScopedView):
     """
 
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def get(self, request: Request, id: str) -> Response:
+        """GET /v1/lists/{id}/ingest: the pushable row schema, this list's
+        HARD (non-AI) columns with their keys and types, so a producer can
+        build a push without guessing. AI columns are omitted, autofill
+        fills them. Same account-scoped auth as the push."""
+        return Response(ingest_schema_wire(self._list_or_404(id)))
 
     def post(self, request: Request, id: str) -> Response:
         target_list = self._list_or_404(id)
@@ -306,7 +317,6 @@ class AiColumnView(_ScopedView):
                 config=config,
                 agent_id=data["agent_id"],
                 confirmed_row_count=data["confirmed_row_count"],
-                concurrency=data["concurrency"],
                 rows=data["rows"],
             )
         except FillRefused as e:
@@ -427,9 +437,9 @@ class ListFillsView(_ScopedView):
         target_list = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        runs = self.fills.page_for_list(str(target_list.id), after_id=after, limit=limit)
+        runs = list(self.fills.page_for_list(str(target_list.id), after_id=after, limit=limit))
         page = FillRunPage(
-            runs=[fill_run_wire(run) for run in runs],
+            runs=fill_runs_wire(runs),
             columns=self.fills.column_summaries(target_list),
             next_cursor=next_cursor_from(runs, limit=limit),
         )

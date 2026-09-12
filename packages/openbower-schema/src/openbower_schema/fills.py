@@ -127,25 +127,15 @@ class FillError(BaseModel):
 
 
 class FillCounters(BaseModel):
-    """Worker-written progress (never COUNT(*) polling): attempted is
-    rows with a terminal outcome this fill; blank counts diagnosed
-    blanks; transient counts rows currently parked in retry."""
+    """Progress, DERIVED from the task rows and cell states at read time
+    (never a stored counter): attempted is rows with a terminal outcome
+    this fill; blank counts diagnosed blanks; transient counts rows
+    currently parked in retry."""
 
     attempted: int
     filled: int
     blank: int
     transient: int
-    # The pace facts (defaults for fills from before they existed):
-    # accumulated wall seconds across terminal rows, the share of it
-    # spent parked on search, and the AIMD operating point at the last
-    # write. "What is slow" derives client-side from the ratio.
-    row_seconds: int = 0
-    search_wait_seconds: int = 0
-    # NOT `concurrency`: that name already means a ceiling in two other
-    # places (the fill's downward-only override, a source's declared
-    # limit). This is the AIMD operating point UNDER those, and it
-    # mirrors the column of the same name.
-    concurrency_point: int = 0
 
 
 class FillRunWire(BaseModel):
@@ -169,8 +159,9 @@ class FillRunWire(BaseModel):
     started_by: str = Field(description="User id, ATTRIBUTION only; authorization is account membership.")
     heartbeat_at: str | None = Field(
         default=None,
-        description="Stamped with each counter write; the client judges staleness against "
-        "ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+        description="The latest state change across this run's tasks (derived); the client judges "
+        "staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented "
+        "as failure).",
     )
     error: FillError | None = Field(
         default=None,

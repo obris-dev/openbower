@@ -12,7 +12,7 @@ import io
 from django.test import TestCase
 from django.urls import reverse
 
-from common.testing import login_session
+from common.testing import TEST_IDENTITY, login_session
 from lists.constants import ListOrigin
 from lists.models import List
 from lists.services.lists import ListService
@@ -49,6 +49,29 @@ class ListsViewsTests(TestCase):
         gone = self.client.delete(reverse("lists_detail", kwargs={"id": list_id}))
         self.assertEqual(gone.status_code, 204)
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": list_id})).status_code, 404)
+
+    def test_ingest_get_returns_the_hard_columns_only(self):
+        # The webhook is self-describing: GET returns the columns a producer
+        # fills (key + type), and OMITS AI columns (fill-owned) so a push
+        # never sends what autofill will.
+        lst = ListService(account_id=TEST_IDENTITY["account_id"]).create(
+            owner_id=TEST_IDENTITY["id"],
+            label="Push target",
+            columns=[
+                {"key": "company", "label": "Company", "type": "url"},
+                {"key": "contact", "label": "Contact", "type": "text"},
+                {"key": "answer", "label": "Answer", "type": "text", "fill": {"agent_id": "01AG" + "A" * 22}},
+            ],
+            origin=ListOrigin.MANUAL,
+        )
+        schema = self.client.get(reverse("lists_ingest", kwargs={"id": str(lst.id)})).json()
+        self.assertEqual(
+            schema["columns"],
+            [
+                {"key": "company", "label": "Company", "type": "url"},
+                {"key": "contact", "label": "Contact", "type": "text"},
+            ],
+        )
 
     def test_move_to_unknown_folder_is_400(self):
         # Reachable from the UI: the Move-to menu can hold a folder
@@ -89,8 +112,8 @@ class ListsViewsTests(TestCase):
         self.assertIsNone(rest["next_cursor"])
 
     def test_foreign_list_is_404(self):
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin=ListOrigin.MANUAL
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id="01US" + "Z" * 22, label="Not yours", columns=[], origin=ListOrigin.MANUAL
         )
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": str(foreign.id)})).status_code, 404)
 

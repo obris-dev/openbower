@@ -6,13 +6,22 @@ attribution only."""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from django.db import models
 
 from agents.constants import ToolStatus
-from openbower_schema.fills import CellRunResult, ColumnFillSummary, FillError
+from openbower_schema.fills import CellRunResult, ColumnFillSummary, FillCounters, FillError
 from openbower_schema.lists import CellStateWire
 
-from ..constants import LIVE_FILL_STATUSES, FillKind, FillStatus, FillTaskStatus, StoredCellState
+from ..constants import (
+    LIVE_FILL_STATUSES,
+    NON_TERMINAL_FILL_TASK_STATES,
+    FillKind,
+    FillStatus,
+    FillTaskStatus,
+    StoredCellState,
+)
 from ..models import Fill, FillCellState, FillTask, List, ListRow
 from .fill_progress import stop_fill
 
@@ -20,6 +29,90 @@ from .fill_progress import stop_fill
 # member on purpose: the server never stores it, it derives it from the
 # queue, so it has no place in the stored taxonomy.
 PENDING = "pending"
+
+
+def derive_counters(fill: Fill) -> FillCounters:
+    """The wire's progress, DERIVED at read time from the task rows and
+    cell states rather than a stored counter: attempted is the run's
+    settled (DONE) tasks; filled is the rows this run wrote a FILLED
+    cell for (distinct, since a multi-column row is one filled row);
+    blank is the settled remainder; transient is the rows currently
+    parked in retry (a non-terminal task carrying the park mark).
+
+    Two indexed reads, no sheet scan: DONE task count on the reclaim
+    index, FILLED cell count on the cell-state index."""
+    fill_run_id = str(fill.id)
+    attempted = FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.DONE).count()
+    filled = (
+        FillCellState.objects.filter(fill_run_id=fill_run_id, state=StoredCellState.FILLED)
+        .values("row_id")
+        .distinct()
+        .count()
+    )
+    transient = FillTask.objects.filter(
+        fill_run_id=fill_run_id, status__in=NON_TERMINAL_FILL_TASK_STATES, parked=True
+    ).count()
+    return FillCounters(attempted=attempted, filled=filled, blank=attempted - filled, transient=transient)
+
+
+def derive_heartbeat(fill: Fill) -> datetime | None:
+    """The run's liveness stamp, DERIVED as the latest state change
+    across its tasks (the reclaim scan's own cursor): a run whose tasks keep
+    moving reads fresh, one that has gone silent reads stale. None when
+    the run has no task carrying one yet."""
+    return FillTask.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=models.Max("last_state_change_at"))[
+        "latest"
+    ]
+
+
+def page_progress(fill_run_ids: list[str]) -> dict[str, tuple[FillCounters, datetime | None]]:
+    """The counters + heartbeat for a PAGE of runs in a fixed number of
+    grouped reads, so the fills poll does not pay derive_counters +
+    derive_heartbeat PER run (a 3+4N walk on a four-second poll). Four
+    aggregates GROUPED by fill_run_id: DONE tasks, distinct FILLED rows,
+    parked non-terminal tasks, and the latest state change. An id with no
+    matching rows reads all-zero / None. The ids are already
+    account-scoped by the caller (page_for_list), and fill_run_id is
+    unique, so no extra tenant filter is needed here."""
+    if not fill_run_ids:
+        return {}
+    done = {
+        r["fill_run_id"]: r["n"]
+        for r in FillTask.objects.filter(fill_run_id__in=fill_run_ids, status=FillTaskStatus.DONE)
+        .values("fill_run_id")
+        .annotate(n=models.Count("id"))
+    }
+    filled = {
+        r["fill_run_id"]: r["n"]
+        for r in FillCellState.objects.filter(fill_run_id__in=fill_run_ids, state=StoredCellState.FILLED)
+        .values("fill_run_id")
+        .annotate(n=models.Count("row_id", distinct=True))
+    }
+    parked = {
+        r["fill_run_id"]: r["n"]
+        for r in FillTask.objects.filter(
+            fill_run_id__in=fill_run_ids, status__in=NON_TERMINAL_FILL_TASK_STATES, parked=True
+        )
+        .values("fill_run_id")
+        .annotate(n=models.Count("id"))
+    }
+    heartbeats = {
+        r["fill_run_id"]: r["latest"]
+        for r in FillTask.objects.filter(fill_run_id__in=fill_run_ids)
+        .values("fill_run_id")
+        .annotate(latest=models.Max("last_state_change_at"))
+    }
+    out: dict[str, tuple[FillCounters, datetime | None]] = {}
+    for fid in fill_run_ids:
+        attempted = done.get(fid, 0)
+        filled_rows = filled.get(fid, 0)
+        out[fid] = (
+            FillCounters(
+                attempted=attempted, filled=filled_rows, blank=attempted - filled_rows, transient=parked.get(fid, 0)
+            ),
+            heartbeats.get(fid),
+        )
+    return out
 
 
 class FillNotFound(Exception):
@@ -147,7 +240,7 @@ class FillService:
             account_id=self.account_id,
             fill_run_id__in=list(live),
             row_id__in=row_ids,
-            status=FillTaskStatus.QUEUED,
+            status__in=NON_TERMINAL_FILL_TASK_STATES,
         ).values_list("fill_run_id", "row_id")
         for fill_run_id, row_id in queued:
             for column_key in live[fill_run_id]:

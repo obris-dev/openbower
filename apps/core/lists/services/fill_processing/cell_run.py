@@ -39,7 +39,7 @@ from agents.runtime.outcomes import SearchOutcome
 from agents.tools.base import FailureMode
 from openbower_schema.agents import AgentConfig
 
-from ..constants import StoredCellState
+from ...constants import StoredCellState
 
 logger = logging.getLogger(__name__)
 

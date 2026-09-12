@@ -73,6 +73,29 @@ class ListColumn(BaseModel):
     fill: ColumnFill | None = Field(default=None, description="Present exactly on AI columns.")
 
 
+class IngestColumn(BaseModel):
+    """One column a producer fills in a push: the key a row dict keys on
+    and the type its value is validated against on append. No fill
+    linkage, these are by definition the non-AI columns."""
+
+    key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Row data dicts key on this.")
+    label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
+    type: ColumnType = Field(description="Shape validator the pushed value must satisfy on append.")
+
+
+class IngestSchema(BaseModel):
+    """The pushable row shape for POST /v1/lists/{id}/ingest: a row in the
+    push is a dict keyed by these columns' keys, each value validated
+    against the column's type on append. ONLY the hard (non-AI) columns
+    appear, a producer sends data and autofill owns the AI columns (which
+    carry a fill linkage and are omitted), so a client builds a push
+    without guessing keys or sending columns the system fills."""
+
+    columns: list[IngestColumn] = Field(
+        default=[], description="Columns a push provides, in display order; AI columns omitted."
+    )
+
+
 class FolderSummary(BaseModel):
     """A flat, account-scoped bucket for lists (taxonomy, not behavior)."""
 

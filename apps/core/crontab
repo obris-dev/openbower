@@ -9,3 +9,4 @@
 # needs the cron service restarted (make restart-cron); the COMMANDS
 # hot-reload regardless, since each tick imports off the bind mount.
 0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills
+*/15 * * * * uv run --frozen --package openbower-core python apps/core/manage.py reclaim_fill_tasks

@@ -5,7 +5,6 @@ import { Button, Spinner } from "@bower/ui";
 import { fetchAgentCatalog } from "@bower/api";
 
 import { etaSeconds, formatEta, pushSample, type EtaSample } from "./lib/fill-eta";
-import { paceSummary } from "./lib/fill-pace";
 import { staleWarning } from "./lib/fill-staleness";
 import type { LiveRun } from "./lib/live-status";
 
@@ -24,7 +23,7 @@ const STATUS_LABEL: Record<LiveRun["status"], string> = {
 };
 
 /** A LIVE run's chip (the tracker popover's status line): counters
- * (attempted of the consented row count), Stop, the pace line, and
+ * (attempted of the consented row count), Stop, and
  * heartbeat staleness as warning-role copy judged against the wire's
  * lease window (fill-staleness owns the judgment and the per-status
  * copy; a stale heartbeat is degraded REPORTING, never failure). The
@@ -43,7 +42,7 @@ export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Prom
   const etaSamples = useRef<EtaSample[]>([]);
   // The ETA is OBSERVED rate only (the spend footer never promises a
   // duration): it appears once two progressing samples exist and
-  // reflects whatever concurrency the worker's controller found.
+  // reflects whatever rate the workers achieved.
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   useEffect(() => {
@@ -107,7 +106,6 @@ export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Prom
           Stop
         </Button>
       </div>
-      {paceSummary(run.counters) && <p className="text-xs text-faint">{paceSummary(run.counters)}</p>}
       {warning && <p className="text-xs text-warning">{warning}</p>}
       {actionError && (
         // Tier 1 for Stop's refusal: the server wrote the detail, the

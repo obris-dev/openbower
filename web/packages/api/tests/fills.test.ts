@@ -10,10 +10,7 @@ const DETAIL_ENVELOPE = {
   counters: {
     attempted: 0,
     blank: 0,
-    concurrency_point: 0,
     filled: 0,
-    row_seconds: 0,
-    search_wait_seconds: 0,
     transient: 0,
   },
   created_at: "2026-01-01T00:00:00Z",

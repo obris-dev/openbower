@@ -1,10 +1,11 @@
-"""Simulate the worker's terminal writes THROUGH the queue seam.
+"""Simulate the consumer's terminal writes THROUGH the state machine.
 
 A test that poked a task row directly would leave the sheet and the
 diagnoses untouched, a state no real path can produce. These helpers
-claim, write, and close the way the worker does, so every simulated
-outcome exercises the same CAS and the same one-transaction write the
-shipped worker runs.
+claim, write, and close the way the shared consumer does (FillTaskFlow
+claim -> land_row -> settle/park), so every simulated outcome exercises
+the same CAS and the same one-transaction write the shipped consumer
+runs.
 
 `settle` with no cause writes a VALUE as well as the FILLED state,
 because a filled cell is both: a value on the sheet row AND a record
@@ -15,12 +16,11 @@ no real path produces, and the two are written in one transaction.
 from __future__ import annotations
 
 from django.db import transaction
-from django.utils import timezone
 
-from ..constants import FillTaskStatus, StoredCellState
+from ..constants import NON_TERMINAL_FILL_TASK_STATES, FillTaskStatus, StoredCellState
 from ..models import Fill, FillTask, ListRow
 from ..services import cell_truth
-from ..services.fill_queue import FillQueueService
+from ..services.fill_tasks import FillTaskFlow
 from ..services.lists import ListService
 
 WORKER_ID = "test-seam"
@@ -31,15 +31,13 @@ FILLED_VALUE = "answered"
 
 
 def _claim(fill: Fill, row_id: str) -> FillTask:
-    """Lease the row's task the way claim_batch does (attempt counted
-    at claim included), so the terminal CAS, which filters on the
-    claimant's own stamp, can land."""
+    """Claim the row's task through the state machine (READY | QUEUED ->
+    PROCESSING, attempt counted at claim), so the terminal CAS, which
+    filters on the claimant's own stamp, can land."""
     task = FillTask.objects.get(fill_run_id=str(fill.id), row_id=row_id)
-    FillTask.objects.filter(id=task.id).update(
-        leased_by=WORKER_ID, leased_at=timezone.now(), attempts=task.attempts + 1, not_before=None
-    )
-    task.refresh_from_db()
-    return task
+    claimed = FillTaskFlow(worker_id=WORKER_ID).claim(str(task.id))
+    assert claimed is not None, f"claim missed for {fill.id}/{row_id}"
+    return claimed
 
 
 def settle(
@@ -58,10 +56,10 @@ def settle(
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
     fill = Fill.objects.get(id=fill_run_id)
-    queue = FillQueueService(worker_id=WORKER_ID)
+    flow = FillTaskFlow(worker_id=WORKER_ID)
     task = _claim(fill, row_id)
     if cause == StoredCellState.TRANSIENT:
-        assert queue.park_task(task, backoff_seconds=0, result={}), f"park missed for {fill_run_id}/{row_id}"
+        assert flow.park(str(task.id), backoff_seconds=0, result={}), f"park missed for {fill_run_id}/{row_id}"
         return
     per_column = causes if causes is not None else ({} if cause is None else cell_truth.uniform(fill, cause))
     states = {key: per_column.get(key, StoredCellState.FILLED) for key in fill.column_keys}
@@ -71,12 +69,20 @@ def settle(
     # FillTask, FillCellState, one transaction.
     with transaction.atomic():
         if answered:
-            ListService(account_id=fill.account_id, user_id=fill.user_id).write_cells(
+            ListService(account_id=fill.account_id).write_cells(
                 fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
             )
-        landed = queue.complete_task(task, result={"tools": tools or {}})
+        landed = flow.settle(str(task.id), {"tools": tools or {}}, status=FillTaskStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
-        cell_truth.write(fill, row_id=row_id, states=states, tools=tools or {})
+        cell_truth.write(
+            account_id=fill.account_id,
+            list_id=fill.list_id,
+            row_id=row_id,
+            fill_run_id=str(fill.id),
+            config_fingerprint=fill.config_fingerprint,
+            states=states,
+            tools=tools or {},
+        )
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:
@@ -86,11 +92,12 @@ def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:
 
 
 def queued_row_ids(fill_run_id: str) -> list[str]:
-    """The rows still owed, in sheet order: the QUEUE, which is what
-    the fill will actually run next."""
+    """The rows still owed, in sheet order: the non-terminal tasks
+    (READY, QUEUED, or PROCESSING), which is what the fill will actually
+    run next."""
     return [
         str(row_id)
-        for row_id in FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.QUEUED)
+        for row_id in FillTask.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_FILL_TASK_STATES)
         .order_by("position")
         .values_list("row_id", flat=True)
     ]

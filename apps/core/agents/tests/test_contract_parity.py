@@ -177,14 +177,14 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         self.assertIn("manage.py sweep_test_fills", crontab)
 
     def test_the_worker_topology_and_graces_hold(self):
-        # Compose cannot import the constant, so the FILL worker's
+        # Compose cannot import the constant, so each graced CONSUMER's
         # stop_grace_period restates the worst case by hand (a grace
         # below it SIGKILLs a legitimately slow row through its outcome
-        # write). Grace is attributed PER SERVICE, never max()d: the
-        # test worker's deliberately short grace must not satisfy the
-        # fill worker's bound. The kinds flags are pinned here too,
-        # because the two-instance topology's whole isolation is the
-        # claim filter each command line carries.
+        # write). The two REAL-ROW consumers are graced: the manual and
+        # autofill consumers both drain user-consented rows, so a stop
+        # finishes the message in flight; the provisioners only publish
+        # ids and need no grace. Each consumer is pinned to its --topic,
+        # the seam that keeps the lanes off each other.
         import re
         from pathlib import Path
 
@@ -201,14 +201,35 @@ class DuplicatedKnowledgePins(SimpleTestCase):
             grace = re.match(r"^\s*stop_grace_period:\s*(\d+)s\s*$", line)
             if grace and current:
                 services.setdefault(current, {})["grace"] = grace.group(1)
-            command = re.match(r"^\s*command:.*fill_worker(.*)$", line)
+            command = re.match(r"^\s*command:.*consume_fill_tasks(.*)$", line)
             if command and current:
-                services.setdefault(current, {})["kinds"] = command.group(1).strip()
+                services.setdefault(current, {})["flags"] = command.group(1).strip()
+            window = re.search(r"consume_fill_tasks\.heartbeat.*-lt (\d+)", line)
+            if window and current:
+                services.setdefault(current, {})["window"] = window.group(1)
         graced = {name: conf for name, conf in services.items() if "grace" in conf}
-        self.assertEqual(set(graced), {"worker", "worker-test"})
-        self.assertGreater(int(graced["worker"]["grace"]), cell_run_worst_case_seconds())
-        self.assertEqual(graced["worker"]["kinds"], "--kinds normal")
-        self.assertEqual(graced["worker-test"]["kinds"], "--kinds test")
+        # Three consumers carry a grace: the manual and autofill consumers
+        # drain bounded real rows (grace ABOVE the worst case), the isolated
+        # bench-TEST consumer kills its quick diagnostic fast (grace BELOW
+        # it, the user is waiting). Each is pinned to its own --topic.
+        self.assertEqual(set(graced), {"fill-consumer", "autofill-consumer", "test-consumer"})
+        self.assertGreater(int(graced["fill-consumer"]["grace"]), cell_run_worst_case_seconds())
+        self.assertEqual(graced["fill-consumer"]["flags"], "--topic manual")
+        self.assertGreater(int(graced["autofill-consumer"]["grace"]), cell_run_worst_case_seconds())
+        self.assertEqual(graced["autofill-consumer"]["flags"], "--topic autofill")
+        self.assertLess(int(graced["test-consumer"]["grace"]), cell_run_worst_case_seconds())
+        self.assertEqual(graced["test-consumer"]["flags"], "--topic test")
+        # Every fill-family CONSUMER (each runs consume_fill_tasks, so each
+        # touches consume_fill_tasks.heartbeat) blocks its loop on a single
+        # claimed run, so its liveness window must clear the SAME worst case
+        # its grace does, or a normal slow row reads as WEDGED. The test
+        # consumer's short grace is a shutdown choice, NOT a smaller window,
+        # so it is pinned above the bound too. FAILS if a window is tightened
+        # below the worst case, or a fourth consumer appears unpinned.
+        windowed = {name: conf for name, conf in services.items() if "window" in conf}
+        self.assertEqual(set(windowed), {"fill-consumer", "test-consumer", "autofill-consumer"})
+        for name, conf in windowed.items():
+            self.assertGreater(int(conf["window"]), cell_run_worst_case_seconds(), name)
 
 
 class ReservedKeyParityPins(SimpleTestCase):

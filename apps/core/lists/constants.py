@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.fills import (
     FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
 )
@@ -78,27 +77,24 @@ class ColumnType(StrEnum):
 # x-constants) live on the CONTRACT and are re-exported here; the rest
 # are server internals, binary when invented, derivations stated when
 # derived.
-# Rows per claim: MAX_FILL_CONCURRENCY, derived, so one claim can
-# fill every slot a process owns. claim_batch additionally never
-# takes more than the claimant's FREE AIMD slots: only a running row
-# crosses the seams that renew its lease, so a queued-but-claimed row
-# would read dead while merely waiting.
-FILL_CLAIM_BATCH = MAX_FILL_CONCURRENCY
-# Where a hosted (canonical) source's AIMD controller starts (binary);
-# self-hosted sources start at 1 and never probe past their declared
-# ceiling (only the operator can see that box).
-FILL_CONCURRENCY_HOSTED_START = 4
+# Autofill task ids the provisioner collects and publishes in ONE flush
+# per pass (binary): a PUBLISH-batch size, not consumer concurrency. The
+# provisioner only puts ids on the bus and the consumers pull at their
+# own rate (Kafka buffers between them), so this sizes how much a pass
+# amortizes the broker round-trip over, not how many run at once. Matches
+# the manual lane's per-fill depth.
+AUTOFILL_PUBLISH_BATCH = 1000
+# Manual fill tasks the provisioner publishes per fill PER PASS (binary):
+# offering every live fill the same per-pass batch is the fairness point,
+# so a wide fill cannot flood the bus ahead of a smaller one beside it in
+# a pass. It bounds a PASS, not the standing QUEUED depth (the consumers
+# drain at their own rate; Kafka buffers between).
+FILL_PUBLISH_BATCH = 1000
 # Live fills per ACCOUNT (binary). Every kind COUNTS into it (a live
 # test spends like any fill), but only NORMAL admissions run the
 # guard: the test admission is deliberately uncapped (the bench must
 # always answer; supersede bounds that lane instead).
 MAX_ACTIVE_FILLS = 4
-# Consecutive rows parked for retry that fail the FILL config-tier
-# (binary): per-row attempts are patience for flaky moments, this
-# breaker is across-row detection of a dead or throttling provider, the
-# model's or a tool's search provider alike (a search provider that keeps
-# refusing parks its rows exactly as a throttling model does).
-CONSECUTIVE_TRANSIENT_LIMIT = 8
 
 FILL_STATUS_MAX_LENGTH = 16
 FILL_TASK_STATUS_MAX_LENGTH = 16
@@ -175,10 +171,7 @@ FILL_WRITE_BATCH = 1000
 # is one fact, whether it is caught at the provider or at claim time.
 class FillFailureCode(StrEnum):
     FILL_UNRUNNABLE = "fill_unrunnable"
-    SOURCE_GONE = "source_gone"
     MODEL_UNRUNNABLE = FillErrorCode.MODEL_UNRUNNABLE
-    PROVIDER_THROTTLED = "provider_throttled"
-    SEARCH_THROTTLED = "search_throttled"
 
 
 class FillTaskStatus(StrEnum):
@@ -187,9 +180,11 @@ class FillTaskStatus(StrEnum):
     it. A task that exhausts its attempts is DONE, and the giving-up is
     diagnosed on its cells.
 
-    A leased QUEUED task is the running one: the lease is what makes it
-    recoverable when a worker dies, so a separate running state would
-    only need un-setting on crash.
+    PROCESSING is the running one: a consumer claimed it. There is no
+    lease to renew, because run_cell is time-bounded, so a task
+    PROCESSING past the worst-case run means a DEAD consumer, and the
+    reclaim scan (reclaim_stale_processing) returns it to READY off
+    last_state_change_at.
 
     ABANDONED is the durable record of consent granted and NOT spent.
     Cancel writes it over the fill's unclaimed tasks in one statement,
@@ -199,12 +194,37 @@ class FillTaskStatus(StrEnum):
     ROW_MISSING is the one task outcome that has no cell to carry it:
     the row was gone when the task came up, so there is nothing to
     diagnose and nothing a resume could owe (unlike ABANDONED, which a
-    resume re-targets). The fill goes on without it."""
+    resume re-targets). The fill goes on without it.
 
+    LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
+    path: the whole list was gone when the task came up (deleted after
+    the row was pushed), so the task settles terminally with nothing to
+    diagnose. A fill-backed task never sees it (its Fill was swept with
+    the list); it is the autofill worker's way to retire an orphaned
+    task instead of a delete-cascade off the list."""
+
+    # The non-terminal lifecycle, in order: READY (admitted, eligible,
+    # not yet handed to the transport), QUEUED (handed off / published,
+    # not re-provisioned), PROCESSING (a consumer owns it and is
+    # running). All three SHIMMER; the terminals below do not.
+    READY = "ready"
     QUEUED = "queued"
+    PROCESSING = "processing"
     DONE = "done"
     ABANDONED = "abandoned"
     ROW_MISSING = "row_missing"
+    LIST_MISSING = "list_missing"
+
+
+# The states a task still owes work in: it shimmers on the sheet, the
+# reclaim scan watches it, and a fill is complete only when it has none. The
+# terminals are everything else; keeping the NON-terminal set explicit
+# is what the reclaim scan's partial index and the pending derivation key on.
+NON_TERMINAL_FILL_TASK_STATES = (
+    FillTaskStatus.READY,
+    FillTaskStatus.QUEUED,
+    FillTaskStatus.PROCESSING,
+)
 
 
 class FillKind(StrEnum):
@@ -214,8 +234,8 @@ class FillKind(StrEnum):
     purpose: every bench click regression-tests the machinery fills
     depend on. A MODE, deliberately not a priority: it decides where
     results land, which surfaces see the run, and its lifecycle; the
-    worker's --kinds flag selecting on it is the scheduling
-    side-effect, not the concept."""
+    provisioner routing a TEST fill to its isolated topic is the
+    scheduling side-effect, not the concept."""
 
     NORMAL = "normal"
     TEST = "test"
@@ -304,17 +324,15 @@ class StoredCellState(StrEnum):
 
 
 # The causes that PARK a row for retry instead of settling a cell (the
-# worker's branch); every other cause is terminal for the run.
+# consumer's branch); every other cause is terminal for the run.
 RETRY_CAUSES = (StoredCellState.TRANSIENT, StoredCellState.TOOL_UNAVAILABLE)
-# The worker's idle heartbeat (binary): how long it sleeps when no fill
-# has claimable work before scanning again.
-FILL_WORKER_IDLE_SECONDS = 4
+# The manual fill provisioner's idle heartbeat (binary): how long it
+# sleeps when no live fill has a READY task before scanning again.
+FILL_PROVISION_IDLE_SECONDS = 4
+# The autofill provisioner's idle heartbeat (binary): how long it sleeps
+# when the automatic queue is empty before scanning again.
+AUTOFILL_WORKER_IDLE_SECONDS = 4
 # A parked task's backoff base (binary): multiplied by the attempt so
 # a provider under pressure is asked less often each time, and long enough
 # that a retry never lands inside the same rate window it just hit.
 FILL_RETRY_BACKOFF_SECONDS = 32
-# The supervising heartbeat (binary): while rows are IN FLIGHT the
-# worker stamps the fill this often, so a healthy-but-slow fill (rows
-# parked on slow searches) never reads as an unreporting worker
-# (terminal rows also stamp; this covers the gaps between them).
-FILL_HEARTBEAT_REFRESH_SECONDS = 64

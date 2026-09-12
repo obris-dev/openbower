@@ -9,13 +9,13 @@ from typing import Any
 from rest_framework import serializers
 
 from agents.serializers import AgentConfigRequest
-from openbower_kernel.provider_config import MAX_FILL_CONCURRENCY
 from openbower_schema.agents import PROMPT_MAX_LENGTH
-from openbower_schema.fills import CellRunResult, FillCounters, FillError
+from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire
 from openbower_schema.lists import FolderSummary as WireFolderSummary
+from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
 
@@ -115,8 +115,6 @@ class AiColumnRequest(serializers.Serializer):
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     confirmed_row_count = serializers.IntegerField(min_value=0)
-    # The optional DOWNWARD-only concurrency override; 0 means unset.
-    concurrency = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_FILL_CONCURRENCY)
     # Scope: fill only the FIRST N eligible rows (0 = all, the absent
     # default; a sent value must be positive).
     rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
@@ -223,6 +221,14 @@ def list_wire(target: List) -> dict[str, Any]:
     ).model_dump()
 
 
+def ingest_schema_wire(target: List) -> dict[str, Any]:
+    """The push schema: the HARD (non-AI) columns a producer fills. A
+    column with a fill linkage is an AI column (autofill owns it) and is
+    omitted, so a producer sees only what it should send."""
+    pushable = [c for c in target.columns if not c.get("fill")]
+    return WireIngestSchema(columns=pushable).model_dump()
+
+
 def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
     # list_count is server truth: the web's folder-delete consent copy
     # counts on it, and loaded pages may not cover the folder.
@@ -249,11 +255,14 @@ def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> di
     return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
 
 
-def fill_run_wire(fill: Fill) -> dict[str, Any]:
+def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:
     # Two-tier error: both legs travel together or not at all (a code
     # with no copy would leave the client nothing to render verbatim),
     # gated on the DOCUMENTED predicate exactly as the column summary
-    # gates last_error: one fact, one rule, on every wire.
+    # gates last_error: one fact, one rule, on every wire. Counters and
+    # the heartbeat DERIVE from the task rows and cell states at read
+    # time (passed in, so a page of runs pays ONE grouped read, not per
+    # run); nothing writes them onto the fill anymore.
     error = (
         FillError(code=fill.error_code, message=fill.error_message)
         if fill.status == FillStatus.FAILED and fill.error_code
@@ -265,16 +274,32 @@ def fill_run_wire(fill: Fill) -> dict[str, Any]:
         agent_id=fill.agent_id,
         status=fill.status,
         column_keys=fill.column_keys or [],
-        # Every declared counter, projected by NAME off the model's own
-        # columns. Enumerating them here by hand is how a counter ships
-        # as a zero while the worker writes it.
-        counters=FillCounters(**{name: getattr(fill, name, 0) for name in FillCounters.model_fields}),
+        counters=counters,
         confirmed_row_count=fill.confirmed_row_count,
         # The base model's attribution field is the wire's started_by;
         # authorization stays account membership.
         started_by=fill.user_id,
-        heartbeat_at=fill.heartbeat_at.isoformat() if fill.heartbeat_at else None,
+        heartbeat_at=heartbeat.isoformat() if heartbeat else None,
         error=error,
         created_at=fill.created_at.isoformat(),
         updated_at=fill.updated_at.isoformat(),
     ).model_dump()
+
+
+def fill_run_wire(fill: Fill) -> dict[str, Any]:
+    """ONE run's wire, for the echo paths (admit/cancel/refill) that
+    return a single fill. The fills PAGE uses fill_runs_wire, which reads
+    all runs' progress in a fixed number of queries."""
+    from .services.fills import derive_counters, derive_heartbeat
+
+    return _fill_run_wire(fill, derive_counters(fill), derive_heartbeat(fill))
+
+
+def fill_runs_wire(fills: list[Fill]) -> list[dict[str, Any]]:
+    """A PAGE of runs' wires, paying a FIXED number of grouped reads for
+    all of them (not derive_counters + derive_heartbeat per run, which is
+    a 3+4N walk on the four-second poll)."""
+    from .services.fills import page_progress
+
+    progress = page_progress([str(fill.id) for fill in fills])
+    return [_fill_run_wire(fill, *progress[str(fill.id)]) for fill in fills]

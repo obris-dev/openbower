@@ -220,10 +220,11 @@ class SaveListTests(TestCase):
 class SeedFromListTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.service = ListService(account_id="01JQ" + "B" * 22, user_id="01JQ" + "A" * 22)
+        self.service = ListService(account_id="01JQ" + "B" * 22)
 
     def _sheet(self, rows: list[dict]) -> List:
         target = self.service.create(
+            owner_id="01US" + "B" * 22,
             label="Sheet",
             columns=[{"key": "website", "label": "Website", "type": "url"}],
             origin=ListOrigin.CSV,
@@ -271,8 +272,8 @@ class SeedFromListTests(TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_foreign_list_reads_as_missing(self):
-        foreign = ListService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(
-            label="Not yours", columns=[], origin=ListOrigin.MANUAL
+        foreign = ListService(account_id="01AC" + "Z" * 22).create(
+            owner_id="01US" + "B" * 22, label="Not yours", columns=[], origin=ListOrigin.MANUAL
         )
         resp, _ = self._seed({"list_id": str(foreign.id), "identifier_key": "website"})
         self.assertEqual(resp.status_code, 400)

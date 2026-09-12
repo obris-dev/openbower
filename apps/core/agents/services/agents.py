@@ -19,21 +19,25 @@ class AgentNotFound(Exception):
 
 
 class AgentService:
-    def __init__(self, *, account_id: str, user_id: str) -> None:
+    """Account-scoped: every method reads or writes within one account.
+    The owner-stamping ops (create, create_ephemeral) take the owner as an
+    explicit `owner_id` argument rather than the service carrying a user_id
+    the account-scoped reads would ignore."""
+
+    def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
-        self.user_id = user_id
 
     def _roster_count(self) -> int:
         return Agent.objects.filter(account_id=self.account_id, ephemeral=False).count()
 
-    def create(self, *, label: str, config: AgentConfig) -> Agent:
+    def create(self, *, owner_id: str, label: str, config: AgentConfig) -> Agent:
         """A config travels as the CONTRACT MODEL, here as everywhere
         (never exploded into loose primitives)."""
         if self._roster_count() >= MAX_AGENTS:
             raise AgentsFull(f"an account holds at most {MAX_AGENTS} agents")
         return Agent.objects.create(
             account_id=self.account_id,
-            user_id=self.user_id,
+            user_id=owner_id,
             label=label,
             provider=config.provider,
             source=config.source,
@@ -54,7 +58,7 @@ class AgentService:
         deleted, _ = Agent.objects.filter(id__in=agent_ids, account_id=self.account_id, ephemeral=True).delete()
         return deleted
 
-    def create_ephemeral(self, *, label: str, config: AgentConfig) -> Agent:
+    def create_ephemeral(self, *, owner_id: str, label: str, config: AgentConfig) -> Agent:
         """The column custody's constructor: hidden from the roster,
         EXCLUDED from MAX_AGENTS (ephemeral rows are bounded by the
         columns that own them, one each), deleted with its column. An
@@ -62,7 +66,7 @@ class AgentService:
         promotion, never by appearing in list()."""
         return Agent.objects.create(
             account_id=self.account_id,
-            user_id=self.user_id,
+            user_id=owner_id,
             label=label,
             ephemeral=True,
             provider=config.provider,

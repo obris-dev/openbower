@@ -1,7 +1,9 @@
-# The full local stack for the open app: db, the Django api, the two
-# fill workers (normal and test), the maintenance cron, and the web
-# dev servers. `make up` runs it; the containers
-# bind-mount the checkout, so edits hot-reload without a rebuild.
+# The full local stack for the open app: db, the Django api, the manual
+# fill provisioner + consumer + the isolated bench-test consumer, the
+# ingest worker, the autofill provisioner + consumer, the maintenance
+# cron, and the web dev servers.
+# `make up` runs it; the containers bind-mount the checkout, so edits
+# hot-reload without a rebuild.
 #
 # The project name is PINNED so every checkout of this repo (a worktree,
 # a renamed clone) resolves to ONE project instead of a rival stack whose
@@ -186,76 +188,124 @@ services:
       retries: 6
       start_period: 300s
 
-  # The api above RELOADS on edit (runserver + the bind mount). The worker
-  # does not, and cannot: a custom command gets no reloader, and a reloader
-  # kills and respawns, which would drop a row mid flight against a metered
-  # provider. A change to worker code needs `make restart-worker`, and a
-  # restart resumes whatever fill was live. Compose runs exactly ONE
-  # worker PER KIND: disjoint kinds claim disjoint fills, and the test
-  # lane rides above this worker's width on a shared source: one row
-  # per test fill, bounded by the live test fills (the one-live-test
-  # rule is per account and advisory), not by one; a second claimer
-  # of the SAME kind would double the load unbounded.
-  worker:
+  # The manual fill PROVISIONER: iterates the live fills and publishes
+  # each one's READY tasks to the manual bus, marking them QUEUED
+  # (publish first, so a crash re-picks them READY). A flat per-fill
+  # depth is the fairness point, so a wide fill cannot flood the bus
+  # ahead of a smaller one. Needs the topics (kafka-setup) and the task
+  # migration (core-setup). No restart policy (crash-is-a-signal); the
+  # loop idles-and-retries a DatabaseError and a broker blip, and the
+  # poll wakes every few seconds so SIGTERM stops it promptly.
+  fill-provisioner:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker --kinds normal
+    command: uv run --frozen --package openbower-core python apps/core/manage.py provision_fill
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
     # Deliberately NOT on the suite network: nothing in the fill path
-    # calls the IdP or the data service, and `worker` is a name the other
-    # stack also uses, so joining would put two A records behind it.
+    # calls the IdP or the data service.
     depends_on:
       core-setup:
         condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
     volumes: *core_volumes
-    # No restart policy, matching core above: in the local profile a crash
-    # is a signal to read. Every restart policy has the daemon-startup
-    # property, `on-failure` included (a drain longer than dockerd's
-    # shutdown timeout exits non-zero, which qualifies), so any of them
-    # brings the worker back ALONE against a db and core that carry none.
-    # The routine failures are already handled in the loop: a DatabaseError
-    # idles and retries, and a per-fill exception is caught per fill.
-    #
-    # The worker traps SIGTERM/SIGINT and finishes the rows in flight; a
-    # SIGKILL through the grace wastes a metered provider call AND burns
-    # one of the row's counted attempts (attempts count at claim). The
-    # grace clears the repo's own worst case for one row, the
-    # runtime's cell_run_worst_case_seconds() (every completion the
-    # budget allows, the capped verdict's own budget included, plus
-    # every search at its clamped worst case; see agents/constants.py
-    # for the derivation), with room to spare: the bound follows the
-    # vendor registry and is not re-tightened here when a vendor
-    # leaves, so the slack can be generous, and a grace set exactly
-    # AT the maximum would SIGKILL the outcome write a bounded row
-    # still owes. A parity test holds this value above the bound, so
-    # the number here is never quietly below it. Docker's default 10s would kill through
-    # nearly every real row. A stop during an active fill can
-    # therefore take minutes; that wait is the point.
-    stop_grace_period: 2100s
+    # Liveness: the loop touches /tmp/fill_provisioner.heartbeat each
+    # pass, so a marker older than 30s means it WEDGED (not merely idle
+    # on an empty queue, which still loops). Compose only SURFACES this;
+    # acting on it is the deploy's job, exactly as for the ingest worker.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/fill_provisioner.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
-  # The TEST lane's worker: the same binary, claiming only test-kind
-  # fills (the bench's one-row diagnostics), so bench latency never
-  # queues behind a wide fill and a wedged fill worker cannot take
-  # agent-configuration UX down. One row wide by construction (a test
-  # fill has exactly one task), so no concurrency knob exists to set.
-  # The SHORT grace is a deliberate trade, and it is effectively
-  # always a kill: 32s is under one completion timeout, so an
-  # in-flight bench row does not finish. What it costs is one metered
-  # call, one of the row's counted attempts, and a poll that reads
-  # live-but-silent until the lease goes stale
-  # (ROW_LEASE_STALE_SECONDS) and the row is reclaimed; a bench run
-  # is throwaway diagnostics, not work worth minutes of shutdown.
-  worker-test:
+  # The manual fill CONSUMER (the shared fill-task processor on the
+  # manual lane): claims each published task off the bus, runs its
+  # FROZEN config, and lands it on the sheet (NORMAL) or its task (TEST),
+  # committing the offset after the settle so a mid-run death redelivers.
+  # ONE consumer serves both kinds; it routes on the task's own fill.
+  # Needs the topics (kafka-setup) and the task migration (core-setup).
+  # No restart policy (crash-is-a-signal); routine failures are handled
+  # in the handler (a config-tier refusal fails the fill, a transient one
+  # parks and redelivers).
+  #
+  # The consumer traps SIGTERM/SIGINT and finishes the message in flight;
+  # a SIGKILL through the grace wastes a metered provider call AND burns
+  # one of the row's counted attempts (attempts count at claim). The grace
+  # clears the repo's own worst case for one row, the runtime's
+  # cell_run_worst_case_seconds() (every completion the budget allows, the
+  # capped verdict's own budget included, plus every search at its clamped
+  # worst case; see agents/constants.py for the derivation), with room to
+  # spare: the bound follows the vendor registry and is not re-tightened
+  # here when a vendor leaves, so the slack can be generous, and a grace
+  # set exactly AT the maximum would SIGKILL the outcome write a bounded
+  # row still owes. A parity test holds this value above the bound, so the
+  # number here is never quietly below it. Docker's default 10s would kill
+  # through nearly every real row. A stop during an active fill can
+  # therefore take minutes; that wait is the point.
+  fill-consumer:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py fill_worker --kinds test
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic manual
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
     depends_on:
       core-setup:
         condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
     volumes: *core_volumes
+    # Liveness: the consume loop touches the heartbeat each poll, but a
+    # single claimed run BLOCKS it for up to the worst-case row time, so
+    # the window clears that same bound the stop_grace below clears (a
+    # tighter one would read a normal slow row as WEDGED, not merely idle
+    # on an empty bus, which still loops). A parity test holds it above
+    # cell_run_worst_case_seconds(). Compose only SURFACES this; acting on
+    # it is the deploy's job.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 2100s
+
+  # The bench-TEST lane, isolated from the manual firehose: a one-row
+  # diagnostic a user is watching gets its own topic + consumer, so it
+  # never queues behind a wide manual fill (the old worker-test, on the
+  # shared spine). SHORT grace on purpose: a bench row is quick and the
+  # user is waiting, so a stop kills it fast rather than draining minutes.
+  test-consumer:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic test
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: same wide window as the manual consumer, and for the same
+    # reason, a bench row runs as long as any row and BLOCKS the loop
+    # while it does. The short stop_grace below is a SHUTDOWN choice (kill
+    # the in-flight bench row fast, the user is waiting), NOT a smaller
+    # liveness bound, so the window stays above the worst-case run.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     stop_grace_period: 32s
 
   # One-shot: reconcile the broker to the ingest topic catalog (declared
@@ -310,6 +360,77 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+  # The autofill provisioner: the ingest worker enqueues a READY null-run
+  # FillTask per pushed row, this service publishes each to the bus and
+  # marks it QUEUED (publish first, so a crash re-picks it READY). Needs
+  # the topics (kafka-setup) and the task migration (core-setup). No
+  # restart policy (crash-is-a-signal, matching the other workers); the
+  # loop idles-and-retries a DatabaseError, and the poll wakes every few
+  # seconds so SIGTERM stops it promptly (default grace).
+  autofill-provisioner:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py provision_autofill
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the loop touches /tmp/autofill_provisioner.heartbeat each
+    # pass, so a marker older than 30s means it WEDGED (not merely idle on
+    # an empty queue, which still loops). Compose only SURFACES this;
+    # acting on it is the deploy's job, exactly as for the ingest worker.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/autofill_provisioner.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # The autofill consumer (the shared fill-task processor): claims each
+  # published task off the bus, runs its AI columns, and lands them,
+  # committing the offset after the settle so a mid-run death redelivers.
+  # Needs the topics (kafka-setup) and the task migration (core-setup).
+  # Same crash-is-a-signal, no restart policy as the other workers; the
+  # poll wakes every second so SIGTERM stops it promptly (default grace).
+  autofill-consumer:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic autofill
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the consume loop touches the heartbeat each poll, but a
+    # single claimed run BLOCKS it for up to the worst-case row time, so
+    # the window clears that same bound the stop_grace below clears (a
+    # tighter one would read a normal slow row as WEDGED, not merely idle
+    # on an empty bus, which still loops). A parity test holds it above
+    # cell_run_worst_case_seconds(). Compose only SURFACES this; acting on
+    # it is the deploy's job.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    # An autofill run is a real metered row (a pushed row's AI columns), so
+    # a stop must finish the message in flight rather than SIGKILL it mid
+    # provider call (wasting the call AND burning one of the row's
+    # attempts), exactly like the manual consumer.
+    stop_grace_period: 2100s
 
   # The suite's cron: supercronic (pinned in the core Dockerfile; the
   # image ships no crond) running the schedule in apps/core/crontab.

@@ -18,7 +18,7 @@ from django.core.cache import caches
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from common.testing import login_session
+from common.testing import TEST_IDENTITY, login_session
 from lists.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, ListOrigin
 from lists.services.lists import ListService
 
@@ -63,7 +63,8 @@ def _claims(**over):
 
 
 def _make_list() -> str:
-    lst = ListService(account_id=_ACCT, user_id=_USER).create(
+    lst = ListService(account_id=_ACCT).create(
+        owner_id=TEST_IDENTITY["id"],
         label="webhook target",
         columns=[{"key": "domain", "label": "Domain", "type": "url"}],
         origin=ListOrigin.MANUAL,
@@ -131,7 +132,7 @@ class IngestMachineTests(TestCase):
         # Honest about async: accepted, but the sheet is unchanged until the
         # worker consumes the bus (a follow-up).
         self._ingest({"rows": [{"domain": "acme.com"}]})
-        lst = ListService(account_id=_ACCT, user_id=_USER).get(self.list_id)
+        lst = ListService(account_id=_ACCT).get(self.list_id)
         self.assertEqual(lst.row_count, 0)
 
     def test_a_foreign_accounts_list_is_404(self):

@@ -633,7 +633,7 @@
       "type": "object"
     },
     "FillCounters": {
-      "description": "Worker-written progress (never COUNT(*) polling): attempted is\nrows with a terminal outcome this fill; blank counts diagnosed\nblanks; transient counts rows currently parked in retry.",
+      "description": "Progress, DERIVED from the task rows and cell states at read time\n(never a stored counter): attempted is rows with a terminal outcome\nthis fill; blank counts diagnosed blanks; transient counts rows\ncurrently parked in retry.",
       "properties": {
         "attempted": {
           "title": "Attempted",
@@ -643,23 +643,8 @@
           "title": "Blank",
           "type": "integer"
         },
-        "concurrency_point": {
-          "default": 0,
-          "title": "Concurrency Point",
-          "type": "integer"
-        },
         "filled": {
           "title": "Filled",
-          "type": "integer"
-        },
-        "row_seconds": {
-          "default": 0,
-          "title": "Row Seconds",
-          "type": "integer"
-        },
-        "search_wait_seconds": {
-          "default": 0,
-          "title": "Search Wait Seconds",
           "type": "integer"
         },
         "transient": {
@@ -744,7 +729,7 @@
             }
           ],
           "default": null,
-          "description": "Stamped with each counter write; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+          "description": "The latest state change across this run's tasks (derived); the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
           "title": "Heartbeat At"
         },
         "id": {
@@ -901,7 +886,7 @@
             }
           ],
           "default": null,
-          "description": "Stamped with each counter write; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+          "description": "The latest state change across this run's tasks (derived); the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
           "title": "Heartbeat At"
         },
         "id": {
