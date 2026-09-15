@@ -20,10 +20,10 @@ from ...constants import (
     FILL_SCAN_CHUNK,
     FREE_SEARCH_FILL_BUDGET,
     MAX_LIST_ROWS,
-    FillTaskStatus,
+    NodeRunStatus,
     StoredCellState,
 )
-from ...models import FillCellState, FillTask, List, ListRow
+from ...models import List, ListCellState, ListRow, NodeRun
 
 
 def row_is_eligible(data: dict, variables: set[str]) -> bool:
@@ -211,7 +211,7 @@ class RefillTargets:
             state__in=SETTLED_CELL_STATES, config_fingerprint=self.fingerprint
         )
         by_row: dict[str, set[str]] = {}
-        for row_id, column_key in FillCellState.objects.filter(
+        for row_id, column_key in ListCellState.objects.filter(
             settled,
             account_id=self.account_id,
             list_id=self.list_id,
@@ -229,10 +229,10 @@ class RefillTargets:
         the queue is materialized and survives its fill."""
         return {
             str(row_id)
-            for row_id in FillTask.objects.filter(
+            for row_id in NodeRun.objects.filter(
                 account_id=self.account_id,
                 fill_run_id=self.owed_by,
-                status=FillTaskStatus.ABANDONED,
+                status=NodeRunStatus.ABANDONED,
                 row_id__in=ids,
             ).values_list("row_id", flat=True)
         }

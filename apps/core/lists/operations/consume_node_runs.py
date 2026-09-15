@@ -1,13 +1,13 @@
-"""The shared fill-task CONSUMER: the loop that claims tasks off the bus
+"""The shared node-run CONSUMER: the loop that claims tasks off the bus
 and hands each to its lane's processor. The consume loop lives here
 (mirroring the ingest consumer); the management command owns only signals;
 the processing itself lives in services.fill_processing. ONE consumer
 serves both lanes, told which topic to read.
 
-`handle_fill_task` is the separable unit, testable without a broker: it
+`handle_node_run` is the separable unit, testable without a broker: it
 claims the task through the state machine (READY | QUEUED -> PROCESSING,
 accepting READY so a message that outran the provisioner's mark still
-runs), routes it to AutofillTask or FillBackedTask on its own
+runs), routes it to AutofillRun or FillBackedRun on its own
 `fill_run_id`, and translates a row/list deletion mid-run into a terminal
 ROW_MISSING.
 
@@ -25,12 +25,12 @@ from pathlib import Path
 from django.conf import settings
 from django.db import DatabaseError, connection
 
-from ..constants import FillTaskStatus
-from ..ingest.topics import AUTOFILL_TASKS
+from ..constants import NodeRunStatus
+from ..ingest.topics import AUTOFILL_RUNS
 from ..services import fill_progress
-from ..services.fill_processing import AutofillTask, FillBackedTask
-from ..services.fill_tasks import FillTaskFlow
+from ..services.fill_processing import AutofillRun, FillBackedRun
 from ..services.lists import ListNotFound, RowNotFound
+from ..services.node_runs import NodeRunFlow
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +39,17 @@ logger = logging.getLogger(__name__)
 # WEDGED loop without false-alarming on an idle bus (an idle consumer
 # still loops and touches this). A fixed path so the healthcheck can name
 # it; keep the two in sync.
-_HEARTBEAT_PATH = Path("/tmp/consume_fill_tasks.heartbeat")
+_HEARTBEAT_PATH = Path("/tmp/consume_node_runs.heartbeat")
 
 
 def _touch_heartbeat() -> None:
     try:
         _HEARTBEAT_PATH.touch()
     except OSError as e:
-        logger.warning("consume_fill_tasks heartbeat write failed: %s", e)
+        logger.warning("consume_node_runs heartbeat write failed: %s", e)
 
 
-def handle_fill_task(task_id: str, worker_id: str) -> str:
+def handle_node_run(task_id: str, worker_id: str) -> str:
     """Claim one task and hand it to its lane's processor. Returns
     "dropped" (the claim CAS lost: a duplicate delivery, or the reclaim
     scan / another consumer got there first), "done" (settled terminally,
@@ -57,11 +57,11 @@ def handle_fill_task(task_id: str, worker_id: str) -> str:
     with a backoff), or "row_missing" / "list_missing" (the row or its list
     vanished). A transient failure inside the run PROPAGATES, so the offset
     is not committed and the message redelivers."""
-    flow = FillTaskFlow(worker_id=worker_id)
+    flow = NodeRunFlow(worker_id=worker_id)
     task = flow.claim(task_id)
     if task is None:
         return "dropped"
-    processor = (FillBackedTask if task.fill_run_id else AutofillTask)(task=task, worker_id=worker_id)
+    processor = (FillBackedRun if task.fill_run_id else AutofillRun)(task=task, worker_id=worker_id)
     try:
         return processor.process()
     except (ListNotFound, RowNotFound):
@@ -69,19 +69,19 @@ def handle_fill_task(task_id: str, worker_id: str) -> str:
         # deletion mid-run): terminal, nothing to diagnose. A fill-backed
         # run also nudges completion so the fill does not strand live on a
         # row that disappeared.
-        flow.settle(task.id, status=FillTaskStatus.ROW_MISSING, result={})
+        flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
         if task.fill_run_id:
             fill_progress.try_finish(task.fill_run_id)
         return "row_missing"
 
 
-class FillTaskConsumer:
+class NodeRunConsumer:
     """The consume loop. State lives in the bus + the task rows, never in
     this process, so a restart resumes from the committed offset. `topic`
     selects the lane (the AUTOFILL firehose or the manual fills); the
     handler routes each task on its own fill_run_id regardless."""
 
-    def __init__(self, *, worker_id: str, stop, topic=AUTOFILL_TASKS) -> None:
+    def __init__(self, *, worker_id: str, stop, topic=AUTOFILL_RUNS) -> None:
         self.worker_id = worker_id
         self.stop = stop
         self.topic = topic
@@ -110,7 +110,7 @@ class FillTaskConsumer:
                         break
                     continue
                 if msg.error():
-                    logger.error("consume_fill_tasks consume error: %s", msg.error())
+                    logger.error("consume_node_runs consume error: %s", msg.error())
                     continue
                 try:
                     task_id = json.loads(msg.value())["task_id"]
@@ -118,11 +118,11 @@ class FillTaskConsumer:
                     # An undecodable message would poison the partition
                     # forever if left uncommitted; skip it (a dead-letter
                     # topic is a follow-up).
-                    logger.error("consume_fill_tasks: undecodable message skipped: %s", e)
+                    logger.error("consume_node_runs: undecodable message skipped: %s", e)
                     consumer.commit(message=msg)
                     continue
                 try:
-                    handle_fill_task(task_id, self.worker_id)
+                    handle_node_run(task_id, self.worker_id)
                     consumer.commit(message=msg)
                 except DatabaseError as e:
                     # Transient (a DB restart, a reset socket, a lock
@@ -132,7 +132,7 @@ class FillTaskConsumer:
                     # leave the offset uncommitted; a task left PROCESSING is
                     # recovered by the reclaim cron. Mirrors the provisioner's
                     # DatabaseError branch.
-                    logger.warning("consume_fill_tasks hit a database error, recovering: %s", e)
+                    logger.warning("consume_node_runs hit a database error, recovering: %s", e)
                     connection.close()
                     if once:
                         return

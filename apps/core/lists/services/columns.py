@@ -171,7 +171,7 @@ class ColumnService:
 
     def rename(self, target_list_id: str, *, key: str, label: str) -> List:
         """Relabel one column. The KEY never moves, and that is the
-        whole design: row data is a dict keyed on it, FillCellState
+        whole design: row data is a dict keyed on it, ListCellState
         references it, and an agent output maps down to it, so a key
         that followed the label would strand every cell the column
         holds. A column relabelled "Decision maker" keeps whatever key
@@ -201,7 +201,7 @@ class ColumnService:
 
         The ORDER is the worker's order: row data first, then the
         queue. The worker's terminal write locks the ListRow and then
-        writes the FillTask in one transaction, so taking them the
+        writes the NodeRun in one transaction, so taking them the
         other way round here is an ABBA deadlock against any fill
         running on this sheet, which Postgres resolves by aborting one
         side. Purging the values first also means a worker that was
@@ -222,7 +222,7 @@ class ColumnService:
             # data invisibly. It touches rows that never held the key
             # too, and that is accepted: narrowing it means asking the
             # blob what it contains, and NOTHING in this codebase
-            # queries row data (FillCellState exists so counting
+            # queries row data (ListCellState exists so counting
             # filled cells never has to). The blob is storage; the
             # structured record is what answers questions about it.
             ListRow.objects.filter(list_id=str(target_list.id)).update(data=_JsonbWithoutKey("data", Value(key)))

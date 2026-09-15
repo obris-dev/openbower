@@ -1,7 +1,7 @@
 """Enqueue autofill work onto the unified task spine.
 
 A pushed row is owed a fill of its BLANK AI columns. This queues that
-as null-run FillTasks (no Fill, so no consent run): one task per (row,
+as null-run NodeRuns (no Fill, so no consent run): one task per (row,
 agent), because an agent produces its whole column set in one run. An
 agent a push fully overrides (every column it owns already carries a
 sent value) gets no task. The autofill worker claims them, resolves
@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from django.utils import timezone
 
-from ..constants import FillTaskStatus
-from ..models import FillTask, List
+from ..constants import NodeRunStatus
+from ..models import List, NodeRun
 
 
 def _agent_columns(target_list: List) -> dict[str, list[str]]:
@@ -48,7 +48,7 @@ def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
     # it publishes. `last_state_change_at` is stamped at birth so the
     # reclaim scan and audit have a value from the start.
     now = timezone.now()
-    tasks: list[FillTask] = []
+    tasks: list[NodeRun] = []
     for row in rows:
         for agent_id, keys in agent_columns.items():
             # Skip a fully overridden agent: a push that fills every column
@@ -58,17 +58,17 @@ def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
             if all((row.data.get(key) or "").strip() for key in keys):
                 continue
             tasks.append(
-                FillTask(
+                NodeRun(
                     account_id=account_id,
                     fill_run_id=None,
                     agent_id=agent_id,
                     row_id=str(row.id),
                     list_id=str(target_list.id),
-                    status=FillTaskStatus.READY,
+                    status=NodeRunStatus.READY,
                     last_state_change_at=now,
                 )
             )
     if not tasks:
         return 0
-    FillTask.objects.bulk_create(tasks, ignore_conflicts=True)
+    NodeRun.objects.bulk_create(tasks, ignore_conflicts=True)
     return len(tasks)

@@ -19,7 +19,7 @@ class Fill(UserScopedModel):
     """One durable fill of one AI column: the frozen record of what the
     user consented to spend, and how far it has got.
 
-    The WORK is FillTask rows, materialized at admission, so this row
+    The WORK is NodeRun rows, materialized at admission, so this row
     carries no cursor and no lease. `user_id` (the base's attribution
     field) is the wire's started_by; authorization is account
     membership, never the starter."""

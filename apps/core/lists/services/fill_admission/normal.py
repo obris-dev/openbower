@@ -24,8 +24,8 @@ from agents.services import AgentNotFound, AgentService
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
-from ...constants import FILL_WRITE_BATCH, FillTaskStatus
-from ...models import Fill, FillTask, List, ListRow
+from ...constants import FILL_WRITE_BATCH, NodeRunStatus
+from ...models import Fill, List, ListRow, NodeRun
 from ..fingerprint import config_fingerprint
 from ..lists import ListNotFound
 from .base import AdmissionBase
@@ -71,7 +71,7 @@ class FillAdmissionService(AdmissionBase):
         The List lock is taken LAST, and held only across the one
         write that needs it: the columns write. Everything before it (the
         guards, the eligible walk, the fill row, and the queue insert,
-        which is one FillTask per targeted row and the expensive part
+        which is one NodeRun per targeted row and the expensive part
         of admission) touches no column, so none of it needs the list
         locked. A Postgres row lock cannot be released early, so the
         only way to hold it briefly is to acquire it late.
@@ -351,14 +351,14 @@ class FillAdmissionService(AdmissionBase):
                 if consented > cap:
                     raise FreeSearchBudget(searches=MAX_TOOL_CALLS * consented)
                 tasks.append(
-                    FillTask(
+                    NodeRun(
                         account_id=self.account_id,
                         fill_run_id=str(fill.id),
                         agent_id=str(agent.id),
                         row_id=row_id,
                         list_id=fill.list_id,
                         position=position,
-                        status=FillTaskStatus.READY,
+                        status=NodeRunStatus.READY,
                         last_state_change_at=now,
                     )
                 )
@@ -368,7 +368,7 @@ class FillAdmissionService(AdmissionBase):
             # Swallowing that would leave confirmed_row_count, which is
             # the progress denominator on every surface, disagreeing
             # with the queue it counts.
-            FillTask.objects.bulk_create(tasks)
+            NodeRun.objects.bulk_create(tasks)
 
         # No columns write here. The caller claims them AFTER this
         # returns, under the List lock, in one write that carries both

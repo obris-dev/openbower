@@ -252,7 +252,7 @@ class ProviderRetiredRefusal(FillRefused):
 
 class ResumeRunNotFound(FillRefused):
     """The named fill is not this SHEET's. Resolving it is what scopes
-    the resume: FillTask carries no account of its own (it is
+    the resume: NodeRun carries no account of its own (it is
     reached through its fill, which does), so reading rows for an
     unresolved id would query another account's table. Nothing crosses
     today, because row ids are ULIDs and the intersection empties, but

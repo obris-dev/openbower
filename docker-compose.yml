@@ -223,7 +223,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # The manual fill CONSUMER (the shared fill-task processor on the
+  # The manual fill CONSUMER (the shared node-run processor on the
   # manual lane): claims each published task off the bus, runs its
   # FROZEN config, and lands it on the sheet (NORMAL) or its task (TEST),
   # committing the offset after the settle so a mid-run death redelivers.
@@ -249,7 +249,7 @@ services:
   # therefore take minutes; that wait is the point.
   fill-consumer:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic manual
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic manual
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
@@ -269,7 +269,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_node_runs.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
       interval: 10s
       timeout: 5s
       retries: 3
@@ -283,7 +283,7 @@ services:
   # user is waiting, so a stop kills it fast rather than draining minutes.
   test-consumer:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic test
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic test
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
@@ -301,7 +301,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_node_runs.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
       interval: 10s
       timeout: 5s
       retries: 3
@@ -362,7 +362,7 @@ services:
       start_period: 40s
 
   # The autofill provisioner: the ingest worker enqueues a READY null-run
-  # FillTask per pushed row, this service publishes each to the bus and
+  # NodeRun per pushed row, this service publishes each to the bus and
   # marks it QUEUED (publish first, so a crash re-picks it READY). Needs
   # the topics (kafka-setup) and the task migration (core-setup). No
   # restart policy (crash-is-a-signal, matching the other workers); the
@@ -393,7 +393,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # The autofill consumer (the shared fill-task processor): claims each
+  # The autofill consumer (the shared node-run processor): claims each
   # published task off the bus, runs its AI columns, and lands them,
   # committing the offset after the settle so a mid-run death redelivers.
   # Needs the topics (kafka-setup) and the task migration (core-setup).
@@ -401,7 +401,7 @@ services:
   # poll wakes every second so SIGTERM stops it promptly (default grace).
   autofill-consumer:
     image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_fill_tasks --topic autofill
+    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic autofill
     env_file: *core_env_file
     environment: *core_env
     extra_hosts: *host_gateway
@@ -421,7 +421,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_fill_tasks.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_node_runs.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
       interval: 10s
       timeout: 5s
       retries: 3

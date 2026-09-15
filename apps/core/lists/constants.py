@@ -5,10 +5,10 @@ from __future__ import annotations
 from enum import StrEnum
 
 from openbower_schema.fills import (
-    FILL_ROW_ATTEMPTS as FILL_ROW_ATTEMPTS,
+    FREE_SEARCH_FILL_BUDGET as FREE_SEARCH_FILL_BUDGET,
 )
 from openbower_schema.fills import (
-    FREE_SEARCH_FILL_BUDGET as FREE_SEARCH_FILL_BUDGET,
+    NODE_RUN_ATTEMPTS as NODE_RUN_ATTEMPTS,
 )
 from openbower_schema.fills import (
     ROW_LEASE_STALE_SECONDS as ROW_LEASE_STALE_SECONDS,
@@ -81,14 +81,14 @@ class ColumnType(StrEnum):
 # x-constants) live on the CONTRACT and are re-exported here; the rest
 # are server internals, binary when invented, derivations stated when
 # derived.
-# Autofill task ids the provisioner collects and publishes in ONE flush
+# Autofill run ids the provisioner collects and publishes in ONE flush
 # per pass (binary): a PUBLISH-batch size, not consumer concurrency. The
 # provisioner only puts ids on the bus and the consumers pull at their
 # own rate (Kafka buffers between them), so this sizes how much a pass
 # amortizes the broker round-trip over, not how many run at once. Matches
 # the manual lane's per-fill depth.
 AUTOFILL_PUBLISH_BATCH = 1000
-# Manual fill tasks the provisioner publishes per fill PER PASS (binary):
+# Manual node runs the provisioner publishes per fill PER PASS (binary):
 # offering every live fill the same per-pass batch is the fairness point,
 # so a wide fill cannot flood the bus ahead of a smaller one beside it in
 # a pass. It bounds a PASS, not the standing QUEUED depth (the consumers
@@ -101,7 +101,7 @@ FILL_PUBLISH_BATCH = 1000
 MAX_ACTIVE_FILLS = 4
 
 FILL_STATUS_MAX_LENGTH = 16
-FILL_TASK_STATUS_MAX_LENGTH = 16
+NODE_RUN_STATUS_MAX_LENGTH = 16
 CELL_STATE_MAX_LENGTH = 32
 # The failed fill's two-tier error: code is the machine leg, message is
 # server-authored copy rendered verbatim (bounded like every authored
@@ -188,7 +188,7 @@ class FillFailureCode(StrEnum):
     MODEL_UNRUNNABLE = FillErrorCode.MODEL_UNRUNNABLE
 
 
-class FillTaskStatus(StrEnum):
+class NodeRunStatus(StrEnum):
     """A queue entry's lifecycle, and DELIBERATELY disjoint from
     StoredCellState: this says whether the WORK finished, never what came of
     it. A task that exhausts its attempts is DONE, and the giving-up is
@@ -234,10 +234,10 @@ class FillTaskStatus(StrEnum):
 # reclaim scan watches it, and a fill is complete only when it has none. The
 # terminals are everything else; keeping the NON-terminal set explicit
 # is what the reclaim scan's partial index and the pending derivation key on.
-NON_TERMINAL_FILL_TASK_STATES = (
-    FillTaskStatus.READY,
-    FillTaskStatus.QUEUED,
-    FillTaskStatus.PROCESSING,
+NON_TERMINAL_NODE_RUN_STATES = (
+    NodeRunStatus.READY,
+    NodeRunStatus.QUEUED,
+    NodeRunStatus.PROCESSING,
 )
 
 
@@ -296,7 +296,7 @@ class StoredCellState(StrEnum):
 
     So ABSENCE means exactly one thing: never attempted.
 
-    PENDING is still not here. A queued FillTask on a live fill IS
+    PENDING is still not here. A queued NodeRun on a live fill IS
     pending, which is what keeps admission from writing to the sheet
     at all and what leaves nothing to sweep when a fill stops. The
     wire's WireCellState carries `pending` (the client needs it to

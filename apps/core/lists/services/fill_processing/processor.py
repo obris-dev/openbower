@@ -1,14 +1,14 @@
-"""The fill-task PROCESSOR: given a CLAIMED task, run its agent and land
-the result. A trusted-process service (like fill_progress / fill_tasks),
+"""The node-run PROCESSOR: given a CLAIMED task, run its agent and land
+the result. A trusted-process service (like fill_progress / node_runs),
 resolving by id; the consume operation is only the loop that feeds it.
 
 Two lanes, one shape:
 
-- AutofillTask (`fill_run_id` NULL): resolves the row's list, the agent's
+- AutofillRun (`fill_run_id` NULL): resolves the row's list, the agent's
   config, and the agent's column set LIVE. A gone row or list settles
   ROW_MISSING / LIST_MISSING; a config-tier failure settles the ONE task.
 
-- FillBackedTask (`fill_run_id` set): rebuilds the fill's FROZEN config and
+- FillBackedRun (`fill_run_id` set): rebuilds the fill's FROZEN config and
   landing context, runs the claim-time model gate (a config-tier refusal
   FAILS the whole fill), lands on the sheet (NORMAL) or the task (TEST),
   and nudges completion after each settle.
@@ -36,12 +36,12 @@ from ...constants import (
     FillFailureCode,
     FillKind,
     FillStatus,
-    FillTaskStatus,
+    NodeRunStatus,
 )
 from ...models import Fill, List, ListRow
 from .. import fill_progress
-from ..fill_tasks import FillTaskFlow
 from ..fingerprint import config_fingerprint
+from ..node_runs import NodeRunFlow
 from .cell_run import run_cell
 from .landing import LandingContext, land_row
 
@@ -62,7 +62,7 @@ def to_result(run) -> CellRunResult:
     )
 
 
-class ProcessFillTask:
+class ProcessNodeRun:
     """One claimed task's run. Built from the primitives (the task and the
     worker id); `flow` is a cached property, not a threaded-in instance."""
 
@@ -71,19 +71,19 @@ class ProcessFillTask:
         self.worker_id = worker_id
 
     @cached_property
-    def flow(self) -> FillTaskFlow:
-        return FillTaskFlow(worker_id=self.worker_id)
+    def flow(self) -> NodeRunFlow:
+        return NodeRunFlow(worker_id=self.worker_id)
 
     def _settle_done(self) -> None:
         """Settle DONE with no result: the run was skipped (nothing to
         fill, a gone agent, a config-tier refusal), so the cell stays
         never-attempted rather than diagnosed."""
-        self.flow.settle(self.task.id, status=FillTaskStatus.DONE, result={})
+        self.flow.settle(self.task.id, status=NodeRunStatus.DONE, result={})
 
     def _close(self):
         """land_row's terminal callback: settle the task DONE inside the
         landing's own transaction, so a landing miss rolls both back."""
-        return partial(self.flow.settle, self.task.id, status=FillTaskStatus.DONE)
+        return partial(self.flow.settle, self.task.id, status=NodeRunStatus.DONE)
 
     def _park_if_retriable(self, run, result: CellRunResult) -> bool:
         """A fully blank row with a retriable cause (a 429, a timeout):
@@ -114,7 +114,7 @@ class ProcessFillTask:
         the fill lane overrides."""
 
 
-class AutofillTask(ProcessFillTask):
+class AutofillRun(ProcessNodeRun):
     """A null-run task: everything resolved LIVE off the sheet, landing on
     the row, a config-tier failure settling only this task."""
 
@@ -122,11 +122,11 @@ class AutofillTask(ProcessFillTask):
         task = self.task
         row = ListRow.objects.filter(id=task.row_id).first()
         if row is None:
-            self.flow.settle(task.id, status=FillTaskStatus.ROW_MISSING, result={})
+            self.flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
             return "row_missing"
         target_list = List.objects.filter(id=row.list_id, account_id=task.account_id).first()
         if target_list is None:
-            self.flow.settle(task.id, status=FillTaskStatus.LIST_MISSING, result={})
+            self.flow.settle(task.id, status=NodeRunStatus.LIST_MISSING, result={})
             return "list_missing"
         # The agent's column set, resolved live: empty means the agent no
         # longer fills any column here (removed or reassigned), so there is
@@ -178,7 +178,7 @@ class AutofillTask(ProcessFillTask):
         return "done"
 
 
-class FillBackedTask(ProcessFillTask):
+class FillBackedRun(ProcessNodeRun):
     """A fill-backed task: the SAME run as autofill, but with the fill's
     FROZEN config and column set (mid-fill agent edits never apply). A TEST
     fill lands on its task; a NORMAL fill lands on its sheet row.
@@ -203,7 +203,7 @@ class FillBackedTask(ProcessFillTask):
         if self.fill.kind == FillKind.TEST:
             # A test run lands ON ITS TASK: no sheet write, no cell truth
             # (there may be no sheet at all).
-            self.flow.settle(self.task.id, payload.model_dump(), status=FillTaskStatus.DONE)
+            self.flow.settle(self.task.id, payload.model_dump(), status=NodeRunStatus.DONE)
         else:
             land_row(self.ctx, self.task.row_id, payload, close=self._close())
 
@@ -243,7 +243,7 @@ class FillBackedTask(ProcessFillTask):
                     # The whole list went away mid-walk: a user deletion is
                     # CANCELLED, never a failure story.
                     fill_progress.cancel(str(self.fill.id))
-                self.flow.settle(self.task.id, status=FillTaskStatus.ROW_MISSING, result={})
+                self.flow.settle(self.task.id, status=NodeRunStatus.ROW_MISSING, result={})
                 self.finish()
                 return "row_missing"
             row_data = row.data

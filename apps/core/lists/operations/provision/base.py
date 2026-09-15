@@ -24,7 +24,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import DatabaseError
 
-from ...models import FillTask
+from ...models import NodeRun
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class ProvisionOperation:
             # healthcheck fires); never crash the loop over it.
             logger.warning("%s provisioner heartbeat write failed: %s", self._LANE, e)
 
-    def _publish_batch(self, tasks: list[FillTask], topic) -> None:
+    def _publish_batch(self, tasks: list[NodeRun], topic) -> None:
         """Produce every task id in the page to `topic` (buffered,
         non-blocking), keyed by row id (an even, query-free spread that
         keeps a row's tasks on one partition), then BLOCK ONCE for the

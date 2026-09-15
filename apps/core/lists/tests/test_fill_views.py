@@ -534,7 +534,7 @@ class CellStatesTests(FillViewsTestCase):
 class ListDeleteTests(FillViewsTestCase):
     def test_the_purge_takes_locks_in_the_worker_s_order(self) -> None:
         # The consumer's terminal write is ONE transaction taking the
-        # ListRow (write_cells) and then the FillTask (the task settle).
+        # ListRow (write_cells) and then the NodeRun (the task settle).
         # A purge that took them the other way round was an ABBA
         # deadlock against any fill running on this sheet, resolved by
         # Postgres aborting one side: a 500 on the delete, or a burned
@@ -552,10 +552,10 @@ class ListDeleteTests(FillViewsTestCase):
             sql = query["sql"]
             if not sql.startswith("DELETE"):
                 continue
-            for table in ("lists_listrow", "lists_filltask"):
+            for table in ("lists_listrow", "lists_noderun"):
                 if table in sql and table not in seen:
                     seen.append(table)
-        self.assertEqual(seen, ["lists_listrow", "lists_filltask"])
+        self.assertEqual(seen, ["lists_listrow", "lists_noderun"])
 
     def test_deleting_a_sheet_takes_its_columns_ephemeral_agents(self) -> None:
         # An ephemeral agent belongs to one column: it is hidden from

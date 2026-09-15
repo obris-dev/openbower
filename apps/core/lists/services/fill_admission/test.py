@@ -21,11 +21,11 @@ from openbower_schema.agents import (
     AgentConfig,
 )
 
-from ...constants import LIVE_FILL_STATUSES, FillKind, FillTaskStatus
-from ...models import Fill, FillTask
+from ...constants import LIVE_FILL_STATUSES, FillKind, NodeRunStatus
+from ...models import Fill, NodeRun
 from .. import fill_progress
-from ..fill_tasks import PROCESSING_STALE_SECONDS
 from ..fingerprint import config_fingerprint
+from ..node_runs import PROCESSING_STALE_SECONDS
 from .base import AdmissionBase
 from .errors import TestFillActive, TestRowInvalid
 
@@ -49,7 +49,7 @@ class TestFillAdmission(AdmissionBase):
         self._check_row(row)
         self._check_model(config)
         # The supersede runs BEFORE the create transaction, unlocked.
-        # It must: stop_fill takes FillTask before Fill (the order the
+        # It must: stop_fill takes NodeRun before Fill (the order the
         # cancel view and the worker's fail leg share), so holding the
         # Fill row lock here and then cancelling inverted that order
         # against every concurrent stopper (an ABBA deadlock). The
@@ -77,13 +77,13 @@ class TestFillAdmission(AdmissionBase):
             # and the row_data list is shaped to grow to N inline rows
             # without a backfill. Minting keeps the idempotency key
             # meaningful from the first row.
-            FillTask.objects.create(
+            NodeRun.objects.create(
                 account_id=self.account_id,
                 fill_run_id=str(fill.id),
                 row_id=ulid.ulid(),
                 list_id=fill.list_id,  # "" by construction: a bench fill points at no sheet
                 position=0,
-                status=FillTaskStatus.READY,
+                status=NodeRunStatus.READY,
                 last_state_change_at=timezone.now(),
             )
         return fill
@@ -113,8 +113,8 @@ class TestFillAdmission(AdmissionBase):
         double cancel a no-op, and two simultaneous admissions that
         both pass this read leave two live tests until the next click
         supersedes both, which the uncapped lane already tolerates.
-        A Fill row lock here would order Fill before FillTask against
-        every other stopper's FillTask-before-Fill and deadlock."""
+        A Fill row lock here would order Fill before NodeRun against
+        every other stopper's NodeRun-before-Fill and deadlock."""
         now = timezone.now()
         fresh_cutoff = now - timedelta(seconds=PROCESSING_STALE_SECONDS)
         live = list(
@@ -133,7 +133,7 @@ class TestFillAdmission(AdmissionBase):
             # bounded run_cell stays fresh the whole way, instead of
             # reading stale and being superseded mid-run. A run with no
             # task moved yet falls back to its ULID birth.
-            heartbeat = FillTask.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=Max("last_state_change_at"))[
+            heartbeat = NodeRun.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=Max("last_state_change_at"))[
                 "latest"
             ]
             fresh = heartbeat >= fresh_cutoff if heartbeat is not None else str(fill.id) >= min_ulid_at(fresh_cutoff)

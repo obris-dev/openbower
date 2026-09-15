@@ -60,8 +60,8 @@ auth + data services live in a separate private repo.
   providers.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
-  command over an operation (the reclaim_fill_tasks command over
-  FillTaskFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
+  command over an operation (the reclaim_node_runs command over
+  NodeRunFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
   never a lock.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
@@ -69,6 +69,13 @@ auth + data services live in a separate private repo.
   then set NOT NULL). Django drops the default after adding the
   column, so any process still running the old code inserts NULL and
   fails until it restarts.
+- Unreleased migration chains are COLLAPSED, not accumulated: while
+  nothing is released, an app ships one `0001_initial` expressing the end
+  state (a chain that records the path, a model created then renamed then
+  dropped, is noise to a fresh install). Migration files freeze their
+  state values as literals, never app enums, so a rename cannot break a
+  fresh migrate. A collapse resets local DBs, so before choosing it,
+  confirm the data regenerates: it does today, and it will not always.
 - First-pass design rules, learned the hard way:
   - Buy the commodity, own the doctrine: before writing infrastructure,
     ask whether it is product or plumbing an ecosystem already

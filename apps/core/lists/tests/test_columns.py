@@ -19,7 +19,7 @@ from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import ListSummary
 
 from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
-from ..models import Fill, FillCellState, ListRow
+from ..models import Fill, ListCellState, ListRow
 from ..services.columns import ColumnKeysNotUnique, ColumnOrderStale, ColumnService
 from ..services.lists import ListService
 
@@ -247,7 +247,7 @@ class ColumnDeleteTests(TestCase):
         )
         for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
             for key in ("contact_name", "contact_url"):
-                FillCellState.objects.create(
+                ListCellState.objects.create(
                     account_id=TEST_IDENTITY["account_id"],
                     list_id=str(self.sheet.id),
                     row_id=str(row.id),
@@ -275,7 +275,7 @@ class ColumnDeleteTests(TestCase):
 
     def test_it_purges_only_that_column_s_cell_states(self) -> None:
         self.client.delete(self.url("contact_name"))
-        states = FillCellState.objects.filter(list_id=str(self.sheet.id))
+        states = ListCellState.objects.filter(list_id=str(self.sheet.id))
         self.assertEqual(states.filter(column_key="contact_name").count(), 0)
         self.assertEqual(states.filter(column_key="contact_url").count(), 2)
 
@@ -367,7 +367,7 @@ class ColumnDeleteTests(TestCase):
         from ..services import cell_truth
 
         extra = [
-            FillCellState(
+            ListCellState(
                 account_id=TEST_IDENTITY["account_id"],
                 list_id=str(self.sheet.id),
                 row_id=f"01ROW{n:021d}",
@@ -376,16 +376,16 @@ class ColumnDeleteTests(TestCase):
             )
             for n in range(7)
         ]
-        FillCellState.objects.bulk_create(extra)
-        total = FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count()
+        ListCellState.objects.bulk_create(extra)
+        total = ListCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count()
         self.assertGreater(total, 2)
 
         with patch.object(cell_truth, "FILL_WRITE_BATCH", 2):
             cell_truth.purge_column(str(self.sheet.id), "contact_name")
 
-        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count(), 0)
+        self.assertEqual(ListCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_name").count(), 0)
         # The neighbour is untouched: paging never widens the filter.
-        self.assertEqual(FillCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_url").count(), 2)
+        self.assertEqual(ListCellState.objects.filter(list_id=str(self.sheet.id), column_key="contact_url").count(), 2)
 
     def test_the_LAST_column_can_go(self) -> None:
         # A sheet with no columns is a real state (every column

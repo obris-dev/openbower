@@ -20,7 +20,7 @@ from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import FillRunWire
 
 from ..constants import FillStatus, StoredCellState
-from ..models import Fill, FillCellState, FillTask
+from ..models import Fill, ListCellState, NodeRun
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
 from .fill_helpers import FILLED_VALUE, row_value, settle, settle_all, targeted, targeted_pairs, targeted_positions
@@ -256,7 +256,7 @@ class PartialAnswerTests(RefillTestCase):
         # Alpha answered and beta did not, on the SAME row: each column
         # carries its own state, so beta stays targetable instead of
         # settling as answered because a sibling landed.
-        states = {(c.row_id, c.column_key): c.state for c in FillCellState.objects.filter(list_id=str(self.sheet.id))}
+        states = {(c.row_id, c.column_key): c.state for c in ListCellState.objects.filter(list_id=str(self.sheet.id))}
         self.assertEqual(states[(str(rows[0].id), "alpha")], StoredCellState.FILLED)
         self.assertEqual(states[(str(rows[0].id), "beta")], StoredCellState.NO_EVIDENCE)
         self.assertEqual(row_value(str(self.sheet.id), str(rows[0].id), "alpha"), FILLED_VALUE)
@@ -456,7 +456,7 @@ class RefillLifecycleTests(RefillTestCase):
 
 
 class ResumeScopeTests(RefillTestCase):
-    """FillTask carries no account of its own: it is reached
+    """NodeRun carries no account of its own: it is reached
     through its fill, which does. Resolving the named fill against THIS
     sheet is what scopes the read."""
 
@@ -709,8 +709,8 @@ class ChildAccountTests(RefillTestCase):
         account = TEST_IDENTITY["account_id"]
         fill = self.admit()
         settle_all(fill["id"], StoredCellState.NO_EVIDENCE)
-        outcomes = FillTask.objects.filter(fill_run_id=fill["id"])
-        cells = FillCellState.objects.filter(list_id=str(self.sheet.id))
+        outcomes = NodeRun.objects.filter(fill_run_id=fill["id"])
+        cells = ListCellState.objects.filter(list_id=str(self.sheet.id))
         self.assertTrue(outcomes.exists() and cells.exists())
         self.assertEqual({o.account_id for o in outcomes}, {account})
         self.assertEqual({c.account_id for c in cells}, {account})

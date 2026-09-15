@@ -16,13 +16,13 @@ from openbower_schema.lists import CellStateWire
 
 from ..constants import (
     LIVE_FILL_STATUSES,
-    NON_TERMINAL_FILL_TASK_STATES,
+    NON_TERMINAL_NODE_RUN_STATES,
     FillKind,
     FillStatus,
-    FillTaskStatus,
+    NodeRunStatus,
     StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask, List, ListRow
+from ..models import Fill, List, ListCellState, ListRow, NodeRun
 from .fill_progress import stop_fill
 
 # The wire's one non-terminal state. A STRING here and not a StoredCellState
@@ -42,15 +42,15 @@ def derive_counters(fill: Fill) -> FillCounters:
     Two indexed reads, no sheet scan: DONE task count on the reclaim
     index, FILLED cell count on the cell-state index."""
     fill_run_id = str(fill.id)
-    attempted = FillTask.objects.filter(fill_run_id=fill_run_id, status=FillTaskStatus.DONE).count()
+    attempted = NodeRun.objects.filter(fill_run_id=fill_run_id, status=NodeRunStatus.DONE).count()
     filled = (
-        FillCellState.objects.filter(fill_run_id=fill_run_id, state=StoredCellState.FILLED)
+        ListCellState.objects.filter(fill_run_id=fill_run_id, state=StoredCellState.FILLED)
         .values("row_id")
         .distinct()
         .count()
     )
-    transient = FillTask.objects.filter(
-        fill_run_id=fill_run_id, status__in=NON_TERMINAL_FILL_TASK_STATES, parked=True
+    transient = NodeRun.objects.filter(
+        fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES, parked=True
     ).count()
     return FillCounters(attempted=attempted, filled=filled, blank=attempted - filled, transient=transient)
 
@@ -60,7 +60,7 @@ def derive_heartbeat(fill: Fill) -> datetime | None:
     across its tasks (the reclaim scan's own cursor): a run whose tasks keep
     moving reads fresh, one that has gone silent reads stale. None when
     the run has no task carrying one yet."""
-    return FillTask.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=models.Max("last_state_change_at"))[
+    return NodeRun.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=models.Max("last_state_change_at"))[
         "latest"
     ]
 
@@ -78,27 +78,27 @@ def page_progress(fill_run_ids: list[str]) -> dict[str, tuple[FillCounters, date
         return {}
     done = {
         r["fill_run_id"]: r["n"]
-        for r in FillTask.objects.filter(fill_run_id__in=fill_run_ids, status=FillTaskStatus.DONE)
+        for r in NodeRun.objects.filter(fill_run_id__in=fill_run_ids, status=NodeRunStatus.DONE)
         .values("fill_run_id")
         .annotate(n=models.Count("id"))
     }
     filled = {
         r["fill_run_id"]: r["n"]
-        for r in FillCellState.objects.filter(fill_run_id__in=fill_run_ids, state=StoredCellState.FILLED)
+        for r in ListCellState.objects.filter(fill_run_id__in=fill_run_ids, state=StoredCellState.FILLED)
         .values("fill_run_id")
         .annotate(n=models.Count("row_id", distinct=True))
     }
     parked = {
         r["fill_run_id"]: r["n"]
-        for r in FillTask.objects.filter(
-            fill_run_id__in=fill_run_ids, status__in=NON_TERMINAL_FILL_TASK_STATES, parked=True
+        for r in NodeRun.objects.filter(
+            fill_run_id__in=fill_run_ids, status__in=NON_TERMINAL_NODE_RUN_STATES, parked=True
         )
         .values("fill_run_id")
         .annotate(n=models.Count("id"))
     }
     heartbeats = {
         r["fill_run_id"]: r["latest"]
-        for r in FillTask.objects.filter(fill_run_id__in=fill_run_ids)
+        for r in NodeRun.objects.filter(fill_run_id__in=fill_run_ids)
         .values("fill_run_id")
         .annotate(latest=models.Max("last_state_change_at"))
     }
@@ -140,8 +140,8 @@ class FillService:
         kind=normal (a normal fill's results live on the sheet)."""
         if fill.kind != FillKind.TEST:
             return None
-        task = FillTask.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
-        if task is None or task.status != FillTaskStatus.DONE or not task.result:
+        task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
+        if task is None or task.status != NodeRunStatus.DONE or not task.result:
             return None
         return CellRunResult.model_validate(task.result)
 
@@ -185,7 +185,7 @@ class FillService:
 
         Two sources, and neither is a stored "pending":
 
-        DIAGNOSED BLANKS come from FillCellState, one indexed query,
+        DIAGNOSED BLANKS come from ListCellState, one indexed query,
         each with the tool statuses of the run that wrote it. FILLED
         travels ONLY when that run had a degraded tool (the value is
         the renderer's already; the mark beside it is not): a clean
@@ -208,7 +208,7 @@ class FillService:
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
         recorded = (
-            FillCellState.objects.filter(
+            ListCellState.objects.filter(
                 account_id=self.account_id,
                 list_id=str(target_list.id),
                 row_id__in=row_ids,
@@ -236,11 +236,11 @@ class FillService:
         }
         if not live:
             return states
-        queued = FillTask.objects.filter(
+        queued = NodeRun.objects.filter(
             account_id=self.account_id,
             fill_run_id__in=list(live),
             row_id__in=row_ids,
-            status__in=NON_TERMINAL_FILL_TASK_STATES,
+            status__in=NON_TERMINAL_NODE_RUN_STATES,
         ).values_list("fill_run_id", "row_id")
         for fill_run_id, row_id in queued:
             for column_key in live[fill_run_id]:
@@ -279,7 +279,7 @@ class FillService:
         filled: dict[str, int] = {}
         attempted: dict[str, int] = {}
         rows = (
-            FillCellState.objects.filter(account_id=self.account_id, list_id=str(target_list.id), column_key__in=keys)
+            ListCellState.objects.filter(account_id=self.account_id, list_id=str(target_list.id), column_key__in=keys)
             .values_list("column_key", "state")
             .annotate(n=models.Count("id"))
         )

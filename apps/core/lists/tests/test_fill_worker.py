@@ -1,6 +1,6 @@
 """The MANUAL fill lane end to end on the shared task state machine:
 admission (tasks born READY) -> the provisioner publishes -> the shared
-consumer's handle_fill_task claims, runs, and lands. The model is a
+consumer's handle_node_run claims, runs, and lands. The model is a
 scripted FunctionModel through the patched model seam; everything else
 (lists, admission, the state machine, landing, derived counters) is
 real.
@@ -33,14 +33,14 @@ from agents.tools.registry import UnknownTool
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
 from ..constants import (
-    FILL_ROW_ATTEMPTS,
+    NODE_RUN_ATTEMPTS,
     FillFailureCode,
     FillStatus,
-    FillTaskStatus,
+    NodeRunStatus,
     StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask, List, ListRow
-from ..operations.consume_fill_tasks import handle_fill_task
+from ..models import Fill, List, ListCellState, ListRow, NodeRun
+from ..operations.consume_node_runs import handle_node_run
 from ..operations.provision import FillProvisionOperation
 from ..services.fill_admission import FillAdmissionService
 from ..services.fills import FillService, derive_counters
@@ -159,23 +159,23 @@ class ManualFillTestCase(TransactionTestCase):
         with _patches(model):
             for pass_number in range(passes):
                 if pass_number:
-                    FillTask.objects.filter(fill_run_id=str(fill.id), not_before__isnull=False).update(
+                    NodeRun.objects.filter(fill_run_id=str(fill.id), not_before__isnull=False).update(
                         not_before=timezone.now()
                     )
                 ids = list(
-                    FillTask.objects.filter(
+                    NodeRun.objects.filter(
                         fill_run_id=str(fill.id),
-                        status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED),
+                        status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED),
                     )
                     .order_by("position")
                     .values_list("id", flat=True)
                 )
                 for task_id in ids:
-                    handle_fill_task(str(task_id), WORKER)
+                    handle_node_run(str(task_id), WORKER)
 
     def _statuses(self, fill: Fill | None = None) -> set[str]:
         fill = fill or self.fill
-        return {t.status for t in FillTask.objects.filter(fill_run_id=str(fill.id))}
+        return {t.status for t in NodeRun.objects.filter(fill_run_id=str(fill.id))}
 
     def test_walks_the_sheet_and_completes(self) -> None:
         self.run_fill(answering_model(lambda prompt: "found: " + prompt.split()[-1]))
@@ -184,11 +184,11 @@ class ManualFillTestCase(TransactionTestCase):
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.assertEqual(rows[0].data["answer"], "found: acme.com")
         self.assertEqual(rows[1].data["answer"], "found: example.io")
-        self.assertEqual(self._statuses(), {FillTaskStatus.DONE})
+        self.assertEqual(self._statuses(), {NodeRunStatus.DONE})
         # An answered cell carries a FILLED record beside its value, with
         # this fill's run id (the derived counters read off it).
-        self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.FILLED})
-        self.assertEqual({c.fill_run_id for c in FillCellState.objects.all()}, {str(self.fill.id)})
+        self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.FILLED})
+        self.assertEqual({c.fill_run_id for c in ListCellState.objects.all()}, {str(self.fill.id)})
         self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
 
     def test_blank_answers_land_diagnosed_not_written(self) -> None:
@@ -197,7 +197,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
             self.assertNotIn("answer", row.data)
-        self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.NO_EVIDENCE})
+        self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.NO_EVIDENCE})
         self.assertEqual(counting(self.fill), {"attempted": 2, "blank": 2})
 
     def test_a_dropped_answer_is_preserved_for_audit(self) -> None:
@@ -206,8 +206,8 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
             self.assertNotIn("answer", row.data)
-        self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.UNVERIFIED})
-        for task in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
+        self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.UNVERIFIED})
+        for task in NodeRun.objects.filter(fill_run_id=str(self.fill.id)):
             self.assertEqual(
                 task.result["assessments"]["answer"],
                 {"confidence": 0.62, "reason": "no record states the parent", "dropped": "Acme Holdings"},
@@ -218,7 +218,7 @@ class ManualFillTestCase(TransactionTestCase):
             return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"answer": "found"})])
 
         self.run_fill(FunctionModel(fn))
-        self.assertEqual({c.state for c in FillCellState.objects.all()}, {StoredCellState.UNPARSEABLE})
+        self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.UNPARSEABLE})
 
     def test_throttled_rows_park_and_are_owed_until_the_fill_stops(self) -> None:
         # A 429 is infrastructure, not an answer: the task parks back to
@@ -228,10 +228,10 @@ class ManualFillTestCase(TransactionTestCase):
         self.run_fill(throttling_model())
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.RUNNING)
-        parked = FillTask.objects.filter(fill_run_id=str(self.fill.id), status=FillTaskStatus.READY, parked=True)
+        parked = NodeRun.objects.filter(fill_run_id=str(self.fill.id), status=NodeRunStatus.READY, parked=True)
         self.assertEqual(parked.count(), 2)
         self.assertTrue(all(task.not_before is not None for task in parked))
-        self.assertFalse(FillCellState.objects.exists())
+        self.assertFalse(ListCellState.objects.exists())
         self.assertEqual(derive_counters(self.fill).transient, 2)
 
     def test_cancelling_a_fill_abandons_its_parked_rows(self) -> None:
@@ -243,7 +243,7 @@ class ManualFillTestCase(TransactionTestCase):
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
-        self.assertEqual(self._statuses(), {FillTaskStatus.ABANDONED})
+        self.assertEqual(self._statuses(), {NodeRunStatus.ABANDONED})
         self.assertEqual(derive_counters(self.fill).transient, 0)
 
     def test_retry_then_fill_clears_the_transient_count(self) -> None:
@@ -251,7 +251,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(self.fill), {"attempted": 2, "filled": 2})
-        self.assertEqual(self._statuses(), {FillTaskStatus.DONE})
+        self.assertEqual(self._statuses(), {NodeRunStatus.DONE})
 
     def test_exhausted_retries_land_a_diagnosed_terminal_blank(self) -> None:
         # One row burning every attempt is TERMINAL: the give-up at the
@@ -269,14 +269,14 @@ class ManualFillTestCase(TransactionTestCase):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
             )
-        self.run_fill(throttling_model(), fill=fill, passes=FILL_ROW_ATTEMPTS + 1)
+        self.run_fill(throttling_model(), fill=fill, passes=NODE_RUN_ATTEMPTS + 1)
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(fill), {"attempted": 1, "blank": 1})
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
-        self.assertEqual(task.status, FillTaskStatus.DONE)
-        self.assertEqual(task.attempts, FILL_ROW_ATTEMPTS + 1)
-        self.assertEqual(FillCellState.objects.get().state, StoredCellState.TRANSIENT)
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        self.assertEqual(task.status, NodeRunStatus.DONE)
+        self.assertEqual(task.attempts, NODE_RUN_ATTEMPTS + 1)
+        self.assertEqual(ListCellState.objects.get().state, StoredCellState.TRANSIENT)
 
     def test_an_unrunnable_config_fails_the_fill_and_settles_the_task(self) -> None:
         # The claim-time model gate is the surviving config-tier FAILED
@@ -288,16 +288,16 @@ class ManualFillTestCase(TransactionTestCase):
             patch("agents.runtime.answer.answerer.model_for"),
         ):
             first_task = (
-                FillTask.objects.filter(fill_run_id=str(self.fill.id))
+                NodeRun.objects.filter(fill_run_id=str(self.fill.id))
                 .order_by("position")
                 .values_list("id", flat=True)[0]
             )
-            handle_fill_task(str(first_task), WORKER)
+            handle_node_run(str(first_task), WORKER)
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.error_code, FillFailureCode.MODEL_UNRUNNABLE)
         self.assertIn("source closed", self.fill.error_message)
-        self.assertFalse(FillCellState.objects.exists())
+        self.assertFalse(ListCellState.objects.exists())
 
     def test_a_retired_tool_fails_the_fill_at_run_not_crash_loops(self) -> None:
         # A retired tool surfaces only inside run_cell (model_for does not
@@ -313,17 +313,17 @@ class ManualFillTestCase(TransactionTestCase):
             ),
         ):
             first_task = (
-                FillTask.objects.filter(fill_run_id=str(self.fill.id))
+                NodeRun.objects.filter(fill_run_id=str(self.fill.id))
                 .order_by("position")
                 .values_list("id", flat=True)[0]
             )
-            outcome = handle_fill_task(str(first_task), WORKER)
+            outcome = handle_node_run(str(first_task), WORKER)
         self.assertEqual(outcome, "done")
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.FAILED)
         self.assertEqual(self.fill.error_code, FillFailureCode.MODEL_UNRUNNABLE)
         self.assertIn("web_search retired", self.fill.error_message)
-        self.assertEqual(FillTask.objects.get(id=first_task).status, FillTaskStatus.DONE)
+        self.assertEqual(NodeRun.objects.get(id=first_task).status, NodeRunStatus.DONE)
 
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
         gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
@@ -332,10 +332,10 @@ class ManualFillTestCase(TransactionTestCase):
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.COMPLETE)
         self.assertEqual(counting(self.fill), {"attempted": 1, "filled": 1})
-        statuses = {t.row_id: t.status for t in FillTask.objects.filter(fill_run_id=str(self.fill.id))}
-        self.assertEqual(statuses[str(gone.id)], FillTaskStatus.ROW_MISSING)
-        self.assertEqual(set(statuses.values()), {FillTaskStatus.ROW_MISSING, FillTaskStatus.DONE})
-        self.assertFalse(FillCellState.objects.filter(row_id=str(gone.id)).exists())
+        statuses = {t.row_id: t.status for t in NodeRun.objects.filter(fill_run_id=str(self.fill.id))}
+        self.assertEqual(statuses[str(gone.id)], NodeRunStatus.ROW_MISSING)
+        self.assertEqual(set(statuses.values()), {NodeRunStatus.ROW_MISSING, NodeRunStatus.DONE})
+        self.assertFalse(ListCellState.objects.filter(row_id=str(gone.id)).exists())
 
     def test_a_purged_list_cancels_the_fill(self) -> None:
         ListRow.objects.filter(list_id=str(self.sheet.id)).delete()
@@ -343,7 +343,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.run_fill(answering_model(lambda prompt: "found"))
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.status, FillStatus.CANCELLED)
-        self.assertFalse(FillCellState.objects.exists())
+        self.assertFalse(ListCellState.objects.exists())
 
     def test_cancelled_run_stops_without_spending(self) -> None:
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
@@ -357,7 +357,7 @@ class ManualFillTestCase(TransactionTestCase):
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "mine, typed by hand"})
         self.run_fill(answering_model(lambda prompt: "what the model found"))
-        task = FillTask.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
+        task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
         row = ListRow.objects.get(id=rows[0].id)
         self.assertEqual(row.data["answer"], "mine, typed by hand")
         self.assertEqual(task.result["cells"]["answer"], "what the model found")
@@ -376,8 +376,8 @@ class ProvisionerTests(ManualFillTestCase):
     def test_it_publishes_each_ready_task_and_marks_it_queued(self) -> None:
         producer = MagicMock()
         producer.flush.return_value = 0  # the broker acked
-        tasks = list(FillTask.objects.filter(fill_run_id=str(self.fill.id)).order_by("position"))
-        self.assertEqual({t.status for t in tasks}, {FillTaskStatus.READY})
+        tasks = list(NodeRun.objects.filter(fill_run_id=str(self.fill.id)).order_by("position"))
+        self.assertEqual({t.status for t in tasks}, {NodeRunStatus.READY})
 
         self._run_provisioner(producer)
 
@@ -391,7 +391,7 @@ class ProvisionerTests(ManualFillTestCase):
         self.assertEqual(args[0], "list.fill.manual")
         for task in tasks:
             task.refresh_from_db()
-            self.assertEqual(task.status, FillTaskStatus.QUEUED)
+            self.assertEqual(task.status, NodeRunStatus.QUEUED)
             self.assertIsNotNone(task.queued_at)
 
     def test_a_test_fill_routes_to_the_isolated_test_topic(self) -> None:
@@ -415,8 +415,8 @@ class ProvisionerTests(ManualFillTestCase):
         producer = MagicMock()
         producer.flush.return_value = 1  # the ack never arrived
         self._run_provisioner(producer)  # backs off, does not raise
-        for task in FillTask.objects.filter(fill_run_id=str(self.fill.id)):
-            self.assertEqual(task.status, FillTaskStatus.READY)
+        for task in NodeRun.objects.filter(fill_run_id=str(self.fill.id)):
+            self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNone(task.queued_at)
 
     def test_a_pass_publishes_at_most_the_batch_and_leaves_the_rest_ready(self) -> None:
@@ -433,6 +433,6 @@ class ProvisionerTests(ManualFillTestCase):
             FillProvisionOperation(worker_id="test:prov", stop=threading.Event())._one_pass()
         self.assertEqual(producer.produce.call_count, 1)
         self.assertEqual(
-            sorted(FillTask.objects.filter(fill_run_id=str(self.fill.id)).values_list("status", flat=True)),
-            [FillTaskStatus.QUEUED, FillTaskStatus.READY],
+            sorted(NodeRun.objects.filter(fill_run_id=str(self.fill.id)).values_list("status", flat=True)),
+            [NodeRunStatus.QUEUED, NodeRunStatus.READY],
         )

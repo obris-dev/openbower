@@ -2,7 +2,7 @@
 
 A test that poked a task row directly would leave the sheet and the
 diagnoses untouched, a state no real path can produce. These helpers
-claim, write, and close the way the shared consumer does (FillTaskFlow
+claim, write, and close the way the shared consumer does (NodeRunFlow
 claim -> land_row -> settle/park), so every simulated outcome exercises
 the same CAS and the same one-transaction write the shipped consumer
 runs.
@@ -17,11 +17,11 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from ..constants import NON_TERMINAL_FILL_TASK_STATES, FillTaskStatus, StoredCellState
-from ..models import Fill, FillTask, ListRow
+from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
+from ..models import Fill, ListRow, NodeRun
 from ..services import cell_truth
-from ..services.fill_tasks import FillTaskFlow
 from ..services.lists import ListService
+from ..services.node_runs import NodeRunFlow
 
 WORKER_ID = "test-seam"
 # What a simulated fill writes into a cell it answers. Any non-blank
@@ -30,12 +30,12 @@ WORKER_ID = "test-seam"
 FILLED_VALUE = "answered"
 
 
-def _claim(fill: Fill, row_id: str) -> FillTask:
+def _claim(fill: Fill, row_id: str) -> NodeRun:
     """Claim the row's task through the state machine (READY | QUEUED ->
     PROCESSING, attempt counted at claim), so the terminal CAS, which
     filters on the claimant's own stamp, can land."""
-    task = FillTask.objects.get(fill_run_id=str(fill.id), row_id=row_id)
-    claimed = FillTaskFlow(worker_id=WORKER_ID).claim(str(task.id))
+    task = NodeRun.objects.get(fill_run_id=str(fill.id), row_id=row_id)
+    claimed = NodeRunFlow(worker_id=WORKER_ID).claim(str(task.id))
     assert claimed is not None, f"claim missed for {fill.id}/{row_id}"
     return claimed
 
@@ -56,7 +56,7 @@ def settle(
     TRANSIENT parks instead of settling, because a park is not terminal.
     """
     fill = Fill.objects.get(id=fill_run_id)
-    flow = FillTaskFlow(worker_id=WORKER_ID)
+    flow = NodeRunFlow(worker_id=WORKER_ID)
     task = _claim(fill, row_id)
     if cause == StoredCellState.TRANSIENT:
         assert flow.park(str(task.id), backoff_seconds=0, result={}), f"park missed for {fill_run_id}/{row_id}"
@@ -66,13 +66,13 @@ def settle(
     answered = [key for key, value in states.items() if value == StoredCellState.FILLED]
     # A deliberate restatement of land_row (the per-column `causes`
     # it cannot express), in land_row's own lock order: ListRow,
-    # FillTask, FillCellState, one transaction.
+    # NodeRun, ListCellState, one transaction.
     with transaction.atomic():
         if answered:
             ListService(account_id=fill.account_id).write_cells(
                 fill.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
             )
-        landed = flow.settle(str(task.id), {"tools": tools or {}}, status=FillTaskStatus.DONE)
+        landed = flow.settle(str(task.id), {"tools": tools or {}}, status=NodeRunStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
         cell_truth.write(
             account_id=fill.account_id,
@@ -97,7 +97,7 @@ def queued_row_ids(fill_run_id: str) -> list[str]:
     run next."""
     return [
         str(row_id)
-        for row_id in FillTask.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_FILL_TASK_STATES)
+        for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES)
         .order_by("position")
         .values_list("row_id", flat=True)
     ]
@@ -109,21 +109,19 @@ def targeted(fill_run_id: str) -> set[str]:
     The queue IS the consent record: one task per row the user agreed
     to, written at admission and never re-derived, so counting tasks is
     exactly what these assertions always meant."""
-    return {str(row_id) for row_id in FillTask.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)}
+    return {str(row_id) for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)}
 
 
 def targeted_positions(fill_run_id: str) -> list[int]:
     """Those rows' sheet positions, in sheet order."""
-    return list(
-        FillTask.objects.filter(fill_run_id=fill_run_id).order_by("position").values_list("position", flat=True)
-    )
+    return list(NodeRun.objects.filter(fill_run_id=fill_run_id).order_by("position").values_list("position", flat=True))
 
 
 def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
     """(row id, position) for the rows a fill targets, in sheet order."""
     return [
         (str(row_id), position)
-        for row_id, position in FillTask.objects.filter(fill_run_id=fill_run_id)
+        for row_id, position in NodeRun.objects.filter(fill_run_id=fill_run_id)
         .order_by("position")
         .values_list("row_id", "position")
     ]

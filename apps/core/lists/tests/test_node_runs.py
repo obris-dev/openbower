@@ -1,14 +1,14 @@
-"""The fill-task state machine's provisioning half: a pushed row enqueues
-null-run FillTasks READY (via handle_ingest_event, inside the apply
+"""The node-run state machine's provisioning half: a pushed row enqueues
+null-run NodeRuns READY (via handle_ingest_event, inside the apply
 transaction), the provisioner publishes each to the bus and marks it
 QUEUED, and the reclaim scan reclaims a consumer that died mid-run. The broker
 is mocked at its client boundary (confluent_kafka.Producer); everything
 else (lists, admission, the task rows) is real.
 
-The claim/run/land half is in test_consume_fill_tasks.py, which reuses
+The claim/run/land half is in test_consume_node_runs.py, which reuses
 this module's AutofillHarness.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_fill_tasks
+Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_node_runs
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ from unittest.mock import MagicMock, patch
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
-from ..constants import FillTaskStatus
+from ..constants import NodeRunStatus
 from ..ingest.consumer import handle_ingest_event
 from ..ingest.events import IngestEvent
-from ..models import FillTask, ListRow
+from ..models import ListRow, NodeRun
 from ..operations.provision import AutofillProvisionOperation
 from ..services import autofill
 from ..services.fill_admission import FillAdmissionService
-from ..services.fill_tasks import PROCESSING_STALE_SECONDS, FillTaskFlow
 from ..services.lists import ListService
+from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 from .test_fill_worker import quick_config
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
@@ -84,7 +84,7 @@ class AutofillHarness(TransactionTestCase):
         return handle_ingest_event(event)
 
     def _null_run_tasks(self):
-        return FillTask.objects.filter(fill_run_id__isnull=True)
+        return NodeRun.objects.filter(fill_run_id__isnull=True)
 
     def _new_row_ids(self, sheet, before: set[str]) -> set[str]:
         return {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))} - before
@@ -107,10 +107,10 @@ class EnqueueTests(AutofillHarness):
             self.assertIsNone(task.fill_run_id)
             self.assertEqual(task.agent_id, agent_id)
             self.assertEqual(task.account_id, ACCOUNT)
-            # Denormalized from the target sheet: an autofill task has no
+            # Denormalized from the target sheet: an autofill run has no
             # Fill, so its list comes off the List it was pushed to.
             self.assertEqual(task.list_id, str(sheet.id))
-            self.assertEqual(task.status, FillTaskStatus.READY)
+            self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)
 
     def test_a_push_that_overrides_an_ai_column_skips_that_agent(self) -> None:
@@ -200,7 +200,7 @@ class ProvisionerTests(AutofillHarness):
         self._push(sheet, [{"company": "target.co"}])
         [row_id] = self._new_row_ids(sheet, before)
         task = self._null_run_tasks().get(row_id=row_id)
-        self.assertEqual(task.status, FillTaskStatus.READY)
+        self.assertEqual(task.status, NodeRunStatus.READY)
 
         producer = MagicMock()
         producer.flush.return_value = 0  # the broker acked
@@ -216,7 +216,7 @@ class ProvisionerTests(AutofillHarness):
 
         # And only THEN marked QUEUED.
         task.refresh_from_db()
-        self.assertEqual(task.status, FillTaskStatus.QUEUED)
+        self.assertEqual(task.status, NodeRunStatus.QUEUED)
         self.assertIsNotNone(task.queued_at)
 
     def test_a_failed_publish_backs_off_and_leaves_the_task_ready(self) -> None:
@@ -235,7 +235,7 @@ class ProvisionerTests(AutofillHarness):
         self._run_provisioner(producer)  # backs off, does not raise
 
         task.refresh_from_db()
-        self.assertEqual(task.status, FillTaskStatus.READY)
+        self.assertEqual(task.status, NodeRunStatus.READY)
         self.assertIsNone(task.queued_at)
 
     def test_mark_queued_no_ops_when_the_task_moved_since_the_page_read(self) -> None:
@@ -253,17 +253,17 @@ class ProvisionerTests(AutofillHarness):
         page_task = self._null_run_tasks().get(row_id=row_id)  # the object the provisioner holds
 
         # A consumer claims then parks it; the real transitions bump the token.
-        flow = FillTaskFlow(worker_id="test:consumer")
+        flow = NodeRunFlow(worker_id="test:consumer")
         self.assertIsNotNone(flow.claim(str(page_task.id)))
         self.assertTrue(flow.park(str(page_task.id), backoff_seconds=60, result={}))
         parked = self._null_run_tasks().get(id=page_task.id)
-        self.assertEqual(parked.status, FillTaskStatus.READY)
+        self.assertEqual(parked.status, NodeRunStatus.READY)
         self.assertGreater(parked.last_state_change_at, page_task.last_state_change_at)  # transition re-stamped
 
         # The provisioner's stale mark carries the old token: it must not fire.
-        self.assertFalse(FillTaskFlow.mark_queued(page_task))
+        self.assertFalse(NodeRunFlow.mark_queued(page_task))
         parked.refresh_from_db()
-        self.assertEqual(parked.status, FillTaskStatus.READY)
+        self.assertEqual(parked.status, NodeRunStatus.READY)
         self.assertIsNone(parked.queued_at)
 
     def test_settle_restamps_last_state_change_at(self) -> None:
@@ -277,14 +277,14 @@ class ProvisionerTests(AutofillHarness):
         [row_id] = self._new_row_ids(sheet, before)
         task = self._null_run_tasks().get(row_id=row_id)
 
-        flow = FillTaskFlow(worker_id="test:consumer")
+        flow = NodeRunFlow(worker_id="test:consumer")
         self.assertIsNotNone(flow.claim(str(task.id)))
         # Age the claim stamp so the settle's re-stamp is unambiguous.
         aged = timezone.now() - timedelta(seconds=300)
-        FillTask.objects.filter(id=task.id).update(last_state_change_at=aged)
-        self.assertTrue(flow.settle(str(task.id), {}, status=FillTaskStatus.DONE))
+        NodeRun.objects.filter(id=task.id).update(last_state_change_at=aged)
+        self.assertTrue(flow.settle(str(task.id), {}, status=NodeRunStatus.DONE))
         task.refresh_from_db()
-        self.assertEqual(task.status, FillTaskStatus.DONE)
+        self.assertEqual(task.status, NodeRunStatus.DONE)
         self.assertGreater(task.last_state_change_at, aged)  # settle re-stamped, not left at the aged claim
 
 
@@ -297,26 +297,26 @@ class ReaperTests(AutofillHarness):
         now = timezone.now()
         # Both PROCESSING under a (now dead or live) consumer; only the
         # stale one is past the window.
-        FillTask.objects.filter(id=stale.id).update(
-            status=FillTaskStatus.PROCESSING,
+        NodeRun.objects.filter(id=stale.id).update(
+            status=NodeRunStatus.PROCESSING,
             leased_by="dead:1",
             last_state_change_at=now - timedelta(seconds=PROCESSING_STALE_SECONDS + 60),
         )
-        FillTask.objects.filter(id=fresh.id).update(
-            status=FillTaskStatus.PROCESSING,
+        NodeRun.objects.filter(id=fresh.id).update(
+            status=NodeRunStatus.PROCESSING,
             leased_by="live:2",
             last_state_change_at=now,
         )
 
-        self.assertEqual(FillTaskFlow.reclaim_stale_processing(), 1)
+        self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 1)
 
         stale.refresh_from_db()
         fresh.refresh_from_db()
-        self.assertEqual(stale.status, FillTaskStatus.READY)
+        self.assertEqual(stale.status, NodeRunStatus.READY)
         self.assertEqual(stale.leased_by, "")
         self.assertIsNone(stale.processing_at)
         # The fresh one is a live run, untouched.
-        self.assertEqual(fresh.status, FillTaskStatus.PROCESSING)
+        self.assertEqual(fresh.status, NodeRunStatus.PROCESSING)
         self.assertEqual(fresh.leased_by, "live:2")
 
     def test_reclaim_never_touches_a_stale_queued_task(self) -> None:
@@ -328,10 +328,10 @@ class ReaperTests(AutofillHarness):
         sheet, _, _ = self._ai_sheet()
         self._push(sheet, [{"company": "queued.co"}])
         (task,) = list(self._null_run_tasks())
-        FillTask.objects.filter(id=task.id).update(
-            status=FillTaskStatus.QUEUED,
+        NodeRun.objects.filter(id=task.id).update(
+            status=NodeRunStatus.QUEUED,
             last_state_change_at=timezone.now() - timedelta(seconds=PROCESSING_STALE_SECONDS + 600),
         )
-        self.assertEqual(FillTaskFlow.reclaim_stale_processing(), 0)  # nothing reclaimed
+        self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 0)  # nothing reclaimed
         task.refresh_from_db()
-        self.assertEqual(task.status, FillTaskStatus.QUEUED)  # still QUEUED, untouched
+        self.assertEqual(task.status, NodeRunStatus.QUEUED)  # still QUEUED, untouched

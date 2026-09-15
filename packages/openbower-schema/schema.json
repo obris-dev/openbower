@@ -1505,9 +1505,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
   "x-constants": {
-    "FILL_ROW_ATTEMPTS": 4,
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_TOOL_CALLS": 6,
+    "NODE_RUN_ATTEMPTS": 4,
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "ROW_LEASE_STALE_SECONDS": 256,
     "SEARCH_PROVIDER_CHOICES": [

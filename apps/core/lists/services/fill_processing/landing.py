@@ -2,7 +2,7 @@
 
 A row is resolved when three writes land together: the sheet value
 (write-if-blank, through ListService), the cell truth (one
-FillCellState per column the fill owns, carrying the run's tool
+ListCellState per column the fill owns, carrying the run's tool
 statuses), and the task's close with the run stored on it. They share
 ONE transaction on purpose: a task whose lease was reclaimed mid-run
 must produce NOTHING, never a value from one attempt wearing a
@@ -124,7 +124,7 @@ def land_row(
                 for mismatch in written.mismatched:
                     states[mismatch.key] = StoredCellState.TYPE_MISMATCH
             # Close BEFORE the ledger: the terminal order is ListRow,
-            # FillTask, FillCellState, the same order both delete
+            # NodeRun, ListCellState, the same order both delete
             # paths take (the reverse is an ABBA deadlock against a
             # mid-fill delete, and a blank landing holds no ListRow
             # lock to serialize on), and a reclaimed lease bows out

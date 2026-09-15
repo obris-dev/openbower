@@ -23,10 +23,10 @@ from ..constants import (
     TEST_FILL_MAX_AGE_SECONDS,
     FillKind,
     FillStatus,
-    FillTaskStatus,
+    NodeRunStatus,
 )
-from ..models import Fill, FillTask, ListRow
-from ..operations.consume_fill_tasks import handle_fill_task
+from ..models import Fill, ListRow, NodeRun
+from ..operations.consume_node_runs import handle_node_run
 from ..operations.sweep_test_fills import SweepTestFillsOperation
 from ..services.fill_admission import (
     FillAdmissionService,
@@ -34,9 +34,9 @@ from ..services.fill_admission import (
     TestFillAdmission,
 )
 from ..services.fill_progress import live_fill_count
-from ..services.fill_tasks import PROCESSING_STALE_SECONDS
 from ..services.fills import FillService
 from ..services.lists import ListService
+from ..services.node_runs import PROCESSING_STALE_SECONDS
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -69,7 +69,7 @@ def _test_fill() -> Fill:
         confirmed_row_count=1,
         status=FillStatus.RUNNING,
     )
-    FillTask.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id="", position=0)
+    NodeRun.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id="", position=0)
     return fill
 
 
@@ -99,7 +99,7 @@ class TestAdmissionTests(TestCase):
         return (admission or self.admission).admit(config=quick_config(), row={"company": "acme.com"}, **overrides)
 
     def test_a_superseding_admission_never_holds_the_fill_row_lock(self):
-        # The ABBA guard. stop_fill takes FillTask before Fill (its
+        # The ABBA guard. stop_fill takes NodeRun before Fill (its
         # documented order, shared with the cancel view and the
         # worker's fail leg); an admission that held the Fill row lock
         # and THEN cancelled inverted that order and could deadlock a
@@ -115,7 +115,7 @@ class TestAdmissionTests(TestCase):
         locked = [
             q["sql"]
             for q in captured.captured_queries
-            # Quoted, so LISTS_FILLTASK does not match: the queue's own
+            # Quoted, so LISTS_NODERUN does not match: the queue's own
             # locks are allowed, the fill row's are the hazard.
             if "FOR UPDATE" in q["sql"].upper() and '"LISTS_FILL"' in q["sql"].upper()
         ]
@@ -128,7 +128,7 @@ class TestAdmissionTests(TestCase):
         self.assertEqual(fill.row_data, [{"company": "acme.com"}])
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertTrue(fill.config_fingerprint)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
         # A MINTED row id, never "": the queue's (fill_run_id, row_id)
         # uniqueness would cap a blank-id lane at one task, against the
         # row_data list's grow-to-N shape. FAILS if the mint reverts.
@@ -136,7 +136,7 @@ class TestAdmissionTests(TestCase):
 
         self.assertTrue(is_valid_ulid(task.row_id))
         # Born READY (the manual provisioner moves it to QUEUED on publish).
-        self.assertEqual((task.position, task.status), (0, FillTaskStatus.READY))
+        self.assertEqual((task.position, task.status), (0, NodeRunStatus.READY))
         # list_id "" by construction: a bench fill points at no sheet, so
         # its task inherits the blank (mirrors fill.list_id above).
         self.assertEqual(task.list_id, "")
@@ -146,7 +146,7 @@ class TestAdmissionTests(TestCase):
         second = self._admit()
         first.refresh_from_db()
         self.assertEqual(first.status, FillStatus.CANCELLED)
-        self.assertEqual(FillTask.objects.get(fill_run_id=str(first.id)).status, FillTaskStatus.ABANDONED)
+        self.assertEqual(NodeRun.objects.get(fill_run_id=str(first.id)).status, NodeRunStatus.ABANDONED)
         self.assertEqual(second.status, FillStatus.PENDING)
 
     def test_a_teammates_fresh_test_refuses_with_its_code(self):
@@ -162,7 +162,7 @@ class TestAdmissionTests(TestCase):
         stale = self._admit()
         # Freshness now derives from the tasks' last state change; aging
         # them past the lease window makes the run observably dead.
-        FillTask.objects.filter(fill_run_id=str(stale.id)).update(
+        NodeRun.objects.filter(fill_run_id=str(stale.id)).update(
             last_state_change_at=timezone.now() - timedelta(seconds=4096)
         )
         teammate = TestFillAdmission(account_id=ACCOUNT, user_id="01USERBBBBBBBBBBBBBBBBBBBB")
@@ -181,7 +181,7 @@ class TestAdmissionTests(TestCase):
         running = self._admit()
         aged = ROW_LEASE_STALE_SECONDS + 60  # past the old window, well inside the processing one
         self.assertLess(aged, PROCESSING_STALE_SECONDS)
-        FillTask.objects.filter(fill_run_id=str(running.id)).update(
+        NodeRun.objects.filter(fill_run_id=str(running.id)).update(
             last_state_change_at=timezone.now() - timedelta(seconds=aged)
         )
         teammate = TestFillAdmission(account_id=ACCOUNT, user_id="01USERBBBBBBBBBBBBBBBBBBBB")
@@ -198,7 +198,7 @@ class TestAdmissionTests(TestCase):
         from openbower_kernel.fields import min_ulid_at
 
         old_id = min_ulid_at(timezone.now() - timedelta(seconds=TEST_FILL_MAX_AGE_SECONDS * 2))
-        FillTask.objects.filter(fill_run_id=str(old.id)).update(fill_run_id=old_id)
+        NodeRun.objects.filter(fill_run_id=str(old.id)).update(fill_run_id=old_id)
         Fill.objects.filter(id=str(old.id)).update(id=old_id)
         # An equally old NORMAL fill must survive: the sweep's kind
         # fence is the guard under test, and a count of exactly one
@@ -218,7 +218,7 @@ class TestAdmissionTests(TestCase):
         keeper = self._admit()
         self.assertEqual(SweepTestFillsOperation().run(), 1)
         self.assertFalse(Fill.objects.filter(id=old_id).exists())
-        self.assertFalse(FillTask.objects.filter(fill_run_id=old_id).exists())
+        self.assertFalse(NodeRun.objects.filter(fill_run_id=old_id).exists())
         self.assertTrue(Fill.objects.filter(id=normal_id).exists())
         self.assertTrue(Fill.objects.filter(id=str(keeper.id)).exists())
 
@@ -354,15 +354,15 @@ class TestKindWorkerTests(TransactionTestCase):
 
         with _patches(model):
             ids = list(
-                FillTask.objects.filter(
+                NodeRun.objects.filter(
                     fill_run_id=str(fill.id),
-                    status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED),
+                    status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED),
                 )
                 .order_by("position")
                 .values_list("id", flat=True)
             )
             for task_id in ids:
-                handle_fill_task(str(task_id), "test:kind")
+                handle_node_run(str(task_id), "test:kind")
 
     def test_an_inline_test_runs_end_to_end_landing_on_its_task(self):
         from ..services.fills import derive_counters
@@ -380,14 +380,14 @@ class TestKindWorkerTests(TransactionTestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.cells["answer"], "found: acme.com")
         # No sheet artifacts, ever: the landing branch never writes one.
-        from ..models import FillCellState
+        from ..models import ListCellState
 
-        self.assertFalse(FillCellState.objects.exists())
+        self.assertFalse(ListCellState.objects.exists())
 
     def test_the_shared_consumer_runs_both_kinds(self):
         # One consumer serves the manual lane and routes on the task's
         # own fill: a NORMAL fill lands on its sheet, a TEST fill on its
-        # task, both driven through the same handle_fill_task.
+        # task, both driven through the same handle_node_run.
         from .test_fill_worker import answering_model
 
         lists = ListService(account_id=ACCOUNT)

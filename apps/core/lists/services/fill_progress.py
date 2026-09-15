@@ -6,7 +6,7 @@ user's Stop also takes).
 Progress counters are NOT written here: the wire derives them from the
 task rows and cell states at read time (services.fills.derive_counters).
 
-Split from the task state machine on purpose: fill_tasks.py is TASK
+Split from the task state machine on purpose: node_runs.py is TASK
 lifecycle (claim, settle, park), this is the fill's. Plain functions,
 because none of this holds state: a fill id in, one UPDATE out. The
 consumer reports here after each settle (try_finish), never through an
@@ -24,8 +24,8 @@ from collections.abc import Iterator
 from django.db import transaction
 from django.utils import timezone
 
-from ..constants import LIVE_FILL_STATUSES, NON_TERMINAL_FILL_TASK_STATES, FillStatus, FillTaskStatus
-from ..models import Fill, FillTask
+from ..constants import LIVE_FILL_STATUSES, NON_TERMINAL_NODE_RUN_STATES, FillStatus, NodeRunStatus
+from ..models import Fill, NodeRun
 
 
 def iter_live_fills(kinds: tuple[str, ...] = ()) -> Iterator[Fill]:
@@ -82,7 +82,7 @@ def try_finish(fill_run_id: str) -> bool:
         fill = Fill.objects.select_for_update().filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).first()
         if fill is None:
             return False
-        if FillTask.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_FILL_TASK_STATES).exists():
+        if NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES).exists():
             return False
         fill.status = FillStatus.COMPLETE
         fill.save(update_fields=["status", "updated_at"])
@@ -94,7 +94,7 @@ def stop_fill(fill_run_id: str, status: FillStatus, *, code: str = "", message: 
     user's cancel, so the two cannot order their writes differently.
 
     The QUEUE IS SWEPT FIRST, then the fill flips. That order is
-    load-bearing: the terminal write path takes FillTask before Fill,
+    load-bearing: the terminal write path takes NodeRun before Fill,
     so flipping the fill first would invert it and deadlock. A consumer
     that claims a task in the window between the two is harmless,
     because its terminal CAS finds the task abandoned.
@@ -129,6 +129,6 @@ def _abandon_queued(fill_run_id: str) -> None:
     between tasks. Leaving PROCESSING untouched also keeps the
     queue-before-fill lock order the caller depends on. The transient
     count is DERIVED now, so nothing is released here."""
-    FillTask.objects.filter(fill_run_id=fill_run_id, status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED)).update(
-        status=FillTaskStatus.ABANDONED, updated_at=timezone.now()
+    NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)).update(
+        status=NodeRunStatus.ABANDONED, updated_at=timezone.now()
     )
