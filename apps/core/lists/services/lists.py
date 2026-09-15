@@ -15,7 +15,7 @@ from agents.services import AgentService
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
-from ..models import Fill, FillTask, Folder, List, ListRow
+from ..models import Fill, Folder, List, ListRow, NodeRun
 from . import cell_truth
 
 logger = logging.getLogger(__name__)
@@ -340,7 +340,7 @@ class ListService:
             fills = Fill.objects.filter(list_id=str(target.id))
             # ROWS FIRST, then the queue, because that is the order the
             # consumer's terminal write takes them: write_cells locks the
-            # ListRow, then the task settle writes the FillTask, both in
+            # ListRow, then the task settle writes the NodeRun, both in
             # one transaction. Deleting the other way round is an ABBA
             # deadlock against any fill running on this sheet, and
             # Postgres resolves it by aborting one side: a 500 on the
@@ -354,7 +354,7 @@ class ListService:
             # copy of it is blank would outlive the list forever, and
             # the fills queryset that produced these ids is already
             # list-scoped under an account-scoped lock.
-            FillTask.objects.filter(fill_run_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
+            NodeRun.objects.filter(fill_run_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
             # The columns' ephemeral agents die with the columns that
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,

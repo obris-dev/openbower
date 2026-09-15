@@ -1,7 +1,7 @@
-"""The one writer of FillCellState: what a fill made of each cell.
+"""The one writer of ListCellState: what a fill made of each cell.
 
 A record exists for every cell a fill has RESOLVED, filled ones
-included. There is nothing to write at admission (a queued FillTask on
+included. There is nothing to write at admission (a queued NodeRun on
 a live fill is what makes a cell read pending) and nothing to sweep
 when a fill stops (nothing was written for the rows it never reached).
 Not writing a pending state is what makes a stop need no sweep: a
@@ -21,7 +21,7 @@ in depth, not the guard.
 from __future__ import annotations
 
 from ..constants import FILL_WRITE_BATCH, StoredCellState
-from ..models import Fill, FillCellState
+from ..models import Fill, ListCellState
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
 _UPSERT_FIELDS = ["state", "fill_run_id", "config_fingerprint", "tools", "updated_at"]
@@ -57,9 +57,9 @@ def write(
     keeps the record of a degraded tool beside its value."""
     if not states:
         return
-    FillCellState.objects.bulk_create(
+    ListCellState.objects.bulk_create(
         [
-            FillCellState(
+            ListCellState(
                 account_id=account_id,
                 list_id=list_id,
                 row_id=row_id,
@@ -93,10 +93,10 @@ def _purge_in_pages(**lookup: str) -> None:
     FILL_WRITE_BATCH rows that still match, so the loop ends when a
     pass comes back empty."""
     while True:
-        ids = list(FillCellState.objects.filter(**lookup).values_list("id", flat=True)[:FILL_WRITE_BATCH])
+        ids = list(ListCellState.objects.filter(**lookup).values_list("id", flat=True)[:FILL_WRITE_BATCH])
         if not ids:
             return
-        FillCellState.objects.filter(id__in=ids).delete()
+        ListCellState.objects.filter(id__in=ids).delete()
 
 
 def purge_column(list_id: str, column_key: str) -> None:

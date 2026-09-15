@@ -38,7 +38,7 @@ SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
 # Per-row retry patience: the initial run plus 3 retries (binary). The
 # consent footer's "worst case 4x these counts" clause is this number,
 # so it is a wire fact, not a server internal.
-FILL_ROW_ATTEMPTS = 4
+NODE_RUN_ATTEMPTS = 4
 # The row-lease staleness window: a claimed row's lease is renewed in
 # bulk by the worker's supervising loop, which passes far more often
 # than this, so silence past this window means the CLAIMANT IS GONE (a

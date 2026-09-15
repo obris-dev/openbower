@@ -175,6 +175,10 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         self.assertIn("supercronic /app/apps/core/crontab", compose)
         crontab = (root / "apps" / "core" / "crontab").read_text()
         self.assertIn("manage.py sweep_test_fills", crontab)
+        # The reclaim scan is the crontab's other line, and nothing else
+        # exercises it by name: a missed edit stops it silently (supercronic
+        # only logs a failing job), so the schedule is pinned here too.
+        self.assertIn("manage.py reclaim_node_runs", crontab)
 
     def test_the_worker_topology_and_graces_hold(self):
         # Compose cannot import the constant, so each graced CONSUMER's
@@ -201,10 +205,10 @@ class DuplicatedKnowledgePins(SimpleTestCase):
             grace = re.match(r"^\s*stop_grace_period:\s*(\d+)s\s*$", line)
             if grace and current:
                 services.setdefault(current, {})["grace"] = grace.group(1)
-            command = re.match(r"^\s*command:.*consume_fill_tasks(.*)$", line)
+            command = re.match(r"^\s*command:.*consume_node_runs(.*)$", line)
             if command and current:
                 services.setdefault(current, {})["flags"] = command.group(1).strip()
-            window = re.search(r"consume_fill_tasks\.heartbeat.*-lt (\d+)", line)
+            window = re.search(r"consume_node_runs\.heartbeat.*-lt (\d+)", line)
             if window and current:
                 services.setdefault(current, {})["window"] = window.group(1)
         graced = {name: conf for name, conf in services.items() if "grace" in conf}
@@ -219,8 +223,8 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         self.assertEqual(graced["autofill-consumer"]["flags"], "--topic autofill")
         self.assertLess(int(graced["test-consumer"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["test-consumer"]["flags"], "--topic test")
-        # Every fill-family CONSUMER (each runs consume_fill_tasks, so each
-        # touches consume_fill_tasks.heartbeat) blocks its loop on a single
+        # Every fill-family CONSUMER (each runs consume_node_runs, so each
+        # touches consume_node_runs.heartbeat) blocks its loop on a single
         # claimed run, so its liveness window must clear the SAME worst case
         # its grace does, or a normal slow row reads as WEDGED. The test
         # consumer's short grace is a shutdown choice, NOT a smaller window,

@@ -4,14 +4,14 @@ from django.utils.translation import gettext_lazy as _
 from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
-    FILL_TASK_STATUS_MAX_LENGTH,
     LEASED_BY_MAX_LENGTH,
-    NON_TERMINAL_FILL_TASK_STATES,
-    FillTaskStatus,
+    NODE_RUN_STATUS_MAX_LENGTH,
+    NON_TERMINAL_NODE_RUN_STATES,
+    NodeRunStatus,
 )
 
 
-class FillTask(AccountScopedModel):
+class NodeRun(AccountScopedModel):
     """One consented agent run, AND the queue itself.
 
     One task per sheet row, materialized at admission, so the queue is
@@ -27,7 +27,7 @@ class FillTask(AccountScopedModel):
     so it carries its own `agent_id` and resolves the rest from its row.
 
     `status` speaks about the WORK and never about the answer; the
-    answer is diagnosed per cell on FillCellState. No word appears in
+    answer is diagnosed per cell on ListCellState. No word appears in
     both vocabularies, which is what keeps them from reading as copies
     of each other.
 
@@ -62,7 +62,7 @@ class FillTask(AccountScopedModel):
     # the sheet the user is watching. TEST: the 0-based index into the
     # fill's own row_data list, which the worker reads it back by.
     position = models.IntegerField(_("position"), default=0)
-    status = models.CharField(_("status"), max_length=FILL_TASK_STATUS_MAX_LENGTH, default=FillTaskStatus.QUEUED)
+    status = models.CharField(_("status"), max_length=NODE_RUN_STATUS_MAX_LENGTH, default=NodeRunStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its
     # worker thread still exhausts across process restarts. Counting
     # completions instead bounds nothing a crash can reach.
@@ -108,21 +108,21 @@ class FillTask(AccountScopedModel):
     last_state_change_at = models.DateTimeField(_("last state change at"), null=True, blank=True)
 
     class Meta:
-        verbose_name = _("fill task")
-        verbose_name_plural = _("fill tasks")
+        verbose_name = _("node run")
+        verbose_name_plural = _("node runs")
         constraints = [
             # The idempotency key: enqueueing the same row twice is a
             # no-op. Also the row drawer's lookup. NULL fill_run_ids are
             # distinct in SQL, so this only binds fill-backed tasks; the
             # automatic path is deduped by its own key below.
-            models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="fill_task_fill_row_uniq"),
-            # The automatic path's idempotency: one autofill task per row
+            models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
+            # The automatic path's idempotency: one autofill run per row
             # per agent (one run fills that agent's whole column set), so
             # re-enqueueing a row's autofill is a no-op.
             models.UniqueConstraint(
                 fields=["row_id", "agent_id"],
                 condition=models.Q(fill_run_id__isnull=True),
-                name="fill_task_autofill_uniq",
+                name="node_run_autofill_uniq",
             ),
         ]
         indexes = [
@@ -142,7 +142,7 @@ class FillTask(AccountScopedModel):
             models.Index(
                 fields=["status", "fill_run_id", "position", "id"],
                 include=["not_before"],
-                name="fill_task_fill_idx",
+                name="node_run_fill_idx",
                 condition=models.Q(fill_run_id__isnull=False),
             ),
             # Autofill firehose: partial on the null-run rows, so status
@@ -153,7 +153,7 @@ class FillTask(AccountScopedModel):
             models.Index(
                 fields=["status", "list_id", "position", "id"],
                 include=["not_before"],
-                name="fill_task_autofill_idx",
+                name="node_run_autofill_idx",
                 condition=models.Q(fill_run_id__isnull=True),
             ),
             # The reclaim scan's access path: find tasks stuck in a
@@ -162,8 +162,8 @@ class FillTask(AccountScopedModel):
             # only the in-flight tail rather than the settled history.
             models.Index(
                 fields=["status", "last_state_change_at"],
-                name="fill_task_reclaim_idx",
-                condition=models.Q(status__in=NON_TERMINAL_FILL_TASK_STATES),
+                name="node_run_reclaim_idx",
+                condition=models.Q(status__in=NON_TERMINAL_NODE_RUN_STATES),
             ),
         ]
 

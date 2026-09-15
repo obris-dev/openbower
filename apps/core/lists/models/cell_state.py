@@ -11,7 +11,7 @@ from ..constants import (
 )
 
 
-class FillCellState(AccountScopedModel):
+class ListCellState(AccountScopedModel):
     """What a fill made of one AI cell: FILLED, or the cause it is
     blank. One row per (list, row, column), upserted.
 
@@ -28,7 +28,7 @@ class FillCellState(AccountScopedModel):
     that count every four seconds, so the scan is the wrong side of the
     trade: one narrow row per answered cell buys it back.
 
-    PENDING is deliberately absent. A queued FillTask on a live fill IS
+    PENDING is deliberately absent. A queued NodeRun on a live fill IS
     a pending cell, which is what lets admission write nothing to the
     sheet and leaves a stopped fill with nothing to sweep.
 
@@ -42,7 +42,7 @@ class FillCellState(AccountScopedModel):
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
     # The fill run that wrote it: the row drawer's link to that run's
-    # FillTask.result, which holds what the model actually said. NULL on
+    # NodeRun.result, which holds what the model actually said. NULL on
     # the automatic path (autofill), which has no fill run; the drawer
     # follows the writing task by (row, column) instead.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
@@ -57,8 +57,8 @@ class FillCellState(AccountScopedModel):
     tools = models.JSONField(_("tool statuses"), default=dict, blank=True)
 
     class Meta:
-        verbose_name = _("fill cell state")
-        verbose_name_plural = _("fill cell states")
+        verbose_name = _("list cell state")
+        verbose_name_plural = _("list cell states")
         constraints = [
             # One truth per cell; every write is an upsert against it.
             models.UniqueConstraint(fields=["list_id", "row_id", "column_key"], name="cell_state_cell_uniq"),

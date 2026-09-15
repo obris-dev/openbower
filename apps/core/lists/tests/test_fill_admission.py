@@ -20,7 +20,7 @@ from ..constants import (
     MAX_LIST_COLUMNS,
     FillStatus,
 )
-from ..models import Fill, FillTask
+from ..models import Fill, NodeRun
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -101,7 +101,7 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(fill.config_snapshot["model"], "test-model")
         self.assertEqual(len(targeted(str(fill.id))), 2)
         # Fill-backed tasks denormalize their list off the Fill.
-        self.assertEqual({t.list_id for t in FillTask.objects.filter(fill_run_id=str(fill.id))}, {str(self.sheet.id)})
+        self.assertEqual({t.list_id for t in NodeRun.objects.filter(fill_run_id=str(fill.id))}, {str(self.sheet.id)})
 
     def test_multi_output_columns_are_the_outputs_own_keys(self) -> None:
         config = quick_config(
@@ -182,7 +182,7 @@ class QuickPathTests(AdmissionTestCase):
         self.admit()
         self.lists.delete(self.sheet)
         self.assertEqual(Fill.objects.count(), 0)
-        self.assertEqual(FillTask.objects.count(), 0)
+        self.assertEqual(NodeRun.objects.count(), 0)
 
     def test_row_count_echo_refuses_on_growth(self) -> None:
         with self.assertRaises(RowCountChanged) as caught:
@@ -384,7 +384,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
     """Where admission takes the List row lock, and for how long.
 
     The lock exists for ONE thing, the columns array write, and the
-    expensive part of admission (a FillTask per targeted row) must not
+    expensive part of admission (a NodeRun per targeted row) must not
     happen while it is held: that same lock is taken by every column
     add, rename, reorder and delete, by add_rows, by the list delete,
     and by another admission, so a large fill holding it stalls all of
@@ -408,7 +408,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             self.admit()
         sql = self.sql(captured)
         locked_at = self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
-        queued_at = self.index_of(sql, lambda s: s.startswith('INSERT INTO "LISTS_FILLTASK"'))
+        queued_at = self.index_of(sql, lambda s: s.startswith('INSERT INTO "LISTS_NODERUN"'))
         self.assertLess(
             queued_at,
             locked_at,
@@ -419,7 +419,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
     def test_deterministic_refusals_never_build_the_queue(self) -> None:
         # An account at its cap and a sheet at its column cap are both
         # knowable before any work: hearing the "no" after inserting up
-        # to 50,000 FillTask rows would waste the build EVERY time, not
+        # to 50,000 NodeRun rows would waste the build EVERY time, not
         # on a race.
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
@@ -427,7 +427,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
         with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
             self.admit()
-        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_FILLTASK"')]
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_NODERUN"')]
         self.assertEqual(inserts, [], "the cap was knowable before the queue was built")
 
     def test_at_both_caps_the_fill_cap_wins(self) -> None:
@@ -459,7 +459,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"c0": "x"}])
         with CaptureQueriesContext(connection) as captured, self.assertRaises(ColumnsFull):
             self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
-        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_FILLTASK"')]
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_NODERUN"')]
         self.assertEqual(inserts, [], "the column cap was knowable before the queue was built")
 
     def test_the_columns_array_is_written_ONCE(self) -> None:

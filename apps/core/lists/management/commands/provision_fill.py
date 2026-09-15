@@ -19,7 +19,7 @@ import threading
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from ...ingest.topics import FILL_TASKS
+from ...ingest.topics import FILL_RUNS
 from ...operations.provision import FillProvisionOperation
 
 logger = logging.getLogger(__name__)
@@ -43,8 +43,8 @@ class Command(BaseCommand):
         logger.info(
             "provision_fill %s up (topic: %s, group: %s)",
             worker_id,
-            FILL_TASKS.name,
-            FILL_TASKS.consumer_group,
+            FILL_RUNS.name,
+            FILL_RUNS.consumer_group,
         )
         try:
             FillProvisionOperation(worker_id=worker_id, stop=self._stop).run(once=options["once"])

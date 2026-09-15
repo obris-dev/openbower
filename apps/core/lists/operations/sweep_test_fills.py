@@ -15,7 +15,7 @@ from django.utils import timezone
 from openbower_kernel.fields import min_ulid_at
 
 from ..constants import FILL_WRITE_BATCH, TEST_FILL_MAX_AGE_SECONDS, FillKind
-from ..models import Fill, FillTask
+from ..models import Fill, NodeRun
 
 
 class SweepTestFillsOperation:
@@ -42,6 +42,6 @@ class SweepTestFillsOperation:
             if not page:
                 return purged
             with transaction.atomic():
-                FillTask.objects.filter(fill_run_id__in=page).delete()
+                NodeRun.objects.filter(fill_run_id__in=page).delete()
                 Fill.objects.filter(id__in=page).delete()
             purged += len(page)

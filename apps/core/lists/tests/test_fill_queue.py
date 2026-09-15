@@ -2,7 +2,7 @@
 through the landing, completion (no non-terminal task remains),
 cancel/fail (the ONE terminal transition), the stale reclaim, and the
 account-scoped run controls. The lease-based queue is gone; task
-transitions are FillTaskFlow's, and the counters DERIVE at read time.
+transitions are NodeRunFlow's, and the counters DERIVE at read time.
 Real DB, no mocks (all pure ORM)."""
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ from openbower_schema.fills import CellRunResult
 
 from ..constants import (
     FillStatus,
-    FillTaskStatus,
+    NodeRunStatus,
     StoredCellState,
 )
-from ..models import Fill, FillCellState, FillTask
+from ..models import Fill, ListCellState, NodeRun
 from ..services import fill_progress
 from ..services.fill_processing.landing import LandingContext, land_row
-from ..services.fill_tasks import PROCESSING_STALE_SECONDS, FillTaskFlow
 from ..services.fills import FillNotFound, FillService, derive_counters
 from ..services.lists import CellWriteResult
+from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -47,12 +47,12 @@ def make_run(*, status: str = FillStatus.PENDING, rows: int = 3) -> Fill:
     # test has its whole consented set of tasks from the start.
     now = timezone.now()
     for n in range(rows):
-        FillTask.objects.create(
+        NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
             row_id=f"01ROW{n:021d}",
             position=n + 1,
-            status=FillTaskStatus.READY,
+            status=NodeRunStatus.READY,
             last_state_change_at=now,
         )
     return fill
@@ -69,11 +69,11 @@ class _SheetThatTakesEverything:
         return CellWriteResult(tuple(cells), (), ())
 
 
-def land(fill: Fill, task: FillTask, *, worker: str = "test:1", state=None) -> bool:
+def land(fill: Fill, task: NodeRun, *, worker: str = "test:1", state=None) -> bool:
     """Claim the task and land a run on its row the way the shared
-    consumer does (FillTaskFlow claim -> land_row -> settle). A FILLED
+    consumer does (NodeRunFlow claim -> land_row -> settle). A FILLED
     state means a value was written."""
-    flow = FillTaskFlow(worker_id=worker)
+    flow = NodeRunFlow(worker_id=worker)
     claimed = flow.claim(str(task.id))
     assert claimed is not None, "claim missed"
     if state is None or state == StoredCellState.FILLED:
@@ -85,7 +85,7 @@ def land(fill: Fill, task: FillTask, *, worker: str = "test:1", state=None) -> b
             LandingContext.from_fill(fill),
             claimed.row_id,
             run,
-            close=partial(flow.settle, claimed.id, status=FillTaskStatus.DONE),
+            close=partial(flow.settle, claimed.id, status=NodeRunStatus.DONE),
             lists=_SheetThatTakesEverything(),
         )
         is not None
@@ -95,11 +95,11 @@ def land(fill: Fill, task: FillTask, *, worker: str = "test:1", state=None) -> b
 class TerminalWriteTests(TestCase):
     def test_terminal_write_lands_the_diagnosis(self) -> None:
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
         self.assertTrue(land(fill, task, state=StoredCellState.NO_EVIDENCE))
         task.refresh_from_db()
-        self.assertEqual(task.status, FillTaskStatus.DONE)
-        cell = FillCellState.objects.get()
+        self.assertEqual(task.status, NodeRunStatus.DONE)
+        cell = ListCellState.objects.get()
         self.assertEqual(
             (cell.list_id, cell.row_id, cell.column_key, cell.state, cell.fill_run_id),
             (fill.list_id, task.row_id, "answer", StoredCellState.NO_EVIDENCE, str(fill.id)),
@@ -111,47 +111,47 @@ class TerminalWriteTests(TestCase):
         # settle CAS (on its own stamp) misses, rolling the diagnosis
         # back with it.
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
-        original = FillTaskFlow(worker_id="test:1")
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        original = NodeRunFlow(worker_id="test:1")
         claimed = original.claim(str(task.id))
-        FillTask.objects.filter(id=task.id).update(
+        NodeRun.objects.filter(id=task.id).update(
             last_state_change_at=timezone.now() - datetime.timedelta(seconds=PROCESSING_STALE_SECONDS + 60)
         )
-        self.assertEqual(FillTaskFlow.reclaim_stale_processing(), 1)
+        self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 1)
         # The original claimant's terminal write now misses.
         self.assertFalse(
             land_row(
                 LandingContext.from_fill(fill),
                 claimed.row_id,
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
-                close=partial(original.settle, claimed.id, status=FillTaskStatus.DONE),
+                close=partial(original.settle, claimed.id, status=NodeRunStatus.DONE),
                 lists=_SheetThatTakesEverything(),
             )
             is not None
         )
-        self.assertFalse(FillCellState.objects.exists())
+        self.assertFalse(ListCellState.objects.exists())
 
     def test_an_answered_column_overwrites_its_earlier_blank(self) -> None:
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
         land(fill, task, state=StoredCellState.NO_EVIDENCE)
-        self.assertEqual(FillCellState.objects.get().state, StoredCellState.NO_EVIDENCE)
+        self.assertEqual(ListCellState.objects.get().state, StoredCellState.NO_EVIDENCE)
         later = make_run(rows=1)
-        FillTask.objects.filter(fill_run_id=str(later.id)).update(row_id=task.row_id)
-        second = FillTask.objects.get(fill_run_id=str(later.id))
+        NodeRun.objects.filter(fill_run_id=str(later.id)).update(row_id=task.row_id)
+        second = NodeRun.objects.get(fill_run_id=str(later.id))
         self.assertTrue(land(later, second))
-        self.assertEqual(FillCellState.objects.count(), 1)
-        self.assertEqual(FillCellState.objects.get().state, StoredCellState.FILLED)
+        self.assertEqual(ListCellState.objects.count(), 1)
+        self.assertEqual(ListCellState.objects.get().state, StoredCellState.FILLED)
 
 
 class CompletionTests(TestCase):
     def _drain(self, fill: Fill) -> None:
-        for task in list(FillTask.objects.filter(fill_run_id=str(fill.id), status=FillTaskStatus.READY)):
+        for task in list(NodeRun.objects.filter(fill_run_id=str(fill.id), status=NodeRunStatus.READY)):
             land(fill, task)
 
     def test_try_finish_refuses_while_work_remains(self) -> None:
         fill = make_run(rows=2)
-        task = FillTask.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
+        task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
         land(fill, task)
         self.assertFalse(fill_progress.try_finish(str(fill.id)))
         fill.refresh_from_db()
@@ -166,7 +166,7 @@ class CompletionTests(TestCase):
 
     def test_a_drained_live_fill_is_still_offered_for_completion(self) -> None:
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
         land(fill, task)
         self.assertEqual([j.id for j in fill_progress.iter_live_fills()], [fill.id])
         self.assertTrue(fill_progress.try_finish(str(fill.id)))
@@ -178,14 +178,14 @@ class CompletionTests(TestCase):
         # A task a consumer owns (PROCESSING) is still owed, so a crashed
         # claimant never fakes completion.
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
-        FillTaskFlow(worker_id="test:1").claim(str(task.id))
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        NodeRunFlow(worker_id="test:1").claim(str(task.id))
         self.assertFalse(fill_progress.try_finish(str(fill.id)))
 
     def test_a_parked_task_blocks_completion(self) -> None:
         fill = make_run(rows=1)
-        task = FillTask.objects.get(fill_run_id=str(fill.id))
-        flow = FillTaskFlow(worker_id="test:1")
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        flow = NodeRunFlow(worker_id="test:1")
         flow.claim(str(task.id))
         flow.park(str(task.id), backoff_seconds=60, result={})
         self.assertFalse(fill_progress.try_finish(str(fill.id)))
@@ -204,18 +204,18 @@ class CompletionTests(TestCase):
         # because a non-terminal task said so. The PROCESSING task the
         # worker still owns is left to its own terminal CAS.
         fill = make_run(rows=3)
-        first = FillTask.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
+        first = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
         land(fill, first)
         self.assertTrue(fill_progress.cancel(str(fill.id)))
         by_status = dict(
-            FillTask.objects.filter(fill_run_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))
+            NodeRun.objects.filter(fill_run_id=str(fill.id)).values_list("status").annotate(n=models.Count("id"))
         )
-        self.assertEqual(by_status, {FillTaskStatus.DONE: 1, FillTaskStatus.ABANDONED: 2})
-        self.assertEqual(FillCellState.objects.count(), 1)
+        self.assertEqual(by_status, {NodeRunStatus.DONE: 1, NodeRunStatus.ABANDONED: 2})
+        self.assertEqual(ListCellState.objects.count(), 1)
 
     def test_counters_derive_from_tasks_and_cells(self) -> None:
         fill = make_run(rows=2)
-        tasks = list(FillTask.objects.filter(fill_run_id=str(fill.id)).order_by("position"))
+        tasks = list(NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position"))
         land(fill, tasks[0])  # FILLED
         land(fill, tasks[1], state=StoredCellState.NO_EVIDENCE)  # blank
         counters = derive_counters(fill)

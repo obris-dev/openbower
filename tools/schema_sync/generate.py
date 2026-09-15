@@ -55,8 +55,8 @@ from openbower_schema.agents import (
     TOOL_STATUSES,
 )
 from openbower_schema.fills import (
-    FILL_ROW_ATTEMPTS,
     FREE_SEARCH_FILL_BUDGET,
+    NODE_RUN_ATTEMPTS,
     ROW_LEASE_STALE_SECONDS,
     SETTLED_CELL_STATES,
 )
@@ -117,7 +117,7 @@ def build_schema() -> dict[str, Any]:
         # WIRE_CONSTANTS): scalars, plus the settled partition of
         # CellState so the client derives it instead of retyping it.
         "x-constants": {
-            "FILL_ROW_ATTEMPTS": FILL_ROW_ATTEMPTS,
+            "NODE_RUN_ATTEMPTS": NODE_RUN_ATTEMPTS,
             "FREE_SEARCH_FILL_BUDGET": FREE_SEARCH_FILL_BUDGET,
             "MAX_TOOL_CALLS": MAX_TOOL_CALLS,
             "RESERVED_OUTPUT_MARKER": RESERVED_OUTPUT_MARKER,

@@ -94,7 +94,7 @@ def preview_columns(
     the useless "this sheet already has that column"), and it runs
     every DETERMINISTIC refusal: an account at its fill cap or a
     sheet at its column cap would otherwise build up to 50,000
-    FillTask rows before hearing a "no" that was knowable up
+    NodeRun rows before hearing a "no" that was knowable up
     front, every time rather than rarely. The cap is read through
     live_fill_count, the lock-free count;
     the select_for_update half of the cap stays locked-only,

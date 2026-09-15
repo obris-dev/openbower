@@ -60,8 +60,8 @@ auth + data services live in a separate private repo.
   providers.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
-  command over an operation (the reclaim_fill_tasks command over
-  FillTaskFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
+  command over an operation (the reclaim_node_runs command over
+  NodeRunFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
   never a lock.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a

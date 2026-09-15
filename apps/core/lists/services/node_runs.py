@@ -1,4 +1,4 @@
-"""The fill-task STATE MACHINE: READY -> QUEUED -> PROCESSING -> terminal,
+"""The node-run STATE MACHINE: READY -> QUEUED -> PROCESSING -> terminal,
 the transitions the provisioner + shared consumer drive.
 
 Every transition is a CAS `UPDATE` that also sets the state's own stamp
@@ -24,8 +24,8 @@ from collections.abc import Iterator
 from django.db import models
 from django.utils import timezone
 
-from ..constants import FILL_ROW_ATTEMPTS, FillTaskStatus
-from ..models import FillTask
+from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus
+from ..models import NodeRun
 
 # The owner tolerates death, not slowness: a task PROCESSING longer than
 # this was abandoned by a dead consumer (run_cell is timeout-bounded, so
@@ -35,7 +35,7 @@ from ..models import FillTask
 PROCESSING_STALE_SECONDS = 35 * 60
 
 
-class FillTaskFlow:
+class NodeRunFlow:
     """State transitions for one worker/consumer (its id stamps the
     PROCESSING claim, so only the owner settles what it claimed)."""
 
@@ -43,40 +43,40 @@ class FillTaskFlow:
         self.worker_id = worker_id
 
     @staticmethod
-    def iter_ready(*, limit: int) -> Iterator[FillTask]:
+    def iter_ready(*, limit: int) -> Iterator[NodeRun]:
         """The autofill provisioner's pick, LAZILY (single-pass): up to
         `limit` READY null-run (autofill) tasks that are due (a parked
         retry backs off in `not_before`), in (list_id, position, id)
         order. Grouping by list first is breadth-first across lists and
-        is what `fill_task_autofill_idx` (partial on the null-run rows)
+        is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick
         narrows to its lists. Streamed via .iterator() so a growing queue
         never materializes as one list."""
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
-        qs = FillTask.objects.filter(due, status=FillTaskStatus.READY, fill_run_id__isnull=True)
+        qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True)
         yield from qs.defer("result").order_by("list_id", "position", "id")[:limit].iterator()
 
     @staticmethod
-    def iter_ready_for_fill(fill_run_id: str, *, limit: int) -> Iterator[FillTask]:
+    def iter_ready_for_fill(fill_run_id: str, *, limit: int) -> Iterator[NodeRun]:
         """The manual provisioner's per-fill pick, LAZILY (single-pass):
         up to `limit` of this fill's READY, due tasks in SHEET ORDER
         (position) so the fill marches top to bottom down the sheet the
         user is watching. A flat `limit` per fill is the fairness point:
         a wide fill cannot flood the bus ahead of a smaller one beside
-        it. `fill_task_fill_idx` (fill_run_id equality, then position)
+        it. `node_run_fill_idx` (fill_run_id equality, then position)
         serves it so the LIMIT stops early. Streamed via .iterator()."""
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         yield from (
-            FillTask.objects.filter(due, fill_run_id=fill_run_id, status=FillTaskStatus.READY)
+            NodeRun.objects.filter(due, fill_run_id=fill_run_id, status=NodeRunStatus.READY)
             .defer("result")
             .order_by("position", "id")[:limit]
             .iterator()
         )
 
     @staticmethod
-    def mark_queued(task: FillTask) -> bool:
+    def mark_queued(task: NodeRun) -> bool:
         """READY -> QUEUED, after the provisioner has published it. The CAS
         matches status READY AND the `last_state_change_at` token the page
         was read with, so a task that moved during the publish is left
@@ -89,19 +89,19 @@ class FillTaskFlow:
         provisioner re-picks only READY)."""
         now = timezone.now()
         return (
-            FillTask.objects.filter(
+            NodeRun.objects.filter(
                 id=task.id,
-                status=FillTaskStatus.READY,
+                status=NodeRunStatus.READY,
                 last_state_change_at=task.last_state_change_at,
             ).update(
-                status=FillTaskStatus.QUEUED,
+                status=NodeRunStatus.QUEUED,
                 queued_at=now,
                 last_state_change_at=now,
             )
             == 1
         )
 
-    def claim(self, task_id: str) -> FillTask | None:
+    def claim(self, task_id: str) -> NodeRun | None:
         """(READY | QUEUED) -> PROCESSING for this consumer. Accepts READY
         too, so a message that outran the provisioner's `mark_queued` (a
         crash between publish and mark) still runs. Stamps the owner
@@ -111,11 +111,11 @@ class FillTaskFlow:
         delivery, or another consumer / the reclaim scan got there first) and
         the message should be dropped."""
         now = timezone.now()
-        claimed = FillTask.objects.filter(
+        claimed = NodeRun.objects.filter(
             id=task_id,
-            status__in=(FillTaskStatus.READY, FillTaskStatus.QUEUED),
+            status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED),
         ).update(
-            status=FillTaskStatus.PROCESSING,
+            status=NodeRunStatus.PROCESSING,
             processing_at=now,
             last_state_change_at=now,
             leased_by=self.worker_id,
@@ -123,15 +123,15 @@ class FillTaskFlow:
         )
         if claimed != 1:
             return None
-        return FillTask.objects.get(id=task_id)
+        return NodeRun.objects.get(id=task_id)
 
     @staticmethod
-    def exhausted(task: FillTask) -> bool:
+    def exhausted(task: NodeRun) -> bool:
         """Whether this claim is one too many, read AFTER the claim
         stamped its attempt (so a crash mid-run still counts)."""
-        return task.attempts > FILL_ROW_ATTEMPTS
+        return task.attempts > NODE_RUN_ATTEMPTS
 
-    def settle(self, task_id: str, result: dict, *, status: FillTaskStatus) -> bool:
+    def settle(self, task_id: str, result: dict, *, status: NodeRunStatus) -> bool:
         """PROCESSING -> a terminal state, CAS on the owner stamp so a
         reclaimed task's original consumer misses silently. `result` is
         positional so a `partial(settle, task_id, status=...)` matches
@@ -141,9 +141,9 @@ class FillTaskFlow:
         writes back on a miss."""
         now = timezone.now()
         return (
-            FillTask.objects.filter(
+            NodeRun.objects.filter(
                 id=task_id,
-                status=FillTaskStatus.PROCESSING,
+                status=NodeRunStatus.PROCESSING,
                 leased_by=self.worker_id,
             ).update(
                 status=status,
@@ -161,12 +161,12 @@ class FillTaskFlow:
         claim stamps the attempt and the consumer gives up at the cap."""
         now = timezone.now()
         return (
-            FillTask.objects.filter(
+            NodeRun.objects.filter(
                 id=task_id,
-                status=FillTaskStatus.PROCESSING,
+                status=NodeRunStatus.PROCESSING,
                 leased_by=self.worker_id,
             ).update(
-                status=FillTaskStatus.READY,
+                status=NodeRunStatus.READY,
                 not_before=now + datetime.timedelta(seconds=backoff_seconds),
                 parked=True,
                 last_state_change_at=now,
@@ -187,11 +187,11 @@ class FillTaskFlow:
         only duplicate work the consumer's claim CAS already drops."""
         now = now or timezone.now()
         stale_before = now - datetime.timedelta(seconds=PROCESSING_STALE_SECONDS)
-        return FillTask.objects.filter(
-            status=FillTaskStatus.PROCESSING,
+        return NodeRun.objects.filter(
+            status=NodeRunStatus.PROCESSING,
             last_state_change_at__lt=stale_before,
         ).update(
-            status=FillTaskStatus.READY,
+            status=NodeRunStatus.READY,
             processing_at=None,
             leased_by="",
             last_state_change_at=now,
