@@ -60,7 +60,7 @@ class ListsViewsTests(TestCase):
             columns=[
                 {"key": "company", "label": "Company", "type": "url"},
                 {"key": "contact", "label": "Contact", "type": "text"},
-                {"key": "answer", "label": "Answer", "type": "text", "fill": {"agent_id": "01AG" + "A" * 22}},
+                {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": "01ND" + "A" * 22}},
             ],
             origin=ListOrigin.MANUAL,
         )

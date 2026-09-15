@@ -51,6 +51,13 @@ MAX_CSV_BYTES = 5 * 1024 * 1024
 # Multipart framing headroom over the file itself (the Content-Length
 # pre-check fires before the body is parsed).
 IMPORT_BODY_OVERHEAD = 16 * 1024
+# A node kind's name: the Node.kind column bound AND the registry's name
+# guard, one number so a registered name always fits the column.
+NODE_KIND_MAX_LENGTH = 32
+# A node's identity, the kind-declared projection of its config that the
+# unique key indexes (binary): an agent id is 26, a future kind may
+# project a hash.
+NODE_IDENTITY_MAX_LENGTH = 64
 
 ORIGIN_MAX_LENGTH = 16
 

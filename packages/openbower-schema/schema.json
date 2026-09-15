@@ -429,21 +429,22 @@
       "type": "object"
     },
     "ColumnFill": {
-      "description": "A column's fill linkage: present exactly on AI columns (the\nagent that fills it; the ephemeral-vs-roster custody rides the\nagent, not the column).",
+      "description": "A column's fill linkage: present exactly on AI columns. The\ncolumn binds to the NODE that fills it; the agent, and its\nephemeral-vs-roster custody, hangs off the node.",
       "properties": {
-        "agent_id": {
-          "title": "Agent Id",
-          "type": "string"
-        },
         "current_fill_id": {
           "default": "",
           "description": "The fill run that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
           "title": "Current Fill Id",
           "type": "string"
+        },
+        "node_id": {
+          "description": "The node that fills this column (today, always an agent bound to this sheet). Per-row work keys on it; the agent hangs off the node, so editing what fills a column goes through the column, never this id.",
+          "title": "Node Id",
+          "type": "string"
         }
       },
       "required": [
-        "agent_id"
+        "node_id"
       ],
       "title": "ColumnFill",
       "type": "object"

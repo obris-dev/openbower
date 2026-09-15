@@ -7,6 +7,8 @@ edit, and reordering. Account-scoped like every lists service."""
 
 from __future__ import annotations
 
+import logging
+
 from django.db import models, transaction
 from django.db.models import Value
 
@@ -21,6 +23,9 @@ from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
 from .fill_progress import stop_fill
 from .lists import ListNotFound
+from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node
+
+logger = logging.getLogger(__name__)
 
 
 class _JsonbWithoutKey(models.Func):
@@ -214,7 +219,7 @@ class ColumnService:
                 raise ColumnNotFound(key)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
-            agent_id = str((doomed.get("fill") or {}).get("agent_id", ""))
+            node_id = str((doomed.get("fill") or {}).get("node_id", ""))
             columns = [column for column in target_list.columns if column["key"] != key]
 
             # ONE UPDATE over the sheet's rows, so an O(rows) write
@@ -246,15 +251,24 @@ class ColumnService:
             # The ephemeral agent dies with the LAST column that used
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
-            self._retire_ephemeral(target_list, agent_id=agent_id)
+            self._retire_ephemeral(target_list, node_id=node_id)
         return target_list
 
-    def _retire_ephemeral(self, target_list: List, *, agent_id: str) -> None:
-        if not agent_id:
+    def _retire_ephemeral(self, target_list: List, *, node_id: str) -> None:
+        """The node stays (runs point at it, and a node with no columns
+        is inert); only the ephemeral agent behind it dies with its last
+        column. A roster agent is untouched: delete_ephemeral filters."""
+        if not node_id or columns_for_node(target_list, node_id):
             return
-        if any((column.get("fill") or {}).get("agent_id") == agent_id for column in target_list.columns):
+        try:
+            node = WorkflowService(account_id=self.account_id).get_node(node_id)
+        except NodeNotFound:
+            # Corruption (nodes die only with their list), but a sheet the
+            # user cannot tidy is the worse failure: the delete lands and
+            # the agent behind the gone node is left as litter, logged.
+            logger.warning("column delete: node %s is gone; its ephemeral agent is left unretired", node_id)
             return
-        AgentService(account_id=self.account_id).delete_ephemeral([agent_id])
+        AgentService(account_id=self.account_id).delete_ephemeral([agent_id_of(node)])
 
     def fill_config(self, target_list_id: str, *, column_key: str) -> AgentConfig:
         """The CURRENT config filling a column (what a refill would
@@ -299,4 +313,5 @@ class ColumnService:
         )
         if fill is None:
             raise FillColumnNotFound(column_key)
-        return agents.get_for_fill(str(fill.get("agent_id", "")))
+        node = WorkflowService(account_id=self.account_id).get_node(str(fill["node_id"]))
+        return agents.get_for_fill(agent_id_of(node))

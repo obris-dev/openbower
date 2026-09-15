@@ -18,10 +18,11 @@ from __future__ import annotations
 from django.db import transaction
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
-from ..models import Fill, ListRow, NodeRun
+from ..models import Fill, ListRow, Node, NodeRun
 from ..services import cell_truth
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
+from ..services.workflows import agent_id_of
 
 WORKER_ID = "test-seam"
 # What a simulated fill writes into a cell it answers. Any non-blank
@@ -125,6 +126,12 @@ def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
         .order_by("position")
         .values_list("row_id", "position")
     ]
+
+
+def fill_agent_id(fill: dict) -> str:
+    """The agent behind a stored column `fill` member, through its
+    node: the column binds to the node, the node names the agent."""
+    return agent_id_of(Node.objects.get(id=fill["node_id"]))
 
 
 def row_value(list_id: str, row_id: str, column_key: str) -> str:

@@ -17,6 +17,7 @@ from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, Folder, List, ListRow, NodeRun
 from . import cell_truth
+from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -324,8 +325,9 @@ class ListService:
         return out
 
     def delete(self, target: List) -> None:
-        """Delete the list with its rows, fills, tasks, and cell states
-        in one transaction (the service owns child cleanup; no
+        """Delete the list with its rows, fills, tasks, cell states, and
+        workflow (nodes and paths) in one transaction (the service owns
+        child cleanup; no
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
         account's fill slots with nothing visible to cancel)."""
@@ -365,6 +367,15 @@ class ListService:
             AgentService(account_id=self.account_id).delete_ephemeral(
                 [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
             )
+            # The fill-backed runs went first (they point at nodes). This
+            # list's autofill runs are NOT purged: they carry list_id and a
+            # node_id the next line orphans, and a claimed one finds its row
+            # gone and settles ROW_MISSING before it reaches the node (the
+            # autofill provisioner picks READY tasks globally, which is what
+            # still claims them). The workflow is list-owned, so it is purged here
+            # and nowhere else; the bench node has no workflow and is
+            # untouched.
+            WorkflowService(account_id=self.account_id).delete_for_list(str(target.id))
             cell_truth.purge_list(str(target.id))
             fills.delete()
             List.objects.filter(id=target.id, account_id=self.account_id).delete()

@@ -13,6 +13,7 @@ from django.test.utils import CaptureQueriesContext, override_settings
 from agents.models import Agent
 from agents.providers import ModelUnavailable
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
+from openbower_schema.lists import ColumnFill
 
 from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
@@ -20,7 +21,7 @@ from ..constants import (
     MAX_LIST_COLUMNS,
     FillStatus,
 )
-from ..models import Fill, NodeRun
+from ..models import Fill, Node, NodeRun
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -93,15 +94,30 @@ class QuickPathTests(AdmissionTestCase):
         added = [c for c in self.sheet.columns if c["key"] == "answer"]
         self.assertEqual(len(added), 1)
         self.assertEqual(added[0]["label"], "Answer")
-        # The column carries BOTH custody facts: which agent fills it
-        # and which fill currently speaks for it (stored, not walked).
-        self.assertEqual(added[0]["fill"], {"agent_id": str(agent.id), "current_fill_id": str(fill.id)})
+        # The column carries BOTH custody facts: which node fills it
+        # (the agent bound to this sheet) and which fill currently
+        # speaks for it (stored, not walked).
+        node = Node.objects.get(identity=str(agent.id))
+        self.assertEqual(added[0]["fill"], {"node_id": str(node.id), "current_fill_id": str(fill.id)})
         self.assertEqual(fill.status, FillStatus.PENDING)
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertEqual(fill.config_snapshot["model"], "test-model")
         self.assertEqual(len(targeted(str(fill.id))), 2)
-        # Fill-backed tasks denormalize their list off the Fill.
-        self.assertEqual({t.list_id for t in NodeRun.objects.filter(fill_run_id=str(fill.id))}, {str(self.sheet.id)})
+        # Fill-backed tasks denormalize their list off the Fill, and
+        # every one is a run of the column's node from birth.
+        tasks = NodeRun.objects.filter(fill_run_id=str(fill.id))
+        self.assertEqual({t.list_id for t in tasks}, {str(self.sheet.id)})
+        self.assertEqual({t.node_id for t in tasks}, {str(node.id)})
+
+    def test_the_stored_fill_member_is_exactly_the_wire_shape(self) -> None:
+        # The parity seam: what admission stores under `column.fill` is
+        # what ColumnFill declares, key for key, so no stored key is
+        # dropped on a list read and no wire key goes unwritten.
+        self.admit()
+        self.sheet.refresh_from_db()
+        stored = next(c["fill"] for c in self.sheet.columns if c["key"] == "answer")
+        self.assertEqual(set(stored), set(ColumnFill.model_fields))
+        self.assertEqual(ColumnFill(**stored).model_dump(), stored)
 
     def test_multi_output_columns_are_the_outputs_own_keys(self) -> None:
         config = quick_config(

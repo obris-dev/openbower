@@ -77,8 +77,10 @@ class ProvisionOperation:
 
     def _publish_batch(self, tasks: list[NodeRun], topic) -> None:
         """Produce every task id in the page to `topic` (buffered,
-        non-blocking), keyed by row id (an even, query-free spread that
-        keeps a row's tasks on one partition), then BLOCK ONCE for the
+        non-blocking), keyed by task id, the one id every lane has (a TEST
+        task's row_id is NULL); an even, query-free spread, and no lane
+        needs row affinity, since every terminal write already serializes
+        on the ListRow lock. Then BLOCK ONCE for the
         whole page's acks. The single flush amortizes the broker round-trip
         across the page instead of paying it per task (librdkafka pipelines
         the produces). Raises ProvisionPublishError when the page does not
@@ -94,7 +96,7 @@ class ProvisionOperation:
         for task in tasks:
             producer.produce(
                 topic.name,
-                key=task.row_id.encode(),
+                key=str(task.id).encode(),
                 value=json.dumps({"task_id": str(task.id)}).encode(),
                 on_delivery=_on_delivery,
             )

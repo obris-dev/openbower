@@ -25,7 +25,7 @@ from ..constants import (
     FillStatus,
     NodeRunStatus,
 )
-from ..models import Fill, ListRow, NodeRun
+from ..models import Fill, ListRow, Node, NodeRun
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.sweep_test_fills import SweepTestFillsOperation
 from ..services.fill_admission import (
@@ -69,7 +69,7 @@ def _test_fill() -> Fill:
         confirmed_row_count=1,
         status=FillStatus.RUNNING,
     )
-    NodeRun.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id="", position=0)
+    NodeRun.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id=None, position=0)
     return fill
 
 
@@ -129,17 +129,42 @@ class TestAdmissionTests(TestCase):
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertTrue(fill.config_fingerprint)
         task = NodeRun.objects.get(fill_run_id=str(fill.id))
-        # A MINTED row id, never "": the queue's (fill_run_id, row_id)
-        # uniqueness would cap a blank-id lane at one task, against the
-        # row_data list's grow-to-N shape. FAILS if the mint reverts.
-        from openbower_kernel.fields import is_valid_ulid
-
-        self.assertTrue(is_valid_ulid(task.row_id))
+        # row_id NULL: the row is inline (row_data[position]) and no
+        # ListRow exists for it. NULL is distinct under the
+        # (fill_run_id, row_id) key, so N inline rows never collide where
+        # "" would cap the lane at one task. FAILS if a minted or blank
+        # id returns.
+        self.assertIsNone(task.row_id)
+        # The run's node is the account's bench node: the one sheetless
+        # column_agent node, no workflow, no path, a blank agent.
+        bench = Node.objects.get(account_id=ACCOUNT, workflow_id="")
+        self.assertEqual(task.node_id, str(bench.id))
+        self.assertEqual((bench.kind, bench.path_id, bench.config), ("column_agent", "", {"agent_id": ""}))
         # Born READY (the manual provisioner moves it to QUEUED on publish).
         self.assertEqual((task.position, task.status), (0, NodeRunStatus.READY))
         # list_id "" by construction: a bench fill points at no sheet, so
         # its task inherits the blank (mirrors fill.list_id above).
         self.assertEqual(task.list_id, "")
+
+    def test_n_inline_tasks_coexist_under_one_test_fill(self):
+        # The reason row_id is NULL rather than "": N inline rows under
+        # one fill must coexist under the (fill_run_id, row_id) key.
+        # The second task mirrors whatever the WRITER stored, so this
+        # FAILS with IntegrityError if the writer returns to a blank id.
+        fill = self._admit()
+        first = NodeRun.objects.get(fill_run_id=str(fill.id))
+        NodeRun.objects.create(
+            account_id=ACCOUNT, fill_run_id=str(fill.id), node_id=first.node_id, row_id=first.row_id, position=1
+        )
+        self.assertEqual(NodeRun.objects.filter(fill_run_id=str(fill.id)).count(), 2)
+
+    def test_every_test_run_reuses_the_one_bench_node(self):
+        first = self._admit()
+        second = self._admit()
+        bench = Node.objects.filter(account_id=ACCOUNT, workflow_id="")
+        self.assertEqual(bench.count(), 1)
+        runs = NodeRun.objects.filter(fill_run_id__in=[str(first.id), str(second.id)])
+        self.assertEqual({task.node_id for task in runs}, {str(bench.get().id)})
 
     def test_your_own_live_test_is_superseded_never_refused(self):
         first = self._admit()

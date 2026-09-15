@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH
+from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, ColumnFill
 
 from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS
 from ...models import Fill, List
@@ -32,7 +32,7 @@ def claim_columns(
     target_list: List,
     *,
     config: AgentConfig,
-    agent_id: str,
+    node_id: str,
     fill_run_id: str,
     account_id: str,
     owned: frozenset[str] = frozenset(),
@@ -74,7 +74,7 @@ def claim_columns(
     # keeps the type it was created with, and resolution above has
     # already refused both an existing key we do not own and an
     # owned one whose output changed shape.
-    append_columns(target_list, column_keys=column_keys, config=config, agent_id=agent_id, fill_run_id=fill_run_id)
+    append_columns(target_list, column_keys=column_keys, config=config, node_id=node_id, fill_run_id=fill_run_id)
     return column_keys
 
 
@@ -143,17 +143,6 @@ def check_account_cap(account_id: str, *, opening: str = "") -> None:
     account_live = Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).exclude(id=opening).count()
     if account_live >= MAX_ACTIVE_FILLS:
         raise AccountFillsFull()
-
-
-def owned_keys(target_list: List, agent_id: str) -> frozenset[str]:
-    """The keys this agent already fills on this sheet: what a
-    refill may write without the existence rule refusing its own
-    columns. ONE derivation, called by the unlocked pass and the
-    locked one, because two hand-spelled copies drifting by a typo
-    is exactly the failure mode a double-judgment design invites."""
-    return frozenset(
-        column["key"] for column in target_list.columns if (column.get("fill") or {}).get("agent_id") == agent_id
-    )
 
 
 def require_fill_column(target_list: List, column_key: str) -> dict:
@@ -227,10 +216,10 @@ def check_columns_free(target_list: List, *, column_keys: list[str], opening: st
 
 
 def append_columns(
-    target_list: List, *, column_keys: list[str], config: AgentConfig, agent_id: str, fill_run_id: str
+    target_list: List, *, column_keys: list[str], config: AgentConfig, node_id: str, fill_run_id: str
 ) -> None:
     """THE one columns write of an admission: new columns append
-    with the fill link and the output's type, an existing one gains
+    with the node link and the output's type, an existing one gains
     the link, and every claimed column learns which fill now speaks
     for it.
 
@@ -247,12 +236,16 @@ def append_columns(
     every later one TYPE_MISMATCH. Resolution refuses the case
     rather than choosing which way to be wrong."""
     outputs_by_key = {output.key: output for output in config.outputs}
+    # Built through the contract model, never a hand-spelled dict: the
+    # stored member IS the wire shape, so a field the contract gains
+    # fails here instead of being dropped on every list read.
+    link = ColumnFill(node_id=node_id, current_fill_id=fill_run_id).model_dump()
     columns = [dict(column) for column in target_list.columns]
     existing = {column["key"] for column in columns}
     for column in columns:
         output = outputs_by_key.get(column["key"])
         if output is not None and column["key"] in column_keys:
-            column["fill"] = {"agent_id": agent_id, "current_fill_id": fill_run_id}
+            column["fill"] = dict(link)
     for key in column_keys:
         if key in existing:
             continue
@@ -266,7 +259,7 @@ def append_columns(
                 "key": key,
                 "label": output.label[:COLUMN_LABEL_MAX_LENGTH],
                 "type": output.type,
-                "fill": {"agent_id": agent_id, "current_fill_id": fill_run_id},
+                "fill": dict(link),
             }
         )
     target_list.columns = columns
