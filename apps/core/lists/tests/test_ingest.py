@@ -209,7 +209,7 @@ class IngestValidationTests(TestCase):
                 columns=[
                     {"key": "domain", "label": "Domain", "type": "url"},
                     {"key": "score", "label": "Score", "type": "number"},
-                    {"key": "rank", "label": "Rank", "type": "number", "fill": {"agent_id": "01AG" + "A" * 22}},
+                    {"key": "rank", "label": "Rank", "type": "number", "fill": {"node_id": "01ND" + "A" * 22}},
                 ],
                 origin=ListOrigin.MANUAL,
             )

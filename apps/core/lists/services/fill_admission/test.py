@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import ulid
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -26,6 +25,7 @@ from ...models import Fill, NodeRun
 from .. import fill_progress
 from ..fingerprint import config_fingerprint
 from ..node_runs import PROCESSING_STALE_SECONDS
+from ..workflows import WorkflowService
 from .base import AdmissionBase
 from .errors import TestFillActive, TestRowInvalid
 
@@ -35,7 +35,8 @@ class TestFillAdmission(AdmissionBase):
         """The bench's one-row diagnostic as a FILL (kind=test): same
         lifecycle, same worker, no sheet custody. No columns write, no
         consent echo, no ephemeral agent (the drafted config IS the
-        custody; agent_id stays blank). The row is INLINE, the one
+        custody; agent_id stays blank, and the run's node is the
+        account's bench node). The row is INLINE, the one
         source: the bench's hand-fed values, bounds-refused by
         _check_row below, riding the fill itself; a test fill never
         points at a sheet (list_id stays blank BY CONSTRUCTION, which
@@ -72,15 +73,18 @@ class TestFillAdmission(AdmissionBase):
                 # lists tomorrow.
                 row_data=[row],
             )
-            # A MINTED id, not "": the queue's (fill_run_id, row_id)
-            # uniqueness would cap a blank-id lane at one task forever,
-            # and the row_data list is shaped to grow to N inline rows
-            # without a backfill. Minting keeps the idempotency key
-            # meaningful from the first row.
+            # The bench node: the account's one sheetless column_agent
+            # node, so a test run has a node to be a run of. The drafted
+            # config rides the fill's snapshot, never the node.
+            bench = WorkflowService(account_id=self.account_id).get_or_create_bench_node()
+            # row_id NULL: the row is inline (`row_data[position]`) and no
+            # ListRow exists for it. NULL is distinct under the
+            # (fill_run_id, row_id) key, so N inline rows never collide.
             NodeRun.objects.create(
                 account_id=self.account_id,
                 fill_run_id=str(fill.id),
-                row_id=ulid.ulid(),
+                node_id=str(bench.id),
+                row_id=None,
                 list_id=fill.list_id,  # "" by construction: a bench fill points at no sheet
                 position=0,
                 status=NodeRunStatus.READY,

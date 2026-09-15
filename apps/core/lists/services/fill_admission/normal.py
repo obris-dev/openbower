@@ -25,11 +25,12 @@ from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
 from ...constants import FILL_WRITE_BATCH, NodeRunStatus
-from ...models import Fill, List, ListRow, NodeRun
+from ...models import Fill, List, ListRow, Node, NodeRun
 from ..fingerprint import config_fingerprint
 from ..lists import ListNotFound
+from ..workflows import WorkflowService, agent_id_of, columns_for_node
 from .base import AdmissionBase
-from .columns import claim_columns, owned_keys, preview_columns, require_fill_column
+from .columns import claim_columns, preview_columns, require_fill_column
 from .errors import (
     ColumnAgentMissing,
     ColumnNoLongerFilled,
@@ -50,6 +51,7 @@ class FillAdmissionService(AdmissionBase):
     def __init__(self, *, account_id: str, user_id: str) -> None:
         super().__init__(account_id=account_id, user_id=user_id)
         self.agents = AgentService(account_id=account_id)
+        self.workflows = WorkflowService(account_id=account_id)
 
     def admit(
         self,
@@ -91,6 +93,20 @@ class FillAdmissionService(AdmissionBase):
         admission. It is NOT taken by the worker: write_cells locks the
         ListRow and reads the list unlocked, for the column types only.
 
+        One key IS held early, on purpose: the node and workflow
+        get-or-create is the transaction's first write on a key a concurrent
+        admission can collide on (the quick tab's ephemeral agent, written
+        before it, holds only its own fresh id), and Postgres holds an
+        uncommitted unique-index entry until commit, so a
+        concurrent admission on the same key waits for this one's whole
+        build. That is a sheet's FIRST AI column (the workflow key) or
+        the same roster agent twice on one sheet (the node key, the
+        double-submitted Fill button, refused anyway once it wakes). It
+        stays inside because the runs are stamped with the node at birth
+        and a refusal must roll the node back with the ephemeral agent
+        whose id names it; minting it committed would leave both as
+        litter with no owner on every refusal.
+
         The agent resolve and the model probe run before the
         transaction for a related reason: the probe is an HTTP call (a
         cold roster probe measured 1.9s healthy, and a dead source pays
@@ -113,12 +129,18 @@ class FillAdmissionService(AdmissionBase):
                     label=resolved_config.outputs[0].label[:AGENT_LABEL_MAX_LENGTH],
                     config=resolved_config,
                 )
+            # The node binds this agent to this sheet: get-or-create, so
+            # a second column from the same roster agent reuses it (one
+            # node per agent per sheet is the run's own grain). Unlocked,
+            # inside the transaction: idempotent by its unique key, and a
+            # refusal below rolls it back with everything else.
+            node = self.workflows.get_or_create_column_agent_node(target_list, agent_id=str(agent.id))
             column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id)
             eligible = iter_eligible_rows(target_list, prompt=resolved_config.prompt)
             targets = islice(eligible, rows) if rows else eligible
             fill = self._open_fill(
                 target_list,
-                agent=agent,
+                node=node,
                 resolved_config=resolved_config,
                 column_keys=column_keys,
                 targets=targets,
@@ -135,7 +157,7 @@ class FillAdmissionService(AdmissionBase):
             claim_columns(
                 locked,
                 config=resolved_config,
-                agent_id=str(agent.id),
+                node_id=str(node.id),
                 fill_run_id=str(fill.id),
                 account_id=self.account_id,
             )
@@ -171,8 +193,11 @@ class FillAdmissionService(AdmissionBase):
         transaction entirely: network IO must not hold any of it."""
         peek = self._list_or_raise(list_id)
         fill = require_fill_column(peek, column_key)
+        # A missing NODE raises as the corruption it is (nodes die only
+        # with their list); a missing AGENT is the allowed orphaning.
+        node = self.workflows.get_node(str(fill["node_id"]))
         try:
-            agent = self.agents.get_for_fill(str(fill.get("agent_id", "")))
+            agent = self.agents.get_for_fill(agent_id_of(node))
         except AgentNotFound as e:
             # Orphaned by an agent delete, which is allowed: answer in
             # the user's terms instead of 404-ing about an agent id
@@ -194,7 +219,7 @@ class FillAdmissionService(AdmissionBase):
             # means the output set can differ from the one that built
             # these columns: a new output has to become a real column
             # here or its answers land nowhere a surface can read.
-            owned = owned_keys(target_list, str(agent.id))
+            owned = frozenset(columns_for_node(target_list, str(node.id)))
             column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id, owned=owned)
             if column_key not in column_keys:
                 # The URL names the column; the CONFIG names what the
@@ -245,7 +270,11 @@ class FillAdmissionService(AdmissionBase):
             # at its N, and nothing behind it has been fetched.
             targets = islice(remaining, rows) if rows else remaining
             fill = self._open_fill(
-                target_list, agent=agent, resolved_config=resolved_config, column_keys=column_keys, targets=targets
+                target_list,
+                node=node,
+                resolved_config=resolved_config,
+                column_keys=column_keys,
+                targets=targets,
             )
             if not fill.confirmed_row_count:
                 # EMPTY is diagnosed first. A finished column consents
@@ -282,10 +311,10 @@ class FillAdmissionService(AdmissionBase):
             claim_columns(
                 locked,
                 config=resolved_config,
-                agent_id=str(agent.id),
+                node_id=str(node.id),
                 fill_run_id=str(fill.id),
                 account_id=self.account_id,
-                owned=owned_keys(locked, str(agent.id)),
+                owned=frozenset(columns_for_node(locked, str(node.id))),
             )
         return fill
 
@@ -293,13 +322,18 @@ class FillAdmissionService(AdmissionBase):
         self,
         target_list: List,
         *,
-        agent: Agent,
+        node: Node,
         resolved_config: AgentConfig,
         column_keys: list[str],
         targets: Iterator[tuple[str, int]],
     ) -> Fill:
         """Everything after the DECISION, shared by both admission
         paths: the fill row carrying its frozen config, and the QUEUE.
+        The node is the one binding both callers hold (admit minted it,
+        refill looked it up): the fill's agent is read off it, and every
+        task is a run of it. `resolved_config` still rides separately,
+        because it is the PROBED config the fill freezes (the roster
+        agent's current one, or the quick tab's draft), never the node's.
         Runs UNLOCKED, inside the caller's transaction: the
         transaction is what makes the column and the fill land
         together; the lock comes later and covers only the writes that
@@ -324,7 +358,7 @@ class FillAdmissionService(AdmissionBase):
             account_id=self.account_id,
             user_id=self.user_id,
             list_id=str(target_list.id),
-            agent_id=str(agent.id),
+            agent_id=agent_id_of(node),
             column_keys=column_keys,
             config_snapshot=resolved_config.model_dump(),
             config_fingerprint=config_fingerprint(resolved_config),
@@ -334,8 +368,8 @@ class FillAdmissionService(AdmissionBase):
         cap = free_provider_row_cap(resolved_config)
         # Tasks are born READY (the manual provisioner moves READY ->
         # QUEUED when it publishes), stamped for the reclaim scan/audit from
-        # the start, carrying the fill's agent so a fill-backed task is
-        # self-describing like an autofill one.
+        # the start, and carrying the node they are a run of: the one
+        # grain every lane shares.
         now = timezone.now()
         # strict=False: the last page is short whenever the target count
         # is not a multiple of the batch, which is the normal case.
@@ -354,7 +388,7 @@ class FillAdmissionService(AdmissionBase):
                     NodeRun(
                         account_id=self.account_id,
                         fill_run_id=str(fill.id),
-                        agent_id=str(agent.id),
+                        node_id=str(node.id),
                         row_id=row_id,
                         list_id=fill.list_id,
                         position=position,
@@ -372,7 +406,7 @@ class FillAdmissionService(AdmissionBase):
 
         # No columns write here. The caller claims them AFTER this
         # returns, under the List lock, in one write that carries both
-        # the agent link and this fill's id: the queue insert is the
+        # the node link and this fill's id: the queue insert is the
         # expensive part of admission and it has no business happening
         # between two writes to the same array.
 
@@ -393,7 +427,7 @@ class FillAdmissionService(AdmissionBase):
         if config is not None:
             return None, config
         # Roster-only on purpose: an ephemeral row belongs to exactly
-        # one column, so a second column can never point at it.
+        # one node, so a second ADMISSION can never reach it.
         agent = self.agents.get(agent_id)
         if agent.provider_retired:
             raise ProviderRetiredRefusal()

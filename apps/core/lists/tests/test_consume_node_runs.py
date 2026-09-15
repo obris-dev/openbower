@@ -19,12 +19,14 @@ from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import TestCase, override_settings
 
+from agents.models import Agent
 from openbower_schema.fills import CellRunResult
 
 from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus, StoredCellState
-from ..models import List, ListCellState, ListRow, NodeRun
+from ..models import List, ListCellState, ListRow, Node, NodeRun
 from ..operations.consume_node_runs import NodeRunConsumer, handle_node_run
 from ..services.fill_processing import ProcessNodeRun
+from ..services.workflows import agent_id_of
 from .test_fill_worker import _patches, answering_model, throttling_model
 from .test_node_runs import AutofillHarness
 
@@ -97,6 +99,79 @@ class ProcessNodeRunTests(AutofillHarness):
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.LIST_MISSING)
         self.assertFalse(ListCellState.objects.filter(row_id=row_id).exists())
+
+    def test_a_node_with_no_columns_left_settles_done_unrun(self) -> None:
+        sheet, task, row_id = self._one_ready_task("moved.co")
+        # The column was removed after the push: the node is inert (still
+        # a row, nothing binds to it), so there is nothing to run.
+        sheet.columns = [column for column in sheet.columns if not column.get("fill")]
+        sheet.save(update_fields=["columns", "updated_at"])
+
+        # A scripted model, not the unpatched one: under the test profile
+        # an unpatched run raises ModelUnavailable and settles DONE with an
+        # empty result, byte-identical to the skip. If the skip ever stops
+        # firing, this run REACHES the model and lands a non-empty result.
+        self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
+        self.assertFalse(ListCellState.objects.filter(row_id=row_id).exists())
+
+    def test_a_vanished_node_settles_done_unrun(self) -> None:
+        _, task, row_id = self._one_ready_task("nodeless.co")
+        # The column still points at the node, but the node row is gone:
+        # the agent is unreachable, so the task settles rather than lingers.
+        Node.objects.filter(id=task.node_id).delete()
+
+        # Same discriminator as above: a run that got past the node hop
+        # would reach this model and land a result. A gone node is
+        # corruption, so unlike a gone agent it must leave a trace.
+        with self.assertLogs("lists.services.fill_processing.processor", level="WARNING") as logs:
+            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+        self.assertIn(f"node {task.node_id} is gone", logs.output[0])
+
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
+        self.assertFalse(ListCellState.objects.filter(row_id=row_id).exists())
+
+    def test_a_vanished_agent_settles_done_unrun_and_silently(self) -> None:
+        _, task, row_id = self._one_ready_task("agentless.co")
+        # An agent delete leaves its columns orphaned on purpose, so this
+        # settle is the allowed shape, not corruption: no warning.
+        Agent.objects.filter(id=agent_id_of(Node.objects.get(id=task.node_id))).delete()
+
+        with self.assertNoLogs("lists.services.fill_processing.processor", level="WARNING"):
+            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
+        self.assertFalse(ListCellState.objects.filter(row_id=row_id).exists())
+
+    def test_a_crash_inside_the_run_parks_the_task_and_never_escapes(self) -> None:
+        _, task, row_id = self._one_ready_task("crash.co")
+        with (
+            patch("lists.operations.consume_node_runs.AutofillRun.process", side_effect=RuntimeError("boom")),
+            self.assertLogs("lists.operations.consume_node_runs", level="ERROR") as logs,
+        ):
+            self.assertEqual(handle_node_run(str(task.id), WORKER), "parked")
+        self.assertIn("crashed on attempt 1", logs.output[0])
+
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.attempts), (NodeRunStatus.READY, 1))
+        self.assertIsNotNone(task.not_before)
+        self.assertFalse(ListCellState.objects.filter(row_id=row_id).exists())
+
+    def test_a_crash_past_the_attempt_cap_settles_done_unrun(self) -> None:
+        _, task, _ = self._one_ready_task("crash.co")
+        NodeRun.objects.filter(id=task.id).update(attempts=NODE_RUN_ATTEMPTS)
+        with (
+            patch("lists.operations.consume_node_runs.AutofillRun.process", side_effect=RuntimeError("boom")),
+            self.assertLogs("lists.operations.consume_node_runs", level="ERROR"),
+        ):
+            self.assertEqual(handle_node_run(str(task.id), WORKER), "done")
+
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
 
     def test_a_transient_blank_parks_back_to_ready_with_a_backoff(self) -> None:
         _, task, row_id = self._one_ready_task("throttled.co")

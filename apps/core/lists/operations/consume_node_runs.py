@@ -25,7 +25,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import DatabaseError, connection
 
-from ..constants import NodeRunStatus
+from ..constants import FILL_RETRY_BACKOFF_SECONDS, NodeRunStatus
 from ..ingest.topics import AUTOFILL_RUNS
 from ..services import fill_progress
 from ..services.fill_processing import AutofillRun, FillBackedRun
@@ -55,8 +55,10 @@ def handle_node_run(task_id: str, worker_id: str) -> str:
     scan / another consumer got there first), "done" (settled terminally,
     with or without a value), "parked" (a retriable blank, back to READY
     with a backoff), or "row_missing" / "list_missing" (the row or its list
-    vanished). A transient failure inside the run PROPAGATES, so the offset
-    is not committed and the message redelivers."""
+    vanished). A database error PROPAGATES, so the offset is not committed
+    and the message redelivers; any other crash inside the run parks the
+    task (a retry with backoff) or, past the attempt cap, settles it DONE
+    unrun, so one bad task never takes the consumer down."""
     flow = NodeRunFlow(worker_id=worker_id)
     task = flow.claim(task_id)
     if task is None:
@@ -73,6 +75,26 @@ def handle_node_run(task_id: str, worker_id: str) -> str:
         if task.fill_run_id:
             fill_progress.try_finish(task.fill_run_id)
         return "row_missing"
+    except DatabaseError:
+        # Transient: the loop's own branch recovers the connection and
+        # leaves the offset uncommitted, so the message redelivers.
+        raise
+    except Exception:
+        # Anything else is a crash inside the run (a bug, a node whose
+        # config no longer parses, a kind the processor cannot run). The
+        # one process draining the queue must not die over one task, nor
+        # redeliver it forever: log the traceback, retry with the standard
+        # backoff while attempts remain, and settle DONE with no result
+        # once they are spent (the cell stays never-attempted; the failure
+        # is the run's, not the row's, so nothing is diagnosed on a cell).
+        logger.exception("node run %s crashed on attempt %d", task.id, task.attempts)
+        if flow.exhausted(task):
+            flow.settle(task.id, {}, status=NodeRunStatus.DONE)
+            if task.fill_run_id:
+                fill_progress.try_finish(task.fill_run_id)
+            return "done"
+        flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result={})
+        return "parked"
 
 
 class NodeRunConsumer:

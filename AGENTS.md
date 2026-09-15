@@ -48,7 +48,13 @@ auth + data services live in a separate private repo.
 - NO cascades: cross-model refs are id pointers, so the owning service
   deletes its own children in one transaction. A child model added
   without a line in its owner's delete is orphaned forever, invisible
-  to every surface that filters by its parent.
+  to every surface that filters by its parent. The one exception is a
+  child that settles itself terminally when its parent is gone (an
+  autofill run finds its row missing and ends as a ledger row, claimed
+  by a picker that never goes through the parent), and an account-level
+  singleton with no parent to be orphaned from (the bench node). Both
+  are named at the owner's delete, so a reader sees the choice rather
+  than a gap.
 - An extensible roster is a REGISTRY, never an enum: each member is
   a module that registers itself at its own bottom (register(...)),
   the roster is a directory walk in the app's AppConfig.ready(),
@@ -57,7 +63,11 @@ auth + data services live in a separate private repo.
   roster by a boot gate plus a parity pin, and any load-bearing
   ordering is a DECLARED field on the member's spec, never import
   order. Exemplars: agents tools, search providers, inference
-  providers.
+  providers, and lists node kinds, where the member IS a typed config
+  class carrying its own kind (KIND, DISPLAY, identity()), so a consumer
+  constructs an instance and works with it and the kind can never be
+  mismatched with its values; a string-keyed lookup exists only for the
+  genuinely dynamic read (a stored row whose kind is a column).
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
   command over an operation (the reclaim_node_runs command over

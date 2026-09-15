@@ -21,10 +21,13 @@ class NodeRun(AccountScopedModel):
     only honest answer to "what did this still owe", which a queue
     holding only what a planner had reached could not give.
 
-    A task with NO fill run (`fill_run_id` NULL) is the automatic path
-    (autofill): the same queue and the same worker, minus the consent a
-    Fill records. It has no Fill to read its list, user, or agent off,
-    so it carries its own `agent_id` and resolves the rest from its row.
+    Every task carries its `node_id` from birth: the node it is a run
+    of, fill-backed and automatic alike (a fill-backed task's node is
+    the column_agent node for its Fill's agent on the sheet; a TEST
+    task's is the account's bench node). A task with NO fill run
+    (`fill_run_id` NULL) is the automatic path (autofill): the same
+    queue and the same worker, minus the consent a Fill records,
+    resolving its list and user from its row.
 
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on ListCellState. No word appears in
@@ -40,22 +43,25 @@ class NodeRun(AccountScopedModel):
     to write on purpose."""
 
     # NULL on the automatic path (autofill): a task with no fill run has
-    # no Fill to read its list, user, or agent off, so it is
-    # self-describing (it carries `agent_id`; list and user resolve from
-    # the row). A fill-backed task sets this to its Fill's id.
+    # no Fill to read its list or user off, so it resolves them from its
+    # row. A fill-backed task sets this to its Fill's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    row_id = models.CharField(_("row id"), max_length=26)
+    # NULL on a TEST task: a bench row is inline (`fill.row_data[position]`)
+    # and no ListRow exists for it. NULLs are distinct under the
+    # (fill_run_id, row_id) key, so N inline rows never collide, where a
+    # blank string would cap a test fill at one task.
+    row_id = models.CharField(_("row id"), max_length=26, null=True, blank=True)
     # The list this task's row lives in, DENORMALIZED from the fill
     # (fill-backed) or the target sheet (autofill), so per-list
     # distribution and account scoping never need a join back to find it.
     # BLANK for a bench TEST fill, which points at no sheet by
     # construction, exactly as its Fill.list_id is.
     list_id = models.CharField(_("list id"), max_length=26, blank=True, default="")
-    # The agent whose column set this task runs, in ONE run (an agent
-    # produces all its outputs together). Set on the automatic path
-    # (autofill), which has no Fill to read it from; NULL on a
-    # fill-backed task, which reads its agent off the Fill.
-    agent_id = models.CharField(_("agent id"), max_length=26, null=True, blank=True)
+    # The node this task is a run of, set on every lane at birth. A
+    # column_agent node runs its agent's whole column set in ONE run (an
+    # agent produces all its outputs together), so one task per
+    # (row, node) is the grain.
+    node_id = models.CharField(_("node id"), max_length=26)
     # WHERE this task's row lives, by kind. NORMAL: the row's sheet
     # position, 1-based and snapshot-coherent (positions are
     # append-only), so claims ordered by it march TOP TO BOTTOM down
@@ -117,10 +123,10 @@ class NodeRun(AccountScopedModel):
             # automatic path is deduped by its own key below.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
             # The automatic path's idempotency: one autofill run per row
-            # per agent (one run fills that agent's whole column set), so
+            # per node (one run fills that node's whole column set), so
             # re-enqueueing a row's autofill is a no-op.
             models.UniqueConstraint(
-                fields=["row_id", "agent_id"],
+                fields=["row_id", "node_id"],
                 condition=models.Q(fill_run_id__isnull=True),
                 name="node_run_autofill_uniq",
             ),

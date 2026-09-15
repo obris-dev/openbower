@@ -4,9 +4,10 @@ resolving by id; the consume operation is only the loop that feeds it.
 
 Two lanes, one shape:
 
-- AutofillRun (`fill_run_id` NULL): resolves the row's list, the agent's
-  config, and the agent's column set LIVE. A gone row or list settles
-  ROW_MISSING / LIST_MISSING; a config-tier failure settles the ONE task.
+- AutofillRun (`fill_run_id` NULL): resolves the row's list, the node's
+  column set, and (through the node) the agent's config LIVE. A gone row
+  or list settles ROW_MISSING / LIST_MISSING; a config-tier failure
+  settles the ONE task.
 
 - FillBackedRun (`fill_run_id` set): rebuilds the fill's FROZEN config and
   landing context, runs the claim-time model gate (a config-tier refusal
@@ -42,6 +43,7 @@ from ...models import Fill, List, ListRow
 from .. import fill_progress
 from ..fingerprint import config_fingerprint
 from ..node_runs import NodeRunFlow
+from ..workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node
 from .cell_run import run_cell
 from .landing import LandingContext, land_row
 
@@ -76,7 +78,7 @@ class ProcessNodeRun:
 
     def _settle_done(self) -> None:
         """Settle DONE with no result: the run was skipped (nothing to
-        fill, a gone agent, a config-tier refusal), so the cell stays
+        fill, a gone node or agent, a config-tier refusal), so the cell stays
         never-attempted rather than diagnosed."""
         self.flow.settle(self.task.id, status=NodeRunStatus.DONE, result={})
 
@@ -128,19 +130,24 @@ class AutofillRun(ProcessNodeRun):
         if target_list is None:
             self.flow.settle(task.id, status=NodeRunStatus.LIST_MISSING, result={})
             return "list_missing"
-        # The agent's column set, resolved live: empty means the agent no
-        # longer fills any column here (removed or reassigned), so there is
-        # nothing to run; settle so the task does not linger.
-        column_keys = tuple(
-            column["key"]
-            for column in target_list.columns
-            if column.get("fill") and column["fill"].get("agent_id") == task.agent_id
-        )
+        # The node's column set, resolved live: empty means the node no
+        # longer fills any column here (its columns were removed), so there
+        # is nothing to run; settle so the task does not linger.
+        column_keys = columns_for_node(target_list, task.node_id)
         if not column_keys:
             self._settle_done()
             return "done"
         try:
-            agent = AgentService(account_id=task.account_id).get_for_fill(task.agent_id)
+            node = WorkflowService(account_id=task.account_id).get_node(task.node_id)
+        except NodeNotFound:
+            # Nodes die only with their list, so a column still pointing at
+            # one is corruption; settle rather than crash-loop the consumer,
+            # but say so, unlike the allowed agent orphaning below.
+            logger.warning("autofill: node %s is gone; settling task %s unrun", task.node_id, task.id)
+            self._settle_done()
+            return "done"
+        try:
+            agent = AgentService(account_id=task.account_id).get_for_fill(agent_id_of(node))
         except AgentNotFound:
             self._settle_done()
             return "done"
@@ -148,7 +155,7 @@ class AutofillRun(ProcessNodeRun):
             # A retired provider cannot run its stored config; settle rather
             # than burn attempts on a run that will never succeed. The cell
             # stays never-attempted, targetable later.
-            logger.warning("autofill: agent %s provider retired; settling task %s unrun", task.agent_id, task.id)
+            logger.warning("autofill: node %s provider retired; settling task %s unrun", task.node_id, task.id)
             self._settle_done()
             return "done"
         config = agent.config()
@@ -168,7 +175,7 @@ class AutofillRun(ProcessNodeRun):
             # Config-tier: the agent cannot run at all (no model, an unknown
             # tool). It fails every row identically, so retrying buys
             # nothing; settle and move on.
-            logger.warning("autofill: agent %s unrunnable (%s); settling task %s", task.agent_id, e, task.id)
+            logger.warning("autofill: node %s unrunnable (%s); settling task %s", task.node_id, e, task.id)
             self._settle_done()
             return "done"
         result = to_result(run)

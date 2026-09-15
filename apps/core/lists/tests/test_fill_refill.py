@@ -23,7 +23,16 @@ from ..constants import FillStatus, StoredCellState
 from ..models import Fill, ListCellState, NodeRun
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
-from .fill_helpers import FILLED_VALUE, row_value, settle, settle_all, targeted, targeted_pairs, targeted_positions
+from .fill_helpers import (
+    FILLED_VALUE,
+    fill_agent_id,
+    row_value,
+    settle,
+    settle_all,
+    targeted,
+    targeted_pairs,
+    targeted_positions,
+)
 
 # Request-shaped config (the serializer derives the output key).
 CONFIG = {
@@ -680,7 +689,8 @@ class OutputDriftTests(RefillTestCase):
         self.assertIn("phantom", keys)
         self.assertIn("phantom", resp.json()["column_keys"])
         appended = next(column for column in self.sheet.columns if column["key"] == "phantom")
-        self.assertEqual(appended["fill"], {"agent_id": str(agent.id), "current_fill_id": resp.json()["id"]})
+        self.assertEqual(appended["fill"]["current_fill_id"], resp.json()["id"])
+        self.assertEqual(fill_agent_id(appended["fill"]), str(agent.id))
 
     def test_a_refill_still_runs_over_its_own_answered_column(self):
         # The collision rule must not read a fill's OWN previous

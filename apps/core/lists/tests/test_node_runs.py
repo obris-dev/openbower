@@ -48,8 +48,9 @@ class AutofillHarness(TransactionTestCase):
     def _ai_sheet(self, *, rows: int = 2):
         """A sheet with one AI column bound to an agent, built the real
         way: ListService.create + admission (which mints the ephemeral
-        agent and stamps the column's `fill.agent_id`). Returns the
-        sheet, the agent id the processor will resolve, and the fill."""
+        agent, its node, and stamps the column's `fill.node_id`).
+        Returns the sheet, the node id the processor will resolve, and
+        the fill."""
         sheet = self.lists.create(
             owner_id=USER,
             label="Prospects",
@@ -62,7 +63,8 @@ class AutofillHarness(TransactionTestCase):
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )
         sheet.refresh_from_db()
-        return sheet, fill.agent_id, fill
+        node_id = next(column["fill"]["node_id"] for column in sheet.columns if column.get("fill"))
+        return sheet, node_id, fill
 
     def _plain_sheet(self):
         return self.lists.create(
@@ -91,21 +93,21 @@ class AutofillHarness(TransactionTestCase):
 
 
 class EnqueueTests(AutofillHarness):
-    def test_a_push_to_an_ai_sheet_enqueues_one_ready_task_per_row_and_agent(self) -> None:
-        sheet, agent_id, _ = self._ai_sheet()
+    def test_a_push_to_an_ai_sheet_enqueues_one_ready_task_per_row_and_node(self) -> None:
+        sheet, node_id, _ = self._ai_sheet()
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
 
         self.assertEqual(self._push(sheet, [{"company": "newco.com"}, {"company": "newco2.io"}]), "applied")
 
         new_ids = self._new_row_ids(sheet, before)
         tasks = list(self._null_run_tasks())
-        # One task per (pushed row, distinct agent among the AI columns):
-        # two rows, one agent => exactly two null-run tasks, born READY.
+        # One task per (pushed row, distinct node among the AI columns):
+        # two rows, one node => exactly two null-run tasks, born READY.
         self.assertEqual(len(tasks), 2)
         self.assertEqual({t.row_id for t in tasks}, new_ids)
         for task in tasks:
             self.assertIsNone(task.fill_run_id)
-            self.assertEqual(task.agent_id, agent_id)
+            self.assertEqual(task.node_id, node_id)
             self.assertEqual(task.account_id, ACCOUNT)
             # Denormalized from the target sheet: an autofill run has no
             # Fill, so its list comes off the List it was pushed to.
@@ -113,8 +115,8 @@ class EnqueueTests(AutofillHarness):
             self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)
 
-    def test_a_push_that_overrides_an_ai_column_skips_that_agent(self) -> None:
-        sheet, agent_id, _ = self._ai_sheet()
+    def test_a_push_that_overrides_an_ai_column_skips_that_node(self) -> None:
+        sheet, node_id, _ = self._ai_sheet()
         ai_key = next(c["key"] for c in sheet.columns if c.get("fill"))
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
 
@@ -126,12 +128,12 @@ class EnqueueTests(AutofillHarness):
 
         tasks = list(self._null_run_tasks())
         # Only the row that left the AI column blank is owed a fill; the
-        # overridden agent gets no task.
+        # overridden node gets no task.
         self.assertEqual(len(tasks), 1)
         (task,) = tasks
         blank_row = ListRow.objects.get(list_id=str(sheet.id), data__company="blank.com")
         self.assertEqual(task.row_id, str(blank_row.id))
-        self.assertEqual(task.agent_id, agent_id)
+        self.assertEqual(task.node_id, node_id)
 
         # The pushed value persisted as the producer sent it.
         override_row = ListRow.objects.get(list_id=str(sheet.id), data__company="override.com")
@@ -139,41 +141,61 @@ class EnqueueTests(AutofillHarness):
         self.assertEqual(self._new_row_ids(sheet, before), {str(blank_row.id), str(override_row.id)})
 
     def test_a_multi_column_agent_skips_only_when_every_column_is_filled(self) -> None:
-        # An agent owns TWO columns. A row that fills BOTH is skipped (no
+        # One node (an agent) owns TWO columns. A row that fills BOTH is skipped (no
         # work left); a row that leaves one blank STILL enqueues. This pins
         # the all() semantics a single-column fixture cannot (there
         # all([x]) == any([x]) == x). A "0" counts as filled (it strips
         # truthy), never blank.
-        agent_id = "01AG" + "A" * 22
+        node_id = "01ND" + "A" * 22
         sheet = self.lists.create(
             owner_id=USER,
             label="Multi",
             columns=[
                 {"key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "fill": {"agent_id": agent_id}},
-                {"key": "b", "label": "B", "type": "text", "fill": {"agent_id": agent_id}},
+                {"key": "a", "label": "A", "type": "text", "fill": {"node_id": node_id}},
+                {"key": "b", "label": "B", "type": "text", "fill": {"node_id": node_id}},
             ],
             origin="manual",
         )
         full, partial = self.lists.add_rows(
             sheet,
             [
-                {"company": "full.co", "a": "0", "b": "y"},  # both of the agent's columns filled ("0" counts) -> skip
-                {"company": "partial.co", "a": "x"},  # b blank -> still owes the agent
+                {"company": "full.co", "a": "0", "b": "y"},  # both of the node's columns filled ("0" counts) -> skip
+                {"company": "partial.co", "a": "x"},  # b blank -> still owes the node
             ],
         )
         sheet.refresh_from_db()
         created = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=[full, partial])
-        self.assertEqual(created, 1)  # only the partial row's agent has work
+        self.assertEqual(created, 1)  # only the partial row's node has work
         self.assertEqual(self._null_run_tasks().filter(row_id=str(partial.id)).count(), 1)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(full.id)).count(), 0)
+
+    def test_a_push_to_a_two_node_sheet_enqueues_one_task_per_node_for_the_row(self) -> None:
+        # Two distinct nodes on one sheet: the one shape where a row owes
+        # more than one task, and the only one the task-id message key
+        # touches. Both land under the (row, node) key.
+        node_a, node_b = "01ND" + "A" * 22, "01ND" + "B" * 22
+        sheet = self.lists.create(
+            owner_id=USER,
+            label="Two nodes",
+            columns=[
+                {"key": "company", "label": "Company", "type": "text"},
+                {"key": "a", "label": "A", "type": "text", "fill": {"node_id": node_a}},
+                {"key": "b", "label": "B", "type": "text", "fill": {"node_id": node_b}},
+            ],
+            origin="manual",
+        )
+        before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
+        self.assertEqual(self._push(sheet, [{"company": "both.co"}]), "applied")
+        [row_id] = self._new_row_ids(sheet, before)
+        self.assertEqual({t.node_id for t in self._null_run_tasks().filter(row_id=row_id)}, {node_a, node_b})
 
     def test_a_push_to_a_sheet_with_no_ai_columns_enqueues_nothing(self) -> None:
         plain = self._plain_sheet()
         self.assertEqual(self._push(plain, [{"company": "newco.com"}]), "applied")
         self.assertEqual(self._null_run_tasks().count(), 0)
 
-    def test_re_enqueue_of_the_same_row_and_agent_is_a_no_op(self) -> None:
+    def test_re_enqueue_of_the_same_row_and_node_is_a_no_op(self) -> None:
         sheet, _, _ = self._ai_sheet()
         created = self.lists.add_rows(sheet, [{"company": "dupe.com"}])
         sheet.refresh_from_db()
@@ -182,7 +204,7 @@ class EnqueueTests(AutofillHarness):
         self.assertEqual(first, 1)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
 
-        # The partial unique (row_id, agent_id) WHERE fill_run_id IS NULL
+        # The partial unique (row_id, node_id) WHERE fill_run_id IS NULL
         # makes a second enqueue a no-op (bulk_create ignore_conflicts).
         autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=created)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
@@ -206,11 +228,11 @@ class ProvisionerTests(AutofillHarness):
         producer.flush.return_value = 0  # the broker acked
         self._run_provisioner(producer)
 
-        # Published: task id in the value, keyed by row id, on the topic.
+        # Published: task id in the value, keyed by task id, on the topic.
         producer.produce.assert_called_once()
         args, kwargs = producer.produce.call_args
         self.assertEqual(args[0], "list.fill.autofill")
-        self.assertEqual(kwargs["key"], row_id.encode())
+        self.assertEqual(kwargs["key"], str(task.id).encode())
         self.assertEqual(json.loads(kwargs["value"])["task_id"], str(task.id))
         producer.flush.assert_called_once()
 

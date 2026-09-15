@@ -42,18 +42,22 @@ def derive_column_key(label: str, *, key: str = "") -> str:
     what an output key MEANS by matching it against the sheet's keys,
     so a second derivation anywhere does not produce a second key, it
     changes which column an output is judged against. What that match
-    then does is FillAdmissionService._resolve_columns's rule, stated
-    there and nowhere else. The web mirrors this one function
+    then does is fill admission's resolve_columns rule, stated there
+    and nowhere else. The web mirrors this one function
     (_components/agent-config/lib/output-key.ts)."""
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 
 class ColumnFill(BaseModel):
-    """A column's fill linkage: present exactly on AI columns (the
-    agent that fills it; the ephemeral-vs-roster custody rides the
-    agent, not the column)."""
+    """A column's fill linkage: present exactly on AI columns. The
+    column binds to the NODE that fills it; the agent, and its
+    ephemeral-vs-roster custody, hangs off the node."""
 
-    agent_id: str
+    node_id: str = Field(
+        description="The node that fills this column (today, always an agent bound to this sheet). "
+        "Per-row work keys on it; the agent hangs off the node, so editing what fills a "
+        "column goes through the column, never this id.",
+    )
     current_fill_id: str = Field(
         default="",
         description="The fill run that speaks for this column, stored here when it opens. "

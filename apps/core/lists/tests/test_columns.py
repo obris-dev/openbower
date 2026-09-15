@@ -19,9 +19,10 @@ from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import ListSummary
 
 from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
-from ..models import Fill, ListCellState, ListRow
+from ..models import Fill, ListCellState, ListRow, Node
 from ..services.columns import ColumnKeysNotUnique, ColumnOrderStale, ColumnService
 from ..services.lists import ListService
+from ..services.workflows import WorkflowService
 
 
 def _config() -> AgentConfig:
@@ -123,7 +124,7 @@ class ColumnOrderTests(TestCase):
             # column dicts are carried across rather than rebuilt.
             columns=[
                 {"key": "company", "label": "Company Name", "type": "text"},
-                {"key": "contact", "label": "Primary Contact", "type": "email", "fill": {"agent_id": "01AGENT"}},
+                {"key": "contact", "label": "Primary Contact", "type": "email", "fill": {"node_id": "01NODE"}},
                 {"key": "notes", "label": "Free Notes", "type": "text"},
             ],
             origin="manual",
@@ -233,11 +234,19 @@ class ColumnDeleteTests(TestCase):
             label="Prospects",
             columns=[
                 {"key": "company", "label": "Company", "type": "text"},
-                {"key": "contact_name", "label": "Contact", "type": "text", "fill": {"agent_id": str(self.agent.id)}},
-                {"key": "contact_url", "label": "Profile", "type": "url", "fill": {"agent_id": str(self.agent.id)}},
+                {"key": "contact_name", "label": "Contact", "type": "text"},
+                {"key": "contact_url", "label": "Profile", "type": "url"},
             ],
             origin="manual",
         )
+        # The node binds the agent to the sheet the way admission does;
+        # both columns then point at it (one multi-output agent, one node).
+        self.node = WorkflowService(account_id=TEST_IDENTITY["account_id"]).get_or_create_column_agent_node(
+            self.sheet, agent_id=str(self.agent.id)
+        )
+        for column in self.sheet.columns[1:]:
+            column["fill"] = {"node_id": str(self.node.id)}
+        self.sheet.save(update_fields=["columns", "updated_at"])
         self.lists.add_rows(
             self.sheet,
             [
@@ -297,6 +306,18 @@ class ColumnDeleteTests(TestCase):
         self.client.delete(self.url("contact_url"))
         self.assertFalse(Agent.objects.filter(id=self.agent.id).exists())
 
+    def test_a_column_whose_node_is_gone_still_deletes(self) -> None:
+        # Corruption (nodes die only with their list) must not make a
+        # column undeletable: the tidy lands and the orphan agent is logged.
+        Node.objects.filter(id=self.node.id).delete()
+        self.assertEqual(self.client.delete(self.url("contact_name")).status_code, 200)
+        with self.assertLogs("lists.services.columns", level="WARNING") as logs:
+            resp = self.client.delete(self.url("contact_url"))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self.columns(), ["company"])
+        self.assertIn(f"node {self.node.id} is gone", logs.output[0])
+        self.assertTrue(Agent.objects.filter(id=self.agent.id).exists())
+
     def test_a_live_fill_touching_the_column_is_cancelled(self) -> None:
         fill = Fill.objects.create(
             account_id=TEST_IDENTITY["account_id"],
@@ -331,7 +352,7 @@ class ColumnDeleteTests(TestCase):
         column = next(c for c in self.sheet.columns if c["key"] == "contact_name")
         self.assertEqual(column["label"], "Decision maker")
         # The key stays, so the cells it holds stay reachable.
-        self.assertEqual(column["fill"], {"agent_id": str(self.agent.id)})
+        self.assertEqual(column["fill"], {"node_id": str(self.node.id)})
         for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
             self.assertIn("contact_name", row.data)
 

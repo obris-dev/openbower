@@ -32,7 +32,7 @@ class ProvisionIndexPlanTests(TestCase):
                 NodeRun(
                     account_id=ACCOUNT,
                     fill_run_id=None,
-                    agent_id="01AGENT" + "0" * 19,
+                    node_id="01NODEA" + "0" * 19,
                     row_id=f"01ROWA{i:020d}",
                     list_id=f"01LIST{i % 10:020d}",
                     position=i,
@@ -45,7 +45,7 @@ class ProvisionIndexPlanTests(TestCase):
                 NodeRun(
                     account_id=ACCOUNT,
                     fill_run_id=FILL,
-                    agent_id="",
+                    node_id="01NODEM" + "0" * 19,
                     row_id=f"01ROWM{i:020d}",
                     list_id="01LIST" + "9" * 20,
                     position=i,
