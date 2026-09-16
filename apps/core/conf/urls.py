@@ -16,4 +16,5 @@ urlpatterns = [
     api_include(f"{_V1}/lists", "lists.urls"),
     api_include(f"{_V1}/fills", "lists.fills_urls"),
     api_include(f"{_V1}/agents", "agents.urls"),
+    api_include(f"{_V1}/webhooks", "webhooks.urls"),
 ]

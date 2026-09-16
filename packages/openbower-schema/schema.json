@@ -1501,6 +1501,238 @@
       ],
       "title": "SearchToolCall",
       "type": "object"
+    },
+    "WebhookDeliveriesPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/WebhookDeliveryWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "WebhookDeliveriesPage",
+      "type": "object"
+    },
+    "WebhookDeliveryWire": {
+      "description": "One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "destination_id": {
+          "title": "Destination Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "error": {
+          "default": "",
+          "description": "What went wrong, in the user's words; empty on ok.",
+          "title": "Error",
+          "type": "string"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The receiver's status code; null when no answer came.",
+          "title": "Http Status"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "test",
+            "digest"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "response_excerpt": {
+          "default": "",
+          "description": "The head of the receiver's answer, kept only when it was not a 2xx.",
+          "maxLength": 1024,
+          "title": "Response Excerpt",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "transient",
+            "rejected",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "destination_id",
+        "kind",
+        "status",
+        "created_at"
+      ],
+      "title": "WebhookDeliveryWire",
+      "type": "object"
+    },
+    "WebhookDestinationCreated": {
+      "description": "The create response: the ONE time the signing secret is on the\nwire. It is minted server-side, stored encrypted, and never returned\nagain; a lost secret means deleting the destination and adding it\nagain.",
+      "properties": {
+        "destination": {
+          "$ref": "#/$defs/WebhookDestinationWire"
+        },
+        "signing_secret": {
+          "title": "Signing Secret",
+          "type": "string"
+        }
+      },
+      "required": [
+        "destination",
+        "signing_secret"
+      ],
+      "title": "WebhookDestinationCreated",
+      "type": "object"
+    },
+    "WebhookDestinationWire": {
+      "description": "A place deliveries go. Header VALUES and the signing secret never\nride here; `header_names` is all the roster shows.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "header_names": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Header Names",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 128,
+          "title": "Label",
+          "type": "string"
+        },
+        "last_delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebhookDeliveryWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The newest delivery on record, the destination's health; null before any."
+        },
+        "url": {
+          "maxLength": 2048,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "url",
+        "created_at"
+      ],
+      "title": "WebhookDestinationWire",
+      "type": "object"
+    },
+    "WebhookDestinationsList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/WebhookDestinationWire"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "WebhookDestinationsList",
+      "type": "object"
+    },
+    "WebhookEnvelope": {
+      "description": "What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme. A retried delivery carries a NEW id; a\ndigest's items each carry their own dedup key, which is what a\nreceiver of batches deduplicates on.",
+      "properties": {
+        "data": {
+          "additionalProperties": true,
+          "title": "Data",
+          "type": "object"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "test",
+            "digest"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "timestamp",
+        "data"
+      ],
+      "title": "WebhookEnvelope",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1508,8 +1740,23 @@
   "x-constants": {
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_TOOL_CALLS": 6,
+    "MAX_WEBHOOK_DESTINATIONS": 32,
+    "MAX_WEBHOOK_HEADERS": 8,
     "NODE_RUN_ATTEMPTS": 4,
     "RESERVED_OUTPUT_MARKER": "_bwr_",
+    "RESERVED_WEBHOOK_HEADER_NAMES": [
+      "accept-encoding",
+      "connection",
+      "content-encoding",
+      "content-length",
+      "content-type",
+      "host",
+      "transfer-encoding",
+      "user-agent",
+      "webhook-id",
+      "webhook-signature",
+      "webhook-timestamp"
+    ],
     "ROW_LEASE_STALE_SECONDS": 256,
     "SEARCH_PROVIDER_CHOICES": [
       "duckduckgo",
@@ -1540,7 +1787,16 @@
         "unreachable",
         "error"
       ]
-    }
+    },
+    "WEBHOOK_HEADER_NAME_GRAMMAR": "^[A-Za-z0-9-]+$",
+    "WEBHOOK_HEADER_NAME_MAX_LENGTH": 128,
+    "WEBHOOK_HEADER_VALUE_GRAMMAR": "^[\\x20-\\x7E\\t]*$",
+    "WEBHOOK_HEADER_VALUE_MAX_LENGTH": 2048,
+    "WEBHOOK_ID_HEADER": "webhook-id",
+    "WEBHOOK_SECRET_PREFIX": "whsec_",
+    "WEBHOOK_SIGNATURE_HEADER": "webhook-signature",
+    "WEBHOOK_SIGNATURE_VERSION": "v1",
+    "WEBHOOK_TIMESTAMP_HEADER": "webhook-timestamp"
   },
   "x-reserved-output-keys": [
     "construct",

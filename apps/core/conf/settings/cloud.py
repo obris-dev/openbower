@@ -75,6 +75,11 @@ SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false")
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", "false")
 
+# Outbound webhooks target URLs users typed: no plain http, and no host
+# that is or resolves to an internal address.
+WEBHOOK_REQUIRE_HTTPS = env_bool("WEBHOOK_REQUIRE_HTTPS", "true")
+WEBHOOK_BLOCK_PRIVATE_IPS = env_bool("WEBHOOK_BLOCK_PRIVATE_IPS", "true")
+
 # The general needs-attention follow-up: hosted users cannot read
 # logs, so the operator names their support channel (SUPPORT_HINT),
 # defaulting to ours. Bounded LOUDLY here: it rides inside bounded

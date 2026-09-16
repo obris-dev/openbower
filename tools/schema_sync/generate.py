@@ -44,6 +44,11 @@ from openbower_schema import (
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookDeliveriesPage,
+    WebhookDestinationCreated,
+    WebhookDestinationsList,
+    WebhookDestinationWire,
+    WebhookEnvelope,
 )
 from openbower_schema.agents import (
     MAX_TOOL_CALLS,
@@ -59,6 +64,20 @@ from openbower_schema.fills import (
     NODE_RUN_ATTEMPTS,
     ROW_LEASE_STALE_SECONDS,
     SETTLED_CELL_STATES,
+)
+from openbower_schema.webhooks import (
+    MAX_WEBHOOK_DESTINATIONS,
+    MAX_WEBHOOK_HEADERS,
+    RESERVED_WEBHOOK_HEADER_NAMES,
+    WEBHOOK_HEADER_NAME_GRAMMAR,
+    WEBHOOK_HEADER_NAME_MAX_LENGTH,
+    WEBHOOK_HEADER_VALUE_GRAMMAR,
+    WEBHOOK_HEADER_VALUE_MAX_LENGTH,
+    WEBHOOK_ID_HEADER,
+    WEBHOOK_SECRET_PREFIX,
+    WEBHOOK_SIGNATURE_HEADER,
+    WEBHOOK_SIGNATURE_VERSION,
+    WEBHOOK_TIMESTAMP_HEADER,
 )
 
 # The models projected into the contract: exactly the RESPONSE ROOTS
@@ -84,6 +103,13 @@ CONTRACT_MODELS: list[type[Any]] = [
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookDeliveriesPage,
+    WebhookDestinationCreated,
+    WebhookDestinationsList,
+    WebhookDestinationWire,
+    # Not a response root: the body a RECEIVER validates, listed so
+    # the contract documents what it sends.
+    WebhookEnvelope,
 ]
 
 # The committed artifact, in the schema package it belongs to. Anchored to this
@@ -131,6 +157,22 @@ def build_schema() -> dict[str, Any]:
             "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
             "TEST_KEY_MAX_LENGTH": TEST_KEY_MAX_LENGTH,
             "TEST_VALUE_MAX_LENGTH": TEST_VALUE_MAX_LENGTH,
+            # Header facts have no wire field (values never ride the
+            # wire), so the client's header grammar mirrors these.
+            "MAX_WEBHOOK_DESTINATIONS": MAX_WEBHOOK_DESTINATIONS,
+            "MAX_WEBHOOK_HEADERS": MAX_WEBHOOK_HEADERS,
+            "RESERVED_WEBHOOK_HEADER_NAMES": list(RESERVED_WEBHOOK_HEADER_NAMES),
+            "WEBHOOK_HEADER_NAME_GRAMMAR": WEBHOOK_HEADER_NAME_GRAMMAR,
+            "WEBHOOK_HEADER_NAME_MAX_LENGTH": WEBHOOK_HEADER_NAME_MAX_LENGTH,
+            "WEBHOOK_HEADER_VALUE_GRAMMAR": WEBHOOK_HEADER_VALUE_GRAMMAR,
+            "WEBHOOK_HEADER_VALUE_MAX_LENGTH": WEBHOOK_HEADER_VALUE_MAX_LENGTH,
+            # The signature scheme's names, so the verify guide the
+            # client renders reads them rather than retyping them.
+            "WEBHOOK_ID_HEADER": WEBHOOK_ID_HEADER,
+            "WEBHOOK_TIMESTAMP_HEADER": WEBHOOK_TIMESTAMP_HEADER,
+            "WEBHOOK_SIGNATURE_HEADER": WEBHOOK_SIGNATURE_HEADER,
+            "WEBHOOK_SIGNATURE_VERSION": WEBHOOK_SIGNATURE_VERSION,
+            "WEBHOOK_SECRET_PREFIX": WEBHOOK_SECRET_PREFIX,
         },
     }
 

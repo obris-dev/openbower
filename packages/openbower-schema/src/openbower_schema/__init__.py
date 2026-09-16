@@ -45,6 +45,14 @@ from .lists import (
     ListSummary,
     RowsAdded,
 )
+from .webhooks import (
+    WebhookDeliveriesPage,
+    WebhookDeliveryWire,
+    WebhookDestinationCreated,
+    WebhookDestinationsList,
+    WebhookDestinationWire,
+    WebhookEnvelope,
+)
 
 __all__ = [
     "AgentCatalog",
@@ -79,4 +87,10 @@ __all__ = [
     "LookalikeItem",
     "LookalikeListResponse",
     "RowsAdded",
+    "WebhookDeliveriesPage",
+    "WebhookDeliveryWire",
+    "WebhookDestinationCreated",
+    "WebhookDestinationWire",
+    "WebhookDestinationsList",
+    "WebhookEnvelope",
 ]

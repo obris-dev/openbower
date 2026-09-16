@@ -20,6 +20,8 @@ in depth, not the guard.
 
 from __future__ import annotations
 
+from openbower_kernel.batches import iter_id_pages
+
 from ..constants import FILL_WRITE_BATCH, StoredCellState
 from ..models import Fill, ListCellState
 
@@ -84,18 +86,9 @@ def uniform(fill: Fill, state: StoredCellState) -> dict[str, StoredCellState]:
 
 
 def _purge_in_pages(**lookup: str) -> None:
-    """Delete matching cell states a page at a time.
-
-    The page is what bounds MEMORY, so the ids are read one page at a
-    time rather than read in full and then sliced: reading them all
-    first makes the peak the whole id set, which is the cost the
-    paging exists to avoid. Each pass asks for the next
-    FILL_WRITE_BATCH rows that still match, so the loop ends when a
-    pass comes back empty."""
-    while True:
-        ids = list(ListCellState.objects.filter(**lookup).values_list("id", flat=True)[:FILL_WRITE_BATCH])
-        if not ids:
-            return
+    """Delete matching cell states a page at a time (the page bounds
+    memory; a deleted page never comes back)."""
+    for ids in iter_id_pages(ListCellState.objects.filter(**lookup), batch=FILL_WRITE_BATCH):
         ListCellState.objects.filter(id__in=ids).delete()
 
 
