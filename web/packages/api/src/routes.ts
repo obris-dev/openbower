@@ -46,6 +46,17 @@ export const apiRoutes = {
     // GET / PATCH / DELETE one agent.
     detail: (id: string) => `/${API_VERSION}/agents/${id}`,
   },
+  webhooks: {
+    // GET the roster / POST create (the create response carries the
+    // signing secret once).
+    index: `/${API_VERSION}/webhooks`,
+    // GET / PATCH / DELETE one destination.
+    detail: (id: string) => `/${API_VERSION}/webhooks/${id}`,
+    // POST: one signed test delivery, sent now; 200 with the delivery.
+    test: (id: string) => `/${API_VERSION}/webhooks/${id}/test`,
+    // GET: keyset deliveries by -id (?after=&limit=).
+    deliveries: (id: string) => `/${API_VERSION}/webhooks/${id}/deliveries`,
+  },
   fills: {
     // POST a drafted config + one hand-fed row; 202 + a test-kind run to poll.
     test: `/${API_VERSION}/fills/test`,
@@ -96,6 +107,7 @@ export const authRoutes = {
 } as const;
 
 const LIST_PREFIX = "/lists";
+const SETTINGS_PREFIX = "/settings";
 
 // Next.js frontend paths the browser navigates to programmatically.
 export const webRoutes = {
@@ -109,6 +121,12 @@ export const webRoutes = {
   agents: "/agents",
   agentNew: "/agents/new",
   agent: (id: string) => `/agents/${id}`,
+  // The account area: a hub of sections, reached from the user menu.
+  settingsPrefix: SETTINGS_PREFIX,
+  settings: SETTINGS_PREFIX,
+  settingsAccount: `${SETTINGS_PREFIX}/account`,
+  settingsWebhooks: `${SETTINGS_PREFIX}/webhooks`,
+  settingsWebhook: (id: string) => `${SETTINGS_PREFIX}/webhooks/${id}`,
   login: "/login",
   signup: "/signup",
 } as const;

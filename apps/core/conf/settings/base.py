@@ -45,6 +45,7 @@ LOCAL_APPS = [
     "discover",
     "lists",
     "agents",
+    "webhooks",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -200,6 +201,19 @@ TOOL_WIRING = _TOOL_CONFIG.wiring
 # Timeout (seconds) for every server-to-IdP HTTP call (token exchange,
 # /me, refresh, revoke), so a hung IdP can't pin a worker.
 AUTH_HTTP_TIMEOUT_SECONDS = int(os.environ.get("AUTH_HTTP_TIMEOUT_SECONDS", "10"))
+
+# Outbound webhooks POST to a user-supplied URL. The timeout bounds each
+# socket READ of one delivery and, counted again from the request's
+# start, the drain of the answer (connect and write carry their own
+# short constant in webhooks.constants), so a receiver that accepts the
+# connection and never answers, or answers a byte at a time, releases
+# the worker within about twice this value plus the connect and write
+# phases. The two guard flags are OFF here because a self-hosted
+# instance legitimately targets internal hooks, and ON in the cloud
+# profile, where every URL is untrusted.
+WEBHOOK_TIMEOUT_SECONDS = int(os.environ.get("WEBHOOK_TIMEOUT_SECONDS", "15"))
+WEBHOOK_REQUIRE_HTTPS = env_bool("WEBHOOK_REQUIRE_HTTPS", "false")
+WEBHOOK_BLOCK_PRIVATE_IPS = env_bool("WEBHOOK_BLOCK_PRIVATE_IPS", "false")
 
 # Core as a RESOURCE SERVER for machine tokens (webhooks, CLI). Core holds
 # NO client secret: it is distributed software, so it verifies a token by

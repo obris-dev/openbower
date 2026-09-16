@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Bot, Compass, House } from "lucide-react";
 import { Sidebar, ThemeToggle } from "@bower/ui";
 import { logout, webRoutes } from "@bower/api";
@@ -10,6 +10,7 @@ import { useUser } from "@bower/auth";
  * phases that build their screens. */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user } = useUser();
 
   const navigation = [
@@ -35,7 +36,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <Sidebar
       navigation={navigation}
-      userNavigation={[{ name: "Sign out", onClick: () => void handleSignOut() }]}
+      userNavigation={[
+        // An in-app transition rides the router (the primitive's href
+        // form is a full document load, for boundary crossings).
+        { name: "Settings", onClick: () => router.push(webRoutes.settings) },
+        { name: "Sign out", onClick: () => void handleSignOut() },
+      ]}
       account={{ email: user?.email }}
       homeHref={webRoutes.home}
       headerActions={<ThemeToggle />}

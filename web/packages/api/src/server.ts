@@ -22,6 +22,11 @@ import {
 import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage } from "./lists.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
+import {
+  TolerantWebhookDestinationsListSchema,
+  TolerantWebhookDestinationWireSchema,
+  type RenderableDestination,
+} from "./webhooks.ts";
 
 /** The server-side /me: the layout forwards the session cookie it
  * received, so the authed shell renders with the user already resolved
@@ -69,6 +74,23 @@ export async function fetchAgentsWithCookie(cookieHeader: string): Promise<Serve
 /** Server-side one agent (the edit page's first paint). */
 export async function fetchAgentWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<AgentSummary>> {
   return fetchParsedWithCookie(apiRoutes.agents.detail(id), cookieHeader, AgentSummarySchema);
+}
+
+/** Server-side webhook destinations roster (unpaged; bounded by the
+ * backend cap). Tolerant: a delivery kind added server-side must not
+ * blank the settings page for a deploy still serving this bundle. */
+export async function fetchWebhooksWithCookie(
+  cookieHeader: string,
+): Promise<ServerFetchResult<{ items: RenderableDestination[] }>> {
+  return fetchParsedWithCookie(apiRoutes.webhooks.index, cookieHeader, TolerantWebhookDestinationsListSchema);
+}
+
+/** Server-side one destination (the detail page's first paint). */
+export async function fetchWebhookWithCookie(
+  cookieHeader: string,
+  id: string,
+): Promise<ServerFetchResult<RenderableDestination>> {
+  return fetchParsedWithCookie(apiRoutes.webhooks.detail(id), cookieHeader, TolerantWebhookDestinationWireSchema);
 }
 
 /** Server-side lists index page. */

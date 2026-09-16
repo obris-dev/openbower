@@ -12,6 +12,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from openbower_kernel.batches import iter_id_pages
 from openbower_kernel.fields import min_ulid_at
 
 from ..constants import FILL_WRITE_BATCH, TEST_FILL_MAX_AGE_SECONDS, FillKind
@@ -26,22 +27,14 @@ class SweepTestFillsOperation:
         no cell truth, no sheet rows, no ephemeral agent). Age is the
         ULID birth; status is deliberately not consulted, because at a
         day old even a "live" test is an orphan no poll is watching.
-        PAGED, so a backlog (a cron that was down for a week) never
-        builds one unbounded IN list, and each page's two deletes ride
-        one transaction so a crash between them cannot orphan tasks.
-        Returns the purge count for the command's log."""
+        Each page's two deletes ride one transaction so a crash between
+        them cannot orphan tasks. Returns the purge count for the
+        command's log."""
         cutoff = min_ulid_at(timezone.now() - timedelta(seconds=TEST_FILL_MAX_AGE_SECONDS))
         purged = 0
-        while True:
-            page = [
-                str(fill_run_id)
-                for fill_run_id in Fill.objects.filter(kind=FillKind.TEST, id__lt=cutoff)
-                .order_by("id")
-                .values_list("id", flat=True)[:FILL_WRITE_BATCH]
-            ]
-            if not page:
-                return purged
+        for page in iter_id_pages(Fill.objects.filter(kind=FillKind.TEST, id__lt=cutoff), batch=FILL_WRITE_BATCH):
             with transaction.atomic():
                 NodeRun.objects.filter(fill_run_id__in=page).delete()
                 Fill.objects.filter(id__in=page).delete()
             purged += len(page)
+        return purged

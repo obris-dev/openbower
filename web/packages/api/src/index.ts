@@ -26,3 +26,4 @@ export {
 export * from "./auth.ts";
 export * from "./discover.ts";
 export * from "./lists.ts";
+export * from "./webhooks.ts";

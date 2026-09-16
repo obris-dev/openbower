@@ -10,3 +10,4 @@
 # hot-reload regardless, since each tick imports off the bind mount.
 0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills
 */15 * * * * uv run --frozen --package openbower-core python apps/core/manage.py reclaim_node_runs
+0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
