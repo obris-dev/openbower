@@ -78,7 +78,7 @@ export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 export const SearchToolCallSchema = z.object({ "attempts": z.number().int(), "discarded": z.number().int(), "hits": z.number().int(), "kind": z.literal("search").default("search"), "provider": z.string(), "query": z.string(), "status": z.string(), "tool": z.string() }).describe("One search-tool call's record: `status` is what the provider\nsaid (open, and hits, possibly zero, is the honest answer; any\nother code is the tool's own failure code saying why there are\nnone), `provider` which provider served it, `attempts` how many\ntries the seam made for this one query (a rate limit is retried,\nsame query, before it counts), and `tool` which tool called, so a\nreader can tell whose call refused. `hits` counts what the tool\nKEPT; `discarded` counts served hits the tool dropped as off-scope\n(an engine that runs dry on a demanded site: relaxes the query and\nserves off-site pages dressed as answers), so a thin answer shows\nwhether the provider ran dry or ran off. Every field REQUIRED: the\none writer sets them all, and a stored record is the same shape as\na served one.");
 export type SearchToolCall = z.infer<typeof SearchToolCallSchema>;
 
-export const WebhookDeliveryWireSchema = z.object({ "created_at": z.string(), "destination_id": z.string(), "duration_ms": z.number().int().default(0), "error": z.string().describe("What went wrong, in the user's words; empty on ok.").default(""), "http_status": z.union([z.number().int(), z.null()]).describe("The receiver's status code; null when no answer came.").default(null), "id": z.string(), "kind": z.enum(["test","digest"]), "response_excerpt": z.string().max(1024).describe("The head of the receiver's answer, kept only when it was not a 2xx.").default(""), "status": z.enum(["ok","transient","rejected","blocked"]) }).describe("One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried.");
+export const WebhookDeliveryWireSchema = z.object({ "created_at": z.string(), "destination_id": z.string(), "duration_ms": z.number().int().default(0), "error": z.string().describe("What went wrong, in the user's words; empty on ok.").default(""), "http_status": z.union([z.number().int(), z.null()]).describe("The receiver's status code; null when no answer came.").default(null), "id": z.string(), "response_excerpt": z.string().max(1024).describe("The head of the receiver's answer, kept only when it was not a 2xx.").default(""), "status": z.enum(["ok","transient","rejected","blocked"]), "test": z.boolean().default(false), "type": z.enum(["ping","digest"]) }).describe("One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried; `type` and `test`\nare the envelope's own, recorded on our side.");
 export type WebhookDeliveryWire = z.infer<typeof WebhookDeliveryWireSchema>;
 
 export const WebhookDestinationWireSchema = z.object({ "created_at": z.string(), "enabled": z.boolean().default(true), "header_names": z.array(z.string()).default([]), "id": z.string(), "label": z.string().max(128), "last_delivery": z.union([z.lazy(() => WebhookDeliveryWireSchema), z.null()]).describe("The newest delivery on record, the destination's health; null before any.").default(null), "url": z.string().max(2048) }).describe("A place deliveries go. Header VALUES and the signing secret never\nride here; `header_names` is all the roster shows.");
@@ -87,8 +87,14 @@ export type WebhookDestinationWire = z.infer<typeof WebhookDestinationWireSchema
 export const WebhookDestinationsListSchema = z.object({ "items": z.array(z.lazy(() => WebhookDestinationWireSchema)) });
 export type WebhookDestinationsList = z.infer<typeof WebhookDestinationsListSchema>;
 
-export const WebhookEnvelopeSchema = z.object({ "data": z.record(z.string(), z.any()), "id": z.string(), "timestamp": z.string(), "type": z.enum(["test","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme. A retried delivery carries a NEW id; a\ndigest's items each carry their own dedup key, which is what a\nreceiver of batches deduplicates on.");
-export type WebhookEnvelope = z.infer<typeof WebhookEnvelopeSchema>;
+export const WebhookDigestItemSchema = z.object({ "cells": z.record(z.string(), z.string()).describe("The payload columns only, by key (the user chooses what leaves the instance), so a waited-on key may appear in `states` and not here."), "completed_at": z.union([z.string(), z.null()]).describe("When the last waited-on column settled. Null only on a test send of a row that has not completed; a real digest never sends null.").default(null), "key": z.string().describe("An opaque dedup key: the same row completing again ships under a new key; receivers dedup on it and never parse it."), "position": z.number().int(), "row_id": z.string(), "states": z.record(z.string(), z.string()).describe("The waited-on columns' stored cell states, by key; a column not yet attempted is absent.") }).describe("One completed row of a digest.");
+export type WebhookDigestItem = z.infer<typeof WebhookDigestItemSchema>;
+
+export const WebhookPingDataSchema = z.object({ "destination_id": z.string(), "label": z.string(), "type": z.literal("ping").default("ping") }).describe("A destination's Test button: nothing from a sheet, just proof\nthat a signed delivery reaches the receiver.");
+export type WebhookPingData = z.infer<typeof WebhookPingDataSchema>;
+
+export const WebhookSheetRefSchema = z.object({ "id": z.string(), "label": z.string() });
+export type WebhookSheetRef = z.infer<typeof WebhookSheetRefSchema>;
 
 export const AgentCatalogSchema = z.object({ "models": z.array(z.lazy(() => CatalogModelSchema)), "search_provider": z.union([z.enum(["duckduckgo","serper"]), z.null()]).describe("The vendor serving web search on this deployment, only while it is READY to serve (registered, wired, credentialed); null otherwise, so client copy never names a vendor whose searches cannot run. Client copy composes it: a rate-limited cell names the metered door only where it is a remedy, never to someone already on it."), "support_followup": z.string().describe("The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify."), "tools": z.record(z.string(), z.string()).describe("Each tool's availability BEFORE a run, keyed by registered tool name (web_search, find_contacts): 'open' gates the toggle on; any other code is the reason it is off (today only 'not_configured' can appear here; the run-time codes ride the cells)."), "truncated": z.boolean().describe("True when the catalog cap cut the list: an address past the cap may still RUN (model_for validates against the full roster), it just is not shown.") }).describe("What THIS deploy can run; `tools` gates the toggles.");
 export type AgentCatalog = z.infer<typeof AgentCatalogSchema>;
@@ -125,6 +131,44 @@ export type WebhookDeliveriesPage = z.infer<typeof WebhookDeliveriesPageSchema>;
 
 export const WebhookDestinationCreatedSchema = z.object({ "destination": z.lazy(() => WebhookDestinationWireSchema), "signing_secret": z.string() }).describe("The create response: the ONE time the signing secret is on the\nwire. It is minted server-side, stored encrypted, and never returned\nagain; a lost secret means deleting the destination and adding it\nagain.");
 export type WebhookDestinationCreated = z.infer<typeof WebhookDestinationCreatedSchema>;
+
+export const WebhookDigestDataSchema = z.object({ "column_keys": z.array(z.string()).describe("The columns that define complete for this digest."), "items": z.array(z.lazy(() => WebhookDigestItemSchema)), "sheet": z.lazy(() => WebhookSheetRefSchema), "type": z.literal("digest").default("digest") }).describe("Rows that completed since the last delivery, for one sheet.");
+export type WebhookDigestData = z.infer<typeof WebhookDigestDataSchema>;
+
+export const WebhookEnvelopeSchema = z.object({ "data": z.any().superRefine((x, ctx) => {
+    const schemas = [z.lazy(() => WebhookPingDataSchema), z.lazy(() => WebhookDigestDataSchema)];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }), "id": z.string(), "test": z.boolean().default(false), "timestamp": z.string(), "type": z.enum(["ping","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own dedup key, which is what a\nreceiver of batches deduplicates on.");
+export type WebhookEnvelope = z.infer<typeof WebhookEnvelopeSchema>;
 
 export const WIRE_BOUNDS = {
   "AgentOutput": {

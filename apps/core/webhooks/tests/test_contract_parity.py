@@ -10,13 +10,13 @@ from typing import get_args
 
 from django.test import SimpleTestCase
 
-from openbower_schema.webhooks import DeliveryStatusWire, WebhookDeliveryKindWire
+from openbower_schema.webhooks import DeliveryStatusWire, WebhookEnvelopeTypeWire
 from webhooks import constants
 
 
 class WireEnumParityTests(SimpleTestCase):
-    def test_delivery_kind_parity(self):
-        self.assertEqual(set(get_args(WebhookDeliveryKindWire)), {v.value for v in constants.WebhookDeliveryKind})
+    def test_envelope_type_parity(self):
+        self.assertEqual(set(get_args(WebhookEnvelopeTypeWire)), {v.value for v in constants.WebhookEnvelopeType})
 
     def test_delivery_status_parity(self):
         self.assertEqual(set(get_args(DeliveryStatusWire)), {v.value for v in constants.DeliveryStatus})

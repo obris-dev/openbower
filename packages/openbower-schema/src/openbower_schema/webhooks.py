@@ -3,9 +3,9 @@ deliveries made to them, and the envelope a receiver gets."""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .agents import LABEL_MAX_LENGTH
 
@@ -53,24 +53,107 @@ RESERVED_WEBHOOK_HEADER_NAMES: tuple[str, ...] = (
 WEBHOOK_HEADER_NAME_GRAMMAR = r"^[A-Za-z0-9-]+$"
 WEBHOOK_HEADER_VALUE_GRAMMAR = r"^[\x20-\x7E\t]*$"
 
-# What a delivery carried: a test from the destination page, or a
-# digest of completed rows (the flush). A receiver branches on the
-# envelope's `type`, which names the same thing.
-WebhookDeliveryKindWire = Literal["test", "digest"]
+# What an envelope's `data` IS: a ping from a destination's Test button,
+# or a digest of completed rows. A receiver branches on it; the log
+# records it beside `test`.
+WebhookEnvelopeTypeWire = Literal["ping", "digest"]
 # How one attempt ended. `transient` means the receiver may accept a
 # retry; `rejected` means the request itself was refused; `blocked`
 # means this deployment refused to send (the address is not reachable
-# from here, or the destination's signing secret is unreadable).
+# from here, or the destination's secret or headers are unreadable).
 DeliveryStatusWire = Literal["ok", "transient", "rejected", "blocked"]
+
+
+class WebhookPingData(BaseModel):
+    """A destination's Test button: nothing from a sheet, just proof
+    that a signed delivery reaches the receiver."""
+
+    type: Literal["ping"] = "ping"
+    destination_id: str
+    label: str
+
+
+class WebhookSheetRef(BaseModel):
+    id: str
+    label: str
+
+
+class WebhookDigestItem(BaseModel):
+    """One completed row of a digest."""
+
+    key: str = Field(
+        description="An opaque dedup key: the same row completing again ships under a new key; "
+        "receivers dedup on it and never parse it."
+    )
+    row_id: str
+    position: int
+    completed_at: str | None = Field(
+        default=None,
+        description="When the last waited-on column settled. Null only on a test send of a row "
+        "that has not completed; a real digest never sends null.",
+    )
+    cells: dict[str, str] = Field(
+        description="The payload columns only, by key (the user chooses what leaves the instance), "
+        "so a waited-on key may appear in `states` and not here."
+    )
+    states: dict[str, str] = Field(
+        description="The waited-on columns' stored cell states, by key; a column not yet attempted is absent."
+    )
+
+
+class WebhookDigestData(BaseModel):
+    """Rows that completed since the last delivery, for one sheet."""
+
+    type: Literal["digest"] = "digest"
+    sheet: WebhookSheetRef
+    column_keys: list[str] = Field(description="The columns that define complete for this digest.")
+    items: list[WebhookDigestItem]
+
+
+WebhookEnvelopeData = WebhookPingData | WebhookDigestData
+
+
+class WebhookEnvelope(BaseModel):
+    """What a receiver gets, as the request body. Every delivery is a
+    POST of this JSON with three headers: `webhook-id` (this `id`),
+    `webhook-timestamp` (unix seconds), and `webhook-signature`
+    (`v1,` then base64 of HMAC-SHA256 over `"{id}.{timestamp}.{body}"`,
+    keyed by the base64-decoded secret after its `whsec_` prefix), the
+    Standard Webhooks scheme.
+
+    `type` says what `data` is. `test` says the delivery came from a
+    Test button (a ping, or a sample digest sent from a sheet) and must
+    not be acted on as live data; a digest the schedule sends carries
+    false. The top-level keys are reserved; everything a user defines
+    is nested under `data`. A retried delivery carries a NEW id; a
+    digest's items each carry their own dedup key, which is what a
+    receiver of batches deduplicates on."""
+
+    id: str
+    type: WebhookEnvelopeTypeWire
+    version: int = 1
+    test: bool = False
+    timestamp: str
+    data: WebhookEnvelopeData = Field(discriminator="type")
+
+    @model_validator(mode="after")
+    def _type_matches_data(self) -> WebhookEnvelope:
+        # The top-level type is the data's, restated for receivers; a
+        # pair that disagrees is a construction bug, refused here.
+        if self.type != self.data.type:
+            raise ValueError("envelope type must match its data's type")
+        return self
 
 
 class WebhookDeliveryWire(BaseModel):
     """One attempt to POST to a destination, whatever it answered. `id`
-    is the `webhook-id` header that request carried."""
+    is the `webhook-id` header that request carried; `type` and `test`
+    are the envelope's own, recorded on our side."""
 
     id: str
     destination_id: str
-    kind: WebhookDeliveryKindWire
+    type: WebhookEnvelopeTypeWire
+    test: bool = False
     status: DeliveryStatusWire
     http_status: int | None = Field(default=None, description="The receiver's status code; null when no answer came.")
     duration_ms: int = 0
@@ -117,20 +200,3 @@ class WebhookDestinationCreated(BaseModel):
 class WebhookDeliveriesPage(BaseModel):
     items: list[WebhookDeliveryWire]
     next_cursor: str | None = None
-
-
-class WebhookEnvelope(BaseModel):
-    """What a receiver gets, as the request body. Every delivery is a
-    POST of this JSON with three headers: `webhook-id` (this `id`),
-    `webhook-timestamp` (unix seconds), and `webhook-signature`
-    (`v1,` then base64 of HMAC-SHA256 over `"{id}.{timestamp}.{body}"`,
-    keyed by the base64-decoded secret after its `whsec_` prefix), the
-    Standard Webhooks scheme. A retried delivery carries a NEW id; a
-    digest's items each carry their own dedup key, which is what a
-    receiver of batches deduplicates on."""
-
-    id: str
-    type: WebhookDeliveryKindWire
-    version: int = 1
-    timestamp: str
-    data: dict[str, Any]

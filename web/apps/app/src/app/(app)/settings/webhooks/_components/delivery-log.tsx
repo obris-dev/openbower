@@ -1,17 +1,9 @@
 "use client";
 
 import { Button } from "@bower/ui";
-import { UNKNOWN_DELIVERY_KIND, WEBHOOK_ID_HEADER, type RenderableDelivery } from "@bower/api";
+import { WEBHOOK_ID_HEADER, type RenderableDelivery } from "@bower/api";
 
-import { deliveryWord, TONE_CLASS } from "./lib/delivery-read";
-import { formatTime } from "./lib/format-time";
-
-// A kind this bundle cannot name gets no chip: naming it would claim
-// what it carried.
-const KIND_LABEL: Record<Exclude<RenderableDelivery["kind"], typeof UNKNOWN_DELIVERY_KIND>, string> = {
-  test: "Test",
-  digest: "Digest",
-};
+import { deliveryLabel, deliveryWord, formatTime, TONE_CLASS } from "../../../_components/webhook-delivery";
 
 /** One delivery per row, newest first: the outcome, what it carried,
  * the receiver's status and timing, then the error and the excerpt
@@ -77,8 +69,9 @@ export function DeliveryLog({
 
 function DeliveryRow({ delivery }: { delivery: RenderableDelivery }) {
   const word = deliveryWord(delivery);
+  const label = deliveryLabel(delivery);
   const facts = [
-    delivery.kind === UNKNOWN_DELIVERY_KIND ? null : KIND_LABEL[delivery.kind],
+    label || null,
     delivery.http_status === null ? null : `HTTP ${delivery.http_status}`,
     `${delivery.duration_ms.toLocaleString("en-US")} ms`,
   ].filter((fact): fact is string => fact !== null);

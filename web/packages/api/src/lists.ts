@@ -39,6 +39,7 @@ import { z } from "zod";
 
 import { http, request, type ApiResult } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
+import { TolerantWebhookDeliveryWireSchema, type RenderableDelivery } from "./webhooks.ts";
 
 // Rows paging, owned once: the server-rendered first page mirrors the
 // backend's DEFAULT_ROWS_PAGE, the client pages its MAX_ROWS_PAGE.
@@ -457,4 +458,29 @@ export async function getFills(id: string, after?: string): Promise<ApiResult<Fi
  * as the server now holds it. */
 export async function postFillCancel(id: string, runId: string): Promise<ApiResult<FillRunWire>> {
   return fillResult(await http.post(apiRoutes.lists.fillCancel(id, runId), TolerantFillRunWireSchema));
+}
+
+// The Send webhook column's Test: the server builds a sample digest
+// from the given row and the caller's (editable) values for the payload
+// columns, sends it signed to the destination, and answers with the
+// delivery whatever the receiver did.
+export type WebhookColumnTestBody = {
+  destination_id: string;
+  wait_keys: string[];
+  payload_keys: string[];
+  row_id: string;
+  cells: Record<string, string>;
+};
+// The refusal codes the drawer acts on (lists.constants
+// WebhookColumnErrorCode): a vanished row re-reads the rows, a vanished
+// destination re-fetches the roster. The column codes render through
+// their verbatim detail alone; the pickers make them unreachable.
+export const WEBHOOK_ROW_UNKNOWN_CODE = "row_unknown";
+export const WEBHOOK_DESTINATION_UNKNOWN_CODE = "destination_unknown";
+
+export async function postColumnWebhookTest(
+  id: string,
+  body: WebhookColumnTestBody,
+): Promise<ApiResult<RenderableDelivery>> {
+  return http.post(apiRoutes.lists.columnWebhookTest(id), TolerantWebhookDeliveryWireSchema, body);
 }

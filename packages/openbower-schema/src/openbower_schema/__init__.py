@@ -51,7 +51,11 @@ from .webhooks import (
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
+    WebhookDigestData,
+    WebhookDigestItem,
     WebhookEnvelope,
+    WebhookPingData,
+    WebhookSheetRef,
 )
 
 __all__ = [
@@ -92,5 +96,9 @@ __all__ = [
     "WebhookDestinationCreated",
     "WebhookDestinationWire",
     "WebhookDestinationsList",
+    "WebhookDigestData",
+    "WebhookDigestItem",
     "WebhookEnvelope",
+    "WebhookPingData",
+    "WebhookSheetRef",
 ]

@@ -27,6 +27,7 @@ import {
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
+import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
@@ -62,8 +63,10 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [exporting, setExporting] = useState(false);
   // null = closed; the KIND arrives with the opening gesture (the
-  // Add column menu), so half-open states are unrepresentable.
-  const [addColumnKind, setAddColumnKind] = useState<ColumnKind | null>(null);
+  // Add column menu), so half-open states are unrepresentable and the
+  // two drawers (the AI column, the Send webhook column) can never be
+  // open together.
+  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook" } | null>(null);
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
@@ -129,15 +132,15 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // outputs and tools have to be chosen; a plain column is named in
   // the grid.
   function openAddColumn(kind: ColumnKind) {
-    if (kind !== "ai") {
+    if (kind !== "ai" && kind !== "webhook") {
       columns.startPending(kind);
       return;
     }
     addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setAddColumnKind(kind);
+    setOpenDrawer({ kind });
   }
   function closeAddColumn() {
-    setAddColumnKind(null);
+    setOpenDrawer(null);
     addColumnInvokerRef.current?.focus();
     addColumnInvokerRef.current = null;
   }
@@ -323,13 +326,20 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
       </div>
 
       <AddColumnDrawer
-        open={addColumnKind !== null}
-        kind={addColumnKind ?? "ai"}
+        open={openDrawer?.kind === "ai"}
+        kind="ai"
         onClose={closeAddColumn}
         rowCount={detail.row_count}
         columns={detail.columns}
         onSubmit={submitAiColumn}
         onAddBlank={submitBlankColumn}
+      />
+      <SendWebhookDrawer
+        open={openDrawer?.kind === "webhook"}
+        onClose={closeAddColumn}
+        listId={detail.id}
+        columns={detail.columns}
+        sampleRow={rows[0] ? { id: rows[0].id, data: rows[0].data } : null}
       />
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">

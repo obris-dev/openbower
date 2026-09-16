@@ -26,6 +26,15 @@ const WORD: Record<RenderableDelivery["status"], DeliveryRead> = {
   unknown: { tone: "muted", line: "Recorded" },
 };
 
+// What the delivery carried, by the envelope's own two facts: the
+// shape, and whether a Test button sent it. A shape this bundle cannot
+// name gets no word (naming it would claim what it carried).
+const TYPE_WORD: Record<RenderableDelivery["type"], string> = {
+  ping: "ping",
+  digest: "digest",
+  unknown: "",
+};
+
 /** The one status line a destination card shows, derived from the
  * wire's facts (never a server-shipped sentence): paused, the newest
  * delivery's outcome and time, or not yet. The verbatim `error` renders
@@ -42,4 +51,13 @@ export function deliveryRead(destination: Facts): DeliveryRead {
 /** The status word for one log row, with its tone. */
 export function deliveryWord(delivery: Pick<RenderableDelivery, "status">): DeliveryRead {
   return WORD[delivery.status];
+}
+
+/** "Test digest", "Test ping", "Digest": the envelope's shape and its
+ * test flag, as a label; "Test" alone for a test of an unknown shape,
+ * "" for an unknown live one. */
+export function deliveryLabel(delivery: Pick<RenderableDelivery, "type" | "test">): string {
+  const shape = TYPE_WORD[delivery.type];
+  if (delivery.test) return shape ? `Test ${shape}` : "Test";
+  return shape ? shape.charAt(0).toUpperCase() + shape.slice(1) : "";
 }

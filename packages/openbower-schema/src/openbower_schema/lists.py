@@ -32,6 +32,9 @@ ListOrigin = Literal["discover", "csv", "manual"]
 # maps it onto a sheet, and a wider bound there would truncate
 # persisted data at the seam.
 COLUMN_KEY_MAX_LENGTH = 40
+# The grammar a column key satisfies (what derive_column_key produces
+# and what every request naming a key is held to).
+COLUMN_KEY_GRAMMAR = r"^[a-z0-9_]+$"
 COLUMN_LABEL_MAX_LENGTH = 80
 
 

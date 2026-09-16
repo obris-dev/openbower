@@ -9,7 +9,7 @@ from __future__ import annotations
 from django.test import TestCase
 
 from openbower_kernel.batches import iter_id_pages
-from webhooks.constants import DeliveryStatus, WebhookDeliveryKind
+from webhooks.constants import DeliveryStatus, WebhookEnvelopeType
 from webhooks.models import WebhookDelivery
 
 ACCOUNT = "01AC" + "A" * 22
@@ -21,7 +21,7 @@ def _rows(n: int) -> list[str]:
             WebhookDelivery.objects.create(
                 account_id=ACCOUNT,
                 destination_id="01DS" + "A" * 22,
-                kind=WebhookDeliveryKind.TEST,
+                type=WebhookEnvelopeType.PING,
                 status=DeliveryStatus.OK,
             ).id
         )

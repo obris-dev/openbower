@@ -12,6 +12,7 @@ urlpatterns = [
     api_path("<str:id>/ingest", views.ListIngestView.as_view(), name="lists_ingest"),
     api_path("<str:id>/columns", views.ColumnsView.as_view(), name="lists_columns"),
     api_path("<str:id>/columns/ai", views.AiColumnView.as_view(), name="lists_columns_ai"),
+    api_path("<str:id>/columns/webhook/test", views.ColumnWebhookTestView.as_view(), name="lists_columns_webhook_test"),
     api_path("<str:id>/column-order", views.ColumnOrderView.as_view(), name="lists_columns_order"),
     api_path("<str:id>/columns/<str:key>", views.ColumnDetailView.as_view(), name="lists_column_detail"),
     api_path("<str:id>/columns/<str:key>/refill", views.ColumnRefillView.as_view(), name="lists_column_refill"),

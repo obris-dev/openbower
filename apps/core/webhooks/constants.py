@@ -43,14 +43,15 @@ WEBHOOK_CONNECT_TIMEOUT_SECONDS = 4
 WEBHOOK_POOL_CONNECTIONS = 32
 WEBHOOK_POOL_KEEPALIVE = 8
 STATUS_MAX_LENGTH = 16
-KIND_MAX_LENGTH = 16
+TYPE_MAX_LENGTH = 16
 
 
-class WebhookDeliveryKind(StrEnum):
-    """What a delivery carried. The envelope's `type` names the same
-    value, so a receiver branches on one vocabulary."""
+class WebhookEnvelopeType(StrEnum):
+    """What an envelope's `data` is. The delivery row records it beside
+    `test` (whether a Test button sent it), the same two facts the
+    receiver reads off the envelope."""
 
-    TEST = "test"
+    PING = "ping"
     DIGEST = "digest"
 
 

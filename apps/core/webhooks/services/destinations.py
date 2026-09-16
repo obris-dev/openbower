@@ -13,13 +13,13 @@ from django.db import transaction
 from django.utils import timezone
 
 from common.ssrf import destination_block_reason
-from openbower_schema.webhooks import WebhookEnvelope
+from openbower_schema.webhooks import WebhookEnvelope, WebhookEnvelopeData, WebhookPingData
 
 from ..constants import (
     MAX_WEBHOOK_DESTINATIONS,
     RESERVED_WEBHOOK_HEADER_NAMES,
     DeliveryStatus,
-    WebhookDeliveryKind,
+    WebhookEnvelopeType,
     WebhookErrorCode,
 )
 from ..delivery.protocol import DeliveryResult
@@ -159,17 +159,20 @@ class WebhookDestinationService:
             logger.warning("destination %s: headers unreadable", destination.id)
             return []
 
-    def test(self, destination: WebhookDestination) -> WebhookDelivery:
-        """One signed delivery of a test envelope, sent now, whatever
-        `enabled` says (the test is an explicit gesture; `enabled` gates
-        the automatic lane). The POST runs outside any transaction; the
-        record lands after."""
+    def deliver(self, destination: WebhookDestination, *, test: bool, data: WebhookEnvelopeData) -> WebhookDelivery:
+        """One signed delivery of `data` to the destination, sent now
+        whatever `enabled` says (`enabled` gates the automatic lane;
+        every caller here made an explicit choice), then recorded. The
+        one place the id, the type, the test flag, and the clock are
+        written, so the wire and the log cannot disagree. The POST runs
+        outside any transaction; the record lands after."""
         delivery_id = str(ulid.ulid())
         envelope = WebhookEnvelope(
             id=delivery_id,
-            type=WebhookDeliveryKind.TEST,
+            type=data.type,
+            test=test,
             timestamp=timezone.now().isoformat(),
-            data={"destination_id": str(destination.id), "label": destination.label},
+            data=data,
         )
         try:
             headers = self.headers_of(destination)
@@ -185,8 +188,18 @@ class WebhookDestinationService:
                 body=encode_body(envelope),
             )
         return self.deliveries.record(
-            str(destination.id), kind=WebhookDeliveryKind.TEST, result=result, delivery_id=delivery_id
+            str(destination.id),
+            envelope_type=WebhookEnvelopeType(data.type),
+            test=test,
+            result=result,
+            delivery_id=delivery_id,
         )
+
+    def test(self, destination: WebhookDestination) -> WebhookDelivery:
+        """The destination page's Test button: a ping, nothing from a
+        sheet, proving a signed delivery reaches the receiver."""
+        ping = WebhookPingData(destination_id=str(destination.id), label=destination.label)
+        return self.deliver(destination, test=True, data=ping)
 
     def _guard_url(self, url: str) -> None:
         reason = destination_block_reason(

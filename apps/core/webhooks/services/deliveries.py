@@ -17,7 +17,7 @@ from ..constants import (
     DELIVERY_WRITE_BATCH,
     WEBHOOK_DELIVERY_MAX_AGE_SECONDS,
     WEBHOOK_ERROR_MAX_LENGTH,
-    WebhookDeliveryKind,
+    WebhookEnvelopeType,
 )
 from ..delivery.protocol import DeliveryResult
 from ..models import WebhookDelivery
@@ -51,7 +51,8 @@ class WebhookDeliveryService:
         self,
         destination_id: str,
         *,
-        kind: WebhookDeliveryKind,
+        envelope_type: WebhookEnvelopeType,
+        test: bool,
         result: DeliveryResult,
         delivery_id: str,
     ) -> WebhookDelivery:
@@ -64,7 +65,8 @@ class WebhookDeliveryService:
             id=delivery_id,
             account_id=self.account_id,
             destination_id=destination_id,
-            kind=kind,
+            type=envelope_type,
+            test=test,
             status=result.status,
             http_status=result.http_status,
             duration_ms=result.duration_ms,

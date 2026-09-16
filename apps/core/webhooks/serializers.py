@@ -105,7 +105,8 @@ def _delivery(delivery: WebhookDelivery) -> WebhookDeliveryWire:
     return WebhookDeliveryWire(
         id=str(delivery.id),
         destination_id=delivery.destination_id,
-        kind=delivery.kind,
+        type=delivery.type,
+        test=delivery.test,
         status=delivery.status,
         http_status=delivery.http_status,
         duration_ms=delivery.duration_ms,

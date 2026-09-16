@@ -100,7 +100,7 @@ function tablistNav<K extends string>(order: readonly K[], current: K, select: (
  * refreshing counts). */
 export function AddColumnDrawer(props: {
   open: boolean;
-  kind: ColumnKind;
+  kind: Exclude<ColumnKind, "webhook">;
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
@@ -143,7 +143,7 @@ function DrawerContent({
 }: {
   open: boolean;
   afterLeave: () => void;
-  kind: ColumnKind;
+  kind: Exclude<ColumnKind, "webhook">;
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
