@@ -158,7 +158,7 @@ prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron co
 
 # A debugging aid outside the stack: a plain container on the stack's
 # network, so it never rides `make up` or a deployment.
-receiver: ## Start a throwaway webhook receiver with a UI (localhost:8085; destinations reach it as webhook-receiver:8080)
+receiver: ## Start a throwaway webhook receiver with a UI (localhost:8085; one URL, http://webhook-receiver.localhost:8085, works from the browser and the stack)
 	@./scripts/debug/webhook-receiver.sh
 
 receiver-stop: ## Stop the throwaway webhook receiver
