@@ -1,9 +1,9 @@
 "use client";
 
 import { Button } from "@bower/ui";
-import { WEBHOOK_ID_HEADER, type RenderableDelivery } from "@bower/api";
+import type { RenderableDelivery } from "@bower/api";
 
-import { deliveryLabel, deliveryWord, formatTime, TONE_CLASS } from "../../../_components/webhook-delivery";
+import { DeliveryRow } from "../../../_components/webhook-delivery";
 
 /** One delivery per row, newest first: the outcome, what it carried,
  * the receiver's status and timing, then the error and the excerpt
@@ -45,7 +45,9 @@ export function DeliveryLog({
     <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-hairline px-3">
       <ul className="divide-y divide-hairline">
         {items.map((delivery) => (
-          <DeliveryRow key={delivery.id} delivery={delivery} />
+          <li key={delivery.id} className="py-3">
+            <DeliveryRow delivery={delivery} />
+          </li>
         ))}
       </ul>
       {failed && (
@@ -64,36 +66,5 @@ export function DeliveryLog({
         </div>
       )}
     </div>
-  );
-}
-
-function DeliveryRow({ delivery }: { delivery: RenderableDelivery }) {
-  const word = deliveryWord(delivery);
-  const label = deliveryLabel(delivery);
-  const facts = [
-    label || null,
-    delivery.http_status === null ? null : `HTTP ${delivery.http_status}`,
-    `${delivery.duration_ms.toLocaleString("en-US")} ms`,
-  ].filter((fact): fact is string => fact !== null);
-  return (
-    <li className="space-y-1 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={`text-sm font-medium ${TONE_CLASS[word.tone]}`}>{word.line}</span>
-        <span className="text-xs text-muted">{facts.join(" | ")}</span>
-        <span className="ml-auto text-xs text-faint">{formatTime(delivery.created_at)}</span>
-      </div>
-      {delivery.error && <p className="text-xs text-danger [overflow-wrap:anywhere]">{delivery.error}</p>}
-      {delivery.response_excerpt && (
-        <details className="text-xs text-muted">
-          <summary className="cursor-pointer">Receiver&apos;s answer</summary>
-          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md bg-wash p-2 font-mono text-xs [overflow-wrap:anywhere]">
-            {delivery.response_excerpt}
-          </pre>
-        </details>
-      )}
-      <p className="font-mono text-[11px] text-faint">
-        {WEBHOOK_ID_HEADER} {delivery.id}
-      </p>
-    </li>
   );
 }

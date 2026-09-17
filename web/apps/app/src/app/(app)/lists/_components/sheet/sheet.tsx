@@ -26,7 +26,8 @@ import {
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { AddColumnDrawer, AddColumnMenuItems, type AiColumnPayload, type BlankColumnPayload, type ColumnKind } from "./add-column";
+import { AddColumnMenuItems, type ColumnKind } from "./add-column";
+import { UseAiDrawer, type AiColumnPayload } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
@@ -150,15 +151,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     // The values left with the column, so the loaded rows still
     // carry a key the sheet no longer has a header for.
     await refreshLoaded();
-  }
-
-  async function submitBlankColumn(payload: BlankColumnPayload): Promise<ColumnOutcome> {
-    const outcome = await columns.addBlank(payload);
-    if (!outcome.ok) return outcome;
-    closeAddColumn();
-    toast.success(`Added the ${payload.label} column.`);
-    router.refresh();
-    return outcome;
   }
 
   async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
@@ -325,21 +317,24 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         </div>
       </div>
 
-      <AddColumnDrawer
+      <UseAiDrawer
         open={openDrawer?.kind === "ai"}
-        kind="ai"
         onClose={closeAddColumn}
         rowCount={detail.row_count}
         columns={detail.columns}
         onSubmit={submitAiColumn}
-        onAddBlank={submitBlankColumn}
       />
       <SendWebhookDrawer
         open={openDrawer?.kind === "webhook"}
         onClose={closeAddColumn}
+        onAddAiColumn={() => {
+          closeAddColumn();
+          openAddColumn("ai");
+        }}
         listId={detail.id}
+        listLabel={detail.label}
         columns={detail.columns}
-        sampleRow={rows[0] ? { id: rows[0].id, data: rows[0].data } : null}
+        sampleRows={rows.map((row) => ({ id: row.id, position: row.position, data: row.data }))}
       />
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">

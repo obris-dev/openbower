@@ -19,7 +19,7 @@ import {
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { columnsInKeyOrder } from "./lib/column-order";
-import type { AiColumnPayload, BlankColumnPayload, ColumnOutcome } from "./add-column";
+import type { AiColumnPayload, ColumnOutcome } from "./use-ai";
 
 // Re-exported beside the ops that produce it, so the sheet imports
 // its hook surface from one place; the TYPE lives with the drawer
@@ -43,7 +43,6 @@ export function useColumns(initialDetail: ListSummary): {
   reorder: (keys: string[]) => Promise<void>;
   rename: (key: string, label: string) => Promise<void>;
   remove: (column: ListColumn) => Promise<boolean>;
-  addBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
   addAi: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
   refreshDetail: () => Promise<void>;
   startPending: (type: ColumnType) => void;
@@ -156,17 +155,6 @@ export function useColumns(initialDetail: ListSummary): {
 
   // The blank add starts nothing: the 200 body IS the updated summary,
   // so the new column renders straight from the response.
-  const addBlank = useCallback(
-    async (payload: BlankColumnPayload): Promise<ColumnOutcome> => {
-      const res = await postColumn(detail.id, payload);
-      if (redirectIfUnauthenticated(res)) return LEAVING;
-      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
-      setDetail(res.data);
-      return { ok: true };
-    },
-    [detail.id],
-  );
-
   // The AI add starts a fill. Its echo is the run envelope, not the
   // summary, so the caller reconciles afterwards (refreshDetail, the
   // rows, the fill attachment): the outcome returns on the 201 at
@@ -221,5 +209,5 @@ export function useColumns(initialDetail: ListSummary): {
     [detail.id, toast],
   );
 
-  return { detail, pendingColumn, reorder, rename, remove, addBlank, addAi, refreshDetail, startPending, namePending, renameList };
+  return { detail, pendingColumn, reorder, rename, remove, addAi, refreshDetail, startPending, namePending, renameList };
 }

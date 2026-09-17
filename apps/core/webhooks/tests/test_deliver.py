@@ -37,10 +37,10 @@ class _FakeSender:
 def _digest() -> WebhookDigestData:
     return WebhookDigestData(
         sheet=WebhookSheetRef(id="01LIST" + "A" * 20, label="Prospects"),
-        column_keys=["answer"],
+        waited_on=["answer"],
         items=[
             WebhookDigestItem(
-                key="k",
+                event_id="e" * 32,
                 row_id="01ROW" + "A" * 21,
                 position=1,
                 completed_at=None,
@@ -59,8 +59,10 @@ class DeliverTests(TestCase):
     def _deliver(self, *, test: bool, data):
         fake = _FakeSender()
         with patch("webhooks.services.destinations.WebhookSender", return_value=fake):
-            delivery = self.service.deliver(self.destination, test=test, data=data)
-        return delivery, WebhookEnvelope.model_validate_json(fake.calls[0]["body"])
+            sent = self.service.deliver(self.destination, test=test, data=data)
+        # What the funnel hands back is what went over the wire.
+        self.assertEqual(sent.envelope, WebhookEnvelope.model_validate_json(fake.calls[0]["body"]))
+        return sent.delivery, sent.envelope
 
     def test_a_scheduled_digest_carries_its_type_and_no_test_flag(self):
         delivery, envelope = self._deliver(test=False, data=_digest())

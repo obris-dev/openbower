@@ -36,7 +36,7 @@ const DESTINATION = {
 
 test("an unknown delivery status or type parses and reads as a client-only unknown", () => {
   // The tolerant half: the WHOLE destination must survive a member this
-  // bundle predates (phase 4 adds a type; a strict enum would fail the
+  // bundle predates (a later contract adds a type; a strict enum would fail the
   // parse and blank the settings page). The mapping half: an unknown
   // reads as a CLIENT member, never as a real status, because a real
   // status is rendered as a claim ("Failed") the bundle cannot make.

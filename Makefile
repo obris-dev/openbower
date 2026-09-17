@@ -80,10 +80,15 @@ up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Star
 build: apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
 	$(COMPOSE) up --build -d --renew-anon-volumes --wait --wait-timeout 900
 
+# The receiver (make receiver) sits on the stack's network as a plain
+# container, and compose cannot remove a network with a foreign endpoint
+# still attached, so it goes first; its stop is idempotent.
 down: ## Stop and remove the stack's containers (the db's data and installed dependencies survive)
+	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
 	$(COMPOSE) down
 
 reset: ## Remove the stack AND its volumes (wipes the dev database and the installed dependencies)
+	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
 	$(COMPOSE) down -v
 
 stop: ## Stop the stack in place; the fill consumer finishes the row in flight before its grace expires (make up resumes)

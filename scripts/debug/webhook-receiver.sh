@@ -64,7 +64,7 @@ wait_until_up() {
         i=$((i + 1))
         sleep 0.5
     done
-    echo "$NAME did not answer on 127.0.0.1:$PORT within 10 s: docker logs $NAME" >&2
+    echo "$NAME did not answer on 127.0.0.1:$PORT after 20 tries: docker logs $NAME" >&2
     return 1
 }
 

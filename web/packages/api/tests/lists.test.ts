@@ -12,6 +12,7 @@ import {
   addListRows,
   fetchListRows,
   getFills,
+  postColumnWebhookTest,
   postFillRefill,
   reorderColumns,
 } from "../src/lists.ts";
@@ -288,4 +289,47 @@ test("reorderColumns sends the WHOLE key order, and nothing about the columns", 
   assert.ok(calls[0]!.url.endsWith("/column-order"));
   assert.equal(calls[0]!.init.method, "PATCH");
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { keys: ["c", "a", "b"] });
+});
+
+// postColumnWebhookTest: the response carries the delivery AND the
+// envelope as sent; the envelope is read as plain JSON so a future
+// envelope type cannot fail the parse.
+test("postColumnWebhookTest parses the delivery and keeps the envelope as JSON", async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const envelope = { id: "01DLV", type: "future", test: true, data: { type: "future", anything: [1, 2] } };
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        delivery: {
+          id: "01DLV",
+          destination_id: "01DST",
+          type: "digest",
+          test: true,
+          status: "ok",
+          http_status: 200,
+          duration_ms: 12,
+          error: "",
+          response_excerpt: "",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        envelope,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+  const res = await postColumnWebhookTest("01AAAAAAAAAAAAAAAAAAAAAAAA", {
+    destination_id: "01DST",
+    wait_keys: ["answer"],
+    payload_keys: ["company"],
+    row_id: "01ROW",
+    cells: { company: "acme.com" },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    assert.equal(res.data.delivery.status, "ok");
+    assert.deepEqual(res.data.envelope, envelope);
+  }
 });

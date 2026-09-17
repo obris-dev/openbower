@@ -10,11 +10,11 @@ from datetime import datetime
 
 from django.utils import timezone
 
-from webhooks.models import WebhookDelivery
-from webhooks.services import DestinationNotFound, WebhookDestinationService
+from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService
 
 from ..constants import WebhookColumnErrorCode
-from ..models import ListCellState, ListRow
+from ..models import ListRow
+from .cell_states import CellStateService
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 
@@ -24,7 +24,7 @@ class WebhookColumnRefused(Exception):
     status, str(self) is server-authored copy the client renders
     verbatim."""
 
-    code: WebhookColumnErrorCode
+    code = WebhookColumnErrorCode.WEBHOOK_COLUMN_REFUSED
 
 
 class WebhookColumnUnknown(WebhookColumnRefused):
@@ -60,6 +60,7 @@ class WebhookColumnService:
         self.account_id = account_id
         self.user_id = user_id
         self.lists = ListService(account_id=account_id)
+        self.cell_states = CellStateService(account_id=account_id)
         self.destinations = WebhookDestinationService(account_id=account_id, user_id=user_id)
 
     def test(
@@ -71,7 +72,7 @@ class WebhookColumnService:
         payload_keys: list[str],
         row_id: str,
         cells: dict[str, str],
-    ) -> WebhookDelivery:
+    ) -> Sent:
         """One sample digest to a destination: the given row, the
         caller's (possibly edited) values for the payload columns, and
         the row's stored states for the waited-on columns, sent as a
@@ -98,29 +99,21 @@ class WebhookColumnService:
 
         # The sample carries exactly what the sheet would hold: the
         # values normalized and clamped by the one cell transform.
-        types = {key: by_key[key]["type"] for key in payload_keys}
+        types = {key: by_key[key].get("type", "") for key in payload_keys}
         stored, _mismatches = cells_for_storage(types, cells, where="webhook_test")
-        settled_at: dict[str, datetime] = {}
-        states: dict[str, str] = {}
-        # Raw states, not the wire reader (which drops a clean filled),
-        # scoped by account like every cell-state read.
-        rows = ListCellState.objects.filter(
-            account_id=self.account_id,
-            list_id=str(target_list.id),
-            row_id=str(row.id),
-            column_key__in=wait_keys,
-        ).values_list("column_key", "state", "updated_at")
-        for key, state, updated_at in rows:
-            states[key] = state
-            settled_at[key] = updated_at
+        # Raw states, not the wire reader (which drops a clean filled).
+        rows = self.cell_states.iter_states(str(target_list.id), row_id=str(row.id), column_keys=wait_keys)
+        records: dict[str, tuple[str, datetime]] = {key: (state, updated_at) for key, state, updated_at in rows}
+        states = {key: state for key, (state, _updated_at) in records.items()}
         sent_at = timezone.now()
         item = build_digest_item(
             scope=str(target_list.id),
             row=row,
             cells=stored,
             states=states,
-            completed_at=completion_of(settled_at, wait_keys),
+            completed_at=completion_of(records, wait_keys),
             sent_at=sent_at,
+            test=True,
         )
-        data = build_digest_data(target_list, column_keys=wait_keys, items=[item])
+        data = build_digest_data(target_list, waited_on=wait_keys, items=[item])
         return self.destinations.deliver(destination, test=True, data=data)

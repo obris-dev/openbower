@@ -11,12 +11,6 @@ import { COLUMN_TYPE_META, columnTypeLabel } from "../../../../_components/colum
  * the generated schema, dress from the one column-type-meta home). */
 export type ColumnKind = "ai" | "webhook" | ColumnType;
 
-export function kindLabel(kind: ColumnKind): string {
-  if (kind === "ai") return "Use AI";
-  if (kind === "webhook") return "Send webhook";
-  return columnTypeLabel(kind);
-}
-
 /** The Add column menu's items, shared by the toolbar primary and the
  * grid's "+" header cell: one gesture vocabulary from every entry
  * point, and new column kinds land here once. The two outbound kinds

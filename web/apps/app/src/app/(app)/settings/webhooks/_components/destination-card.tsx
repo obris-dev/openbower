@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { webRoutes, type RenderableDestination } from "@bower/api";
 
-import { deliveryRead, TONE_CLASS } from "../../../_components/webhook-delivery";
-import { hostOf } from "../../../_components/webhook-delivery";
+import { deliveryRead, hostOf, TONE_CLASS } from "../../../_components/webhook-delivery";
 
 /** One destination on the roster: name, host, its header names, and
  * how its newest delivery went. The whole card links to the detail. */

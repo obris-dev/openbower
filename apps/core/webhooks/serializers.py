@@ -98,10 +98,11 @@ class DestinationPatchRequest(serializers.Serializer):
 
 
 def delivery_wire(delivery: WebhookDelivery) -> dict[str, Any]:
-    return _delivery(delivery).model_dump()
+    model = delivery_model(delivery)
+    return model.model_dump()
 
 
-def _delivery(delivery: WebhookDelivery) -> WebhookDeliveryWire:
+def delivery_model(delivery: WebhookDelivery) -> WebhookDeliveryWire:
     return WebhookDeliveryWire(
         id=str(delivery.id),
         destination_id=delivery.destination_id,
@@ -125,10 +126,10 @@ def destination_wire(
         url=destination.url,
         header_names=header_names,
         enabled=destination.enabled,
-        last_delivery=_delivery(newest) if newest is not None else None,
+        last_delivery=delivery_model(newest) if newest is not None else None,
         created_at=destination.created_at.isoformat(),
     ).model_dump()
 
 
 def deliveries_page_wire(rows: list[WebhookDelivery], *, next_cursor: str | None) -> dict[str, Any]:
-    return WebhookDeliveriesPage(items=[_delivery(row) for row in rows], next_cursor=next_cursor).model_dump()
+    return WebhookDeliveriesPage(items=[delivery_model(row) for row in rows], next_cursor=next_cursor).model_dump()

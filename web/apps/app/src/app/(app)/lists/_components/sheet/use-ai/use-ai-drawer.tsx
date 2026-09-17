@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Button, Drawer, ErrorMessage, FieldError, Input, Label, useToast } from "@bower/ui";
+import { Button, Drawer, ErrorMessage, FieldError, Input, useToast } from "@bower/ui";
 import {
-  AGENT_OUTPUT_LABEL_MAX_LENGTH,
   fetchAgent,
   fetchAgentCatalog,
   fetchAgents,
@@ -13,7 +12,6 @@ import {
   type AgentOutput,
   type AgentSummary,
   type AgentTools,
-  type ColumnType,
   type ListColumn,
   COLUMN_COLLISION_CODE,
   DERIVED_KEY_COLLISION_CODE,
@@ -25,7 +23,6 @@ import { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, ty
 import { type Attempt, buildChecklist, configMissing, configReady, draftProvider, EMPTY_OUTPUT, EMPTY_TOOLS, firstGap, goToSection, isContentful, type Missing, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, type Provider, ReadinessChecklist, ToolToggles } from "../../../../_components/agent-config";
 import { AgentsTab } from "./agents-tab";
 import { collidingKeys } from "./landing-keys";
-import { kindLabel, type ColumnKind } from "./menu-items";
 
 export type AiColumnPayload = {
   config?: AgentConfig;
@@ -34,8 +31,6 @@ export type AiColumnPayload = {
   /** First-N row scope; omitted means every row. */
   rows?: number;
 };
-
-export type BlankColumnPayload = { label: string; type: ColumnType };
 
 /** A submission's outcome, declared HERE because this drawer renders
  * the refusal (field-level where it can): `error` is the machine
@@ -47,7 +42,7 @@ export type ColumnOutcome = { ok: true } | { ok: false; error: string; detail: s
 type Tab = "prompt" | "agents";
 type ModelTriple = { provider: Provider; source: string; model: string };
 
-const FORM_ID = "add-column-form";
+const FORM_ID = "use-ai-form";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "prompt", label: "New prompt" },
@@ -58,8 +53,6 @@ const TABS: { key: Tab; label: string }[] = [
 // what the fill would write): the server's verbatim detail renders in
 // the AI pane beside the collision pre-warnings; every other code
 // keeps the footer slot.
-const BLANK_LABEL_ID = "add-column-label";
-const BLANK_LABEL_ERROR_ID = "add-column-label-error";
 const SCOPE_INPUT_ID = "fill-scope-rows";
 const SCOPE_ERROR_ID = "fill-scope-rows-error";
 
@@ -84,28 +77,23 @@ function tablistNav<K extends string>(order: readonly K[], current: K, select: (
   };
 }
 
-/** The add-column drawer over the sheet, opened ALREADY KNOWING its
- * kind (the Add column menu chose it: "Use AI" fills columns with an
- * agent, the type kinds append an empty column, the CSV-template
- * flow). The AI kind offers two ways to a runnable fill ("New
- * prompt" composes the shared config editor; "Your agents" points a
- * saved one), a row-scope choice (First N | All rows) whose effective
- * count drives the counts-only consent footer and the labeled submit;
- * its OUTPUTS are the columns (each output's key and label name what
- * its cells land under, so no column-name field renders), and its
- * prompt variables are THIS sheet's columns. The plain kinds need
- * only a name and carry the type from the gesture. Presentational:
- * the parent owns `open` and the kind, the POSTs behind
- * onSubmit/onAddBlank, and every after-effect of a start (closing,
- * refreshing counts). */
-export function AddColumnDrawer(props: {
+/** The Use AI drawer over the sheet (the Add column menu's AI kind;
+ * a plain column is named in the grid and a webhook has its own
+ * drawer). Two ways to a runnable fill ("New prompt" composes the
+ * shared config editor; "Your agents" points a saved one), a
+ * row-scope choice (First N | All rows) whose effective count drives
+ * the counts-only consent footer and the labeled submit; its OUTPUTS
+ * are the columns (each output's key and label name what its cells
+ * land under, so no column-name field renders), and its prompt
+ * variables are THIS sheet's columns. Presentational: the parent owns
+ * `open`, the POST behind onSubmit, and every after-effect of a start
+ * (closing, refreshing counts). */
+export function UseAiDrawer(props: {
   open: boolean;
-  kind: Exclude<ColumnKind, "webhook">;
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
   onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
-  onAddBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
 }) {
   // Mounted fresh per open: state resets with the gesture, autoFocus
   // lands on a fresh mount, and no fetch runs while the drawer is
@@ -121,12 +109,10 @@ export function AddColumnDrawer(props: {
       // is already sliding back in and its content must not unmount
       // under it.
       afterLeave={() => setMounted(props.open)}
-      kind={props.kind}
       onClose={props.onClose}
       rowCount={props.rowCount}
       columns={props.columns}
       onSubmit={props.onSubmit}
-      onAddBlank={props.onAddBlank}
     />
   );
 }
@@ -134,30 +120,20 @@ export function AddColumnDrawer(props: {
 function DrawerContent({
   open,
   afterLeave,
-  kind,
   onClose,
   rowCount,
   columns,
   onSubmit,
-  onAddBlank,
 }: {
   open: boolean;
   afterLeave: () => void;
-  kind: Exclude<ColumnKind, "webhook">;
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
   onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
-  onAddBlank: (payload: BlankColumnPayload) => Promise<ColumnOutcome>;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("prompt");
-  const [columnLabel, setColumnLabel] = useState("");
-
-  // The blank kinds' error slot is their own (the AI pane's
-  // serverError must not bleed across kinds); the TYPE arrived with
-  // the gesture (kind IS the type for non-AI columns).
-  const [blankError, setBlankError] = useState<string | null>(null);
 
   // The prompt tab's form state, the config editor's shapes: one object
   // for the model address (its three parts only ever move together).
@@ -288,10 +264,9 @@ function DrawerContent({
   // kinds carry no warning (their one refusal, a duplicate key,
   // arrives verbatim from the server).
   const collisions = useMemo(() => {
-    if (kind !== "ai") return [];
     const forOutputs = tab === "prompt" ? outputs : (selectedDetail?.config.outputs ?? []);
     return collidingKeys(forOutputs, columns);
-  }, [kind, tab, outputs, selectedDetail, columns]);
+  }, [tab, outputs, selectedDetail, columns]);
 
   // A refusal about the outputs describes a submit that is now in
   // the past: any move of its inputs (outputs, tab, chosen agent)
@@ -349,14 +324,12 @@ function DrawerContent({
   // than through the checklist. It blocks the submit exactly as the
   // sections do: payload is null while it cannot be parsed.
   const scopeMissing = scopeKind === "first" && scope === null;
-  const labelMissing = !columnLabel.trim();
   const problems = {
     // `scope` reads like its siblings on purpose: nothing shows before
     // a first attempt, and an unfilled field is WARNED (amber, no
     // aria-invalid), not invalid: danger says "wrong", and an
     // unfinished field is incomplete.
     scope: attempted !== null && scopeMissing,
-    label: attempted !== null && labelMissing,
     prompt: attempted !== null && missing.prompt,
     model: attempted !== null && missing.model,
     outputs: attempted !== null && missing.outputs,
@@ -411,29 +384,7 @@ function DrawerContent({
     }
   }
 
-  async function submitBlank() {
-    // Same shape as the AI pane: the action stays enabled and
-    // diagnoses here. A disabled button cannot run this, so nothing
-    // would set `attempted` and the cause below could never render.
-    if (labelMissing) {
-      setAttempted("fill");
-      setJump({ anchor: BLANK_LABEL_ID, at: Date.now() });
-      return;
-    }
-    const label = columnLabel.trim();
-    if (submitting) return;
-    setSubmitting(true);
-    setBlankError(null);
-    const res = await onAddBlank({ label, type: kind === "ai" ? "text" : kind });
-    setSubmitting(false);
-    if (!res.ok) {
-      // The same verbatim rule as the AI pane, in its own slot.
-      setBlankError(res.detail);
-    }
-  }
-
-  const footer =
-    kind === "ai" ? (
+  const footer = (
       <>
         {serverError && <ErrorMessage message={serverError} />}
         {/* The row scope, chosen BEFORE the spend: the counts
@@ -499,13 +450,6 @@ function DrawerContent({
           {scopedRows === null ? "Start fill" : `Start fill | ${scopedRows.toLocaleString("en-US")} rows`}
         </Button>
       </>
-    ) : (
-      <>
-        {blankError && <ErrorMessage message={blankError} />}
-        <Button type="submit" form={FORM_ID} fullWidth loading={submitting}>
-          Add column
-        </Button>
-      </>
     );
 
   return (
@@ -513,48 +457,18 @@ function DrawerContent({
       open={open}
       afterLeave={afterLeave}
       onClose={onClose}
-      title={kind === "ai" ? "Use AI" : `${kindLabel(kind)} column`}
+      title="Use AI"
       footer={footer}
     >
       <form
         id={FORM_ID}
         onSubmit={(event) => {
           event.preventDefault();
-          if (kind === "ai") void submit();
-          else void submitBlank();
+          void submit();
         }}
         className="space-y-4"
       >
-        {/* The KIND arrived with the gesture (the Add column menu
-            chose it). A plain column's pane is the name field; the
-            AI kind has none (its outputs ARE the columns, named in
-            the outputs editor). */}
-        {kind !== "ai" && (
-          <div>
-            <Label htmlFor="add-column-label">Column name</Label>
-            <Input
-              id={BLANK_LABEL_ID}
-              autoFocus
-              value={columnLabel}
-              onChange={(event) => setColumnLabel(event.target.value)}
-              maxLength={AGENT_OUTPUT_LABEL_MAX_LENGTH}
-              placeholder="Contact email"
-              warned={problems.label}
-              aria-describedby={problems.label ? BLANK_LABEL_ERROR_ID : undefined}
-              className="mt-1"
-            />
-            {problems.label && (
-              <FieldError id={BLANK_LABEL_ERROR_ID} tone="warning">
-                Name the column to add it.
-              </FieldError>
-            )}
-          </div>
-        )}
-
-        {/* The KIND is fixed for the drawer's life (a new gesture
-            mounts a new drawer), so this pane's hidden state is
-            static; hidden content is out of the tab order. */}
-        <div id="panel-kind-ai" hidden={kind !== "ai"} className="space-y-4">
+        <div className="space-y-4">
           <div
             role="tablist"
             aria-label="Fill with"

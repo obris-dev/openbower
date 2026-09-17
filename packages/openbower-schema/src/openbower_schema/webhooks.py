@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .agents import LABEL_MAX_LENGTH
+from .lists import WireCellState
 
 # Wire bounds live ON the contract (Field constraints below) so both
 # sides enforce one number. Values are binary by house rule.
@@ -81,9 +82,9 @@ class WebhookSheetRef(BaseModel):
 class WebhookDigestItem(BaseModel):
     """One completed row of a digest."""
 
-    key: str = Field(
-        description="An opaque dedup key: the same row completing again ships under a new key; "
-        "receivers dedup on it and never parse it."
+    event_id: str = Field(
+        description="An opaque, fixed-width id for this row completion, the same on every redelivery "
+        "of it; the same row completing again ships under a new one. Receivers dedup on it and never parse it."
     )
     row_id: str
     position: int
@@ -96,8 +97,9 @@ class WebhookDigestItem(BaseModel):
         description="The payload columns only, by key (the user chooses what leaves the instance), "
         "so a waited-on key may appear in `states` and not here."
     )
-    states: dict[str, str] = Field(
-        description="The waited-on columns' stored cell states, by key; a column not yet attempted is absent."
+    states: dict[str, WireCellState] = Field(
+        description="The waited-on columns' stored cell states, by key; a column not yet attempted is absent. "
+        "Never `pending`: a digest reads stored truth, and a row still being worked on is not complete."
     )
 
 
@@ -106,7 +108,9 @@ class WebhookDigestData(BaseModel):
 
     type: Literal["digest"] = "digest"
     sheet: WebhookSheetRef
-    column_keys: list[str] = Field(description="The columns that define complete for this digest.")
+    waited_on: list[str] = Field(
+        description="The columns whose settling makes a row complete; the keys each item's states report on."
+    )
     items: list[WebhookDigestItem]
 
 
@@ -126,7 +130,7 @@ class WebhookEnvelope(BaseModel):
     not be acted on as live data; a digest the schedule sends carries
     false. The top-level keys are reserved; everything a user defines
     is nested under `data`. A retried delivery carries a NEW id; a
-    digest's items each carry their own dedup key, which is what a
+    digest's items each carry their own `event_id`, which is what a
     receiver of batches deduplicates on."""
 
     id: str
@@ -200,3 +204,12 @@ class WebhookDestinationCreated(BaseModel):
 class WebhookDeliveriesPage(BaseModel):
     items: list[WebhookDeliveryWire]
     next_cursor: str | None = None
+
+
+class WebhookColumnTestResponse(BaseModel):
+    """A Send webhook column's test send: the delivery as recorded, and
+    the envelope exactly as the receiver got it, so the sheet can show
+    the body a test produced rather than reconstruct it."""
+
+    delivery: WebhookDeliveryWire
+    envelope: WebhookEnvelope

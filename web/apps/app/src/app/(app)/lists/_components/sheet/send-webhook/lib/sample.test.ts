@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { cellsFor, sampleFrom } from "./sample.ts";
 
-const ROW = { id: "01ROW", data: { company: "acme.com", answer: "yes" } };
+const ROW = { id: "01ROW", position: 1, data: { company: "acme.com", answer: "yes" } };
 
 test("sampleFrom takes the row's values and blanks a key the row lacks", () => {
   assert.deepEqual(sampleFrom(ROW, ["company", "score"]), { company: "acme.com", score: "" });

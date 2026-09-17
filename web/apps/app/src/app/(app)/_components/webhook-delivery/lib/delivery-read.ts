@@ -48,6 +48,18 @@ export function deliveryRead(destination: Facts): DeliveryRead {
   return { tone: word.tone, line: `${word.line} ${formatTime(last.created_at)}${http}` };
 }
 
+/** The facts beside a delivery's word: what it carried, the receiver's
+ * status when one came, and the timing. One derivation for every
+ * surface that lists a delivery. */
+export function deliveryFacts(delivery: Pick<RenderableDelivery, "type" | "test" | "http_status" | "duration_ms">): string[] {
+  const label = deliveryLabel(delivery);
+  return [
+    label || null,
+    delivery.http_status === null ? null : `HTTP ${delivery.http_status}`,
+    `${delivery.duration_ms.toLocaleString("en-US")} ms`,
+  ].filter((fact): fact is string => fact !== null);
+}
+
 /** The status word for one log row, with its tone. */
 export function deliveryWord(delivery: Pick<RenderableDelivery, "status">): DeliveryRead {
   return WORD[delivery.status];

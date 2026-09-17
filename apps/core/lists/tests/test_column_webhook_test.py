@@ -17,6 +17,7 @@ from django.urls import reverse
 from common.testing import TEST_IDENTITY, login_session
 from lists.constants import CELL_MAX_LENGTH, StoredCellState, WebhookColumnErrorCode
 from lists.services import cell_truth
+from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
 from openbower_schema.webhooks import WebhookDeliveryWire, WebhookDigestData, WebhookEnvelope
 from webhooks.constants import DeliveryStatus
@@ -86,8 +87,13 @@ class ColumnWebhookTestTests(TestCase):
         self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED})
         resp, fake = self._post()
         self.assertEqual(resp.status_code, 200, resp.content)
-        delivery = resp.json()
+        body = resp.json()
+        delivery = body["delivery"]
         WebhookDeliveryWire(**delivery)
+        # The response's envelope IS the body the receiver got.
+        self.assertEqual(
+            WebhookEnvelope.model_validate(body["envelope"]), WebhookEnvelope.model_validate_json(fake.calls[0]["body"])
+        )
         self.assertEqual(delivery["type"], "digest")
         self.assertTrue(delivery["test"])
         self.assertEqual(delivery["destination_id"], str(self.destination.id))
@@ -98,7 +104,7 @@ class ColumnWebhookTestTests(TestCase):
         data = envelope.data
         self.assertIsInstance(data, WebhookDigestData)
         self.assertEqual(data.sheet.id, str(self.sheet.id))
-        self.assertEqual(data.column_keys, ["answer", "score"])
+        self.assertEqual(data.waited_on, ["answer", "score"])
         [item] = data.items
         self.assertEqual(item.row_id, str(self.rows[0].id))
         self.assertEqual(item.position, 1)
@@ -109,7 +115,7 @@ class ColumnWebhookTestTests(TestCase):
         # so the row is not complete.
         self.assertEqual(item.states, {"answer": StoredCellState.FILLED})
         self.assertIsNone(item.completed_at)
-        self.assertTrue(item.key.startswith(f"{self.sheet.id}:{self.rows[0].id}:"))
+        self.assertRegex(item.event_id, r"^[0-9a-f]{32}$")
 
         row = WebhookDelivery.objects.get(id=delivery["id"])
         self.assertEqual(row.destination_id, str(self.destination.id))
@@ -121,8 +127,20 @@ class ColumnWebhookTestTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         [item] = WebhookEnvelope.model_validate_json(fake.calls[0]["body"]).data.items
         self.assertIsNotNone(item.completed_at)
-        self.assertEqual(item.key, f"{self.sheet.id}:{self.rows[0].id}:{item.completed_at}")
+        expected = event_id_of(
+            scope=str(self.sheet.id), row_id=str(self.rows[0].id), stamp=item.completed_at, test=True
+        )
+        self.assertEqual(item.event_id, expected)
         self.assertEqual(set(item.states), {"answer", "score"})
+
+    def test_a_row_whose_wait_key_ended_in_a_retryable_failure_is_not_complete(self):
+        self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED, "score": StoredCellState.TRANSIENT})
+        resp, fake = self._post()
+        self.assertEqual(resp.status_code, 200)
+        [item] = WebhookEnvelope.model_validate_json(fake.calls[0]["body"]).data.items
+        # The state still rides (the receiver sees why), the completion does not.
+        self.assertEqual(item.states["score"], StoredCellState.TRANSIENT)
+        self.assertIsNone(item.completed_at)
 
     def test_a_long_cell_arrives_clamped(self):
         resp, fake = self._post(cells={"company": "x" * (CELL_MAX_LENGTH + 10), "answer": ""})
@@ -145,6 +163,24 @@ class ColumnWebhookTestTests(TestCase):
                 self.assertEqual(resp.json()["error"], code)
                 self.assertEqual(fake.calls, [])
         self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_another_accounts_destination_reads_as_unknown(self):
+        # Cross-tenant is not-found, never a 403 oracle.
+        foreign = WebhookDestinationService(account_id="01ACCT" + "Z" * 20, user_id=TEST_IDENTITY["id"])
+        theirs, _ = foreign.create(label="Theirs", url="https://hooks.example.com/theirs", headers={})
+        resp, fake = self._post(destination_id=str(theirs.id))
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.DESTINATION_UNKNOWN)
+        self.assertEqual(fake.calls, [])
+
+    def test_a_paused_destination_still_receives_an_explicit_test(self):
+        # `enabled` gates the automatic lane only; a Test is a choice.
+        WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"]).patch(
+            self.destination, enabled=False
+        )
+        resp, fake = self._post()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(fake.calls), 1)
 
     def test_a_row_of_another_sheet_reads_as_unknown(self):
         other = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Other", columns=COLUMNS, origin="manual")

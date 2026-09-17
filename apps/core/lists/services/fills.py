@@ -23,6 +23,7 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, List, ListCellState, ListRow, NodeRun
+from .cell_states import CellStateService
 from .fill_progress import stop_fill
 
 # The wire's one non-terminal state. A STRING here and not a StoredCellState
@@ -122,6 +123,7 @@ class FillNotFound(Exception):
 class FillService:
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
+        self.cell_states = CellStateService(account_id=account_id)
 
     def get(self, fill_run_id: str) -> Fill:
         try:
@@ -207,19 +209,7 @@ class FillService:
             return {}
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
-        recorded = (
-            ListCellState.objects.filter(
-                account_id=self.account_id,
-                list_id=str(target_list.id),
-                row_id__in=row_ids,
-                column_key__in=fill_keys,
-            )
-            # DB-side narrowing only (a pre-tools filled row); the
-            # Python guard below stays the rule, because a clean run
-            # records {"web_search": "open"}, never {}.
-            .exclude(state=StoredCellState.FILLED, tools={})
-            .values_list("row_id", "column_key", "state", "tools")
-        )
+        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=fill_keys)
         for row_id, column_key, state, tools in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())
@@ -278,11 +268,7 @@ class FillService:
         keys = [column["key"] for column in fill_columns]
         filled: dict[str, int] = {}
         attempted: dict[str, int] = {}
-        rows = (
-            ListCellState.objects.filter(account_id=self.account_id, list_id=str(target_list.id), column_key__in=keys)
-            .values_list("column_key", "state")
-            .annotate(n=models.Count("id"))
-        )
+        rows = self.cell_states.iter_counts_by_column(str(target_list.id), column_keys=keys)
         for key, state, count in rows:
             attempted[key] = attempted.get(key, 0) + count
             if state == StoredCellState.FILLED:

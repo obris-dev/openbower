@@ -13,6 +13,7 @@ from django.test import SimpleTestCase
 from lists import constants
 from openbower_schema.lists import ColumnType as WireColumnType
 from openbower_schema.lists import ListOrigin as WireListOrigin
+from openbower_schema.lists import WireCellState
 
 
 class WireEnumParityTests(SimpleTestCase):
@@ -21,3 +22,10 @@ class WireEnumParityTests(SimpleTestCase):
 
     def test_list_origin_parity(self):
         self.assertEqual(set(get_args(WireListOrigin)), {v.value for v in constants.ListOrigin})
+
+    def test_cell_state_parity(self):
+        # The wire adds `pending` (derived, never stored) and otherwise
+        # names exactly the stored members: a digest's `states` map is
+        # typed over the wire vocabulary, so a new stored state must
+        # reach it.
+        self.assertEqual(set(get_args(WireCellState)) - {"pending"}, {v.value for v in constants.StoredCellState})

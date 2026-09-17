@@ -23,8 +23,9 @@ from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.lists import FoldersList, ImportResult, IngestAccepted, ListRowsPage, ListsPage, RowsAdded
+from openbower_schema.webhooks import WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
-from webhooks.serializers import delivery_wire
+from webhooks.serializers import delivery_model
 
 from .constants import (
     DEFAULT_INDEX_PAGE,
@@ -352,17 +353,17 @@ class AiColumnView(_ScopedView):
 
 class ColumnWebhookTestView(_ScopedView):
     """POST /v1/lists/{id}/columns/webhook/test: one sample digest to a
-    destination, sent now. Answers 200 with the delivery whatever the
-    receiver did (a failed delivery is an API object); every refusal
-    names something in the body the caller changes, so it is a 400 with
-    a code."""
+    destination, sent now. Answers 200 with the delivery and the envelope
+    it carried whatever the receiver did, since a failed delivery is an
+    API object. Every refusal names something in the body the caller
+    changes, so it is a 400 with a code."""
 
     def post(self, request: Request, id: str) -> Response:
         serializer = WebhookColumnTestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            delivery = self.webhook_columns.test(
+            sent = self.webhook_columns.test(
                 id,
                 destination_id=data["destination_id"],
                 wait_keys=data["wait_keys"],
@@ -374,7 +375,9 @@ class ColumnWebhookTestView(_ScopedView):
             return Response({"error": e.code, "detail": str(e)}, status=400)
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        return Response(delivery_wire(delivery))
+        delivery = delivery_model(sent.delivery)
+        body = WebhookColumnTestResponse(delivery=delivery, envelope=sent.envelope)
+        return Response(body.model_dump())
 
 
 class ColumnDetailView(_ScopedView):

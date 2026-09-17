@@ -19,6 +19,7 @@ import {
   ListsPageSchema,
   ListSummarySchema,
   RowsAddedSchema,
+  WebhookColumnTestResponseSchema,
   WIRE_CONSTANTS,
   type AgentConfig,
   type ColumnFillSummary,
@@ -478,9 +479,20 @@ export type WebhookColumnTestBody = {
 export const WEBHOOK_ROW_UNKNOWN_CODE = "row_unknown";
 export const WEBHOOK_DESTINATION_UNKNOWN_CODE = "destination_unknown";
 
+// The envelope comes back for DISPLAY (the sheet shows the body the
+// receiver got), never branched on, so it is read as plain JSON: a
+// strict parse would turn a future envelope type into a failed test.
+export type WebhookEnvelopeJson = Record<string, unknown>;
+export type WebhookColumnTestResult = { delivery: RenderableDelivery; envelope: WebhookEnvelopeJson };
+
+const TolerantWebhookColumnTestResponseSchema = WebhookColumnTestResponseSchema.extend({
+  delivery: TolerantWebhookDeliveryWireSchema,
+  envelope: z.record(z.string(), z.unknown()),
+});
+
 export async function postColumnWebhookTest(
   id: string,
   body: WebhookColumnTestBody,
-): Promise<ApiResult<RenderableDelivery>> {
-  return http.post(apiRoutes.lists.columnWebhookTest(id), TolerantWebhookDeliveryWireSchema, body);
+): Promise<ApiResult<WebhookColumnTestResult>> {
+  return http.post(apiRoutes.lists.columnWebhookTest(id), TolerantWebhookColumnTestResponseSchema, body);
 }

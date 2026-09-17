@@ -1,7 +1,7 @@
 // The sample the Send webhook drawer pre-fills: one value per chosen
 // column, from the sheet's row when it has one, blank otherwise.
 
-export type SampleRow = { id: string; data: Record<string, string> };
+export type SampleRow = { id: string; position: number; data: Record<string, string> };
 
 /** The editable sample's starting values: the row's cell for each key,
  * "" for a key the row does not hold. Pure, so the drawer's state

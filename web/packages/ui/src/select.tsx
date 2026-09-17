@@ -4,6 +4,9 @@ import { cn } from "./cn";
 
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   invalid?: boolean;
+  /** Incomplete, not wrong: amber ring, no aria-invalid (red stays
+   * reserved for genuine rejections). */
+  warned?: boolean;
 }
 
 /** Native select styled to sit beside Input (same surface, ring, and
@@ -12,7 +15,7 @@ export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
  * chevron must anchor to the control's box, and appearance-none
  * removed the native arrow it replaces. */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { invalid, className, ...rest },
+  { invalid, warned, className, ...rest },
   ref,
 ) {
   return (
@@ -26,7 +29,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           "focus:outline-none focus:ring-2 focus:ring-inset",
           // Exclusive, not additive: emitting both rings would leave the
           // winner to stylesheet order (and the dark variant to chance).
-          invalid ? "ring-danger-edge focus:ring-danger-edge" : "ring-edge focus:ring-signal",
+          invalid
+            ? "ring-danger-edge focus:ring-danger-edge"
+            : warned
+              ? "ring-warning-edge focus:ring-warning-edge"
+              : "ring-edge focus:ring-signal",
         )}
         {...rest}
       />

@@ -180,6 +180,8 @@ class IngestErrorCode(StrEnum):
 # race worth waiting out. Body references answer with a code and copy
 # rather than a 404, so the drawer can act on them.
 class WebhookColumnErrorCode(StrEnum):
+    # The generic leg a refusal carries until a subclass names its own.
+    WEBHOOK_COLUMN_REFUSED = "webhook_column_refused"
     COLUMN_UNKNOWN = "column_unknown"
     COLUMN_NOT_AI = "column_not_ai"
     ROW_UNKNOWN = "row_unknown"

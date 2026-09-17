@@ -46,6 +46,7 @@ from .lists import (
     RowsAdded,
 )
 from .webhooks import (
+    WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDeliveryWire,
     WebhookDestinationCreated,
@@ -91,6 +92,7 @@ __all__ = [
     "LookalikeItem",
     "LookalikeListResponse",
     "RowsAdded",
+    "WebhookColumnTestResponse",
     "WebhookDeliveriesPage",
     "WebhookDeliveryWire",
     "WebhookDestinationCreated",
