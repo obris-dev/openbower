@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -155,6 +155,14 @@ sweep: ## Run the test-fill sweep once, in the cron container (proves its enviro
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
+
+# A debugging aid outside the stack: a plain container on the stack's
+# network, so it never rides `make up` or a deployment.
+receiver: ## Start a throwaway webhook receiver with a UI (localhost:8085; destinations reach it as webhook-receiver:8080)
+	@./scripts/debug/webhook-receiver.sh
+
+receiver-stop: ## Stop the throwaway webhook receiver
+	@./scripts/debug/webhook-receiver.sh stop
 
 
 local-exec: ## Run a command in a container (e.g. make local-exec SVC=core CMD="uv run ruff check .")
