@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import NamedTuple
 
 import ulid
 from django.conf import settings
@@ -13,13 +14,13 @@ from django.db import transaction
 from django.utils import timezone
 
 from common.ssrf import destination_block_reason
-from openbower_schema.webhooks import WebhookEnvelope
+from openbower_schema.webhooks import WebhookEnvelope, WebhookEnvelopeData, WebhookPingData
 
 from ..constants import (
     MAX_WEBHOOK_DESTINATIONS,
     RESERVED_WEBHOOK_HEADER_NAMES,
     DeliveryStatus,
-    WebhookDeliveryKind,
+    WebhookEnvelopeType,
     WebhookErrorCode,
 )
 from ..delivery.protocol import DeliveryResult
@@ -29,6 +30,14 @@ from ..models import WebhookDelivery, WebhookDestination
 from .deliveries import WebhookDeliveryService
 
 logger = logging.getLogger(__name__)
+
+
+class Sent(NamedTuple):
+    """One delivery as recorded, with the envelope it carried."""
+
+    delivery: WebhookDelivery
+    envelope: WebhookEnvelope
+
 
 HEADERS_UNREADABLE = "This destination's headers are unreadable; delete it and add it again."
 
@@ -159,17 +168,22 @@ class WebhookDestinationService:
             logger.warning("destination %s: headers unreadable", destination.id)
             return []
 
-    def test(self, destination: WebhookDestination) -> WebhookDelivery:
-        """One signed delivery of a test envelope, sent now, whatever
-        `enabled` says (the test is an explicit gesture; `enabled` gates
-        the automatic lane). The POST runs outside any transaction; the
-        record lands after."""
+    def deliver(self, destination: WebhookDestination, *, test: bool, data: WebhookEnvelopeData) -> Sent:
+        """One signed delivery of `data` to the destination, sent now
+        whatever `enabled` says, then recorded. `enabled` gates the
+        AUTOMATIC lane: a scheduled caller filters on it before calling
+        here; an explicit Test does not. The
+        one place the id, the type, the test flag, and the clock are
+        written, so the wire and the log cannot disagree. The POST runs
+        outside any transaction; the record lands after. Hands back the
+        envelope beside the record, since nothing stores it."""
         delivery_id = str(ulid.ulid())
         envelope = WebhookEnvelope(
             id=delivery_id,
-            type=WebhookDeliveryKind.TEST,
+            type=data.type,
+            test=test,
             timestamp=timezone.now().isoformat(),
-            data={"destination_id": str(destination.id), "label": destination.label},
+            data=data,
         )
         try:
             headers = self.headers_of(destination)
@@ -184,9 +198,21 @@ class WebhookDestinationService:
                 delivery_id=delivery_id,
                 body=encode_body(envelope),
             )
-        return self.deliveries.record(
-            str(destination.id), kind=WebhookDeliveryKind.TEST, result=result, delivery_id=delivery_id
+        delivery = self.deliveries.record(
+            str(destination.id),
+            envelope_type=WebhookEnvelopeType(data.type),
+            test=test,
+            result=result,
+            delivery_id=delivery_id,
         )
+        return Sent(delivery=delivery, envelope=envelope)
+
+    def test(self, destination: WebhookDestination) -> WebhookDelivery:
+        """The destination page's Test button: a ping, nothing from a
+        sheet, proving a signed delivery reaches the receiver."""
+        ping = WebhookPingData(destination_id=str(destination.id), label=destination.label)
+        sent = self.deliver(destination, test=True, data=ping)
+        return sent.delivery
 
     def _guard_url(self, url: str) -> None:
         reason = destination_block_reason(

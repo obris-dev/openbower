@@ -15,6 +15,9 @@ from openbower_schema.fills import (
 )
 from openbower_schema.lists import CELL_MAX_LENGTH as WIRE_CELL_MAX_LENGTH
 from openbower_schema.lists import (
+    COLUMN_KEY_GRAMMAR as COLUMN_KEY_GRAMMAR,
+)
+from openbower_schema.lists import (
     COLUMN_KEY_MAX_LENGTH as COLUMN_KEY_MAX_LENGTH,
 )
 from openbower_schema.lists import (
@@ -170,6 +173,19 @@ class FillErrorCode(StrEnum):
 class IngestErrorCode(StrEnum):
     INGEST_INVALID = "ingest_invalid"
     INGEST_UNAVAILABLE = "ingest_unavailable"
+
+
+# The Send webhook column's refusals, all 400: each names something in
+# the request the caller changes (a key, a row, a destination), never a
+# race worth waiting out. Body references answer with a code and copy
+# rather than a 404, so the drawer can act on them.
+class WebhookColumnErrorCode(StrEnum):
+    # The generic leg a refusal carries until a subclass names its own.
+    WEBHOOK_COLUMN_REFUSED = "webhook_column_refused"
+    COLUMN_UNKNOWN = "column_unknown"
+    COLUMN_NOT_AI = "column_not_ai"
+    ROW_UNKNOWN = "row_unknown"
+    DESTINATION_UNKNOWN = "destination_unknown"
 
 
 # Rows per fetch when a fill service STREAMS the sheet (binary,

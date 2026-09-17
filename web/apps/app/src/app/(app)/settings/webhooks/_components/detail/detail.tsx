@@ -9,7 +9,7 @@ import { ensureOk } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../../_components/breadcrumbs";
 import { SECRET_RECOVERY_NOTE } from "../copy";
 import { DeliveryLog } from "../delivery-log";
-import { hostOf } from "../lib/host-of";
+import { hostOf } from "../../../../_components/webhook-delivery";
 import { useDeliveries } from "../use-deliveries";
 import { VerifyGuide } from "../verify-guide";
 import { DetailFooter } from "./footer";

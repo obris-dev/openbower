@@ -9,21 +9,18 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from django.db import models
-
 from agents.runtime.prompts import prompt_variables
 from agents.tools.search.web_search import web_search_is_metered
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
-from openbower_schema.fills import SETTLED_CELL_STATES
 
 from ...constants import (
     FILL_SCAN_CHUNK,
     FREE_SEARCH_FILL_BUDGET,
     MAX_LIST_ROWS,
     NodeRunStatus,
-    StoredCellState,
 )
-from ...models import List, ListCellState, ListRow, NodeRun
+from ...models import List, ListRow, NodeRun
+from ..cell_states import CellStateService
 
 
 def row_is_eligible(data: dict, variables: set[str]) -> bool:
@@ -139,6 +136,7 @@ class RefillTargets:
     ) -> None:
         self.list_id = str(target_list.id)
         self.account_id = target_list.account_id
+        self.cell_states = CellStateService(account_id=self.account_id)
         # The columns owed-ness is judged across. A widening gesture
         # passes the ONE column the user clicked. A RESUME passes the
         # resumed fill's whole set, because a fill owns every output
@@ -207,17 +205,10 @@ class RefillTargets:
         siblings. Filled cells are here too, but the non-blank test
         above already excludes them; this answers the other half, the
         blanks that are settled rather than retryable."""
-        settled = models.Q(state=StoredCellState.FILLED) | models.Q(
-            state__in=SETTLED_CELL_STATES, config_fingerprint=self.fingerprint
-        )
         by_row: dict[str, set[str]] = {}
-        for row_id, column_key in ListCellState.objects.filter(
-            settled,
-            account_id=self.account_id,
-            list_id=self.list_id,
-            column_key__in=self.column_keys,
-            row_id__in=ids,
-        ).values_list("row_id", "column_key"):
+        for row_id, column_key in self.cell_states.iter_settled(
+            self.list_id, row_ids=ids, column_keys=self.column_keys, fingerprint=self.fingerprint
+        ):
             by_row.setdefault(str(row_id), set()).add(column_key)
         return by_row
 

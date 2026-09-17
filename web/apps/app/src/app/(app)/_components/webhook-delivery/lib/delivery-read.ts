@@ -26,6 +26,15 @@ const WORD: Record<RenderableDelivery["status"], DeliveryRead> = {
   unknown: { tone: "muted", line: "Recorded" },
 };
 
+// What the delivery carried, by the envelope's own two facts: the
+// shape, and whether a Test button sent it. A shape this bundle cannot
+// name gets no word (naming it would claim what it carried).
+const TYPE_WORD: Record<RenderableDelivery["type"], string> = {
+  ping: "ping",
+  digest: "digest",
+  unknown: "",
+};
+
 /** The one status line a destination card shows, derived from the
  * wire's facts (never a server-shipped sentence): paused, the newest
  * delivery's outcome and time, or not yet. The verbatim `error` renders
@@ -39,7 +48,28 @@ export function deliveryRead(destination: Facts): DeliveryRead {
   return { tone: word.tone, line: `${word.line} ${formatTime(last.created_at)}${http}` };
 }
 
+/** The facts beside a delivery's word: what it carried, the receiver's
+ * status when one came, and the timing. One derivation for every
+ * surface that lists a delivery. */
+export function deliveryFacts(delivery: Pick<RenderableDelivery, "type" | "test" | "http_status" | "duration_ms">): string[] {
+  const label = deliveryLabel(delivery);
+  return [
+    label || null,
+    delivery.http_status === null ? null : `HTTP ${delivery.http_status}`,
+    `${delivery.duration_ms.toLocaleString("en-US")} ms`,
+  ].filter((fact): fact is string => fact !== null);
+}
+
 /** The status word for one log row, with its tone. */
 export function deliveryWord(delivery: Pick<RenderableDelivery, "status">): DeliveryRead {
   return WORD[delivery.status];
+}
+
+/** "Test digest", "Test ping", "Digest": the envelope's shape and its
+ * test flag, as a label; "Test" alone for a test of an unknown shape,
+ * "" for an unknown live one. */
+export function deliveryLabel(delivery: Pick<RenderableDelivery, "type" | "test">): string {
+  const shape = TYPE_WORD[delivery.type];
+  if (delivery.test) return shape ? `Test ${shape}` : "Test";
+  return shape ? shape.charAt(0).toUpperCase() + shape.slice(1) : "";
 }

@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -80,10 +80,15 @@ up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Star
 build: apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
 	$(COMPOSE) up --build -d --renew-anon-volumes --wait --wait-timeout 900
 
+# The receiver (make receiver) sits on the stack's network as a plain
+# container, and compose cannot remove a network with a foreign endpoint
+# still attached, so it goes first; its stop is idempotent.
 down: ## Stop and remove the stack's containers (the db's data and installed dependencies survive)
+	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
 	$(COMPOSE) down
 
 reset: ## Remove the stack AND its volumes (wipes the dev database and the installed dependencies)
+	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
 	$(COMPOSE) down -v
 
 stop: ## Stop the stack in place; the fill consumer finishes the row in flight before its grace expires (make up resumes)
@@ -155,6 +160,14 @@ sweep: ## Run the test-fill sweep once, in the cron container (proves its enviro
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
+
+# A debugging aid outside the stack: a plain container on the stack's
+# network, so it never rides `make up` or a deployment.
+receiver: ## Start a throwaway webhook receiver with a UI (localhost:8085; one URL, http://webhook-receiver.localhost:8085, works from the browser and the stack)
+	@./scripts/debug/webhook-receiver.sh
+
+receiver-stop: ## Stop the throwaway webhook receiver
+	@./scripts/debug/webhook-receiver.sh stop
 
 
 local-exec: ## Run a command in a container (e.g. make local-exec SVC=core CMD="uv run ruff check .")

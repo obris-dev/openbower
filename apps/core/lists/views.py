@@ -23,7 +23,9 @@ from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.lists import FoldersList, ImportResult, IngestAccepted, ListRowsPage, ListsPage, RowsAdded
+from openbower_schema.webhooks import WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
+from webhooks.serializers import delivery_model
 
 from .constants import (
     DEFAULT_INDEX_PAGE,
@@ -52,6 +54,7 @@ from .serializers import (
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
+    WebhookColumnTestRequest,
     fill_run_wire,
     fill_runs_wire,
     folder_wire,
@@ -64,6 +67,7 @@ from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
+from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +118,10 @@ class _ScopedView(ScopedView):
     @cached_property
     def fills(self) -> FillService:
         return FillService(account_id=self.request.user.account_id)
+
+    @cached_property
+    def webhook_columns(self) -> WebhookColumnService:
+        return WebhookColumnService(account_id=self.request.user.account_id, user_id=self.request.user.id)
 
     def _list_or_404(self, list_id: str) -> List:
         try:
@@ -341,6 +349,35 @@ class AiColumnView(_ScopedView):
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
         return Response(fill_run_wire(fill), status=201)
+
+
+class ColumnWebhookTestView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook/test: one sample digest to a
+    destination, sent now. Answers 200 with the delivery and the envelope
+    it carried whatever the receiver did, since a failed delivery is an
+    API object. Every refusal names something in the body the caller
+    changes, so it is a 400 with a code."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnTestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            sent = self.webhook_columns.test(
+                id,
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                row_id=data["row_id"],
+                cells=data["cells"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        delivery = delivery_model(sent.delivery)
+        body = WebhookColumnTestResponse(delivery=delivery, envelope=sent.envelope)
+        return Response(body.model_dump())
 
 
 class ColumnDetailView(_ScopedView):

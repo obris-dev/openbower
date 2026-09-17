@@ -18,7 +18,7 @@ from django.urls import reverse
 
 from common.testing import login_session
 from openbower_schema.webhooks import WebhookDeliveryWire, WebhookDestinationWire, WebhookEnvelope
-from webhooks.constants import DeliveryStatus, WebhookDeliveryKind, WebhookErrorCode
+from webhooks.constants import DeliveryStatus, WebhookEnvelopeType, WebhookErrorCode
 from webhooks.delivery.protocol import DeliveryResult
 from webhooks.models import WebhookDelivery, WebhookDestination
 from webhooks.services import WebhookDestinationService
@@ -221,7 +221,8 @@ class TestDeliveryTests(_Base):
         delivery, fake = self._test(created["id"])
         WebhookDeliveryWire(**delivery)
         self.assertEqual(delivery["status"], "ok")
-        self.assertEqual(delivery["kind"], "test")
+        self.assertEqual(delivery["type"], "ping")
+        self.assertTrue(delivery["test"])
         self.assertEqual(delivery["http_status"], 200)
         self.assertEqual(delivery["destination_id"], created["id"])
 
@@ -232,8 +233,11 @@ class TestDeliveryTests(_Base):
         self.assertEqual(call["delivery_id"], delivery["id"])
         envelope = WebhookEnvelope.model_validate_json(call["body"])
         self.assertEqual(envelope.id, delivery["id"])
-        self.assertEqual(envelope.type, WebhookDeliveryKind.TEST)
-        self.assertEqual(envelope.data, {"destination_id": created["id"], "label": "CRM sync"})
+        self.assertEqual(envelope.type, WebhookEnvelopeType.PING)
+        self.assertTrue(envelope.test)
+        self.assertEqual(
+            envelope.data.model_dump(), {"type": "ping", "destination_id": created["id"], "label": "CRM sync"}
+        )
 
         row = WebhookDelivery.objects.get(id=delivery["id"])
         self.assertEqual(row.destination_id, created["id"])

@@ -1,6 +1,7 @@
 import {
   STANDARD_WEBHOOKS_SPEC_URL,
   STANDARD_WEBHOOKS_URL,
+  VERIFY_BODY,
   VERIFY_EXAMPLE,
   VERIFY_HEADERS,
   VERIFY_INTRO,
@@ -30,6 +31,7 @@ export function VerifyGuide({ heading = true }: { heading?: boolean }) {
         ))}
       </ul>
       <pre className="overflow-x-auto rounded-md bg-wash p-3 font-mono text-xs text-foreground">{VERIFY_EXAMPLE}</pre>
+      <p className="text-sm text-muted">{VERIFY_BODY}</p>
       <p className="text-xs text-muted">
         {VERIFY_SPEC_LEAD}
         <a href={STANDARD_WEBHOOKS_SPEC_URL} target="_blank" rel="noreferrer" className={LINK_CLASS}>

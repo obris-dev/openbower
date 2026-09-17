@@ -1502,6 +1502,23 @@
       "title": "SearchToolCall",
       "type": "object"
     },
+    "WebhookColumnTestResponse": {
+      "description": "A Send webhook column's test send: the delivery as recorded, and\nthe envelope exactly as the receiver got it, so the sheet can show\nthe body a test produced rather than reconstruct it.",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/WebhookDeliveryWire"
+        },
+        "envelope": {
+          "$ref": "#/$defs/WebhookEnvelope"
+        }
+      },
+      "required": [
+        "delivery",
+        "envelope"
+      ],
+      "title": "WebhookColumnTestResponse",
+      "type": "object"
+    },
     "WebhookDeliveriesPage": {
       "properties": {
         "items": {
@@ -1531,7 +1548,7 @@
       "type": "object"
     },
     "WebhookDeliveryWire": {
-      "description": "One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried.",
+      "description": "One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried; `type` and `test`\nare the envelope's own, recorded on our side.",
       "properties": {
         "created_at": {
           "title": "Created At",
@@ -1569,14 +1586,6 @@
           "title": "Id",
           "type": "string"
         },
-        "kind": {
-          "enum": [
-            "test",
-            "digest"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
         "response_excerpt": {
           "default": "",
           "description": "The head of the receiver's answer, kept only when it was not a 2xx.",
@@ -1593,12 +1602,25 @@
           ],
           "title": "Status",
           "type": "string"
+        },
+        "test": {
+          "default": false,
+          "title": "Test",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "ping",
+            "digest"
+          ],
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
         "id",
         "destination_id",
-        "kind",
+        "type",
         "status",
         "created_at"
       ],
@@ -1695,17 +1717,140 @@
       "title": "WebhookDestinationsList",
       "type": "object"
     },
+    "WebhookDigestData": {
+      "description": "Rows that completed since the last delivery, for one sheet.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/WebhookDigestItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "sheet": {
+          "$ref": "#/$defs/WebhookSheetRef"
+        },
+        "type": {
+          "const": "digest",
+          "default": "digest",
+          "title": "Type",
+          "type": "string"
+        },
+        "waited_on": {
+          "description": "The columns whose settling makes a row complete; the keys each item's states report on.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Waited On",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sheet",
+        "waited_on",
+        "items"
+      ],
+      "title": "WebhookDigestData",
+      "type": "object"
+    },
+    "WebhookDigestItem": {
+      "description": "One completed row of a digest.",
+      "properties": {
+        "cells": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The payload columns only, by key (the user chooses what leaves the instance), so a waited-on key may appear in `states` and not here.",
+          "title": "Cells",
+          "type": "object"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the last waited-on column settled. Null only on a test send of a row that has not completed; a real digest never sends null.",
+          "title": "Completed At"
+        },
+        "event_id": {
+          "description": "An opaque, fixed-width id for this row completion, the same on every redelivery of it; the same row completing again ships under a new one. Receivers dedup on it and never parse it.",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "position": {
+          "title": "Position",
+          "type": "integer"
+        },
+        "row_id": {
+          "title": "Row Id",
+          "type": "string"
+        },
+        "states": {
+          "additionalProperties": {
+            "enum": [
+              "pending",
+              "filled",
+              "no_evidence",
+              "no_answer",
+              "unverified",
+              "unparseable",
+              "type_mismatch",
+              "model_error",
+              "transient",
+              "tool_not_configured",
+              "tool_unavailable"
+            ],
+            "type": "string"
+          },
+          "description": "The waited-on columns' stored cell states, by key; a column not yet attempted is absent. Never `pending`: a digest reads stored truth, and a row still being worked on is not complete.",
+          "title": "States",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event_id",
+        "row_id",
+        "position",
+        "cells",
+        "states"
+      ],
+      "title": "WebhookDigestItem",
+      "type": "object"
+    },
     "WebhookEnvelope": {
-      "description": "What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme. A retried delivery carries a NEW id; a\ndigest's items each carry their own dedup key, which is what a\nreceiver of batches deduplicates on.",
+      "description": "What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.",
       "properties": {
         "data": {
-          "additionalProperties": true,
-          "title": "Data",
-          "type": "object"
+          "discriminator": {
+            "mapping": {
+              "digest": "#/$defs/WebhookDigestData",
+              "ping": "#/$defs/WebhookPingData"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WebhookPingData"
+            },
+            {
+              "$ref": "#/$defs/WebhookDigestData"
+            }
+          ],
+          "title": "Data"
         },
         "id": {
           "title": "Id",
           "type": "string"
+        },
+        "test": {
+          "default": false,
+          "title": "Test",
+          "type": "boolean"
         },
         "timestamp": {
           "title": "Timestamp",
@@ -1713,7 +1858,7 @@
         },
         "type": {
           "enum": [
-            "test",
+            "ping",
             "digest"
           ],
           "title": "Type",
@@ -1732,6 +1877,49 @@
         "data"
       ],
       "title": "WebhookEnvelope",
+      "type": "object"
+    },
+    "WebhookPingData": {
+      "description": "A destination's Test button: nothing from a sheet, just proof\nthat a signed delivery reaches the receiver.",
+      "properties": {
+        "destination_id": {
+          "title": "Destination Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "const": "ping",
+          "default": "ping",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "destination_id",
+        "label"
+      ],
+      "title": "WebhookPingData",
+      "type": "object"
+    },
+    "WebhookSheetRef": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "WebhookSheetRef",
       "type": "object"
     }
   },

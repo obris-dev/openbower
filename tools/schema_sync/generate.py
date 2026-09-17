@@ -44,11 +44,14 @@ from openbower_schema import (
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
+    WebhookDigestData,
     WebhookEnvelope,
+    WebhookPingData,
 )
 from openbower_schema.agents import (
     MAX_TOOL_CALLS,
@@ -103,13 +106,17 @@ CONTRACT_MODELS: list[type[Any]] = [
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
-    # Not a response root: the body a RECEIVER validates, listed so
-    # the contract documents what it sends.
+    # Not response roots: the body a RECEIVER validates and the two
+    # shapes its `data` takes, listed so the contract documents what it
+    # sends.
     WebhookEnvelope,
+    WebhookPingData,
+    WebhookDigestData,
 ]
 
 # The committed artifact, in the schema package it belongs to. Anchored to this

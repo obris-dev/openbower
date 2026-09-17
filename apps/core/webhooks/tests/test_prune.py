@@ -14,7 +14,7 @@ from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
-from webhooks.constants import WEBHOOK_DELIVERY_MAX_AGE_SECONDS, DeliveryStatus, WebhookDeliveryKind
+from webhooks.constants import WEBHOOK_DELIVERY_MAX_AGE_SECONDS, DeliveryStatus, WebhookEnvelopeType
 from webhooks.models import WebhookDelivery
 from webhooks.services import WebhookDeliveryService
 
@@ -28,7 +28,7 @@ def _delivery(age_seconds: int) -> WebhookDelivery:
         id=ulid.encode_time(int(born.timestamp() * 1000), 10) + ulid.encode_random(16),
         account_id=ACCOUNT,
         destination_id=DESTINATION,
-        kind=WebhookDeliveryKind.TEST,
+        type=WebhookEnvelopeType.PING,
         status=DeliveryStatus.OK,
     )
 

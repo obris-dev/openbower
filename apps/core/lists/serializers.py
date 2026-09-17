@@ -20,6 +20,7 @@ from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
 
 from .constants import (
+    COLUMN_KEY_GRAMMAR,
     COLUMN_KEY_MAX_LENGTH,
     COLUMN_LABEL_MAX_LENGTH,
     LABEL_MAX_LENGTH,
@@ -35,7 +36,7 @@ from .models import Fill, Folder, List, ListRow
 
 
 class ColumnDef(serializers.Serializer):
-    key = serializers.RegexField(r"^[a-z0-9_]+$", max_length=COLUMN_KEY_MAX_LENGTH)
+    key = serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH)
     label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
     type = serializers.ChoiceField(choices=[t.value for t in ColumnType])
 
@@ -180,7 +181,7 @@ class ColumnOrderRequest(serializers.Serializer):
         # ever exist, so it is a malformed request and not a sheet that
         # moved. Without it such a key reaches the stale check and gets
         # told to try again, which can never work.
-        child=serializers.RegexField(r"^[a-z0-9_]+$", max_length=COLUMN_KEY_MAX_LENGTH),
+        child=serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH),
         min_length=1,
         max_length=MAX_LIST_COLUMNS,
     )
@@ -338,3 +339,46 @@ def fill_runs_wire(fills: list[Fill]) -> list[dict[str, Any]]:
 
     progress = page_progress([str(fill.id) for fill in fills])
     return [_fill_run_wire(fill, *progress[str(fill.id)]) for fill in fills]
+
+
+class WebhookColumnTestRequest(serializers.Serializer):
+    """POST /v1/lists/{id}/columns/webhook/test: the destination, the
+    columns the future column waits on, the columns it sends, the sample
+    row, and the caller's values for the payload columns (the sample is
+    editable). Cell values carry no length bound here: the service runs
+    them through the one cell transform, so what is sent is what the
+    sheet would hold."""
+
+    destination_id = serializers.CharField(max_length=26)
+    wait_keys = serializers.ListField(
+        child=serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH),
+        min_length=1,
+        max_length=MAX_LIST_COLUMNS,
+    )
+    payload_keys = serializers.ListField(
+        child=serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH),
+        min_length=1,
+        max_length=MAX_LIST_COLUMNS,
+    )
+    row_id = serializers.CharField(max_length=26)
+    cells = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
+
+    def validate_wait_keys(self, value: list[str]) -> list[str]:
+        return _unique_keys(value)
+
+    def validate_payload_keys(self, value: list[str]) -> list[str]:
+        return _unique_keys(value)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        # The sample is exactly the payload columns: the drawer always
+        # sends every one, so a mismatch is a malformed request, not a
+        # choice to fall back on.
+        if set(attrs["cells"]) != set(attrs["payload_keys"]):
+            raise serializers.ValidationError("cells must carry exactly the payload keys")
+        return attrs
+
+
+def _unique_keys(value: list[str]) -> list[str]:
+    if len(set(value)) != len(value):
+        raise serializers.ValidationError("column keys must be unique")
+    return value

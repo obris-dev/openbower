@@ -23,6 +23,8 @@ export const SECRET_RECOVERY_NOTE =
 // headers and the recipe are the Standard Webhooks scheme, so a
 // library for it accepts the secret as is.
 export const VERIFY_INTRO = "Each delivery is a JSON POST with three headers:";
+export const VERIFY_BODY =
+  "The body carries `type` (ping or digest) and `test`. A delivery with `test: true` came from a Test button: verify it, then ignore it.";
 export const VERIFY_HEADERS: { name: string; meaning: string }[] = [
   { name: WEBHOOK_ID_HEADER, meaning: "unique per delivery" },
   { name: WEBHOOK_TIMESTAMP_HEADER, meaning: "unix seconds" },

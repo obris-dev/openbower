@@ -4,8 +4,8 @@ from django.utils.translation import gettext_lazy as _
 from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
-    KIND_MAX_LENGTH,
     STATUS_MAX_LENGTH,
+    TYPE_MAX_LENGTH,
     WEBHOOK_ERROR_MAX_LENGTH,
     WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH,
 )
@@ -17,8 +17,10 @@ class WebhookDelivery(AccountScopedModel):
 
     The row's ULID is the `webhook-id` header the request carried, so a
     receiver's log and this one meet on one value. One row per attempt.
+    `type` and `test` are the envelope's own two facts (what the data
+    was, and whether a Test button sent it), recorded as sent.
 
-    `kind` and `status` are bare CharFields over the constants' enums
+    `type` and `status` are bare CharFields over the constants' enums
     (choices= would make every added member a migration for no DB-side
     enforcement). `error` is a sentence for the user, never an
     exception name. `response_excerpt` is kept ONLY when the receiver
@@ -30,7 +32,8 @@ class WebhookDelivery(AccountScopedModel):
     destination by the service."""
 
     destination_id = models.CharField(_("destination id"), max_length=26)
-    kind = models.CharField(_("kind"), max_length=KIND_MAX_LENGTH)
+    type = models.CharField(_("type"), max_length=TYPE_MAX_LENGTH)
+    test = models.BooleanField(_("test"), default=False)
     status = models.CharField(_("status"), max_length=STATUS_MAX_LENGTH)
     http_status = models.IntegerField(_("http status"), null=True, blank=True)
     duration_ms = models.IntegerField(_("duration ms"), default=0)
@@ -49,4 +52,4 @@ class WebhookDelivery(AccountScopedModel):
         ]
 
     def __str__(self) -> str:
-        return f"{self.kind} {self.status} -> {self.destination_id} ({self.id})"
+        return f"{self.type} {self.status} -> {self.destination_id} ({self.id})"

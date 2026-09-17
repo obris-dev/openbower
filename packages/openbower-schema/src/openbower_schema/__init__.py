@@ -46,12 +46,17 @@ from .lists import (
     RowsAdded,
 )
 from .webhooks import (
+    WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDeliveryWire,
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
+    WebhookDigestData,
+    WebhookDigestItem,
     WebhookEnvelope,
+    WebhookPingData,
+    WebhookSheetRef,
 )
 
 __all__ = [
@@ -87,10 +92,15 @@ __all__ = [
     "LookalikeItem",
     "LookalikeListResponse",
     "RowsAdded",
+    "WebhookColumnTestResponse",
     "WebhookDeliveriesPage",
     "WebhookDeliveryWire",
     "WebhookDestinationCreated",
     "WebhookDestinationWire",
     "WebhookDestinationsList",
+    "WebhookDigestData",
+    "WebhookDigestItem",
     "WebhookEnvelope",
+    "WebhookPingData",
+    "WebhookSheetRef",
 ]

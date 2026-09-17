@@ -87,6 +87,8 @@ export const apiRoutes = {
     column: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${encodeURIComponent(key)}`,
     // POST: add an AI column and admit its fill in one transaction.
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
+    // POST: one sample digest to a destination, sent now; 200 with the delivery.
+    columnWebhookTest: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/test`,
     // POST: refill a column's unanswered rows (a NEW run, fresh snapshot).
     columnRefill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/refill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).

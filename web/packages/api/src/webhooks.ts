@@ -62,22 +62,22 @@ export type WebhookHeader = { name: string; value: string };
 export type DestinationBody = { label: string; url: string; headers: WebhookHeader[] };
 export type DestinationPatchBody = { label?: string; url?: string; enabled?: boolean; headers?: WebhookHeader[] };
 
-// A delivery's status and kind are the SERVER's enums, and this bundle
-// can predate the next contract (phase 4 adds a kind): strict-parsing
-// them would fail the whole settings page for every open tab. Widen
-// the read and map an unknown member to a CLIENT member, not to one of
-// the server's: a real status renders as a claim ("Failed"), and a
-// status this bundle cannot name is not one it can make (the lists
-// client's UNKNOWN_CELL_STATE idiom).
+// A delivery's status and type are the SERVER's enums, and this bundle
+// can predate the next contract: strict-parsing them would fail the
+// whole settings page for every open tab. Widen the read and map an
+// unknown member to a CLIENT member, not to one of the server's: a real
+// status renders as a claim ("Failed"), and a status this bundle cannot
+// name is not one it can make (the lists client's UNKNOWN_CELL_STATE
+// idiom). `test` is a plain boolean on every delivery.
 export const UNKNOWN_DELIVERY_STATUS = "unknown" as const;
-export const UNKNOWN_DELIVERY_KIND = "unknown" as const;
+export const UNKNOWN_DELIVERY_TYPE = "unknown" as const;
 export type RenderableDeliveryStatus = WebhookDeliveryWire["status"] | typeof UNKNOWN_DELIVERY_STATUS;
-export type RenderableDeliveryKind = WebhookDeliveryWire["kind"] | typeof UNKNOWN_DELIVERY_KIND;
+export type RenderableDeliveryType = WebhookDeliveryWire["type"] | typeof UNKNOWN_DELIVERY_TYPE;
 /** A delivery as the app renders it: the wire's shape with the two
  * server-owned enums widened by their client-only unknown member. */
-export type RenderableDelivery = Omit<WebhookDeliveryWire, "status" | "kind"> & {
+export type RenderableDelivery = Omit<WebhookDeliveryWire, "status" | "type"> & {
   status: RenderableDeliveryStatus;
-  kind: RenderableDeliveryKind;
+  type: RenderableDeliveryType;
 };
 export type RenderableDestination = Omit<WebhookDestinationWire, "last_delivery"> & {
   last_delivery: RenderableDelivery | null;
@@ -88,15 +88,15 @@ export type RenderableDestinationCreated = Omit<WebhookDestinationCreated, "dest
 };
 
 const STATUSES = new Set<string>(WebhookDeliveryWireSchema.shape.status.options);
-const KINDS = new Set<string>(WebhookDeliveryWireSchema.shape.kind.options);
+const TYPES = new Set<string>(WebhookDeliveryWireSchema.shape.type.options);
 export const TolerantWebhookDeliveryWireSchema = WebhookDeliveryWireSchema.extend({
   status: z.string(),
-  kind: z.string(),
+  type: z.string(),
 }).transform(
   (raw): RenderableDelivery => ({
     ...raw,
     status: (STATUSES.has(raw.status) ? raw.status : UNKNOWN_DELIVERY_STATUS) as RenderableDeliveryStatus,
-    kind: (KINDS.has(raw.kind) ? raw.kind : UNKNOWN_DELIVERY_KIND) as RenderableDeliveryKind,
+    type: (TYPES.has(raw.type) ? raw.type : UNKNOWN_DELIVERY_TYPE) as RenderableDeliveryType,
   }),
 );
 export const TolerantWebhookDestinationWireSchema = WebhookDestinationWireSchema.extend({
@@ -135,7 +135,7 @@ export async function deleteWebhook(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.webhooks.detail(id));
 }
 
-/** One signed test delivery, sent now. Answers ok with the delivery
+/** One signed test ping, sent now. Answers ok with the delivery
  * whatever the receiver did: its `status` is the outcome. */
 export async function testWebhook(id: string): Promise<ApiResult<RenderableDelivery>> {
   return http.post(apiRoutes.webhooks.test(id), TolerantWebhookDeliveryWireSchema, {});

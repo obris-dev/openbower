@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { deliveryRead, deliveryWord } from "./delivery-read.ts";
+import { deliveryFacts, deliveryLabel, deliveryRead, deliveryWord } from "./delivery-read.ts";
 
 const DELIVERY = {
   id: "01DLV",
   destination_id: "01DST",
-  kind: "test" as const,
+  type: "ping" as const,
+  test: true,
   status: "ok" as const,
   http_status: 200,
   duration_ms: 12,
@@ -43,8 +44,26 @@ test("a status this bundle cannot name renders as recorded, never as a failure",
   // The client-only member the tolerant read maps unknowns to: the
   // delivery happened and is on record; what it meant is not ours to say.
   assert.deepEqual(deliveryWord({ status: "unknown" }), { tone: "muted", line: "Recorded" });
-  assert.deepEqual(deliveryRead({ enabled: true, last_delivery: { ...DELIVERY, status: "unknown", kind: "unknown" } }), {
+  assert.deepEqual(deliveryRead({ enabled: true, last_delivery: { ...DELIVERY, status: "unknown", type: "unknown" } }), {
     tone: "muted",
     line: "Recorded Sep 16, 17:01:12 UTC | 200",
   });
+});
+
+test("the facts line carries the label, the receiver's status when one came, and the timing", () => {
+  assert.deepEqual(deliveryFacts({ type: "digest", test: true, http_status: 200, duration_ms: 1234 }), [
+    "Test digest",
+    "HTTP 200",
+    "1,234 ms",
+  ]);
+  // No answer came: no HTTP fact. An unknown shape: no label.
+  assert.deepEqual(deliveryFacts({ type: "unknown", test: false, http_status: null, duration_ms: 5 }), ["5 ms"]);
+});
+
+test("the label is the envelope's shape and test flag, and claims nothing for an unknown shape", () => {
+  assert.equal(deliveryLabel({ type: "ping", test: true }), "Test ping");
+  assert.equal(deliveryLabel({ type: "digest", test: true }), "Test digest");
+  assert.equal(deliveryLabel({ type: "digest", test: false }), "Digest");
+  assert.equal(deliveryLabel({ type: "unknown", test: true }), "Test");
+  assert.equal(deliveryLabel({ type: "unknown", test: false }), "");
 });
