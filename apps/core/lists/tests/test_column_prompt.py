@@ -39,7 +39,7 @@ class ColumnPromptTestCase(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])

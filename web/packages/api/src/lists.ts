@@ -15,6 +15,7 @@ import {
   FolderSummarySchema,
   ImportResultSchema,
   ListColumnSchema,
+  PlainColumnSchema,
   ListRowsPageSchema,
   ListsPageSchema,
   ListSummarySchema,
@@ -31,11 +32,12 @@ import {
   type FillRunWire,
   type FoldersList,
   type FolderSummary,
-  type ImportResult,
-  type ListColumn,
+  type ImportResult as WireImportResult,
+  type ListColumn as WireListColumn,
   type ListRowsPage,
-  type ListsPage,
-  type ListSummary,
+  type ListsPage as WireListsPage,
+  type ListSummary as WireListSummary,
+  type PlainColumn,
   type RowsAdded,
   type WebhookColumnConfigWire,
 } from "@bower/schema";
@@ -51,10 +53,59 @@ import { TolerantWebhookDeliveryWireSchema, type RenderableDelivery } from "./we
 export const ROWS_FIRST_PAGE = 50;
 export const ROWS_PAGE_LIMIT = 200;
 
-export type { ColumnFillSummary, ColumnPromptWire, FillRunPage, FillRunWire, FoldersList, FolderSummary, ImportResult, ListRowsPage, ListSummary, ListsPage, RowsAdded };
+export type { ColumnFillSummary, ColumnPromptWire, FillRunPage, FillRunWire, FoldersList, FolderSummary, ListRowsPage, RowsAdded };
 // Re-exported so app code never imports @bower/schema directly (the
 // schema package has exactly one consumer: this one).
-export type { FillError, ListColumn, ListRowWire, WebhookColumnConfigWire } from "@bower/schema";
+export type { AiColumn, FillError, ListRowWire, PlainColumn, WebhookColumn, WebhookColumnConfigWire } from "@bower/schema";
+
+/** A column kind this bundle has never heard of. A CLIENT member, not
+ * one of the server's: the sheet renders its values like a plain
+ * column's and the export and payload picker carry them (they are
+ * data the user can see), but it claims nothing else for the column:
+ * no tracker cell, no fill verbs, no place among the columns a webhook
+ * waits on. Mapping it onto `plain` would assert the column holds
+ * hand-written data, which the bundle cannot know. */
+export const UNKNOWN_COLUMN_KIND = "unknown_kind" as const;
+export type UnknownColumn = Pick<PlainColumn, "key" | "label" | "type"> & { kind: typeof UNKNOWN_COLUMN_KIND };
+/** A column as the CLIENT holds it: the contract's kinds plus the
+ * unknown member the tolerant read produces. App code narrows on
+ * `kind`; the contract's members keep their fields. These carry the
+ * wire names on purpose, unlike the Renderable* row types: the
+ * widening happens inside the parse (a transform), so the parsed value
+ * IS the client shape and the strict wire twin is unreachable from app
+ * code, which is what "app code imports only @bower/api" buys. The
+ * row types widen after the parse and so need a second name. */
+export type ListColumn = WireListColumn | UnknownColumn;
+export type ColumnKind = ListColumn["kind"];
+export type ListSummary = Omit<WireListSummary, "columns"> & { columns: ListColumn[] };
+export type ListsPage = Omit<WireListsPage, "items"> & { items: ListSummary[] };
+export type ImportResult = Omit<WireImportResult, "list"> & { list: ListSummary };
+
+// The columns array is read TOLERANTLY, like fill statuses and cell
+// states: a kind added server-side must not fail every open sheet's
+// parse. A column carrying an unheard-of tag keeps its base fields and
+// reads as the unknown member; a column with NO tag still refuses, as
+// the server refuses it (nothing the server writes lacks one).
+// The catch-all admits only a tag the contract does not know: a known
+// kind whose body fails its own member is a broken column, refused
+// like any other bad response rather than hidden as unknown. It reads
+// the base fields with the same skew tolerance: a display type this
+// bundle has not heard of renders as text (type drives rendering
+// only), and the label bound is the server's to enforce.
+const KNOWN_COLUMN_KINDS = new Set<string>(ListColumnSchema.options.map((member) => member.shape.kind.unwrap().value));
+const KNOWN_COLUMN_TYPES = new Set<string>(PlainColumnSchema.shape.type.options);
+const UnknownColumnSchema = z
+  .object({
+    kind: z.string().refine((kind) => !KNOWN_COLUMN_KINDS.has(kind)),
+    key: z.string(),
+    label: z.string(),
+    type: z.string().transform((type) => (KNOWN_COLUMN_TYPES.has(type) ? type : "text") as ColumnType),
+  })
+  .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
+const TolerantListColumnSchema = z.union([ListColumnSchema, UnknownColumnSchema]);
+export const TolerantListSummarySchema = ListSummarySchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
+export const TolerantListsPageSchema = ListsPageSchema.extend({ items: z.array(TolerantListSummarySchema) });
+const TolerantImportResultSchema = ImportResultSchema.extend({ list: TolerantListSummarySchema });
 
 /** One cell's wire state, derived from the sidecar's own record so a
  * cause added server-side reaches every consumer through the regen:
@@ -130,8 +181,10 @@ export type AiColumnBody = {
 // Column-type OPTIONS derive from the generated contract (a type
 // added or removed server-side reaches every consumer through the
 // regen, never through a hand-retyped list).
-export const COLUMN_TYPES = ListColumnSchema.shape.type.options;
-export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.ListColumn.label.maxLength;
+// Every kind shares the base's key, label, and type, so any one
+// kind's projection is the base's; plain is the kind with nothing else.
+export const COLUMN_TYPES = PlainColumnSchema.shape.type.options;
+export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.label.maxLength;
 export type ColumnType = ListColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the
@@ -142,7 +195,7 @@ export function isNumericColumn(column: ListColumn): boolean {
 
 export async function fetchListsPage(after?: string): Promise<ApiResult<ListsPage>> {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
-  return http.get(`${apiRoutes.lists.index}${suffix}`, ListsPageSchema);
+  return http.get(`${apiRoutes.lists.index}${suffix}`, TolerantListsPageSchema);
 }
 
 // The walk's bound counts PAGES, not items: an item bound never
@@ -170,7 +223,7 @@ export async function fetchAllLists(): Promise<ApiResult<{ items: ListSummary[];
 }
 
 export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
-  return http.get(apiRoutes.lists.detail(id), ListSummarySchema);
+  return http.get(apiRoutes.lists.detail(id), TolerantListSummarySchema);
 }
 
 // A cause this bundle has never heard of (a server ahead of the app)
@@ -298,11 +351,11 @@ export async function updateList(
   id: string,
   patch: { label?: string; folder_id?: string },
 ): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.detail(id), ListSummarySchema, patch);
+  return http.patch(apiRoutes.lists.detail(id), TolerantListSummarySchema, patch);
 }
 
 export async function createList(label: string): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.index, ListSummarySchema, { label });
+  return http.post(apiRoutes.lists.index, TolerantListSummarySchema, { label });
 }
 
 export async function fetchFolders(): Promise<ApiResult<FoldersList>> {
@@ -334,7 +387,7 @@ export async function importListCsv(file: File, label?: string): Promise<ApiResu
   const form = new FormData();
   form.set("file", file);
   if (label) form.set("label", label);
-  return http.post(apiRoutes.lists.import, ImportResultSchema, form);
+  return http.post(apiRoutes.lists.import, TolerantImportResultSchema, form);
 }
 
 export async function saveRunAsList(
@@ -344,7 +397,7 @@ export async function saveRunAsList(
   const body: Record<string, unknown> = { label: opts.label };
   if (opts.limit) body.limit = opts.limit;
   if (opts.exclude?.length) body.exclude = opts.exclude;
-  return http.post(apiRoutes.discover.lookalikeRunSaveList(runId), ListSummarySchema, body);
+  return http.post(apiRoutes.discover.lookalikeRunSaveList(runId), TolerantListSummarySchema, body);
 }
 
 /** Append one BLANK column (no fill): the key derives server-side
@@ -358,7 +411,7 @@ export async function postColumn(
   id: string,
   body: { label: string; type: ColumnType },
 ): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.columns(id), ListSummarySchema, body);
+  return http.post(apiRoutes.lists.columns(id), TolerantListSummarySchema, body);
 }
 
 /** Reorder the sheet's columns, sending the WHOLE key order.
@@ -370,14 +423,14 @@ export async function postColumn(
  * the updated summary, so the caller renders the SERVER's order
  * rather than trusting its own optimistic move. */
 export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.columnOrder(id), ListSummarySchema, { keys });
+  return http.patch(apiRoutes.lists.columnOrder(id), TolerantListSummarySchema, { keys });
 }
 
 /** Relabel one column. The KEY is the address and never changes: row
  * data is keyed on it server-side, so a key that followed the label
  * would strand every cell the column holds. */
 export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.column(id, key), ListSummarySchema, { label });
+  return http.patch(apiRoutes.lists.column(id, key), TolerantListSummarySchema, { label });
 }
 
 /** Delete one column and everything in it. Any column, not only an AI
@@ -388,7 +441,7 @@ export async function deleteColumn(id: string, key: string): Promise<ApiResult<L
   // no-content form: this DELETE answers with the updated summary, so
   // the sheet re-renders its columns from the response like it does
   // after every other columns write.
-  return request(apiRoutes.lists.column(id, key), ListSummarySchema, { method: "DELETE" });
+  return request(apiRoutes.lists.column(id, key), TolerantListSummarySchema, { method: "DELETE" });
 }
 
 /** Add an AI column and admit its fill in one server transaction;
@@ -548,7 +601,7 @@ const TolerantWebhookColumnPreviewResponseSchema = WebhookColumnPreviewResponseS
 
 /** Add a webhook column; the 201 body IS the summary, the shape every columns write returns. */
 export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.columnWebhook(id), ListSummarySchema, body);
+  return http.post(apiRoutes.lists.columnWebhook(id), TolerantListSummarySchema, body);
 }
 
 export async function getColumnWebhook(id: string, key: string): Promise<ApiResult<WebhookColumnConfigWire>> {

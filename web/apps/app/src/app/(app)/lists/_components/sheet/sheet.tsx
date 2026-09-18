@@ -19,6 +19,7 @@ import {
   loginUrl,
   postFillRefill,
   type ListColumn,
+  type WebhookColumn,
   webRoutes,
   type RenderableListRowsPage,
   type ListSummary,
@@ -145,7 +146,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     setOpenDrawer(kind === "ai" ? { kind } : { kind, column: null });
   }
   // The same drawer on an existing webhook column, prefilled from its config.
-  function openEditWebhook(column: ListColumn) {
+  function openEditWebhook(column: WebhookColumn) {
     addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpenDrawer({ kind: "webhook", column });
   }

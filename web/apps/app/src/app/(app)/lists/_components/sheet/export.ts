@@ -1,7 +1,7 @@
 import { fetchListRows, isNumericColumn, ROWS_PAGE_LIMIT, type ListSummary } from "@bower/api";
 
 import { csvField, saveCsvFile } from "./csv";
-import { exportableColumns } from "./lib/column-kind";
+import { exportableColumns } from "./lib/exportable-columns";
 
 /** Build the sheet's CSV client-side from the same rows pages the table
  * reads (the house rule: no server CSV surface). Pages by position via

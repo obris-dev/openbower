@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, ColumnFill
+from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, AiColumn, ListColumn
 
 from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS
 from ...models import Fill, List
@@ -145,17 +145,13 @@ def check_account_cap(account_id: str, *, opening: str = "") -> None:
         raise AccountFillsFull()
 
 
-def require_fill_column(target_list: List, column_key: str) -> dict:
-    """The named column's fill member, or the 404-shaped refusal
-    (a column the sheet does not have, or a plain one, is not a
-    refill target)."""
-    fill = next(
-        (column.get("fill") for column in target_list.columns if column["key"] == column_key and column.get("fill")),
-        None,
-    )
-    if fill is None:
+def require_fill_column(target_list: List, column_key: str) -> AiColumn:
+    """The named AI column, or the 404-shaped refusal (a column the
+    sheet does not have, or a plain one, is not a refill target)."""
+    column = next((column for column in target_list.columns if column.key == column_key), None)
+    if not isinstance(column, AiColumn):
         raise FillColumnNotFound(column_key)
-    return fill
+    return column
 
 
 def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
@@ -175,8 +171,8 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
             raise DerivedKeyCollision(first=claimed[key], second=output.label)
         claimed[key] = output.label
         keys.append(key)
-    stored_types = {column["key"]: column.get("type", "") for column in target_list.columns}
-    filled_keys = {column["key"] for column in target_list.columns if column.get("fill")}
+    stored_types = {column.key: column.type for column in target_list.columns}
+    ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
     outputs_by_key = {output.key: output for output in config.outputs}
     for key in keys:
         # `owned` is what the caller has already established it may
@@ -184,7 +180,7 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
         # so the existence rule would otherwise refuse every refill.
         if key not in owned:
             if key in stored_types:
-                raise ColumnCollision(key=key, filled=key in filled_keys)
+                raise ColumnCollision(key=key, filled=key in ai_keys)
             continue
         wanted = outputs_by_key[key].type
         if stored_types.get(key, wanted) != wanted:
@@ -196,7 +192,7 @@ def check_column_cap(target_list: List, *, column_keys: list[str]) -> None:
     """ONE spelling of the column-cap arithmetic, called by the
     preview and the locked claim: two hand-spelled copies are how
     the passes drift, and this file has the receipts."""
-    new_keys = set(column_keys) - {column["key"] for column in target_list.columns}
+    new_keys = set(column_keys) - {column.key for column in target_list.columns}
     if len(target_list.columns) + len(new_keys) > MAX_LIST_COLUMNS:
         raise ColumnsFull()
 
@@ -218,10 +214,10 @@ def check_columns_free(target_list: List, *, column_keys: list[str], opening: st
 def append_columns(
     target_list: List, *, column_keys: list[str], config: AgentConfig, node_id: str, fill_run_id: str
 ) -> None:
-    """THE one columns write of an admission: new columns append
-    with the node link and the output's type, an existing one gains
-    the link, and every claimed column learns which fill now speaks
-    for it.
+    """THE one columns write of an admission: new AI columns append
+    bound to the node with the output's type, an existing AI column of
+    this node is re-pointed, and every claimed column learns which
+    fill now speaks for it.
 
     Both facts ride ONE write because the fill row already exists
     when this runs: admission opens the fill and its queue before
@@ -236,16 +232,15 @@ def append_columns(
     every later one TYPE_MISMATCH. Resolution refuses the case
     rather than choosing which way to be wrong."""
     outputs_by_key = {output.key: output for output in config.outputs}
-    # Built through the contract model, never a hand-spelled dict: the
-    # stored member IS the wire shape, so a field the contract gains
-    # fails here instead of being dropped on every list read.
-    link = ColumnFill(node_id=node_id, current_fill_id=fill_run_id).model_dump()
-    columns = [dict(column) for column in target_list.columns]
-    existing = {column["key"] for column in columns}
-    for column in columns:
-        output = outputs_by_key.get(column["key"])
-        if output is not None and column["key"] in column_keys:
-            column["fill"] = dict(link)
+    columns: list[ListColumn] = []
+    existing = {column.key for column in target_list.columns}
+    for column in target_list.columns:
+        # An existing key reaches here only when this node already
+        # fills it (resolve_columns admits nothing else), so the write
+        # re-points an AI column at this run and never changes a kind.
+        if column.key in column_keys and isinstance(column, AiColumn):
+            column = column.model_copy(update={"node_id": node_id, "current_fill_id": fill_run_id})
+        columns.append(column)
     for key in column_keys:
         if key in existing:
             continue
@@ -255,12 +250,13 @@ def append_columns(
         existing.add(key)
         output = outputs_by_key[key]
         columns.append(
-            {
-                "key": key,
-                "label": output.label[:COLUMN_LABEL_MAX_LENGTH],
-                "type": output.type,
-                "fill": dict(link),
-            }
+            AiColumn(
+                key=key,
+                label=output.label[:COLUMN_LABEL_MAX_LENGTH],
+                type=output.type,
+                node_id=node_id,
+                current_fill_id=fill_run_id,
+            )
         )
     target_list.columns = columns
     target_list.save(update_fields=["columns", "updated_at"])

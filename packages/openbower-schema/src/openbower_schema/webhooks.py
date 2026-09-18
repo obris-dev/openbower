@@ -3,7 +3,7 @@ deliveries made to them, and the envelope a receiver gets."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -124,7 +124,9 @@ class WebhookDigestData(BaseModel):
     items: list[WebhookDigestItem]
 
 
-WebhookEnvelopeData = WebhookPingData | WebhookDigestData
+# A PEP 695 alias for the same reason as ListColumn: one named definition
+# the client narrows on, the discriminator travelling with the type.
+type WebhookEnvelopeData = Annotated[WebhookPingData | WebhookDigestData, Field(discriminator="type")]
 
 
 class WebhookEnvelope(BaseModel):
@@ -148,7 +150,7 @@ class WebhookEnvelope(BaseModel):
     version: int = 1
     test: bool = False
     timestamp: str
-    data: WebhookEnvelopeData = Field(discriminator="type")
+    data: WebhookEnvelopeData
 
     @model_validator(mode="after")
     def _type_matches_data(self) -> WebhookEnvelope:

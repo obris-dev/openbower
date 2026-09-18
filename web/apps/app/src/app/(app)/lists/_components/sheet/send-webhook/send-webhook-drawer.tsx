@@ -24,7 +24,6 @@ import {
 } from "@bower/api";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { columnKind } from "../lib/column-kind";
 import { ColumnPicker } from "./column-picker";
 import {
   ADD_AI_COLUMN,
@@ -53,6 +52,7 @@ import {
   WAIT_HINT,
   WAIT_LEGEND,
 } from "./copy";
+import { exportableColumns } from "../lib/exportable-columns";
 import { DestinationPicker } from "./destination-picker";
 import { cadenceLabel, cadenceOptions } from "./lib/cadence";
 import { bodyFor, initialDraft, isDirty, type WebhookDraft } from "./lib/config";
@@ -163,7 +163,7 @@ function WebhookEditor({
   columns,
   sampleRows,
 }: Props & { afterLeave: () => void; saved: WebhookColumnConfigWire | null }) {
-  const aiColumns = useMemo(() => columns.filter((c) => columnKind(c) === "ai"), [columns]);
+  const aiColumns = useMemo(() => columns.filter((c) => c.kind === "ai"), [columns]);
   const allKeys = useMemo(() => columns.map((c) => c.key), [columns]);
   const labels = useMemo(() => Object.fromEntries(columns.map((c) => [c.key, c.label])), [columns]);
   const [draft, setDraft] = useState<WebhookDraft>(() =>
@@ -194,7 +194,7 @@ function WebhookEditor({
   const waitGap = draft.waitKeys.size === 0 ? GAP_WAIT : null;
   const rowsGap = sampleRow === null ? NO_ROWS_LINE : null;
   const body = bodyFor(draft, columns);
-  const missingColumns = columns.filter((c) => columnKind(c) !== "webhook" && !draft.payloadKeys.has(c.key));
+  const missingColumns = exportableColumns(columns).filter((c) => !draft.payloadKeys.has(c.key));
   const dirty = saved === null || isDirty(draft, saved);
 
   // The preview asks the server once the body is previewable; the

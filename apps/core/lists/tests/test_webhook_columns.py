@@ -51,7 +51,7 @@ class WebhookColumnTests(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         # Two real AI nodes on their own paths: one agent with two
@@ -60,9 +60,9 @@ class WebhookColumnTests(TestCase):
         second = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=OTHER_AGENT)
         self.sheet.columns = [
             *self.sheet.columns,
-            {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": str(first.id)}},
-            {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": str(first.id)}},
-            {"key": "country", "label": "Country", "type": "text", "fill": {"node_id": str(second.id)}},
+            {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(first.id)},
+            {"key": "score", "label": "Score", "type": "text", "kind": "ai", "node_id": str(first.id)},
+            {"key": "country", "label": "Country", "type": "text", "kind": "ai", "node_id": str(second.id)},
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.first_path, self.second_path = first.path_id, second.path_id
@@ -96,10 +96,9 @@ class WebhookColumnTests(TestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         summary = ListSummary(**resp.json())
         column = next(c for c in summary.columns if c.key == "crm_sync")
-        self.assertEqual((column.type, column.fill), ("text", None))
-        self.assertIsNotNone(column.webhook)
+        self.assertEqual((column.type, column.kind), ("text", "webhook"))
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] + 2, self.baseline[1] + 1))
-        webhook_node = self.workflows.get_node(column.webhook.node_id)
+        webhook_node = self.workflows.get_node(column.node_id)
         wait_node, same = self.workflows.nodes_on_path(webhook_node.path_id)
         self.assertEqual((wait_node.rank, same.id), (0, webhook_node.id))
         # Two wait keys of two agents: two inbound paths, in the order given.
@@ -178,11 +177,11 @@ class WebhookColumnTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         first = ListSummary(**resp.json()).columns[0]
         self.assertEqual(first.key, "crm_sync")
-        self.assertIsNotNone(first.webhook)
+        self.assertEqual(first.kind, "webhook")
 
     def test_a_scoped_test_send_uses_the_webhook_node_as_the_event_scope(self):
         self._add()
-        column = next(c for c in self.lists.get(str(self.sheet.id)).columns if c["key"] == "crm_sync")
+        column = next(c for c in self.lists.get(str(self.sheet.id)).columns if c.key == "crm_sync")
         # Settle the wait key so the item's stamp is its completion, a
         # value the test can read back, rather than the send clock.
         cell_truth.write(
@@ -214,7 +213,7 @@ class WebhookColumnTests(TestCase):
         [item] = WebhookEnvelope.model_validate_json(fake.calls[0]["body"]).data.items
         self.assertIsNotNone(item.completed_at)
         row_id = str(self.rows[0].id)
-        scoped = event_id_of(scope=column["webhook"]["node_id"], row_id=row_id, stamp=item.completed_at, test=True)
+        scoped = event_id_of(scope=column.node_id, row_id=row_id, stamp=item.completed_at, test=True)
         self.assertEqual(item.event_id, scoped)
         # And NOT the sheet-scoped id the add drawer's test send carries.
         unscoped = event_id_of(scope=str(self.sheet.id), row_id=row_id, stamp=item.completed_at, test=True)
@@ -268,7 +267,7 @@ class WebhookColumnTests(TestCase):
         resp = self.client.delete(reverse("lists_column_detail", kwargs={"id": str(self.sheet.id), "key": "crm_sync"}))
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
-        self.assertNotIn("crm_sync", [c["key"] for c in self.lists.get(str(self.sheet.id)).columns])
+        self.assertNotIn("crm_sync", [c.key for c in self.lists.get(str(self.sheet.id)).columns])
 
     def test_deleting_a_waited_on_ai_column_is_refused_until_the_webhook_goes(self):
         self._add(wait_keys=["country"])

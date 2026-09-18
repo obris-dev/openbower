@@ -5,7 +5,7 @@ import type { ListColumn } from "@bower/api";
  * The key order is the whole vocabulary the reorder endpoint speaks:
  * it validates the set is unchanged and carries each column's own
  * record across, so the client never sends a column's label, type, or
- * fill member back and cannot edit one by dragging it.
+ * kind's linkage back and cannot edit one by dragging it.
  *
  * Both gestures land here. The menu moves by one and the drag moves
  * to an arbitrary index, but "the order after this move" is one

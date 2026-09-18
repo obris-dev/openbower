@@ -226,7 +226,7 @@ class SeedFromListTests(TestCase):
         target = self.service.create(
             owner_id="01US" + "B" * 22,
             label="Sheet",
-            columns=[{"key": "website", "label": "Website", "type": "url"}],
+            columns=[{"kind": "plain", "key": "website", "label": "Website", "type": "url"}],
             origin=ListOrigin.CSV,
         )
         self.service.add_rows(target, rows)

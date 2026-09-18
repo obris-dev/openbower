@@ -52,7 +52,7 @@ class RefillTestCase(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
@@ -481,7 +481,7 @@ class ResumeScopeTests(RefillTestCase):
         sheet = theirs.create(
             owner_id=TEST_IDENTITY["id"],
             label="Theirs",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         theirs.add_rows(sheet, [{"company": "secret.io"}, {"company": "private.io"}])
@@ -648,7 +648,7 @@ class ColumnShapeTests(RefillTestCase):
         self.assertIn("Delete the column", resp.json()["detail"])
         # And it did NOT quietly retype on the way to refusing.
         self.sheet.refresh_from_db()
-        self.assertEqual(next(c for c in self.sheet.columns if c["key"] == "answer")["type"], "text")
+        self.assertEqual(next(c for c in self.sheet.columns if c.key == "answer").type, "text")
 
     def test_an_unchanged_type_refills_normally(self):
         fill = self.admit()
@@ -682,15 +682,15 @@ class OutputDriftTests(RefillTestCase):
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
         self.sheet.refresh_from_db()
-        keys = [column["key"] for column in self.sheet.columns]
+        keys = [column.key for column in self.sheet.columns]
         # Without the shared claim, the fill owned "phantom" while the
         # sheet had no such column: every row spent a completion and
         # wrote a cell no surface renders.
         self.assertIn("phantom", keys)
         self.assertIn("phantom", resp.json()["column_keys"])
-        appended = next(column for column in self.sheet.columns if column["key"] == "phantom")
-        self.assertEqual(appended["fill"]["current_fill_id"], resp.json()["id"])
-        self.assertEqual(fill_agent_id(appended["fill"]), str(agent.id))
+        appended = next(column for column in self.sheet.columns if column.key == "phantom")
+        self.assertEqual(appended.current_fill_id, resp.json()["id"])
+        self.assertEqual(fill_agent_id(appended), str(agent.id))
 
     def test_a_refill_still_runs_over_its_own_answered_column(self):
         # The collision rule must not read a fill's OWN previous

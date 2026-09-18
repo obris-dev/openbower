@@ -4,7 +4,7 @@
 
 import type { ListColumn, WebhookColumnConfig, WebhookColumnConfigWire } from "@bower/api";
 
-import { columnKind, exportableColumns } from "../../lib/column-kind.ts";
+import { exportableColumns } from "../../lib/exportable-columns.ts";
 
 export type WebhookDraft = {
   destinationId: string;
@@ -28,7 +28,7 @@ export function initialDraft(
   if (config === null) {
     return {
       destinationId: "",
-      waitKeys: new Set(columns.filter((column) => columnKind(column) === "ai").map((column) => column.key)),
+      waitKeys: new Set(columns.filter((column) => column.kind === "ai").map((column) => column.key)),
       payloadKeys: new Set(exportableColumns(columns).map((column) => column.key)),
       intervalSeconds: defaults.intervalSeconds,
       enabled: true,

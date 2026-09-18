@@ -31,6 +31,8 @@ from collections.abc import Sequence
 from django.db import transaction
 from django.db.models import Count, QuerySet
 
+from openbower_schema.lists import AiColumn
+
 from ..models import List, Node, NodePath, Workflow
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import ColumnAgent
@@ -52,9 +54,8 @@ def columns_by_node(target_list: List) -> dict[str, list[str]]:
     agent is one node)."""
     mapping: dict[str, list[str]] = {}
     for column in target_list.columns:
-        fill = column.get("fill")
-        if fill and fill.get("node_id"):
-            mapping.setdefault(fill["node_id"], []).append(column["key"])
+        if isinstance(column, AiColumn):
+            mapping.setdefault(column.node_id, []).append(column.key)
     return mapping
 
 
@@ -212,9 +213,8 @@ class WorkflowService:
         """The path an AI column's node sits on, the id a wait node
         names; raises NodeNotFound for a column with no node."""
         for column in target_list.columns:
-            fill = column.get("fill") or {}
-            if column["key"] == key and fill.get("node_id"):
-                return self.get_node(fill["node_id"]).path_id
+            if column.key == key and isinstance(column, AiColumn):
+                return self.get_node(column.node_id).path_id
         raise NodeNotFound(key)
 
     def delete_for_list(self, list_id: str) -> None:

@@ -211,8 +211,11 @@ class ColumnFillSummary(BaseModel):
     once, on the consent path, where it has to be exact anyway."""
 
     column_key: str
-    current_fill_id: str = Field(description='The newest fill run naming this column; "" when none is exposed.')
-    # No defaults on either field, the sibling current_fill_id's rule:
+    current_fill_id: str = Field(
+        description="The run the column currently names (AiColumn.current_fill_id, its stored pointer), "
+        'never the newest by time; "" when the column has never run.'
+    )
+    # No defaults on either field, the rule current_fill_id above sets:
     # a constructor that forgets one must fail loudly, because the
     # defaults are real stories ("never ran", "no failure") that would
     # otherwise ship silently.

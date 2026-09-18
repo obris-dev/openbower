@@ -42,6 +42,7 @@ from lists.services.lists import ListNotFound, ListService, ListsFull
 from openbower_kernel.domains import normalize_domain
 from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import LookalikeListResponse
+from openbower_schema.lists import PlainColumn
 
 from .constants import (
     MAX_INLINE_DOMAINS,
@@ -205,7 +206,7 @@ def _list_seed_domains(request, *, list_id: str, identifier_key: str) -> list[st
         target = service.get(list_id)
     except ListNotFound:
         return _invalid_request("no list with that id")
-    if identifier_key not in {c["key"] for c in target.columns}:
+    if identifier_key not in {c.key for c in target.columns}:
         return _invalid_request("that column does not exist on the list")
     values = service.column_values(target, key=identifier_key, limit=MAX_LIST_SEED_VALUES)
     domains = normalize_seed_values(values, cap=MAX_INLINE_DOMAINS)
@@ -248,13 +249,15 @@ class LookalikeRunSaveListView(ScopedView):
     leaving a half-sheet that looks finished; a concurrent delete of the
     target answers 409."""
 
+    # Shared across requests: the members are frozen, so the field
+    # holding these same instances on every saved sheet is safe.
     _COLUMNS = [
-        {"key": "domain", "label": "Domain", "type": ColumnType.URL},
-        {"key": "name", "label": "Name", "type": ColumnType.TEXT},
-        {"key": "industry", "label": "Industry", "type": ColumnType.TEXT},
-        {"key": "size", "label": "Size", "type": ColumnType.TEXT},
-        {"key": "score", "label": "Score", "type": ColumnType.NUMBER},
-        {"key": "group", "label": "Group", "type": ColumnType.TEXT},
+        PlainColumn(key="domain", label="Domain", type=ColumnType.URL),
+        PlainColumn(key="name", label="Name", type=ColumnType.TEXT),
+        PlainColumn(key="industry", label="Industry", type=ColumnType.TEXT),
+        PlainColumn(key="size", label="Size", type=ColumnType.TEXT),
+        PlainColumn(key="score", label="Score", type=ColumnType.NUMBER),
+        PlainColumn(key="group", label="Group", type=ColumnType.TEXT),
     ]
 
     def post(self, request, id: str) -> Response:
@@ -270,7 +273,11 @@ class LookalikeRunSaveListView(ScopedView):
         client = IndexClientService.for_session(request.auth)
         service = ListService(account_id=request.user.account_id)
         target = service.create(
-            owner_id=request.user.id, label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id
+            owner_id=request.user.id,
+            label=label,
+            columns=self._COLUMNS,
+            origin=ListOrigin.DISCOVER,
+            origin_ref=id,
         )
         added = 0
         # `wanted` counts ranks WALKED (pre-exclusion), matching the

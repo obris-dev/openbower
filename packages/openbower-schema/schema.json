@@ -259,6 +259,61 @@
       "title": "AgentsList",
       "type": "object"
     },
+    "AiColumn": {
+      "description": "A column an agent fills. The column binds to the NODE that fills\nit; the agent, and its ephemeral-vs-roster custody, hangs off the\nnode, so editing what fills a column goes through the column,\nnever this id.",
+      "properties": {
+        "current_fill_id": {
+          "default": "",
+          "description": "The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time; \"\" when the column has never run.",
+          "title": "Current Fill Id",
+          "type": "string"
+        },
+        "key": {
+          "description": "Stable snake_case key; row data dicts key on it.",
+          "maxLength": 40,
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ai",
+          "default": "ai",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display label, as the user (or the CSV header) wrote it.",
+          "maxLength": 80,
+          "title": "Label",
+          "type": "string"
+        },
+        "node_id": {
+          "description": "The node that fills this column (an agent bound to this sheet).",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "type": {
+          "description": "Sheet display type; drives rendering only.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type",
+        "node_id"
+      ],
+      "title": "AiColumn",
+      "type": "object"
+    },
     "AuthUser": {
       "description": "The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.",
       "properties": {
@@ -428,27 +483,6 @@
       "title": "CellStateWire",
       "type": "object"
     },
-    "ColumnFill": {
-      "description": "A column's fill linkage: present exactly on AI columns. The\ncolumn binds to the NODE that fills it; the agent, and its\nephemeral-vs-roster custody, hangs off the node.",
-      "properties": {
-        "current_fill_id": {
-          "default": "",
-          "description": "The fill run that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.",
-          "title": "Current Fill Id",
-          "type": "string"
-        },
-        "node_id": {
-          "description": "The node that fills this column (today, always an agent bound to this sheet). Per-row work keys on it; the agent hangs off the node, so editing what fills a column goes through the column, never this id.",
-          "title": "Node Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "node_id"
-      ],
-      "title": "ColumnFill",
-      "type": "object"
-    },
     "ColumnFillSummary": {
       "description": "Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.",
       "properties": {
@@ -462,7 +496,7 @@
           "type": "string"
         },
         "current_fill_id": {
-          "description": "The newest fill run naming this column; \"\" when none is exposed.",
+          "description": "The run the column currently names (AiColumn.current_fill_id, its stored pointer), never the newest by time; \"\" when the column has never run.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -536,21 +570,6 @@
         "source"
       ],
       "title": "ColumnPromptWire",
-      "type": "object"
-    },
-    "ColumnWebhook": {
-      "description": "A column's webhook linkage: present exactly on Send webhook\ncolumns. The column binds to the webhook NODE at rank 1 of its own\npath (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
-      "properties": {
-        "node_id": {
-          "description": "The webhook node this column is; its config and the wait node's hang off the path.",
-          "title": "Node Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "node_id"
-      ],
-      "title": "ColumnWebhook",
       "type": "object"
     },
     "Company": {
@@ -1047,64 +1066,26 @@
       "type": "object"
     },
     "ListColumn": {
-      "properties": {
-        "fill": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ColumnFill"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Present exactly on AI columns."
+      "description": "One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), or webhook (a Send webhook column). Narrow on `kind`.",
+      "discriminator": {
+        "mapping": {
+          "ai": "#/$defs/AiColumn",
+          "plain": "#/$defs/PlainColumn",
+          "webhook": "#/$defs/WebhookColumn"
         },
-        "key": {
-          "description": "Stable snake_case key; row data dicts key on it.",
-          "maxLength": 40,
-          "title": "Key",
-          "type": "string"
-        },
-        "label": {
-          "description": "Display label, as the user (or the CSV header) wrote it.",
-          "maxLength": 80,
-          "title": "Label",
-          "type": "string"
-        },
-        "type": {
-          "description": "Sheet display type; drives rendering only.",
-          "enum": [
-            "text",
-            "number",
-            "currency",
-            "date",
-            "url",
-            "email"
-          ],
-          "title": "Type",
-          "type": "string"
-        },
-        "webhook": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ColumnWebhook"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Present exactly on Send webhook columns; never together with fill."
-        }
+        "propertyName": "kind"
       },
-      "required": [
-        "key",
-        "label",
-        "type"
-      ],
-      "title": "ListColumn",
-      "type": "object"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PlainColumn"
+        },
+        {
+          "$ref": "#/$defs/AiColumn"
+        },
+        {
+          "$ref": "#/$defs/WebhookColumn"
+        }
+      ]
     },
     "ListRowWire": {
       "properties": {
@@ -1470,6 +1451,49 @@
       "title": "LookalikeListResponse",
       "type": "object"
     },
+    "PlainColumn": {
+      "description": "A column the user or an import fills by hand.",
+      "properties": {
+        "key": {
+          "description": "Stable snake_case key; row data dicts key on it.",
+          "maxLength": 40,
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "plain",
+          "default": "plain",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display label, as the user (or the CSV header) wrote it.",
+          "maxLength": 80,
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "description": "Sheet display type; drives rendering only.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type"
+      ],
+      "title": "PlainColumn",
+      "type": "object"
+    },
     "RowsAdded": {
       "description": "The manual-append receipt.",
       "properties": {
@@ -1537,6 +1561,55 @@
         "discarded"
       ],
       "title": "SearchToolCall",
+      "type": "object"
+    },
+    "WebhookColumn": {
+      "description": "A Send webhook column. It IS the webhook node at rank 1 of its\nown path (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
+      "properties": {
+        "key": {
+          "description": "Stable snake_case key; row data dicts key on it.",
+          "maxLength": 40,
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "webhook",
+          "default": "webhook",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display label, as the user (or the CSV header) wrote it.",
+          "maxLength": 80,
+          "title": "Label",
+          "type": "string"
+        },
+        "node_id": {
+          "description": "The webhook node this column is; its config and the wait node's hang off the path.",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "type": {
+          "description": "Sheet display type; drives rendering only.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type",
+        "node_id"
+      ],
+      "title": "WebhookColumn",
       "type": "object"
     },
     "WebhookColumnConfigWire": {
@@ -1945,22 +2018,7 @@
       "description": "What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.",
       "properties": {
         "data": {
-          "discriminator": {
-            "mapping": {
-              "digest": "#/$defs/WebhookDigestData",
-              "ping": "#/$defs/WebhookPingData"
-            },
-            "propertyName": "type"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/WebhookPingData"
-            },
-            {
-              "$ref": "#/$defs/WebhookDigestData"
-            }
-          ],
-          "title": "Data"
+          "$ref": "#/$defs/WebhookEnvelopeData"
         },
         "id": {
           "title": "Id",
@@ -1997,6 +2055,23 @@
       ],
       "title": "WebhookEnvelope",
       "type": "object"
+    },
+    "WebhookEnvelopeData": {
+      "discriminator": {
+        "mapping": {
+          "digest": "#/$defs/WebhookDigestData",
+          "ping": "#/$defs/WebhookPingData"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/WebhookPingData"
+        },
+        {
+          "$ref": "#/$defs/WebhookDigestData"
+        }
+      ]
     },
     "WebhookPingData": {
       "description": "A destination's Test button: nothing from a sheet, just proof\nthat a signed delivery reaches the receiver.",

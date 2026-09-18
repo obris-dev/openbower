@@ -43,7 +43,7 @@ def _make_list(account_id=_ACCT) -> str:
     lst = ListService(account_id=account_id).create(
         owner_id="01US" + "A" * 22,
         label="ingest target",
-        columns=[{"key": "domain", "label": "Domain", "type": "url"}],
+        columns=[{"kind": "plain", "key": "domain", "label": "Domain", "type": "url"}],
         origin=ListOrigin.MANUAL,
     )
     return str(lst.id)
