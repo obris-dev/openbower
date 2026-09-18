@@ -29,7 +29,7 @@ class ListsViewsTests(TestCase):
     def test_create_index_detail_rename_delete(self):
         created = self.client.post(
             reverse("lists_index"),
-            {"label": "My sheet", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
+            {"label": "My sheet", "columns": [{"key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         )
         self.assertEqual(created.status_code, 201)
@@ -49,6 +49,22 @@ class ListsViewsTests(TestCase):
         gone = self.client.delete(reverse("lists_detail", kwargs={"id": list_id}))
         self.assertEqual(gone.status_code, 204)
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": list_id})).status_code, 404)
+
+    def test_a_create_body_cannot_choose_a_column_kind(self):
+        """The create request declares key, label, and type; a kind a
+        client sends is not part of it and never lands (the view builds
+        plain columns), so a round-tripped AI column stays plain."""
+        resp = self.client.post(
+            reverse("lists_index"),
+            {
+                "label": "Round trip",
+                "columns": [{"kind": "ai", "key": "a", "label": "A", "type": "text", "node_id": "x"}],
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        [column] = resp.json()["columns"]
+        self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text"})
 
     def test_ingest_get_marks_ai_columns_autopopulated(self):
         # The webhook is self-describing: GET returns every column a producer
@@ -79,7 +95,7 @@ class ListsViewsTests(TestCase):
         # deleted in another tab.
         list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "Movable", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
+            {"label": "Movable", "columns": [{"key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         ).json()["id"]
         resp = self.client.patch(
@@ -92,7 +108,7 @@ class ListsViewsTests(TestCase):
     def test_rows_append_and_keyset_page(self):
         list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "Rows", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
+            {"label": "Rows", "columns": [{"key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         ).json()["id"]
         added = self.client.post(
@@ -147,7 +163,7 @@ class FoldersViewsTests(TestCase):
         for n in range(3):
             list_id = self.client.post(
                 reverse("lists_index"),
-                {"label": f"Sheet {n}", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
+                {"label": f"Sheet {n}", "columns": [{"key": "a", "label": "A", "type": "text"}]},
                 content_type="application/json",
             ).json()["id"]
             self.client.patch(

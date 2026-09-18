@@ -172,7 +172,7 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
         claimed[key] = output.label
         keys.append(key)
     stored_types = {column.key: column.type for column in target_list.columns}
-    filled_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
+    ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
     outputs_by_key = {output.key: output for output in config.outputs}
     for key in keys:
         # `owned` is what the caller has already established it may
@@ -180,7 +180,7 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
         # so the existence rule would otherwise refuse every refill.
         if key not in owned:
             if key in stored_types:
-                raise ColumnCollision(key=key, filled=key in filled_keys)
+                raise ColumnCollision(key=key, filled=key in ai_keys)
             continue
         wanted = outputs_by_key[key].type
         if stored_types.get(key, wanted) != wanted:
@@ -214,10 +214,10 @@ def check_columns_free(target_list: List, *, column_keys: list[str], opening: st
 def append_columns(
     target_list: List, *, column_keys: list[str], config: AgentConfig, node_id: str, fill_run_id: str
 ) -> None:
-    """THE one columns write of an admission: new columns append
-    with the node link and the output's type, an existing one gains
-    the link, and every claimed column learns which fill now speaks
-    for it.
+    """THE one columns write of an admission: new AI columns append
+    bound to the node with the output's type, an existing AI column of
+    this node is re-pointed, and every claimed column learns which
+    fill now speaks for it.
 
     Both facts ride ONE write because the fill row already exists
     when this runs: admission opens the fill and its queue before
@@ -235,13 +235,11 @@ def append_columns(
     columns: list[ListColumn] = []
     existing = {column.key for column in target_list.columns}
     for column in target_list.columns:
-        output = outputs_by_key.get(column.key)
-        if output is not None and column.key in column_keys:
-            # A plain column becomes an AI column; an AI column is
-            # re-pointed at this run.
-            column = AiColumn(
-                key=column.key, label=column.label, type=column.type, node_id=node_id, current_fill_id=fill_run_id
-            )
+        # An existing key reaches here only when this node already
+        # fills it (resolve_columns admits nothing else), so the write
+        # re-points an AI column at this run and never changes a kind.
+        if column.key in column_keys and isinstance(column, AiColumn):
+            column = column.model_copy(update={"node_id": node_id, "current_fill_id": fill_run_id})
         columns.append(column)
     for key in column_keys:
         if key in existing:

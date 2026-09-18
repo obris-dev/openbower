@@ -10,6 +10,7 @@ import {
   SETTLED_CELL_STATES,
   UNKNOWN_CELL_STATE,
   addListRows,
+  fetchList,
   fetchListRows,
   getFills,
   DEFAULT_WEBHOOK_CADENCE_SECONDS,
@@ -21,7 +22,9 @@ import {
   postFillRefill,
   reorderColumns,
   updateColumnWebhook,
+  UNKNOWN_COLUMN_KIND,
 } from "../src/lists.ts";
+import { ListColumnSchema, ListSummarySchema } from "@bower/schema";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -427,4 +430,40 @@ test("postColumnWebhookPreview keeps a future envelope as JSON and sends the col
   if (res.status === "ok") assert.deepEqual(res.data.envelope, envelope);
   assert.ok(calls[0]!.url.endsWith("/columns/webhook/preview"));
   assert.equal(JSON.parse(String(calls[0]!.init.body)).key, "crm_sync");
+});
+
+test("the column union is discriminated: no tag and an unknown tag both refuse", () => {
+  // A plain z.union would let a column with no kind match its first
+  // member and read as plain, dropping an AI column's node on the
+  // floor while the server refuses the same blob.
+  const base = { key: "answer", label: "Answer", type: "text" };
+  assert.equal(ListColumnSchema.safeParse({ ...base, node_id: "01NODE" }).success, false);
+  assert.equal(ListColumnSchema.safeParse({ ...base, kind: "formula" }).success, false);
+  const ai = ListColumnSchema.safeParse({ ...base, kind: "ai", node_id: "01NODE" });
+  assert.ok(ai.success && ai.data.kind === "ai" && ai.data.node_id === "01NODE");
+});
+
+test("a column kind from the future reads as the unknown member; the known kinds keep their fields", async (t) => {
+  const columns = [
+    { kind: "plain", key: "company", label: "Company", type: "text" },
+    { kind: "ai", key: "answer", label: "Answer", type: "text", node_id: "01NODE", current_fill_id: "01RUN" },
+    { kind: "webhook", key: "crm_sync", label: "CRM sync", type: "text", node_id: "01HOOK" },
+    { kind: "formula", key: "later", label: "Later", type: "text", expression: "1 + 1" },
+  ];
+  const summary = { ...SUMMARY, columns };
+  // The strict contract refuses the whole summary over the fourth
+  // column; the tolerant read is what keeps the sheet rendering.
+  assert.equal(ListSummarySchema.safeParse(summary).success, false);
+  stubFetch(t, summary);
+  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual(
+    res.data.columns.map((column) => column.kind),
+    ["plain", "ai", "webhook", UNKNOWN_COLUMN_KIND],
+  );
+  const [, ai, webhook, later] = res.data.columns;
+  assert.ok(ai!.kind === "ai" && ai!.node_id === "01NODE" && ai!.current_fill_id === "01RUN");
+  assert.ok(webhook!.kind === "webhook" && webhook!.node_id === "01HOOK");
+  assert.deepEqual(later, { kind: UNKNOWN_COLUMN_KIND, key: "later", label: "Later", type: "text" });
 });

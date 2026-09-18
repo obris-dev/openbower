@@ -204,12 +204,12 @@ class FillService:
         diagnosed and a live fill has re-queued is being worked on now,
         and that is what the user should see.
         """
-        fill_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
-        if not fill_keys or not rows:
+        ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
+        if not ai_keys or not rows:
             return {}
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
-        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=fill_keys)
+        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=ai_keys)
         for row_id, column_key, state, tools in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())
@@ -217,7 +217,7 @@ class FillService:
                 continue
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         live = {
-            str(fill_run_id): [key for key in (keys or ()) if key in fill_keys]
+            str(fill_run_id): [key for key in (keys or ()) if key in ai_keys]
             for fill_run_id, keys in Fill.objects.filter(
                 account_id=self.account_id,
                 list_id=str(target_list.id),

@@ -176,7 +176,7 @@ class IngestSessionTests(TestCase):
         login_session(self.client)
         self.list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "t", "columns": [{"kind": "plain", "key": "domain", "label": "Domain", "type": "url"}]},
+            {"label": "t", "columns": [{"key": "domain", "label": "Domain", "type": "url"}]},
             content_type="application/json",
         ).json()["id"]
 

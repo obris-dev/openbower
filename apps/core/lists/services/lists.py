@@ -5,6 +5,7 @@ a missing row, so foreign ids are not an oracle)."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from django.db import transaction
@@ -13,6 +14,7 @@ from django.utils import timezone
 
 from agents.services import AgentService
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
+from openbower_schema.lists import ListColumn
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, Folder, List, ListRow, NodeRun
@@ -146,7 +148,14 @@ class ListService:
         self.account_id = account_id
 
     def create(
-        self, *, owner_id: str, label: str, columns: list[dict], origin: str, origin_ref: str = "", folder_id: str = ""
+        self,
+        *,
+        owner_id: str,
+        label: str,
+        columns: Sequence[ListColumn],
+        origin: str,
+        origin_ref: str = "",
+        folder_id: str = "",
     ) -> List:
         return List.objects.create(
             account_id=self.account_id,

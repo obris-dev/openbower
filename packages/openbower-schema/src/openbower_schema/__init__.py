@@ -34,7 +34,6 @@ from .fills import (
 )
 from .lists import (
     AiColumn,
-    ColumnBase,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -77,7 +76,6 @@ __all__ = [
     "AuthUser",
     "CatalogModel",
     "CellRunResult",
-    "ColumnBase",
     "ColumnFillSummary",
     "ColumnPromptWire",
     "Company",

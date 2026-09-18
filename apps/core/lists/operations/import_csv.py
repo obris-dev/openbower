@@ -88,7 +88,7 @@ def infer_type(values: list[str]) -> str:
     return ColumnType.TEXT
 
 
-def parse_csv(raw: bytes) -> tuple[list[dict], list[dict], int]:
+def parse_csv(raw: bytes) -> tuple[list[PlainColumn], list[dict], int]:
     """(columns, row data dicts, skipped). Header row is required and
     becomes the schema; short rows pad with "", wider-than-header rows
     are skipped and counted (silently truncating them would drop user

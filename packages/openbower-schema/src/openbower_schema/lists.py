@@ -52,10 +52,9 @@ def derive_column_key(label: str, *, key: str = "") -> str:
 
 
 class ColumnBase(BaseModel):
-    """What every column has, whichever kind it is. The kinds below
-    are ONE discriminated union: a column is exactly one of them by
-    construction, so a reader narrows on `kind` and nothing has to
-    rule out a column that is two things at once."""
+    """What every column has, whichever kind it is. Never a column on
+    its own: the kinds below are the members, and a reader narrows on
+    their `kind`."""
 
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
     label: str = Field(
@@ -80,9 +79,9 @@ class AiColumn(ColumnBase):
     node_id: str = Field(description="The node that fills this column (an agent bound to this sheet).")
     current_fill_id: str = Field(
         default="",
-        description="The fill run that speaks for this column, stored here when it opens. "
-        "Read by the poll (the tracker follows this run, not the newest), never walked back "
-        "from the runs. Blank until the first run opens.",
+        description="The fill run that speaks for this column, stored here when it opens and "
+        "served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never "
+        "the newest by time. Blank until a run opens for it.",
     )
 
 
@@ -97,11 +96,23 @@ class WebhookColumn(ColumnBase):
     )
 
 
-# A named alias (PEP 695) so the union is ONE definition in the contract
-# document, referenced by every model that carries columns, rather than
-# inlined at each use.
-type ListColumn = Annotated[PlainColumn | AiColumn | WebhookColumn, Field(discriminator="kind")]
-ColumnKind = Literal["plain", "ai", "webhook"]
+# A column is exactly ONE of these by construction: the union is
+# discriminated on `kind`, so nothing has to rule out a column that is
+# two things at once, and a stored column with no kind is refused
+# rather than guessed. A PEP 695 alias rather than a plain one so
+# pydantic emits the union as a NAMED definition (the client gets one
+# ListColumn schema to narrow on) and the discriminator travels with
+# the type into every TypeAdapter that parses it. The vocabulary is
+# CLOSED on purpose, unlike the node-kind registry: the client renders
+# per kind, so a new kind is a client change, not a roster entry.
+type ListColumn = Annotated[
+    PlainColumn | AiColumn | WebhookColumn,
+    Field(
+        discriminator="kind",
+        description="One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), "
+        "or webhook (a Send webhook column). Narrow on `kind`.",
+    ),
+]
 
 
 class IngestColumn(BaseModel):

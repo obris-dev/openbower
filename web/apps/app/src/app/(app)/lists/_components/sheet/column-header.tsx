@@ -6,10 +6,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { ArrowUpRight, ChevronDown, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
 import { Input, Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 import { useState } from "react";
-import { isNumericColumn, type ListColumn } from "@bower/api";
+import { isNumericColumn, type ListColumn, type ColumnKind } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
-import type { ColumnKind } from "./lib/column-kind";
 import { canMove, nudgeColumn } from "./lib/column-order";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";

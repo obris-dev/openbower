@@ -264,7 +264,7 @@
       "properties": {
         "current_fill_id": {
           "default": "",
-          "description": "The fill run that speaks for this column, stored here when it opens. Read by the poll (the tracker follows this run, not the newest), never walked back from the runs. Blank until the first run opens.",
+          "description": "The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time. Blank until a run opens for it.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -496,7 +496,7 @@
           "type": "string"
         },
         "current_fill_id": {
-          "description": "The newest fill run naming this column; \"\" when none is exposed.",
+          "description": "The run the column currently names (AiColumn.current_fill_id, its stored pointer), never the newest by time; \"\" when none is exposed.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -1066,6 +1066,7 @@
       "type": "object"
     },
     "ListColumn": {
+      "description": "One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), or webhook (a Send webhook column). Narrow on `kind`.",
       "discriminator": {
         "mapping": {
           "ai": "#/$defs/AiColumn",

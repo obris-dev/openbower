@@ -249,14 +249,19 @@ class LookalikeRunSaveListView(ScopedView):
     leaving a half-sheet that looks finished; a concurrent delete of the
     target answers 409."""
 
-    _COLUMNS = [
-        PlainColumn(key="domain", label="Domain", type=ColumnType.URL),
-        PlainColumn(key="name", label="Name", type=ColumnType.TEXT),
-        PlainColumn(key="industry", label="Industry", type=ColumnType.TEXT),
-        PlainColumn(key="size", label="Size", type=ColumnType.TEXT),
-        PlainColumn(key="score", label="Score", type=ColumnType.NUMBER),
-        PlainColumn(key="group", label="Group", type=ColumnType.TEXT),
-    ]
+    @staticmethod
+    def _seed_columns() -> list[PlainColumn]:
+        # Built per request: the typed field keeps the instances it is
+        # handed, so a shared list would be one set of columns aliased
+        # into every saved sheet.
+        return [
+            PlainColumn(key="domain", label="Domain", type=ColumnType.URL),
+            PlainColumn(key="name", label="Name", type=ColumnType.TEXT),
+            PlainColumn(key="industry", label="Industry", type=ColumnType.TEXT),
+            PlainColumn(key="size", label="Size", type=ColumnType.TEXT),
+            PlainColumn(key="score", label="Score", type=ColumnType.NUMBER),
+            PlainColumn(key="group", label="Group", type=ColumnType.TEXT),
+        ]
 
     def post(self, request, id: str) -> Response:
         # The run id lands in origin_ref (varchar 64) and the upstream
@@ -271,7 +276,11 @@ class LookalikeRunSaveListView(ScopedView):
         client = IndexClientService.for_session(request.auth)
         service = ListService(account_id=request.user.account_id)
         target = service.create(
-            owner_id=request.user.id, label=label, columns=self._COLUMNS, origin=ListOrigin.DISCOVER, origin_ref=id
+            owner_id=request.user.id,
+            label=label,
+            columns=self._seed_columns(),
+            origin=ListOrigin.DISCOVER,
+            origin_ref=id,
         )
         added = 0
         # `wanted` counts ranks WALKED (pre-exclusion), matching the

@@ -1,11 +1,8 @@
-import type { ListColumn } from "@bower/api";
-
-/** What a column IS on the sheet: the contract's discriminator, so a
- * column is exactly one kind by construction. */
-export type ColumnKind = ListColumn["kind"];
+import { UNKNOWN_COLUMN_KIND, type ListColumn } from "@bower/api";
 
 /** The columns that hold row data: a CSV export and the payload picker
- * offer these; a webhook column never holds a value. */
+ * offer these. A webhook column never holds a value, and a column of a
+ * kind this bundle has not heard of is not claimed to. */
 export function exportableColumns<T extends Pick<ListColumn, "kind">>(columns: readonly T[]): T[] {
-  return columns.filter((column) => column.kind !== "webhook");
+  return columns.filter((column) => column.kind !== "webhook" && column.kind !== UNKNOWN_COLUMN_KIND);
 }

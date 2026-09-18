@@ -68,7 +68,7 @@ class ColumnsViewTests(TestCase):
         self.assertEqual(added.key, "contact_email")
         self.assertEqual(added.label, "Contact Email")
         self.assertEqual(added.type, "email")
-        # Blank means blank: no fill member, ever. The add starts
+        # Blank means blank: a plain column, ever. The add starts
         # nothing, and a column that exists refuses an AI column that
         # would land on the same key.
         self.assertEqual(added.kind, "plain")
@@ -122,8 +122,8 @@ class ColumnOrderTests(TestCase):
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
             # Labels deliberately NOT derivable from their keys, and
-            # one carrying a fill member: this is what proves the
-            # column dicts are carried across rather than rebuilt.
+            # one AI column: this is what proves the columns are
+            # carried across rather than rebuilt.
             columns=[
                 {"kind": "plain", "key": "company", "label": "Company Name", "type": "text"},
                 {"key": "contact", "label": "Primary Contact", "type": "email", "kind": "ai", "node_id": "01NODE"},
@@ -150,7 +150,7 @@ class ColumnOrderTests(TestCase):
     def test_it_carries_each_column_across_verbatim(self) -> None:
         # The guard that keeps this from being a mutation path: the
         # request names keys and nothing else, so a label, a type, or a
-        # fill member cannot be edited through an ordering request.
+        # linkage cannot be edited through an ordering request.
         before = {c.key: c for c in self.sheet.columns}
         self.assertEqual(self.reorder(["notes", "contact", "company"]).status_code, 200)
         self.sheet.refresh_from_db()

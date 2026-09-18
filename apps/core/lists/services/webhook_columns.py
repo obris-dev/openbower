@@ -14,7 +14,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from openbower_schema.lists import AiColumn, WebhookCellState, WebhookColumn
+from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookCellState, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
@@ -115,7 +115,7 @@ class WebhookColumnService:
                 destination_id=destination_id, interval_seconds=interval_seconds, payload_keys=payload_keys
             )
             _path, nodes = self.workflows.create_path(target_list, [wait, webhook])
-            column = WebhookColumn(key=key, label=label, type="text", node_id=str(nodes[1].id))
+            column = WebhookColumn(key=key, label=label, type=DEFAULT_COLUMN_TYPE, node_id=str(nodes[1].id))
             target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list

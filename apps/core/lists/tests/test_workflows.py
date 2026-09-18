@@ -263,7 +263,7 @@ class PathTests(AdmissionTestCase):
         self.assertEqual(foreign.nodes_of_kind(Webhook.KIND).count(), 0)
         self.assertEqual(foreign.node_counts_by(Webhook.KIND, "destination_id"), {})
 
-    def test_path_of_column_walks_the_fill_linkage(self) -> None:
+    def test_path_of_column_walks_the_ai_column_to_its_node(self) -> None:
         self.sheet.columns = [
             *self.sheet.columns,
             {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(self.agent_node.id)},

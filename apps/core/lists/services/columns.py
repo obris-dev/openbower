@@ -1,5 +1,5 @@
 """Column custody: blank-column adds (the CSV-template flow; a blank
-column carries no fill member, and its key derives through the
+column is a plain column, and its key derives through the
 runtime's ONE derivation rule, because a key the sheet already has
 refuses an AI column that would land there and two derivation rules
 would make that refusal unpredictable), the column-scoped fill-prompt
@@ -161,7 +161,7 @@ class ColumnService:
         The key SET must be unchanged, which is what keeps this from
         being a mutation path: every other columns writer decides what
         a column IS, and this one may only decide where it sits. It
-        carries each column's dict across VERBATIM, so a fill member,
+        carries each column across VERBATIM, so a kind's linkage,
         a type, and a label cannot be edited through an ordering
         request even if the caller sends them.
 

@@ -13,7 +13,7 @@ from django.db import connection
 from django.test import TestCase
 from pydantic import ValidationError
 
-from openbower_schema.lists import AiColumn, PlainColumn
+from openbower_schema.lists import AiColumn, ColumnBase, PlainColumn
 
 from ..fields import ListColumnsField
 from ..models import List
@@ -48,7 +48,10 @@ class ListColumnsFieldTests(TestCase):
 
     def test_at_rest_the_column_holds_the_contract_dumps(self) -> None:
         sheet = self.lists.create(owner_id=USER, label="Prospects", columns=[], origin="manual")
-        sheet.columns = [PlainColumn(key="company", label="Company", type="text")]
+        sheet.columns = [
+            PlainColumn(key="company", label="Company", type="text"),
+            AiColumn(key="answer", label="Answer", type="text", node_id=NODE_ID, current_fill_id="01RUN" + "A" * 21),
+        ]
         sheet.save(update_fields=["columns", "updated_at"])
         with connection.cursor() as cursor:
             cursor.execute("SELECT columns FROM lists_list WHERE id = %s", [str(sheet.id)])
@@ -56,7 +59,17 @@ class ListColumnsFieldTests(TestCase):
         # A raw cursor hands the jsonb back undecoded.
         self.assertEqual(
             json.loads(stored) if isinstance(stored, str) else stored,
-            [{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            [
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {
+                    "kind": "ai",
+                    "key": "answer",
+                    "label": "Answer",
+                    "type": "text",
+                    "node_id": NODE_ID,
+                    "current_fill_id": "01RUN" + "A" * 21,
+                },
+            ],
         )
 
     def test_a_column_the_contract_refuses_fails_at_assignment(self) -> None:
@@ -66,6 +79,9 @@ class ListColumnsFieldTests(TestCase):
             {"kind": "plain", "label": "Company", "type": "text"},
             {"kind": "ai", "key": "answer", "label": "Answer", "type": "text"},
             {"key": "company", "label": "Company", "type": "text"},
+            {"kind": "formula", "key": "company", "label": "Company", "type": "text"},
+            # The base alone is not a column: no kind to store.
+            ColumnBase(key="company", label="Company", type="text"),
         ):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 sheet.columns = [bad]
