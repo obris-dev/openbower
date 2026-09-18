@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, ColumnFill
+from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, ColumnFill, ListColumn
 
 from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS
 from ...models import Fill, List
@@ -145,17 +145,14 @@ def check_account_cap(account_id: str, *, opening: str = "") -> None:
         raise AccountFillsFull()
 
 
-def require_fill_column(target_list: List, column_key: str) -> dict:
+def require_fill_column(target_list: List, column_key: str) -> ColumnFill:
     """The named column's fill member, or the 404-shaped refusal
     (a column the sheet does not have, or a plain one, is not a
     refill target)."""
-    fill = next(
-        (column.get("fill") for column in target_list.columns if column["key"] == column_key and column.get("fill")),
-        None,
-    )
-    if fill is None:
+    column = next((column for column in target_list.columns if column.key == column_key), None)
+    if column is None or column.fill is None:
         raise FillColumnNotFound(column_key)
-    return fill
+    return column.fill
 
 
 def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
@@ -175,8 +172,8 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
             raise DerivedKeyCollision(first=claimed[key], second=output.label)
         claimed[key] = output.label
         keys.append(key)
-    stored_types = {column["key"]: column.get("type", "") for column in target_list.columns}
-    filled_keys = {column["key"] for column in target_list.columns if column.get("fill")}
+    stored_types = {column.key: column.type for column in target_list.columns}
+    filled_keys = {column.key for column in target_list.columns if column.fill is not None}
     outputs_by_key = {output.key: output for output in config.outputs}
     for key in keys:
         # `owned` is what the caller has already established it may
@@ -196,7 +193,7 @@ def check_column_cap(target_list: List, *, column_keys: list[str]) -> None:
     """ONE spelling of the column-cap arithmetic, called by the
     preview and the locked claim: two hand-spelled copies are how
     the passes drift, and this file has the receipts."""
-    new_keys = set(column_keys) - {column["key"] for column in target_list.columns}
+    new_keys = set(column_keys) - {column.key for column in target_list.columns}
     if len(target_list.columns) + len(new_keys) > MAX_LIST_COLUMNS:
         raise ColumnsFull()
 
@@ -236,16 +233,14 @@ def append_columns(
     every later one TYPE_MISMATCH. Resolution refuses the case
     rather than choosing which way to be wrong."""
     outputs_by_key = {output.key: output for output in config.outputs}
-    # Built through the contract model, never a hand-spelled dict: the
-    # stored member IS the wire shape, so a field the contract gains
-    # fails here instead of being dropped on every list read.
-    link = ColumnFill(node_id=node_id, current_fill_id=fill_run_id).model_dump()
-    columns = [dict(column) for column in target_list.columns]
-    existing = {column["key"] for column in columns}
-    for column in columns:
-        output = outputs_by_key.get(column["key"])
-        if output is not None and column["key"] in column_keys:
-            column["fill"] = dict(link)
+    link = ColumnFill(node_id=node_id, current_fill_id=fill_run_id)
+    columns: list[ListColumn] = []
+    existing = {column.key for column in target_list.columns}
+    for column in target_list.columns:
+        output = outputs_by_key.get(column.key)
+        if output is not None and column.key in column_keys:
+            column = column.model_copy(update={"fill": link})
+        columns.append(column)
     for key in column_keys:
         if key in existing:
             continue
@@ -254,13 +249,6 @@ def append_columns(
         # upstream; this is the write-side backstop).
         existing.add(key)
         output = outputs_by_key[key]
-        columns.append(
-            {
-                "key": key,
-                "label": output.label[:COLUMN_LABEL_MAX_LENGTH],
-                "type": output.type,
-                "fill": dict(link),
-            }
-        )
+        columns.append(ListColumn(key=key, label=output.label[:COLUMN_LABEL_MAX_LENGTH], type=output.type, fill=link))
     target_list.columns = columns
     target_list.save(update_fields=["columns", "updated_at"])

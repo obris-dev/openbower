@@ -232,10 +232,10 @@ def ingest_schema_wire(target: List) -> dict[str, Any]:
     columns and may leave the AI ones blank for autofill, or send a value
     to pin its own (write-if-blank keeps it)."""
     columns = [
-        IngestColumn(key=c["key"], label=c["label"], type=c["type"], autopopulated=bool(c.get("fill")))
+        IngestColumn(key=c.key, label=c.label, type=c.type, autopopulated=c.fill is not None)
         for c in target.columns
         # A webhook column holds no data: a producer never sends into it.
-        if not c.get("webhook")
+        if c.webhook is None
     ]
     return WireIngestSchema(columns=columns).model_dump()
 
@@ -256,7 +256,7 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     column for autofill). Capped at MAX_INGEST_PROBLEMS."""
     from .services.lists import cells_for_storage
 
-    types = {column["key"]: column.get("type", "") for column in target.columns if not column.get("webhook")}
+    types = {column.key: column.type for column in target.columns if column.webhook is None}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):

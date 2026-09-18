@@ -86,6 +86,6 @@ class ImportCsvOperationTests(TestCase):
         self.assertEqual(stats.skipped, 0)
         self.assertEqual(stats.target.row_count, 3)
         self.assertEqual(stats.target.origin, "csv")
-        types = {c["key"]: c["type"] for c in stats.target.columns}
+        types = {c.key: c.type for c in stats.target.columns}
         self.assertEqual(types["website"], "url")
         self.assertEqual(types["name"], "text")

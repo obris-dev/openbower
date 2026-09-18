@@ -104,7 +104,7 @@ class ProcessNodeRunTests(AutofillHarness):
         sheet, task, row_id = self._one_ready_task("moved.co")
         # The column was removed after the push: the node is inert (still
         # a row, nothing binds to it), so there is nothing to run.
-        sheet.columns = [column for column in sheet.columns if not column.get("fill")]
+        sheet.columns = [column for column in sheet.columns if column.fill is None]
         sheet.save(update_fields=["columns", "updated_at"])
 
         # A scripted model, not the unpatched one: under the test profile

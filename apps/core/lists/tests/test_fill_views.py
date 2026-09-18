@@ -21,7 +21,7 @@ from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
-from openbower_schema.lists import ListRowsPage
+from openbower_schema.lists import ColumnFill, ListRowsPage
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, FillStatus, StoredCellState
 from ..models import Fill
@@ -317,8 +317,8 @@ class ColumnSummaryTests(FillViewsTestCase):
         # The legacy shape: the fill config exists (the column IS an AI
         # column) but predates the current_fill_id write.
         for column in self.sheet.columns:
-            if column.get("fill"):
-                column["fill"].pop("current_fill_id", None)
+            if column.fill is not None:
+                column.fill = ColumnFill(node_id=column.fill.node_id)
         self.sheet.save(update_fields=["columns"])
         _, by_key = self._summaries()
         self.assertEqual(by_key["answer"].current_status, "")

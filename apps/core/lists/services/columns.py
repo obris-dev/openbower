@@ -15,7 +15,7 @@ from django.db.models import Value
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import derive_column_key
+from openbower_schema.lists import ListColumn, derive_column_key
 
 from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
@@ -133,7 +133,7 @@ def claim_key(target_list: List, *, label: str) -> str:
     key = derive_column_key(label)
     if not key or reserved_output_key(key):
         raise ReservedColumnKey(label=label)
-    if key in {column["key"] for column in target_list.columns}:
+    if key in {column.key for column in target_list.columns}:
         raise ColumnExists(key=key)
     if len(target_list.columns) >= MAX_LIST_COLUMNS:
         raise ColumnsFull()
@@ -150,7 +150,7 @@ class ColumnService:
         with transaction.atomic():
             target_list = self._locked(target_list_id)
             key = claim_key(target_list, label=label)
-            target_list.columns = [*target_list.columns, {"key": key, "label": label, "type": column_type}]
+            target_list.columns = [*target_list.columns, ListColumn(key=key, label=label, type=column_type)]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
 
@@ -174,7 +174,7 @@ class ColumnService:
                 target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
             except List.DoesNotExist as e:
                 raise ListNotFound(target_list_id) from e
-            by_key = {column["key"]: column for column in target_list.columns}
+            by_key = {column.key: column for column in target_list.columns}
             # A repeat is judged FIRST and separately, because it is
             # the request being wrong rather than the sheet having
             # moved, and the two owe the caller different answers.
@@ -205,9 +205,9 @@ class ColumnService:
         with transaction.atomic():
             target_list = self._locked(target_list_id)
             columns = list(target_list.columns)
-            for column in columns:
-                if column["key"] == key:
-                    column["label"] = label
+            for index, column in enumerate(columns):
+                if column.key == key:
+                    columns[index] = column.model_copy(update={"label": label})
                     break
             else:
                 raise ColumnNotFound(key)
@@ -234,17 +234,17 @@ class ColumnService:
         when it wakes, so it writes the deleted key back to nothing."""
         with transaction.atomic():
             target_list = self._locked(target_list_id)
-            doomed = next((column for column in target_list.columns if column["key"] == key), None)
+            doomed = next((column for column in target_list.columns if column.key == key), None)
             if doomed is None:
                 raise ColumnNotFound(key)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
-            node_id = str((doomed.get("fill") or {}).get("node_id", ""))
-            webhook_node_id = str((doomed.get("webhook") or {}).get("node_id", ""))
+            node_id = doomed.fill.node_id if doomed.fill is not None else ""
+            webhook_node_id = doomed.webhook.node_id if doomed.webhook is not None else ""
             workflows = WorkflowService(account_id=self.account_id)
             if node_id:
                 self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
-            columns = [column for column in target_list.columns if column["key"] != key]
+            columns = [column for column in target_list.columns if column.key != key]
 
             # ONE UPDATE over the sheet's rows, so an O(rows) write
             # dissolves inside the transaction rather than stranding
@@ -295,9 +295,9 @@ class ColumnService:
         waits = workflows.nodes_of_kind(WaitUntil.KIND, config__inbound_path_ids__contains=[path_id])
         webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
         labels = [
-            column["label"]
+            column.label
             for column in target_list.columns
-            if (column.get("webhook") or {}).get("node_id") in webhook_node_ids
+            if column.webhook is not None and column.webhook.node_id in webhook_node_ids
         ]
         if labels:
             raise ColumnWaitedOn(labels=labels)
@@ -351,15 +351,8 @@ class ColumnService:
             target_list = List.objects.get(id=target_list_id, account_id=self.account_id)
         except List.DoesNotExist as e:
             raise ListNotFound(target_list_id) from e
-        fill = next(
-            (
-                column.get("fill")
-                for column in target_list.columns
-                if column["key"] == column_key and column.get("fill")
-            ),
-            None,
-        )
-        if fill is None:
+        column = next((column for column in target_list.columns if column.key == column_key), None)
+        if column is None or column.fill is None:
             raise FillColumnNotFound(column_key)
-        node = WorkflowService(account_id=self.account_id).get_node(str(fill["node_id"]))
+        node = WorkflowService(account_id=self.account_id).get_node(column.fill.node_id)
         return agents.get_for_fill(agent_id_of(node))

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from openbower_schema.lists import ColumnFill
+
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..models import Fill, ListRow, Node, NodeRun
 from ..services import cell_truth
@@ -129,10 +131,10 @@ def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
     ]
 
 
-def fill_agent_id(fill: dict) -> str:
+def fill_agent_id(fill: ColumnFill) -> str:
     """The agent behind a stored column `fill` member, through its
     node: the column binds to the node, the node names the agent."""
-    return agent_id_of(Node.objects.get(id=fill["node_id"]))
+    return agent_id_of(Node.objects.get(id=fill.node_id))
 
 
 def row_value(list_id: str, row_id: str, column_key: str) -> str:

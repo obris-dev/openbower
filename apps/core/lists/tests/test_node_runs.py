@@ -63,7 +63,7 @@ class AutofillHarness(TransactionTestCase):
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )
         sheet.refresh_from_db()
-        node_id = next(column["fill"]["node_id"] for column in sheet.columns if column.get("fill"))
+        node_id = next(column.fill.node_id for column in sheet.columns if column.fill is not None)
         return sheet, node_id, fill
 
     def _plain_sheet(self):
@@ -117,7 +117,7 @@ class EnqueueTests(AutofillHarness):
 
     def test_a_push_that_overrides_an_ai_column_skips_that_node(self) -> None:
         sheet, node_id, _ = self._ai_sheet()
-        ai_key = next(c["key"] for c in sheet.columns if c.get("fill"))
+        ai_key = next(c.key for c in sheet.columns if c.fill is not None)
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
 
         # One row pins the AI column (an override), one leaves it blank.

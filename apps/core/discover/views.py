@@ -205,7 +205,7 @@ def _list_seed_domains(request, *, list_id: str, identifier_key: str) -> list[st
         target = service.get(list_id)
     except ListNotFound:
         return _invalid_request("no list with that id")
-    if identifier_key not in {c["key"] for c in target.columns}:
+    if identifier_key not in {c.key for c in target.columns}:
         return _invalid_request("that column does not exist on the list")
     values = service.column_values(target, key=identifier_key, limit=MAX_LIST_SEED_VALUES)
     domains = normalize_seed_values(values, cap=MAX_INLINE_DOMAINS)

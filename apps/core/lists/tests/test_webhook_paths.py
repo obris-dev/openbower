@@ -7,18 +7,21 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
+from ..fields import parse_columns
 from ..services.webhook_paths import inbound_paths_for, wait_keys_for
 
 NODE_A = "01NDA" + "A" * 21
 NODE_B = "01NDB" + "B" * 21
 PATH_A = "01PTA" + "A" * 21
 PATH_B = "01PTB" + "B" * 21
-COLUMNS = [
-    {"key": "company", "label": "Company", "type": "text"},
-    {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": NODE_A}},
-    {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": NODE_A}},
-    {"key": "country", "label": "Country", "type": "text", "fill": {"node_id": NODE_B}},
-]
+COLUMNS = parse_columns(
+    [
+        {"key": "company", "label": "Company", "type": "text"},
+        {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": NODE_A}},
+        {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": NODE_A}},
+        {"key": "country", "label": "Country", "type": "text", "fill": {"node_id": NODE_B}},
+    ]
+)
 PATH_BY_NODE = {NODE_A: PATH_A, NODE_B: PATH_B}
 NODE_BY_PATH = {PATH_A: NODE_A, PATH_B: NODE_B}
 

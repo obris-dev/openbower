@@ -91,14 +91,14 @@ class QuickPathTests(AdmissionTestCase):
         # The ephemeral row's label is the FIRST output's.
         self.assertEqual(agent.label, "Answer")
         self.sheet.refresh_from_db()
-        added = [c for c in self.sheet.columns if c["key"] == "answer"]
+        added = [c for c in self.sheet.columns if c.key == "answer"]
         self.assertEqual(len(added), 1)
-        self.assertEqual(added[0]["label"], "Answer")
+        self.assertEqual(added[0].label, "Answer")
         # The column carries BOTH custody facts: which node fills it
         # (the agent bound to this sheet) and which fill currently
         # speaks for it (stored, not walked).
         node = Node.objects.get(identity=str(agent.id))
-        self.assertEqual(added[0]["fill"], {"node_id": str(node.id), "current_fill_id": str(fill.id)})
+        self.assertEqual(added[0].fill, ColumnFill(node_id=str(node.id), current_fill_id=str(fill.id)))
         self.assertEqual(fill.status, FillStatus.PENDING)
         self.assertEqual(fill.column_keys, ["answer"])
         self.assertEqual(fill.config_snapshot["model"], "test-model")
@@ -115,9 +115,9 @@ class QuickPathTests(AdmissionTestCase):
         # dropped on a list read and no wire key goes unwritten.
         self.admit()
         self.sheet.refresh_from_db()
-        stored = next(c["fill"] for c in self.sheet.columns if c["key"] == "answer")
-        self.assertEqual(set(stored), set(ColumnFill.model_fields))
-        self.assertEqual(ColumnFill(**stored).model_dump(), stored)
+        stored = next(c.fill for c in self.sheet.columns if c.key == "answer")
+        self.assertIsInstance(stored, ColumnFill)
+        self.assertEqual(set(stored.model_dump()), set(ColumnFill.model_fields))
 
     def test_multi_output_columns_are_the_outputs_own_keys(self) -> None:
         config = quick_config(
@@ -129,10 +129,10 @@ class QuickPathTests(AdmissionTestCase):
         fill = self.admit(config=config)
         self.assertEqual(fill.column_keys, ["email", "status"])
         self.sheet.refresh_from_db()
-        keys = {c["key"] for c in self.sheet.columns}
+        keys = {c.key for c in self.sheet.columns}
         self.assertIn("email", keys)
         self.assertIn("status", keys)
-        labels = {c["key"]: c["label"] for c in self.sheet.columns}
+        labels = {c.key: c.label for c in self.sheet.columns}
         self.assertEqual(labels["email"], "Email")
         self.assertEqual(labels["status"], "Status")
 
@@ -189,7 +189,7 @@ class QuickPathTests(AdmissionTestCase):
         # Nothing committed: no fill, no ephemeral, no columns change.
         self.assertEqual(Fill.objects.count(), 0)
         self.sheet.refresh_from_db()
-        self.assertEqual([c["key"] for c in self.sheet.columns], ["company"])
+        self.assertEqual([c.key for c in self.sheet.columns], ["company"])
 
     def test_list_delete_purges_runs_and_outcomes(self) -> None:
         # No cascades exist: delete() owns the fill custody's cleanup,
@@ -358,7 +358,7 @@ class ScopedFillTests(AdmissionTestCase):
         self.assertEqual(Fill.objects.count(), 0)
         self.assertEqual(Agent.objects.count(), 0)
         bare.refresh_from_db()
-        self.assertEqual([c["key"] for c in bare.columns], ["company"])
+        self.assertEqual([c.key for c in bare.columns], ["company"])
 
     def test_variable_less_prompt_treats_every_row_as_eligible(self) -> None:
         # No {{tokens}} means the prompt asks the same question

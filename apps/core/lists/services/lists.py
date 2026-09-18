@@ -203,7 +203,7 @@ class ListService:
         # the fill write path stores. Authored input TOLERATES a mismatch:
         # the mismatches are ignored (the raw value stores), because an
         # import must never fail a whole batch over one bad cell.
-        types = {column["key"]: column.get("type", "") for column in target.columns}
+        types = {column.key: column.type for column in target.columns}
         stored_rows = []
         for data in rows:
             stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
@@ -259,7 +259,7 @@ class ListService:
                 row = ListRow.objects.select_for_update().get(id=row_id, list_id=str(target.id))
             except ListRow.DoesNotExist as e:
                 raise RowNotFound(row_id) from e
-            types = {column["key"]: column.get("type", "") for column in target.columns}
+            types = {column.key: column.type for column in target.columns}
             # row.data is the row's stored cell values, keyed by column key.
             # Work on a mutable copy: this call's writes merge in, keys
             # outside it carry through, and the whole dict is persisted once.

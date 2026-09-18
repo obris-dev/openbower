@@ -182,7 +182,7 @@ class WebhookColumnTests(TestCase):
 
     def test_a_scoped_test_send_uses_the_webhook_node_as_the_event_scope(self):
         self._add()
-        column = next(c for c in self.lists.get(str(self.sheet.id)).columns if c["key"] == "crm_sync")
+        column = next(c for c in self.lists.get(str(self.sheet.id)).columns if c.key == "crm_sync")
         # Settle the wait key so the item's stamp is its completion, a
         # value the test can read back, rather than the send clock.
         cell_truth.write(
@@ -214,7 +214,7 @@ class WebhookColumnTests(TestCase):
         [item] = WebhookEnvelope.model_validate_json(fake.calls[0]["body"]).data.items
         self.assertIsNotNone(item.completed_at)
         row_id = str(self.rows[0].id)
-        scoped = event_id_of(scope=column["webhook"]["node_id"], row_id=row_id, stamp=item.completed_at, test=True)
+        scoped = event_id_of(scope=column.webhook.node_id, row_id=row_id, stamp=item.completed_at, test=True)
         self.assertEqual(item.event_id, scoped)
         # And NOT the sheet-scoped id the add drawer's test send carries.
         unscoped = event_id_of(scope=str(self.sheet.id), row_id=row_id, stamp=item.completed_at, test=True)
@@ -268,7 +268,7 @@ class WebhookColumnTests(TestCase):
         resp = self.client.delete(reverse("lists_column_detail", kwargs={"id": str(self.sheet.id), "key": "crm_sync"}))
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
-        self.assertNotIn("crm_sync", [c["key"] for c in self.lists.get(str(self.sheet.id)).columns])
+        self.assertNotIn("crm_sync", [c.key for c in self.lists.get(str(self.sheet.id)).columns])
 
     def test_deleting_a_waited_on_ai_column_is_refused_until_the_webhook_goes(self):
         self._add(wait_keys=["country"])
