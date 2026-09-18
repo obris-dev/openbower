@@ -9,7 +9,8 @@ from __future__ import annotations
 from django.test import TestCase
 
 from common.testing import TEST_IDENTITY
-from lists.constants import StoredCellState
+from lists.constants import CellSource, StoredCellState
+from lists.models import ListCellState
 from lists.services import cell_truth
 from lists.services.cell_states import CellStateService
 from lists.services.lists import ListService
@@ -52,3 +53,32 @@ class CellStateScopingTests(TestCase):
 
     def test_another_account_sees_nothing_through_any_iterator(self):
         self.assertEqual(self._reads(self.theirs), [0, 0, 0, 0])
+
+
+class CellSourceTests(TestCase):
+    def test_a_fill_lands_as_the_fill_source_and_a_later_writer_re_attributes(self):
+        lists = ListService(account_id=TEST_IDENTITY["account_id"])
+        sheet = lists.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual")
+        [row] = lists.add_rows(sheet, [{"company": "acme.com"}])
+        write = {"account_id": TEST_IDENTITY["account_id"], "list_id": str(sheet.id), "row_id": str(row.id)}
+        cell_truth.write(
+            **write, fill_run_id=None, config_fingerprint="", states={"answer": StoredCellState.FILLED}, tools={}
+        )
+        record = ListCellState.objects.get(list_id=str(sheet.id), column_key="answer")
+        self.assertEqual(record.source, CellSource.FILL)
+        cell_truth.write(
+            **write,
+            fill_run_id=None,
+            config_fingerprint="",
+            states={"answer": StoredCellState.FILLED},
+            tools={},
+            source=CellSource.MANUAL,
+        )
+        record.refresh_from_db()
+        self.assertEqual(record.source, CellSource.MANUAL)
+        # And a fill writing over it takes the cell back.
+        cell_truth.write(
+            **write, fill_run_id=None, config_fingerprint="", states={"answer": StoredCellState.FILLED}, tools={}
+        )
+        record.refresh_from_db()
+        self.assertEqual(record.source, CellSource.FILL)

@@ -4,20 +4,23 @@ from django.utils.translation import gettext_lazy as _
 from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
+    CELL_SOURCE_MAX_LENGTH,
     CELL_STATE_MAX_LENGTH,
     COLUMN_KEY_MAX_LENGTH,
     CONFIG_FINGERPRINT_MAX_LENGTH,
+    CellSource,
     StoredCellState,
 )
 
 
 class ListCellState(AccountScopedModel):
-    """What a fill made of one AI cell: FILLED, or the cause it is
-    blank. One row per (list, row, column), upserted.
+    """What was made of one AI cell: FILLED, or the cause it is blank,
+    and who made it (`source`: a fill today; a hand-typed value once the
+    grid can be edited). One row per (list, row, column), upserted.
 
     ABSENCE means exactly one thing: never attempted. Nothing is
-    written at admission, and nothing is written for a cell no fill has
-    reached.
+    written at admission, and nothing is written for a cell no writer
+    has reached.
 
     Recording FILLED rather than reading it off the sheet is a QUERY
     decision. A value on the row does
@@ -41,6 +44,7 @@ class ListCellState(AccountScopedModel):
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
+    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.FILL)
     # The fill run that wrote it: the row drawer's link to that run's
     # NodeRun.result, which holds what the model actually said. NULL on
     # the automatic path (autofill), which has no fill run; the drawer

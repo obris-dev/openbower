@@ -538,6 +538,21 @@
       "title": "ColumnPromptWire",
       "type": "object"
     },
+    "ColumnWebhook": {
+      "description": "A column's webhook linkage: present exactly on Send webhook\ncolumns. The column binds to the webhook NODE at rank 1 of its own\npath (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
+      "properties": {
+        "node_id": {
+          "description": "The webhook node this column is; its config and the wait node's hang off the path.",
+          "title": "Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "ColumnWebhook",
+      "type": "object"
+    },
     "Company": {
       "description": "One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.",
       "properties": {
@@ -1069,6 +1084,18 @@
           ],
           "title": "Type",
           "type": "string"
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnWebhook"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present exactly on Send webhook columns; never together with fill."
         }
       },
       "required": [
@@ -1502,6 +1529,69 @@
       "title": "SearchToolCall",
       "type": "object"
     },
+    "WebhookColumnConfigWire": {
+      "description": "A Send webhook column as configured: what it waits for (derived\nback from the paths its wait node names, in sheet order), where it\nsends, what rides, how often, and whether it is running.",
+      "properties": {
+        "destination_id": {
+          "title": "Destination Id",
+          "type": "string"
+        },
+        "destination_label": {
+          "title": "Destination Label",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "interval_seconds": {
+          "title": "Interval Seconds",
+          "type": "integer"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "payload_keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Payload Keys",
+          "type": "array"
+        },
+        "wait_keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Wait Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "node_id",
+        "destination_id",
+        "destination_label",
+        "wait_keys",
+        "payload_keys",
+        "interval_seconds"
+      ],
+      "title": "WebhookColumnConfigWire",
+      "type": "object"
+    },
+    "WebhookColumnPreviewResponse": {
+      "description": "The envelope a test send of these choices would carry, rendered by\nthe server and sent nowhere, so the sheet shows the truth before a\nsend rather than a reconstruction.",
+      "properties": {
+        "envelope": {
+          "$ref": "#/$defs/WebhookEnvelope"
+        }
+      },
+      "required": [
+        "envelope"
+      ],
+      "title": "WebhookColumnPreviewResponse",
+      "type": "object"
+    },
     "WebhookColumnTestResponse": {
       "description": "A Send webhook column's test send: the delivery as recorded, and\nthe envelope exactly as the receiver got it, so the sheet can show\nthe body a test produced rather than reconstruct it.",
       "properties": {
@@ -1628,7 +1718,7 @@
       "type": "object"
     },
     "WebhookDestinationCreated": {
-      "description": "The create response: the ONE time the signing secret is on the\nwire. It is minted server-side, stored encrypted, and never returned\nagain; a lost secret means deleting the destination and adding it\nagain.",
+      "description": "The create and rotate response: the ONE time a signing secret is\non the wire. It is minted server-side, stored encrypted, and never\nreturned again; a lost secret is replaced by rotating.",
       "properties": {
         "destination": {
           "$ref": "#/$defs/WebhookDestinationWire"
@@ -1648,6 +1738,12 @@
     "WebhookDestinationWire": {
       "description": "A place deliveries go. Header VALUES and the signing secret never\nride here; `header_names` is all the roster shows.",
       "properties": {
+        "column_count": {
+          "default": 0,
+          "description": "How many Send webhook columns send here; delete is refused while any do.",
+          "title": "Column Count",
+          "type": "integer"
+        },
         "created_at": {
           "title": "Created At",
           "type": "string"
@@ -1685,6 +1781,19 @@
           ],
           "default": null,
           "description": "The newest delivery on record, the destination's health; null before any."
+        },
+        "rotated_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.",
+          "title": "Rotated At"
         },
         "url": {
           "maxLength": 2048,
@@ -1926,6 +2035,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
   "x-constants": {
+    "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_TOOL_CALLS": 6,
     "MAX_WEBHOOK_DESTINATIONS": 32,
@@ -1976,11 +2086,19 @@
         "error"
       ]
     },
+    "WEBHOOK_CADENCE_SECONDS": [
+      300,
+      900,
+      3600,
+      21600,
+      86400
+    ],
     "WEBHOOK_HEADER_NAME_GRAMMAR": "^[A-Za-z0-9-]+$",
     "WEBHOOK_HEADER_NAME_MAX_LENGTH": 128,
     "WEBHOOK_HEADER_VALUE_GRAMMAR": "^[\\x20-\\x7E\\t]*$",
     "WEBHOOK_HEADER_VALUE_MAX_LENGTH": 2048,
     "WEBHOOK_ID_HEADER": "webhook-id",
+    "WEBHOOK_ROTATION_GRACE_SECONDS": 131072,
     "WEBHOOK_SECRET_PREFIX": "whsec_",
     "WEBHOOK_SIGNATURE_HEADER": "webhook-signature",
     "WEBHOOK_SIGNATURE_VERSION": "v1",

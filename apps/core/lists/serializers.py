@@ -23,12 +23,14 @@ from .constants import (
     COLUMN_KEY_GRAMMAR,
     COLUMN_KEY_MAX_LENGTH,
     COLUMN_LABEL_MAX_LENGTH,
+    DEFAULT_WEBHOOK_CADENCE_SECONDS,
     LABEL_MAX_LENGTH,
     MAX_INGEST_EVENT_ID_LENGTH,
     MAX_INGEST_PROBLEMS,
     MAX_LIST_COLUMNS,
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
+    WEBHOOK_CADENCE_SECONDS,
     ColumnType,
     FillStatus,
 )
@@ -232,6 +234,8 @@ def ingest_schema_wire(target: List) -> dict[str, Any]:
     columns = [
         IngestColumn(key=c["key"], label=c["label"], type=c["type"], autopopulated=bool(c.get("fill")))
         for c in target.columns
+        # A webhook column holds no data: a producer never sends into it.
+        if not c.get("webhook")
     ]
     return WireIngestSchema(columns=columns).model_dump()
 
@@ -252,7 +256,7 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     column for autofill). Capped at MAX_INGEST_PROBLEMS."""
     from .services.lists import cells_for_storage
 
-    types = {column["key"]: column.get("type", "") for column in target.columns}
+    types = {column["key"]: column.get("type", "") for column in target.columns if not column.get("webhook")}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):
@@ -362,6 +366,8 @@ class WebhookColumnTestRequest(serializers.Serializer):
     )
     row_id = serializers.CharField(max_length=26)
     cells = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
+    # The column, once it exists: the digest is then scoped to its node.
+    key = serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH, required=False, default="")
 
     def validate_wait_keys(self, value: list[str]) -> list[str]:
         return _unique_keys(value)
@@ -376,6 +382,41 @@ class WebhookColumnTestRequest(serializers.Serializer):
         if set(attrs["cells"]) != set(attrs["payload_keys"]):
             raise serializers.ValidationError("cells must carry exactly the payload keys")
         return attrs
+
+
+class WebhookColumnConfigRequest(serializers.Serializer):
+    """PATCH /v1/lists/{id}/columns/webhook/{key}: what the column waits
+    on, where it sends, what rides, how often (one of the presets), and
+    whether it runs."""
+
+    destination_id = serializers.CharField(max_length=26)
+    wait_keys = serializers.ListField(
+        child=serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH),
+        min_length=1,
+        max_length=MAX_LIST_COLUMNS,
+    )
+    payload_keys = serializers.ListField(
+        child=serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH),
+        min_length=1,
+        max_length=MAX_LIST_COLUMNS,
+    )
+    interval_seconds = serializers.ChoiceField(
+        choices=list(WEBHOOK_CADENCE_SECONDS), default=DEFAULT_WEBHOOK_CADENCE_SECONDS
+    )
+    enabled = serializers.BooleanField(default=True)
+
+    def validate_wait_keys(self, value: list[str]) -> list[str]:
+        return _unique_keys(value)
+
+    def validate_payload_keys(self, value: list[str]) -> list[str]:
+        return _unique_keys(value)
+
+
+class WebhookColumnAddRequest(WebhookColumnConfigRequest):
+    """POST /v1/lists/{id}/columns/webhook: the config plus the label the
+    column's key derives from."""
+
+    label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
 
 
 def _unique_keys(value: list[str]) -> list[str]:

@@ -15,6 +15,9 @@ from unittest.mock import patch
 from openbower_schema.agents import AgentOutput
 
 from ..models import Node, NodePath, NodeRun, Workflow
+from ..nodes.base import NodeConfig
+from ..nodes.wait_until import WaitUntil
+from ..nodes.webhook import Webhook
 from ..services.fill_admission import NoEligibleRows
 from ..services.workflows import (
     NodeNotFound,
@@ -23,6 +26,7 @@ from ..services.workflows import (
     agent_id_of,
     columns_by_node,
     columns_for_node,
+    config_as,
 )
 from .fill_helpers import settle_all
 from .test_fill_admission import ACCOUNT, USER, AdmissionTestCase, quick_config
@@ -174,3 +178,88 @@ class ListDeleteTests(AdmissionTestCase):
         self.lists.delete(self.sheet)
         self.assertEqual((Workflow.objects.count(), NodePath.objects.count()), (0, 0))
         self.assertEqual(list(Node.objects.values_list("id", flat=True)), [bench.id])
+
+
+class PathTests(AdmissionTestCase):
+    """The kind-blind path writers: configs built in memory, persisted
+    in rank order and bound to the path they land on."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.workflows = WorkflowService(account_id=ACCOUNT)
+        self.agent = self.admission.agents.create(owner_id=USER, label="Finder", config=quick_config())
+        self.agent_node = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
+
+    def _configs(self, destination_id: str = "01DST" + "A" * 21) -> list[NodeConfig]:
+        wait = WaitUntil(inbound_path_ids=[self.agent_node.path_id])
+        webhook = Webhook(destination_id=destination_id, payload_keys=["company"], interval_seconds=3600)
+        return [wait, webhook]
+
+    def test_create_path_stores_the_configs_in_rank_order_bound_to_the_new_path(self) -> None:
+        path, nodes = self.workflows.create_path(self.sheet, self._configs())
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (3, 2, 1))
+        self.assertEqual(
+            [(n.kind, n.rank, n.path_id, n.identity) for n in nodes],
+            [
+                (WaitUntil.KIND, 0, str(path.id), str(path.id)),
+                (Webhook.KIND, 1, str(path.id), str(path.id)),
+            ],
+        )
+        self.assertEqual(config_as(nodes[0], WaitUntil).inbound_path_ids, [self.agent_node.path_id])
+        self.assertEqual(config_as(nodes[1], Webhook).interval_seconds, 3600)
+        self.assertEqual(self.workflows.nodes_on_path(str(path.id)), nodes)
+        # The agent node's path is untouched and still holds one node at 0.
+        self.assertEqual([n.rank for n in self.workflows.nodes_on_path(self.agent_node.path_id)], [0])
+
+    def test_a_failed_node_write_rolls_the_path_back(self) -> None:
+        # FAILS if create_path loses its transaction: the path survives.
+        with (
+            patch("lists.services.workflows.Node.objects.create", side_effect=RuntimeError("boom")),
+            self.assertRaises(RuntimeError),
+        ):
+            self.workflows.create_path(self.sheet, self._configs())
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (1, 1))
+
+    def test_config_as_refuses_the_wrong_kind_and_save_node_refuses_a_foreign_config(self) -> None:
+        _, nodes = self.workflows.create_path(self.sheet, self._configs())
+        with self.assertRaises(WrongNodeKind):
+            config_as(nodes[0], Webhook)
+        with self.assertRaises(WrongNodeKind):
+            self.workflows.save_node(nodes[0], Webhook(destination_id="d", payload_keys=[]))
+
+    def test_replace_path_nodes_rewrites_each_config_in_place_and_keeps_the_shape(self) -> None:
+        path, nodes = self.workflows.create_path(self.sheet, self._configs())
+        replaced = self.workflows.replace_path_nodes(str(path.id), self._configs(destination_id="01DST" + "B" * 21))
+        self.assertEqual([n.id for n in replaced], [n.id for n in nodes])
+        self.assertEqual(config_as(replaced[1], Webhook).destination_id, "01DST" + "B" * 21)
+        self.assertEqual(replaced[1].identity, str(path.id))
+        with self.assertRaises(WrongNodeKind):
+            self.workflows.replace_path_nodes(str(path.id), self._configs()[:1])
+
+    def test_nodes_of_kind_queries_the_config_and_is_account_scoped(self) -> None:
+        path, _ = self.workflows.create_path(self.sheet, self._configs())
+        naming = self.workflows.nodes_of_kind(
+            WaitUntil.KIND, config__inbound_path_ids__contains=[self.agent_node.path_id]
+        )
+        self.assertEqual([n.path_id for n in naming], [str(path.id)])
+        by_destination = self.workflows.nodes_of_kind(Webhook.KIND, config__destination_id="01DST" + "A" * 21)
+        self.assertEqual(by_destination.count(), 1)
+        self.assertEqual(self.workflows.node_counts_by(Webhook.KIND, "destination_id"), {"01DST" + "A" * 21: 1})
+        foreign = WorkflowService(account_id="01ACCT" + "Z" * 20)
+        self.assertEqual(foreign.nodes_of_kind(Webhook.KIND).count(), 0)
+        self.assertEqual(foreign.node_counts_by(Webhook.KIND, "destination_id"), {})
+
+    def test_path_of_column_walks_the_fill_linkage(self) -> None:
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": str(self.agent_node.id)}},
+        ]
+        self.assertEqual(self.workflows.path_of_column(self.sheet, "answer"), self.agent_node.path_id)
+        with self.assertRaises(NodeNotFound):
+            self.workflows.path_of_column(self.sheet, "company")
+
+    def test_delete_path_removes_exactly_its_nodes_and_itself(self) -> None:
+        path, _ = self.workflows.create_path(self.sheet, self._configs())
+        self.workflows.delete_path(str(path.id))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (1, 1, 1))
+        self.assertEqual(Node.objects.get().id, self.agent_node.id)

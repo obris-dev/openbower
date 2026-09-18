@@ -65,7 +65,7 @@ class ColumnWebhookTestTests(TestCase):
             tools={},
         )
 
-    def _post(self, **overrides):
+    def _post(self, route: str = "lists_columns_webhook_test", **overrides):
         body = {
             "destination_id": str(self.destination.id),
             "wait_keys": ["answer", "score"],
@@ -77,7 +77,7 @@ class ColumnWebhookTestTests(TestCase):
         fake = _FakeSender()
         with patch("webhooks.services.destinations.WebhookSender", return_value=fake):
             resp = self.client.post(
-                reverse("lists_columns_webhook_test", kwargs={"id": str(self.sheet.id)}),
+                reverse(route, kwargs={"id": str(self.sheet.id)}),
                 body,
                 content_type="application/json",
             )
@@ -132,6 +132,27 @@ class ColumnWebhookTestTests(TestCase):
         )
         self.assertEqual(item.event_id, expected)
         self.assertEqual(set(item.states), {"answer", "score"})
+
+    def test_preview_renders_the_same_envelope_and_sends_nothing(self):
+        resp, fake = self._post(route="lists_columns_webhook_preview")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        envelope = WebhookEnvelope.model_validate(resp.json()["envelope"])
+        self.assertEqual((envelope.type, envelope.test), ("digest", True))
+        [item] = envelope.data.items
+        self.assertEqual(item.cells, {"company": "edited.example", "answer": "yes"})
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_a_key_naming_no_webhook_column_refuses(self):
+        for key, code in (
+            ("company", WebhookColumnErrorCode.COLUMN_NOT_WEBHOOK),
+            ("nope", WebhookColumnErrorCode.COLUMN_UNKNOWN),
+        ):
+            with self.subTest(key=key):
+                resp, fake = self._post(key=key)
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.json()["error"], code)
+                self.assertEqual(fake.calls, [])
 
     def test_a_row_whose_wait_key_ended_in_a_retryable_failure_is_not_complete(self):
         self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED, "score": StoredCellState.TRANSIENT})

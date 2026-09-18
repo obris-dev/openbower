@@ -24,6 +24,16 @@ WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH = 1024
 # destination in the account.
 MAX_WEBHOOK_DESTINATIONS = 32
 MAX_WEBHOOK_HEADERS = 8
+# How often a webhook column's completed rows are batched and sent: a
+# closed list of presets (seconds), so the drawer offers a choice rather
+# than a number, and the flush's tick can never be asked for a value it
+# would refuse.
+WEBHOOK_CADENCE_SECONDS: tuple[int, ...] = (300, 900, 3600, 21_600, 86_400)
+DEFAULT_WEBHOOK_CADENCE_SECONDS = 900
+# After a secret rotation, deliveries carry a signature under the old
+# secret too for this long (binary; above the 24 h the reference
+# implementation keeps), so a receiver switches at its own pace.
+WEBHOOK_ROTATION_GRACE_SECONDS = 131_072
 # The signature triple every delivery carries, and the shape of what
 # rides in it: the Standard Webhooks scheme, so a receiver library
 # verifies with the secret as shown.
@@ -184,6 +194,11 @@ class WebhookDestinationWire(BaseModel):
     last_delivery: WebhookDeliveryWire | None = Field(
         default=None, description="The newest delivery on record, the destination's health; null before any."
     )
+    rotated_at: str | None = Field(
+        default=None,
+        description="When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.",
+    )
+    column_count: int = Field(default=0, description="How many Send webhook columns send here; delete is refused while any do.")
     created_at: str
 
 
@@ -192,10 +207,9 @@ class WebhookDestinationsList(BaseModel):
 
 
 class WebhookDestinationCreated(BaseModel):
-    """The create response: the ONE time the signing secret is on the
-    wire. It is minted server-side, stored encrypted, and never returned
-    again; a lost secret means deleting the destination and adding it
-    again."""
+    """The create and rotate response: the ONE time a signing secret is
+    on the wire. It is minted server-side, stored encrypted, and never
+    returned again; a lost secret is replaced by rotating."""
 
     destination: WebhookDestinationWire
     signing_secret: str
@@ -213,3 +227,25 @@ class WebhookColumnTestResponse(BaseModel):
 
     delivery: WebhookDeliveryWire
     envelope: WebhookEnvelope
+
+
+class WebhookColumnPreviewResponse(BaseModel):
+    """The envelope a test send of these choices would carry, rendered by
+    the server and sent nowhere, so the sheet shows the truth before a
+    send rather than a reconstruction."""
+
+    envelope: WebhookEnvelope
+
+
+class WebhookColumnConfigWire(BaseModel):
+    """A Send webhook column as configured: what it waits for (derived
+    back from the paths its wait node names, in sheet order), where it
+    sends, what rides, how often, and whether it is running."""
+
+    node_id: str
+    destination_id: str
+    destination_label: str
+    wait_keys: list[str]
+    payload_keys: list[str]
+    interval_seconds: int
+    enabled: bool = True

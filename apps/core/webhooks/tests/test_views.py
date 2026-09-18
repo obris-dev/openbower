@@ -10,14 +10,27 @@ Run: DJANGO_ENV=test uv run python manage.py test webhooks
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
-from common.testing import login_session
-from openbower_schema.webhooks import WebhookDeliveryWire, WebhookDestinationWire, WebhookEnvelope
+from common.testing import TEST_IDENTITY, login_session
+from lists.nodes.wait_until import WaitUntil
+from lists.nodes.webhook import Webhook
+from lists.services.lists import ListService
+from lists.services.workflows import WorkflowService
+from openbower_schema.webhooks import (
+    WEBHOOK_ROTATION_GRACE_SECONDS,
+    WEBHOOK_SECRET_PREFIX,
+    WebhookDeliveryWire,
+    WebhookDestinationCreated,
+    WebhookDestinationWire,
+    WebhookEnvelope,
+)
 from webhooks.constants import DeliveryStatus, WebhookEnvelopeType, WebhookErrorCode
 from webhooks.delivery.protocol import DeliveryResult
 from webhooks.models import WebhookDelivery, WebhookDestination
@@ -215,6 +228,57 @@ class DeleteTests(_Base):
         self.assertEqual(WebhookDestination.objects.count(), 0)
 
 
+class RotateTests(_Base):
+    def test_rotate_mints_a_new_secret_shown_once_and_keeps_the_old_one_signing(self):
+        created = self._create()
+        old_secret = created["signing_secret"]
+        resp = self.client.post(reverse("webhooks_rotate", kwargs={"id": created["destination"]["id"]}))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        WebhookDestinationCreated(**body)
+        self.assertTrue(body["signing_secret"].startswith(WEBHOOK_SECRET_PREFIX))
+        self.assertNotEqual(body["signing_secret"], old_secret)
+        self.assertIsNotNone(body["destination"]["rotated_at"])
+        stored = WebhookDestination.objects.get(id=created["destination"]["id"])
+        self.assertEqual((stored.signing_secret, stored.previous_signing_secret), (body["signing_secret"], old_secret))
+        # The next delivery signs with both, current first.
+        _, fake = self._test(created["destination"]["id"])
+        self.assertEqual(fake.calls[0]["secrets"], [body["signing_secret"], old_secret])
+
+    def test_the_retired_secret_stops_signing_after_the_grace_window(self):
+        created = self._create()["destination"]
+        self.client.post(reverse("webhooks_rotate", kwargs={"id": created["id"]}))
+        stored = WebhookDestination.objects.get(id=created["id"])
+        stored.rotated_at = timezone.now() - timedelta(seconds=WEBHOOK_ROTATION_GRACE_SECONDS + 1)
+        stored.save(update_fields=["rotated_at"])
+        _, fake = self._test(created["id"])
+        self.assertEqual(len(fake.calls[0]["secrets"]), 1)
+
+
+class InUseDeleteTests(_Base):
+    def _column_using(self, destination_id: str) -> str:
+        lists = ListService(account_id=TEST_IDENTITY["account_id"])
+        sheet = lists.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=[], origin="manual")
+        workflows = WorkflowService(account_id=TEST_IDENTITY["account_id"])
+        path, _ = workflows.create_path(
+            sheet, [WaitUntil(inbound_path_ids=[]), Webhook(destination_id=destination_id, payload_keys=[])]
+        )
+        return str(path.id)
+
+    def test_delete_is_refused_while_a_webhook_column_sends_here_and_the_wire_counts_it(self):
+        created = self._create()["destination"]
+        path_id = self._column_using(created["id"])
+        detail = self.client.get(self._detail(created["id"])).json()
+        self.assertEqual(detail["column_count"], 1)
+        resp = self.client.delete(self._detail(created["id"]))
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.assertEqual(resp.json()["error"], WebhookErrorCode.DESTINATION_IN_USE)
+        self.assertIn("1 webhook column on 1 sheet", resp.json()["detail"])
+        self.assertEqual(WebhookDestination.objects.count(), 1)
+        WorkflowService(account_id=TEST_IDENTITY["account_id"]).delete_path(path_id)
+        self.assertEqual(self.client.delete(self._detail(created["id"])).status_code, 204)
+
+
 class TestDeliveryTests(_Base):
     def test_sends_a_signed_envelope_and_records_it(self):
         created = self._create()["destination"]
@@ -229,7 +293,8 @@ class TestDeliveryTests(_Base):
         call = fake.calls[0]
         self.assertEqual(call["url"], URL)
         self.assertEqual(call["headers"], {"Authorization": "Bearer receiver-token"})
-        self.assertTrue(call["secret"].startswith("whsec_"))
+        self.assertEqual(len(call["secrets"]), 1)
+        self.assertTrue(call["secrets"][0].startswith("whsec_"))
         self.assertEqual(call["delivery_id"], delivery["id"])
         envelope = WebhookEnvelope.model_validate_json(call["body"])
         self.assertEqual(envelope.id, delivery["id"])

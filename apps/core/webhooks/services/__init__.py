@@ -1,5 +1,6 @@
 from .deliveries import WebhookDeliveryGlobal, WebhookDeliveryService
 from .destinations import (
+    DestinationInUse,
     DestinationNotFound,
     DestinationsFull,
     HeaderReserved,
@@ -7,9 +8,11 @@ from .destinations import (
     UrlBlocked,
     WebhookDestinationService,
     WebhookRefused,
+    envelope_of,
 )
 
 __all__ = [
+    "DestinationInUse",
     "DestinationNotFound",
     "DestinationsFull",
     "HeaderReserved",
@@ -19,4 +22,5 @@ __all__ = [
     "WebhookDeliveryService",
     "WebhookDestinationService",
     "WebhookRefused",
+    "envelope_of",
 ]

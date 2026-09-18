@@ -34,6 +34,7 @@ from .fills import (
 )
 from .lists import (
     ColumnFill,
+    ColumnWebhook,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -46,6 +47,8 @@ from .lists import (
     RowsAdded,
 )
 from .webhooks import (
+    WebhookColumnConfigWire,
+    WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDeliveryWire,
@@ -71,6 +74,7 @@ __all__ = [
     "CatalogModel",
     "CellRunResult",
     "ColumnFill",
+    "ColumnWebhook",
     "ColumnFillSummary",
     "ColumnPromptWire",
     "Company",
@@ -92,6 +96,8 @@ __all__ = [
     "LookalikeItem",
     "LookalikeListResponse",
     "RowsAdded",
+    "WebhookColumnConfigWire",
+    "WebhookColumnPreviewResponse",
     "WebhookColumnTestResponse",
     "WebhookDeliveriesPage",
     "WebhookDeliveryWire",

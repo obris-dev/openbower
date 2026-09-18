@@ -19,7 +19,7 @@ at the bottom. Nothing in the registry or the services changes.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from pydantic import BaseModel
 
@@ -45,3 +45,11 @@ class NodeConfig(BaseModel):
     def _identity(self) -> str:
         """The kind's own projection; every kind declares one."""
         raise NotImplementedError
+
+    def bound_to_path(self, path_id: str) -> Self:
+        """This config as it is stored on a node of `path_id`. A kind
+        whose identity IS its path (one such node per path) returns a
+        copy carrying the id, so a generic writer persisting a path's
+        nodes binds each without knowing its kind; the default is the
+        config itself."""
+        return self

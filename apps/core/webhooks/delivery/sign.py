@@ -1,8 +1,10 @@
 """Signing, the Standard Webhooks scheme: a secret `whsec_<base64>`,
 and per delivery the id, timestamp (unix seconds), and signature
 headers (`v1,` + base64 of HMAC-SHA256 over `"{id}.{timestamp}.{body}"`).
-The header names and the secret's shape are the contract's constants.
-Pure: no settings, no I/O."""
+After a rotation the header carries one such value per secret,
+space-separated, current first, so a receiver on either secret
+verifies. The header names and the secret's shape are the contract's
+constants. Pure: no settings, no I/O."""
 
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import hashlib
 import hmac
 import json
 import secrets
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from pydantic import BaseModel
@@ -49,12 +52,19 @@ def encode_body(payload: BaseModel) -> bytes:
 
 
 class Signature(NamedTuple):
-    """One delivery's signature: the three values a receiver checks,
-    and the headers that carry them."""
+    """One delivery's signature: the id and timestamp a receiver checks,
+    one `v1,` value per signing key (current first), and the headers
+    that carry them."""
 
     delivery_id: str
     timestamp: int
-    value: str
+    values: tuple[str, ...]
+
+    @property
+    def value(self) -> str:
+        """The signature header's value: every key's signature, space
+        separated, as the scheme lays them out."""
+        return " ".join(self.values)
 
     def headers(self) -> dict[str, str]:
         return {
@@ -64,8 +74,10 @@ class Signature(NamedTuple):
         }
 
 
-def sign(*, key: bytes, delivery_id: str, timestamp: int, body: bytes) -> Signature:
+def sign(*, keys: Sequence[bytes], delivery_id: str, timestamp: int, body: bytes) -> Signature:
     signed = f"{delivery_id}.{timestamp}.".encode() + body
-    digest = hmac.new(key, signed, hashlib.sha256).digest()
-    value = f"{WEBHOOK_SIGNATURE_VERSION},{base64.b64encode(digest).decode('ascii')}"
-    return Signature(delivery_id=delivery_id, timestamp=timestamp, value=value)
+    values = tuple(
+        f"{WEBHOOK_SIGNATURE_VERSION},{base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode('ascii')}"
+        for key in keys
+    )
+    return Signature(delivery_id=delivery_id, timestamp=timestamp, values=values)

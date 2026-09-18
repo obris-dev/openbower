@@ -14,6 +14,7 @@ from openbower_schema.webhooks import WEBHOOK_HEADER_VALUE_GRAMMAR as WEBHOOK_HE
 from openbower_schema.webhooks import WEBHOOK_HEADER_VALUE_MAX_LENGTH as WEBHOOK_HEADER_VALUE_MAX_LENGTH
 from openbower_schema.webhooks import WEBHOOK_ID_HEADER as WEBHOOK_ID_HEADER
 from openbower_schema.webhooks import WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH as WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH
+from openbower_schema.webhooks import WEBHOOK_ROTATION_GRACE_SECONDS as WEBHOOK_ROTATION_GRACE_SECONDS
 from openbower_schema.webhooks import WEBHOOK_SECRET_PREFIX as WEBHOOK_SECRET_PREFIX
 from openbower_schema.webhooks import WEBHOOK_SIGNATURE_HEADER as WEBHOOK_SIGNATURE_HEADER
 from openbower_schema.webhooks import WEBHOOK_SIGNATURE_VERSION as WEBHOOK_SIGNATURE_VERSION
@@ -68,10 +69,12 @@ class DeliveryStatus(StrEnum):
 
 
 class WebhookErrorCode(StrEnum):
-    """Refusal codes, all 400: each is fixed by the caller changing the
-    request or the account (a full roster empties by deleting), never
-    by waiting."""
+    """Refusal codes. Each is fixed by the caller changing the request
+    or the account, never by waiting: 400, except DESTINATION_IN_USE,
+    which is fixed by changing something ELSE (the columns sending
+    here), so it is a 409 like the other in-use conflicts."""
 
     DESTINATIONS_FULL = "destinations_full"
     URL_BLOCKED = "url_blocked"
     HEADER_RESERVED = "header_reserved"
+    DESTINATION_IN_USE = "destination_in_use"

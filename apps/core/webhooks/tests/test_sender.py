@@ -79,7 +79,7 @@ class _Transport:
 
 
 def _send(**overrides):
-    fields = {"url": URL, "headers": HEADERS, "secret": SECRET, "delivery_id": DELIVERY_ID, "body": BODY}
+    fields = {"url": URL, "headers": HEADERS, "secrets": [SECRET], "delivery_id": DELIVERY_ID, "body": BODY}
     fields.update(overrides)
     return WebhookSender().send(**fields)
 
@@ -258,7 +258,7 @@ class SharedClientTests(SimpleTestCase):
 class GuardTests(SimpleTestCase):
     def test_unreadable_secret_blocks_before_any_request(self):
         with _Transport(200) as transport:
-            result = _send(secret="gAAAAABciphertext")
+            result = _send(secrets=["gAAAAABciphertext"])
         self.assertEqual(result.status, DeliveryStatus.BLOCKED)
         self.assertEqual(result.error, SECRET_UNREADABLE)
         self.assertEqual(transport.requests, [])
@@ -289,3 +289,30 @@ class GuardTests(SimpleTestCase):
             result = _send()
         self.assertEqual(result.status, DeliveryStatus.OK)
         self.assertEqual(len(transport.requests), 1)
+
+
+class RotationSecretsTests(SimpleTestCase):
+    """After a rotation two secrets sign; a retired one that is
+    unreadable is dropped, never blocks."""
+
+    def test_two_readable_secrets_put_two_values_in_the_header_both_masked(self):
+        other = "whsec_" + base64.b64encode(bytes(range(24))).decode("ascii")
+        with _Transport(500, b"echo " + b"x") as transport:
+            result = _send(secrets=[SECRET, other])
+        self.assertEqual(result.status, DeliveryStatus.TRANSIENT)
+        header = transport.requests[0].headers["webhook-signature"]
+        values = header.split(" ")
+        self.assertEqual(len(values), 2)
+        self.assertTrue(all(value.startswith("v1,") for value in values))
+
+    def test_an_unreadable_retired_secret_is_dropped_and_the_current_one_signs(self):
+        with _Transport(200, b"") as transport:
+            result = _send(secrets=[SECRET, "gAAAAABciphertext"])
+        self.assertEqual(result.status, DeliveryStatus.OK)
+        header = transport.requests[0].headers["webhook-signature"]
+        self.assertEqual(len(header.split(" ")), 1)
+
+    def test_an_unreadable_current_secret_blocks_whatever_follows(self):
+        with _Transport(200, b""):
+            result = _send(secrets=["gAAAAABciphertext", SECRET])
+        self.assertEqual(result.status, DeliveryStatus.BLOCKED)

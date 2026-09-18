@@ -14,10 +14,12 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from common.views import ScopedView
+from lists.nodes.webhook import Webhook
+from lists.services.workflows import WorkflowService
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.webhooks import WebhookDestinationCreated, WebhookDestinationsList
 
-from .constants import DEFAULT_DELIVERIES_PAGE, MAX_DELIVERIES_PAGE
+from .constants import DEFAULT_DELIVERIES_PAGE, MAX_DELIVERIES_PAGE, WebhookErrorCode
 from .models import WebhookDestination
 from .serializers import (
     DestinationCreateRequest,
@@ -30,12 +32,18 @@ from .services import DestinationNotFound, WebhookDeliveryService, WebhookDestin
 
 logger = logging.getLogger(__name__)
 
+# Refusals fixed by changing something ELSE (the columns sending to a
+# destination) rather than the request: a conflict, like the fill and
+# column lanes' own.
+_WEBHOOK_CONFLICT_CODES = frozenset({WebhookErrorCode.DESTINATION_IN_USE})
+
 
 def _refused(e: WebhookRefused) -> Response:
-    # Every refusal here is fixed by the caller changing the request
+    # Every other refusal is fixed by the caller changing the request
     # or the account, never by waiting: 400, with the machine code and
     # the server's copy.
-    return Response({"error": e.code, "detail": str(e)}, status=400)
+    status = 409 if e.code in _WEBHOOK_CONFLICT_CODES else 400
+    return Response({"error": e.code, "detail": str(e)}, status=status)
 
 
 class _ScopedView(ScopedView):
@@ -53,10 +61,18 @@ class _ScopedView(ScopedView):
         except DestinationNotFound as e:
             raise NotFound("no destination with that id") from e
 
+    @cached_property
+    def column_counts(self) -> dict[str, int]:
+        """How many webhook columns send to each destination, one
+        grouped read for the request (the roster shows it per card)."""
+        workflows = WorkflowService(account_id=self.request.user.account_id)
+        return workflows.node_counts_by(Webhook.KIND, "destination_id")
+
     def _wire(self, destination: WebhookDestination) -> dict:
         newest = self.deliveries.newest_for([str(destination.id)]).get(str(destination.id))
         header_names = self.destinations.header_names_of(destination)
-        return destination_wire(destination, header_names=header_names, newest=newest)
+        column_count = self.column_counts.get(str(destination.id), 0)
+        return destination_wire(destination, header_names=header_names, newest=newest, column_count=column_count)
 
 
 class WebhooksView(_ScopedView):
@@ -107,8 +123,23 @@ class WebhookDetailView(_ScopedView):
 
     def delete(self, request: Request, id: str) -> Response:
         destination = self._destination_or_404(id)
-        self.destinations.delete(destination)
+        try:
+            self.destinations.delete(destination)
+        except WebhookRefused as e:
+            return _refused(e)
         return Response(status=204)
+
+
+class WebhookRotateView(_ScopedView):
+    """POST /v1/webhooks/{id}/rotate: a new signing secret, shown once
+    (the create response's shape); the old one keeps signing for the
+    grace window."""
+
+    def post(self, request: Request, id: str) -> Response:
+        destination = self._destination_or_404(id)
+        rotated, secret = self.destinations.rotate(destination)
+        body = WebhookDestinationCreated(destination=self._wire(rotated), signing_secret=secret)
+        return Response(body.model_dump())
 
 
 class WebhookTestView(_ScopedView):

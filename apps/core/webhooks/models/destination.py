@@ -28,6 +28,11 @@ class WebhookDestination(UserScopedModel):
     url = models.CharField(_("url"), max_length=WEBHOOK_URL_MAX_LENGTH)
     headers = EncryptedTextField(_("headers"), blank=True, default="{}")
     signing_secret = EncryptedTextField(_("signing secret"))
+    # After a rotation the old secret keeps signing (a second value in
+    # the signature header) for the grace window, so a receiver switches
+    # at its own pace; blank before any rotation.
+    previous_signing_secret = EncryptedTextField(_("previous signing secret"), blank=True, default="")
+    rotated_at = models.DateTimeField(_("rotated at"), null=True, blank=True)
     # Gates the automatic lane (a flush never posts to a paused
     # destination); a test delivery is an explicit gesture and ignores it.
     enabled = models.BooleanField(_("enabled"), default=True)

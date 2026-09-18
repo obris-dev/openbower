@@ -19,6 +19,7 @@ from openbower_schema.webhooks import WebhookEnvelope, WebhookEnvelopeData, Webh
 from ..constants import (
     MAX_WEBHOOK_DESTINATIONS,
     RESERVED_WEBHOOK_HEADER_NAMES,
+    WEBHOOK_ROTATION_GRACE_SECONDS,
     DeliveryStatus,
     WebhookEnvelopeType,
     WebhookErrorCode,
@@ -30,6 +31,19 @@ from ..models import WebhookDelivery, WebhookDestination
 from .deliveries import WebhookDeliveryService
 
 logger = logging.getLogger(__name__)
+
+
+def envelope_of(*, test: bool, data: WebhookEnvelopeData) -> WebhookEnvelope:
+    """One envelope, minted now: the id (which is the delivery's id when
+    it is sent) and the clock are written HERE and nowhere else, so a
+    preview and a send of the same data differ only in being sent."""
+    return WebhookEnvelope(
+        id=str(ulid.ulid()),
+        type=data.type,
+        test=test,
+        timestamp=timezone.now().isoformat(),
+        data=data,
+    )
 
 
 class Sent(NamedTuple):
@@ -69,6 +83,18 @@ class HeaderReserved(WebhookRefused):
 
     def __init__(self, name: str) -> None:
         super().__init__(f"The {name} header is set by every delivery and cannot be configured.")
+
+
+class DestinationInUse(WebhookRefused):
+    """A Send webhook column sends here: deleting would strand it, so
+    those columns go first (a 409: the fix is elsewhere)."""
+
+    code = WebhookErrorCode.DESTINATION_IN_USE
+
+    def __init__(self, *, columns: int, sheets: int) -> None:
+        which = "1 webhook column" if columns == 1 else f"{columns} webhook columns"
+        where = "1 sheet" if sheets == 1 else f"{sheets} sheets"
+        super().__init__(f"{which} on {where} send to this destination; edit or delete those columns first.")
 
 
 class DestinationNotFound(Exception):
@@ -143,14 +169,50 @@ class WebhookDestinationService:
 
     def delete(self, destination: WebhookDestination) -> None:
         """No cascades: the owner removes its own children, in one
-        transaction. A zero count means another delete won. A delivery
-        recorded in the same instant can outlive this; the prune removes
-        it."""
+        transaction. Refused while any webhook column sends here (the
+        column's config names this id; the sheet's service owns that
+        link, read here through the substrate's one config reader). A
+        zero count means another delete won. A delivery recorded in the
+        same instant can outlive this; the prune removes it."""
+        users = self._webhook_nodes_naming(destination)
+        if users:
+            sheets = len({node.workflow_id for node in users})
+            raise DestinationInUse(columns=len(users), sheets=sheets)
         with transaction.atomic():
             deleted, _ = WebhookDestination.objects.filter(id=destination.id, account_id=self.account_id).delete()
             if not deleted:
                 return
             self.deliveries.delete_for(str(destination.id))
+
+    def _webhook_nodes_naming(self, destination: WebhookDestination) -> list[object]:
+        # Imported here: the lists app already depends on this one, and a
+        # module-level import would make that a cycle.
+        from lists.nodes.webhook import Webhook
+        from lists.services.workflows import WorkflowService
+
+        workflows = WorkflowService(account_id=self.account_id)
+        return list(workflows.nodes_of_kind(Webhook.KIND, config__destination_id=str(destination.id)))
+
+    def rotate(self, destination: WebhookDestination) -> tuple[WebhookDestination, str]:
+        """A new signing secret, the old one kept to sign beside it for
+        the grace window. Returns `(destination, raw_secret)`: the raw
+        value exists only in this return and the response."""
+        secret = mint_secret()
+        destination.previous_signing_secret = destination.signing_secret
+        destination.signing_secret = secret
+        destination.rotated_at = timezone.now()
+        destination.save(update_fields=["previous_signing_secret", "signing_secret", "rotated_at", "updated_at"])
+        return destination, secret
+
+    def signing_secrets_of(self, destination: WebhookDestination) -> list[str]:
+        """The secrets a delivery signs with: the current one, and the
+        retired one while its grace lasts."""
+        secrets = [destination.signing_secret]
+        if destination.previous_signing_secret and destination.rotated_at is not None:
+            age = (timezone.now() - destination.rotated_at).total_seconds()
+            if age < WEBHOOK_ROTATION_GRACE_SECONDS:
+                secrets.append(destination.previous_signing_secret)
+        return secrets
 
     def headers_of(self, destination: WebhookDestination) -> dict[str, str]:
         """The ONE decode of the encrypted column. A value that no
@@ -177,14 +239,8 @@ class WebhookDestinationService:
         written, so the wire and the log cannot disagree. The POST runs
         outside any transaction; the record lands after. Hands back the
         envelope beside the record, since nothing stores it."""
-        delivery_id = str(ulid.ulid())
-        envelope = WebhookEnvelope(
-            id=delivery_id,
-            type=data.type,
-            test=test,
-            timestamp=timezone.now().isoformat(),
-            data=data,
-        )
+        envelope = envelope_of(test=test, data=data)
+        delivery_id = envelope.id
         try:
             headers = self.headers_of(destination)
         except json.JSONDecodeError:
@@ -194,7 +250,7 @@ class WebhookDestinationService:
             result = WebhookSender().send(
                 url=destination.url,
                 headers=headers,
-                secret=destination.signing_secret,
+                secrets=self.signing_secrets_of(destination),
                 delivery_id=delivery_id,
                 body=encode_body(envelope),
             )

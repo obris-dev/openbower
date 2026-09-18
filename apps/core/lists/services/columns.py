@@ -19,6 +19,7 @@ from openbower_schema.lists import derive_column_key
 
 from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
+from ..nodes.wait_until import WaitUntil
 from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
 from .fill_progress import stop_fill
@@ -95,11 +96,48 @@ class ColumnKeysNotUnique(ColumnRefused):
         super().__init__("That reorder named the same column twice.")
 
 
+class ColumnWaitedOn(ColumnRefused):
+    """A Send webhook column waits on this one: deleting it would leave
+    that webhook waiting on nothing, so the webhook columns go first
+    (a 409: the fix is elsewhere)."""
+
+    code = FillErrorCode.COLUMN_WAITED_ON
+
+    def __init__(self, *, labels: list[str]) -> None:
+        named = " and ".join(labels)
+        super().__init__(f"{named} waits on this column; edit or delete that webhook column first.")
+
+
 class ColumnNotFound(Exception):
     """No column on this sheet holds that key."""
 
     def __init__(self, key: str) -> None:
         super().__init__(f"no column {key}")
+
+
+def locked_list(account_id: str, list_id: str) -> List:
+    """The List row every columns writer takes before touching the
+    array, so a concurrent add cannot append to the version this read
+    is about to replace. Module-level: the webhook column's service
+    writes the same array."""
+    try:
+        return List.objects.select_for_update().get(id=list_id, account_id=account_id)
+    except List.DoesNotExist as e:
+        raise ListNotFound(list_id) from e
+
+
+def claim_key(target_list: List, *, label: str) -> str:
+    """The key a new column takes for `label`, through the ONE
+    derivation rule, refused when reserved, taken, or over the cap.
+    Under the list lock, by every path that appends a column."""
+    key = derive_column_key(label)
+    if not key or reserved_output_key(key):
+        raise ReservedColumnKey(label=label)
+    if key in {column["key"] for column in target_list.columns}:
+        raise ColumnExists(key=key)
+    if len(target_list.columns) >= MAX_LIST_COLUMNS:
+        raise ColumnsFull()
+    return key
 
 
 class ColumnService:
@@ -110,20 +148,8 @@ class ColumnService:
     def add_column(self, target_list_id: str, *, label: str, column_type: str) -> List:
         """Append one blank column and return the updated list."""
         with transaction.atomic():
-            # The same List lock every columns writer takes: without it
-            # a concurrent add (or a fill's admission) can append over
-            # this read and one write silently drops the other's column.
-            try:
-                target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
-            except List.DoesNotExist as e:
-                raise ListNotFound(target_list_id) from e
-            key = derive_column_key(label)
-            if not key or reserved_output_key(key):
-                raise ReservedColumnKey(label=label)
-            if key in {column["key"] for column in target_list.columns}:
-                raise ColumnExists(key=key)
-            if len(target_list.columns) >= MAX_LIST_COLUMNS:
-                raise ColumnsFull()
+            target_list = self._locked(target_list_id)
+            key = claim_key(target_list, label=label)
             target_list.columns = [*target_list.columns, {"key": key, "label": label, "type": column_type}]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
@@ -166,13 +192,7 @@ class ColumnService:
         return target_list
 
     def _locked(self, target_list_id: str) -> List:
-        """The List row every columns writer takes before touching the
-        array, so a concurrent add cannot append to the version this
-        read is about to replace."""
-        try:
-            return List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
-        except List.DoesNotExist as e:
-            raise ListNotFound(target_list_id) from e
+        return locked_list(self.account_id, target_list_id)
 
     def rename(self, target_list_id: str, *, key: str, label: str) -> List:
         """Relabel one column. The KEY never moves, and that is the
@@ -220,6 +240,10 @@ class ColumnService:
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
             node_id = str((doomed.get("fill") or {}).get("node_id", ""))
+            webhook_node_id = str((doomed.get("webhook") or {}).get("node_id", ""))
+            workflows = WorkflowService(account_id=self.account_id)
+            if node_id:
+                self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
             columns = [column for column in target_list.columns if column["key"] != key]
 
             # ONE UPDATE over the sheet's rows, so an O(rows) write
@@ -252,7 +276,31 @@ class ColumnService:
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
             self._retire_ephemeral(target_list, node_id=node_id)
+            # A webhook column IS its path: no run points at its nodes,
+            # so unlike an agent's they go with the column.
+            if webhook_node_id:
+                webhook_node = workflows.get_node(webhook_node_id)
+                workflows.delete_path(webhook_node.path_id)
         return target_list
+
+    def _refuse_if_waited_on(self, target_list: List, workflows: WorkflowService, *, node_id: str) -> None:
+        """An AI column's path named by any wait node is load-bearing
+        for a webhook column; name those columns and refuse. A node
+        that is already gone has no path to be named, so the delete
+        lands (the retire step logs that corruption)."""
+        try:
+            path_id = workflows.get_node(node_id).path_id
+        except NodeNotFound:
+            return
+        waits = workflows.nodes_of_kind(WaitUntil.KIND, config__inbound_path_ids__contains=[path_id])
+        webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
+        labels = [
+            column["label"]
+            for column in target_list.columns
+            if (column.get("webhook") or {}).get("node_id") in webhook_node_ids
+        ]
+        if labels:
+            raise ColumnWaitedOn(labels=labels)
 
     def _retire_ephemeral(self, target_list: List, *, node_id: str) -> None:
         """The node stays (runs point at it, and a node with no columns

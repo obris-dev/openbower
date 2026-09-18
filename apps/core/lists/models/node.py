@@ -18,6 +18,11 @@ class Node(AccountScopedModel):
     config that makes get-or-create indexable: the one writer derives it
     from the typed config, and nothing edits it.
 
+    `rank` is the node's dense position on its path: a column_agent path
+    holds one node at 0; a webhook column's path holds its wait node at
+    0 and its webhook node at 1. Unique per path, so two nodes can never
+    claim one slot.
+
     A sheet node points at its workflow and path. The bench node points
     at neither (workflow_id and path_id blank, exactly as a TEST fill's
     list_id is): the account's one sheetless column_agent node, the
@@ -37,6 +42,7 @@ class Node(AccountScopedModel):
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
     config = models.JSONField(_("config"), default=dict)
     identity = models.CharField(_("identity"), max_length=NODE_IDENTITY_MAX_LENGTH, blank=True, default="")
+    rank = models.IntegerField(_("rank"), default=0)
 
     class Meta:
         verbose_name = _("node")
@@ -47,6 +53,12 @@ class Node(AccountScopedModel):
             models.UniqueConstraint(
                 fields=["account_id", "workflow_id", "kind", "identity"],
                 name="node_identity_uniq",
+            ),
+            # One node per slot on a path; the bench node has no path.
+            models.UniqueConstraint(
+                fields=["path_id", "rank"],
+                condition=~models.Q(path_id=""),
+                name="node_path_rank_uniq",
             ),
         ]
 

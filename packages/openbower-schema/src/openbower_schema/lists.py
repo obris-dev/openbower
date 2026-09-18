@@ -71,6 +71,15 @@ class ColumnFill(BaseModel):
     )
 
 
+class ColumnWebhook(BaseModel):
+    """A column's webhook linkage: present exactly on Send webhook
+    columns. The column binds to the webhook NODE at rank 1 of its own
+    path (the wait node at rank 0 names the paths it waits on); the
+    column holds no row data, its cells show delivery state."""
+
+    node_id: str = Field(description="The webhook node this column is; its config and the wait node's hang off the path.")
+
+
 class ListColumn(BaseModel):
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
     label: str = Field(
@@ -78,6 +87,9 @@ class ListColumn(BaseModel):
     )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
     fill: ColumnFill | None = Field(default=None, description="Present exactly on AI columns.")
+    webhook: ColumnWebhook | None = Field(
+        default=None, description="Present exactly on Send webhook columns; never together with fill."
+    )
 
 
 class IngestColumn(BaseModel):

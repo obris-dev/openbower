@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 
 import httpx
 from django.conf import settings
@@ -65,11 +66,20 @@ def redact(text: str, secrets: list[str]) -> str:
 
 
 class WebhookSender:
-    def send(self, *, url: str, headers: dict[str, str], secret: str, delivery_id: str, body: bytes) -> DeliveryResult:
-        key = secret_key(secret)
-        if key is None:
+    def send(
+        self, *, url: str, headers: dict[str, str], secrets: Sequence[str], delivery_id: str, body: bytes
+    ) -> DeliveryResult:
+        """`secrets` is the current secret first, then the one a
+        rotation retired while its grace lasts. An unreadable current
+        secret blocks the delivery; an unreadable retired one is dropped
+        with a warning, since the current secret still signs."""
+        keys = [secret_key(secret) for secret in secrets]
+        if not keys or keys[0] is None:
             logger.warning("delivery %s: blocked, signing secret unreadable", delivery_id)
             return DeliveryResult(DeliveryStatus.BLOCKED, None, SECRET_UNREADABLE)
+        if any(key is None for key in keys[1:]):
+            logger.warning("delivery %s: a retired signing secret is unreadable and was not used", delivery_id)
+        usable = [key for key in keys if key is not None]
         reason = destination_block_reason(
             url,
             require_https=settings.WEBHOOK_REQUIRE_HTTPS,
@@ -91,14 +101,14 @@ class WebhookSender:
         user_headers = {
             name: value for name, value in headers.items() if name.lower() not in RESERVED_WEBHOOK_HEADER_NAMES
         }
-        signature = sign(key=key, delivery_id=delivery_id, timestamp=int(time.time()), body=body)
+        signature = sign(keys=usable, delivery_id=delivery_id, timestamp=int(time.time()), body=body)
         request_headers = {
             **user_headers,
             "user-agent": USER_AGENT,
             "content-type": "application/json",
             **signature.headers(),
         }
-        masked = [*user_headers.values(), signature.value]
+        masked = [*user_headers.values(), *signature.values]
         timeout = httpx.Timeout(
             connect=WEBHOOK_CONNECT_TIMEOUT_SECONDS,
             read=settings.WEBHOOK_TIMEOUT_SECONDS,

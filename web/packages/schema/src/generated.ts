@@ -27,6 +27,9 @@ export type ColumnFill = z.infer<typeof ColumnFillSchema>;
 export const ColumnPromptWireSchema = z.object({ "model": z.string(), "prompt": z.string(), "source": z.string() }).describe("The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). Live fills keep their frozen\nsnapshot; an edit reaches the NEXT fill's admission, so surfaces\npeeking at \"what fills this column\" read HERE, never a fill's\nsnapshot.");
 export type ColumnPromptWire = z.infer<typeof ColumnPromptWireSchema>;
 
+export const ColumnWebhookSchema = z.object({ "node_id": z.string().describe("The webhook node this column is; its config and the wait node's hang off the path.") }).describe("A column's webhook linkage: present exactly on Send webhook\ncolumns. The column binds to the webhook NODE at rank 1 of its own\npath (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.");
+export type ColumnWebhook = z.infer<typeof ColumnWebhookSchema>;
+
 export const CompanySchema = z.object({ "country": z.string().describe("Country; empty when unknown."), "domain": z.string().describe("Canonical lowercased bare domain."), "founded_year": z.union([z.number().int(), z.null()]).describe("Founding year when known.").default(null), "id": z.string().describe("The company's ULID in the universe."), "industry": z.string().describe("Industry label; empty when unknown."), "linkedin_url": z.string().describe("LinkedIn company URL; empty when unknown."), "locality": z.string().describe("City/locality; empty when unknown."), "name": z.string().describe("Company display name."), "region": z.string().describe("Region/state; empty when unknown."), "size_band": z.string().describe("Coarse employee band, e.g. 1-10; empty when unknown."), "snapshot_date": z.union([z.string(), z.null()]).describe("ISO date the row's data was current.").default(null), "source": z.string().describe("Provenance of the row, e.g. pdl_free.") }).describe("One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.");
 export type Company = z.infer<typeof CompanySchema>;
 
@@ -48,7 +51,7 @@ export type FoldersList = z.infer<typeof FoldersListSchema>;
 export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "event_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.");
 export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
 
-export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") });
+export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only."), "webhook": z.union([z.lazy(() => ColumnWebhookSchema), z.null()]).describe("Present exactly on Send webhook columns; never together with fill.").default(null) });
 export type ListColumn = z.infer<typeof ListColumnSchema>;
 
 export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order."), "states": z.record(z.string(), z.lazy(() => CellStateWireSchema)).describe("AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.").default({}) });
@@ -78,10 +81,13 @@ export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 export const SearchToolCallSchema = z.object({ "attempts": z.number().int(), "discarded": z.number().int(), "hits": z.number().int(), "kind": z.literal("search").default("search"), "provider": z.string(), "query": z.string(), "status": z.string(), "tool": z.string() }).describe("One search-tool call's record: `status` is what the provider\nsaid (open, and hits, possibly zero, is the honest answer; any\nother code is the tool's own failure code saying why there are\nnone), `provider` which provider served it, `attempts` how many\ntries the seam made for this one query (a rate limit is retried,\nsame query, before it counts), and `tool` which tool called, so a\nreader can tell whose call refused. `hits` counts what the tool\nKEPT; `discarded` counts served hits the tool dropped as off-scope\n(an engine that runs dry on a demanded site: relaxes the query and\nserves off-site pages dressed as answers), so a thin answer shows\nwhether the provider ran dry or ran off. Every field REQUIRED: the\none writer sets them all, and a stored record is the same shape as\na served one.");
 export type SearchToolCall = z.infer<typeof SearchToolCallSchema>;
 
+export const WebhookColumnConfigWireSchema = z.object({ "destination_id": z.string(), "destination_label": z.string(), "enabled": z.boolean().default(true), "interval_seconds": z.number().int(), "node_id": z.string(), "payload_keys": z.array(z.string()), "wait_keys": z.array(z.string()) }).describe("A Send webhook column as configured: what it waits for (derived\nback from the paths its wait node names, in sheet order), where it\nsends, what rides, how often, and whether it is running.");
+export type WebhookColumnConfigWire = z.infer<typeof WebhookColumnConfigWireSchema>;
+
 export const WebhookDeliveryWireSchema = z.object({ "created_at": z.string(), "destination_id": z.string(), "duration_ms": z.number().int().default(0), "error": z.string().describe("What went wrong, in the user's words; empty on ok.").default(""), "http_status": z.union([z.number().int(), z.null()]).describe("The receiver's status code; null when no answer came.").default(null), "id": z.string(), "response_excerpt": z.string().max(1024).describe("The head of the receiver's answer, kept only when it was not a 2xx.").default(""), "status": z.enum(["ok","transient","rejected","blocked"]), "test": z.boolean().default(false), "type": z.enum(["ping","digest"]) }).describe("One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried; `type` and `test`\nare the envelope's own, recorded on our side.");
 export type WebhookDeliveryWire = z.infer<typeof WebhookDeliveryWireSchema>;
 
-export const WebhookDestinationWireSchema = z.object({ "created_at": z.string(), "enabled": z.boolean().default(true), "header_names": z.array(z.string()).default([]), "id": z.string(), "label": z.string().max(128), "last_delivery": z.union([z.lazy(() => WebhookDeliveryWireSchema), z.null()]).describe("The newest delivery on record, the destination's health; null before any.").default(null), "url": z.string().max(2048) }).describe("A place deliveries go. Header VALUES and the signing secret never\nride here; `header_names` is all the roster shows.");
+export const WebhookDestinationWireSchema = z.object({ "column_count": z.number().int().describe("How many Send webhook columns send here; delete is refused while any do.").default(0), "created_at": z.string(), "enabled": z.boolean().default(true), "header_names": z.array(z.string()).default([]), "id": z.string(), "label": z.string().max(128), "last_delivery": z.union([z.lazy(() => WebhookDeliveryWireSchema), z.null()]).describe("The newest delivery on record, the destination's health; null before any.").default(null), "rotated_at": z.union([z.string(), z.null()]).describe("When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.").default(null), "url": z.string().max(2048) }).describe("A place deliveries go. Header VALUES and the signing secret never\nride here; `header_names` is all the roster shows.");
 export type WebhookDestinationWire = z.infer<typeof WebhookDestinationWireSchema>;
 
 export const WebhookDestinationsListSchema = z.object({ "items": z.array(z.lazy(() => WebhookDestinationWireSchema)) });
@@ -129,7 +135,7 @@ export type ImportResult = z.infer<typeof ImportResultSchema>;
 export const WebhookDeliveriesPageSchema = z.object({ "items": z.array(z.lazy(() => WebhookDeliveryWireSchema)), "next_cursor": z.union([z.string(), z.null()]).default(null) });
 export type WebhookDeliveriesPage = z.infer<typeof WebhookDeliveriesPageSchema>;
 
-export const WebhookDestinationCreatedSchema = z.object({ "destination": z.lazy(() => WebhookDestinationWireSchema), "signing_secret": z.string() }).describe("The create response: the ONE time the signing secret is on the\nwire. It is minted server-side, stored encrypted, and never returned\nagain; a lost secret means deleting the destination and adding it\nagain.");
+export const WebhookDestinationCreatedSchema = z.object({ "destination": z.lazy(() => WebhookDestinationWireSchema), "signing_secret": z.string() }).describe("The create and rotate response: the ONE time a signing secret is\non the wire. It is minted server-side, stored encrypted, and never\nreturned again; a lost secret is replaced by rotating.");
 export type WebhookDestinationCreated = z.infer<typeof WebhookDestinationCreatedSchema>;
 
 export const WebhookDigestDataSchema = z.object({ "items": z.array(z.lazy(() => WebhookDigestItemSchema)), "sheet": z.lazy(() => WebhookSheetRefSchema), "type": z.literal("digest").default("digest"), "waited_on": z.array(z.string()).describe("The columns whose settling makes a row complete; the keys each item's states report on.") }).describe("Rows that completed since the last delivery, for one sheet.");
@@ -169,6 +175,9 @@ export const WebhookEnvelopeSchema = z.object({ "data": z.any().superRefine((x, 
     }
   }), "id": z.string(), "test": z.boolean().default(false), "timestamp": z.string(), "type": z.enum(["ping","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.");
 export type WebhookEnvelope = z.infer<typeof WebhookEnvelopeSchema>;
+
+export const WebhookColumnPreviewResponseSchema = z.object({ "envelope": z.lazy(() => WebhookEnvelopeSchema) }).describe("The envelope a test send of these choices would carry, rendered by\nthe server and sent nowhere, so the sheet shows the truth before a\nsend rather than a reconstruction.");
+export type WebhookColumnPreviewResponse = z.infer<typeof WebhookColumnPreviewResponseSchema>;
 
 export const WebhookColumnTestResponseSchema = z.object({ "delivery": z.lazy(() => WebhookDeliveryWireSchema), "envelope": z.lazy(() => WebhookEnvelopeSchema) }).describe("A Send webhook column's test send: the delivery as recorded, and\nthe envelope exactly as the receiver got it, so the sheet can show\nthe body a test produced rather than reconstruct it.");
 export type WebhookColumnTestResponse = z.infer<typeof WebhookColumnTestResponseSchema>;
@@ -259,6 +268,7 @@ export const RESERVED_OUTPUT_KEYS = [
 ] as const;
 
 export const WIRE_CONSTANTS = {
+  "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
   "FREE_SEARCH_FILL_BUDGET": 768,
   "MAX_TOOL_CALLS": 6,
   "MAX_WEBHOOK_DESTINATIONS": 32,
@@ -309,11 +319,19 @@ export const WIRE_CONSTANTS = {
       "error"
     ]
   },
+  "WEBHOOK_CADENCE_SECONDS": [
+    300,
+    900,
+    3600,
+    21600,
+    86400
+  ],
   "WEBHOOK_HEADER_NAME_GRAMMAR": "^[A-Za-z0-9-]+$",
   "WEBHOOK_HEADER_NAME_MAX_LENGTH": 128,
   "WEBHOOK_HEADER_VALUE_GRAMMAR": "^[\\x20-\\x7E\\t]*$",
   "WEBHOOK_HEADER_VALUE_MAX_LENGTH": 2048,
   "WEBHOOK_ID_HEADER": "webhook-id",
+  "WEBHOOK_ROTATION_GRACE_SECONDS": 131072,
   "WEBHOOK_SECRET_PREFIX": "whsec_",
   "WEBHOOK_SIGNATURE_HEADER": "webhook-signature",
   "WEBHOOK_SIGNATURE_VERSION": "v1",
