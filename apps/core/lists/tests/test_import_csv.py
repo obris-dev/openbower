@@ -21,7 +21,7 @@ from lists.operations.import_csv import (
 class ParseCsvTests(SimpleTestCase):
     def test_header_becomes_schema_and_rows_key_on_it(self):
         columns, rows, skipped = parse_csv(b"Company Name,Website\nAcme,acme.com\nInitech,initech.com\n")
-        self.assertEqual([c["key"] for c in columns], ["company_name", "website"])
+        self.assertEqual([c.key for c in columns], ["company_name", "website"])
         self.assertEqual(
             rows,
             [
@@ -38,11 +38,11 @@ class ParseCsvTests(SimpleTestCase):
 
     def test_duplicate_headers_get_unique_keys(self):
         columns, _, _ = parse_csv(b"Name,Name,name!\nx,y,z\n")
-        self.assertEqual([c["key"] for c in columns], ["name", "name_2", "name_3"])
+        self.assertEqual([c.key for c in columns], ["name", "name_2", "name_3"])
 
     def test_bom_and_empty_file(self):
         columns, _, _ = parse_csv("﻿a,b\n1,2\n".encode())
-        self.assertEqual([c["key"] for c in columns], ["a", "b"])
+        self.assertEqual([c.key for c in columns], ["a", "b"])
         with self.assertRaises(CsvUnusable):
             parse_csv(b"")
         with self.assertRaises(CsvUnusable):

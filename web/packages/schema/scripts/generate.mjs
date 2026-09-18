@@ -73,11 +73,31 @@ const constName = (node) => `${node.$ref.split("/").pop()}Schema`;
 //     so a non-lazy `XSchema` reference inside its own initializer would be a
 //     TDZ ReferenceError at import. Lazy is also correct for plain forward
 //     refs, so this is always safe.
-// (2) a date-time string becomes zod 4's z.iso.datetime (matching the server's
+// (2) a discriminated union (pydantic emits oneOf + discriminator) becomes
+//     z.discriminatedUnion over its members: the library's own oneOf
+//     rendering is an untyped refinement (z.any) that would erase the
+//     inferred type every consumer narrows on, and a plain z.union would
+//     let a value missing the tag match the first member. Members are
+//     named directly, not lazily: pydantic only discriminates over models,
+//     which are $refs placed before the union by the topological order,
+//     and discriminatedUnion cannot see through z.lazy. Anything else in
+//     the member list is a shape this generator has not met; refuse.
+// (3) a date-time string becomes zod 4's z.iso.datetime (matching the server's
 //     tz-aware ISO output).
 const parserOverride = (schema) => {
   if (schema && typeof schema.$ref === "string") {
     return `z.lazy(() => ${constName(schema)})`;
+  }
+  if (Array.isArray(schema?.oneOf) && schema.discriminator) {
+    const members = schema.oneOf.map((member) => {
+      if (typeof member?.$ref !== "string") {
+        process.stderr.write(`Discriminated union member without $ref: ${JSON.stringify(member)}\n`);
+        process.exit(1);
+      }
+      return constName(member);
+    });
+    const union = `z.discriminatedUnion(${JSON.stringify(schema.discriminator.propertyName)}, [${members.join(", ")}])`;
+    return schema.description ? `${union}.describe(${JSON.stringify(schema.description)})` : union;
   }
   if (schema?.type === "string" && schema.format === "date-time") {
     return "z.iso.datetime({ offset: true })";

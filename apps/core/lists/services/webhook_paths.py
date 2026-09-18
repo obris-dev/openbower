@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from openbower_schema.lists import ListColumn
+from openbower_schema.lists import AiColumn, ListColumn
 
 
 def inbound_paths_for(
@@ -17,7 +17,7 @@ def inbound_paths_for(
     """The paths the given AI columns' nodes sit on, first-seen order,
     deduplicated: two outputs of one agent share a node and a path, so
     waiting on both is waiting on one path."""
-    node_by_key = {column.key: column.fill.node_id for column in columns if column.fill is not None}
+    node_by_key = {column.key: column.node_id for column in columns if isinstance(column, AiColumn)}
     paths: list[str] = []
     for key in wait_keys:
         path_id = path_by_node.get(node_by_key.get(key, ""), "")
@@ -33,4 +33,4 @@ def wait_keys_for(
     user sees), every column of a multi-output node included: waiting
     on a path is waiting on everything it fills."""
     wanted = {node_by_path[path_id] for path_id in inbound_path_ids if path_id in node_by_path}
-    return [column.key for column in columns if column.fill is not None and column.fill.node_id in wanted]
+    return [column.key for column in columns if isinstance(column, AiColumn) and column.node_id in wanted]

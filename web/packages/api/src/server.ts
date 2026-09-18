@@ -11,15 +11,11 @@ import {
   AgentsListSchema,
   AgentSummarySchema,
   FoldersListSchema,
-  ListsPageSchema,
-  ListSummarySchema,
   type AgentsList,
   type AgentSummary,
   type FoldersList,
-  type ListsPage,
-  type ListSummary,
 } from "@bower/schema";
-import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage } from "./lists.ts";
+import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage, TolerantListsPageSchema, TolerantListSummarySchema, type ListsPage, type ListSummary } from "./lists.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 import {
@@ -95,7 +91,7 @@ export async function fetchWebhookWithCookie(
 
 /** Server-side lists index page. */
 export async function fetchListsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<ListsPage>> {
-  return fetchParsedWithCookie(apiRoutes.lists.index, cookieHeader, ListsPageSchema);
+  return fetchParsedWithCookie(apiRoutes.lists.index, cookieHeader, TolerantListsPageSchema);
 }
 
 /** Server-side folder set for the home directory. */
@@ -105,7 +101,7 @@ export async function fetchFoldersWithCookie(cookieHeader: string): Promise<Serv
 
 /** Server-side list detail; the page decides what each outcome renders. */
 export async function fetchListWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<ListSummary>> {
-  return fetchParsedWithCookie(apiRoutes.lists.detail(id), cookieHeader, ListSummarySchema);
+  return fetchParsedWithCookie(apiRoutes.lists.detail(id), cookieHeader, TolerantListSummarySchema);
 }
 
 /** Server-side first rows page, so the sheet paints with data. */

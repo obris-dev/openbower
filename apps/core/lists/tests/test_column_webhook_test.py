@@ -27,9 +27,9 @@ from webhooks.services import WebhookDestinationService
 
 NODE = "01ND" + "A" * 22
 COLUMNS = [
-    {"key": "company", "label": "Company", "type": "text"},
-    {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": NODE}},
-    {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": NODE}},
+    {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+    {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": NODE},
+    {"key": "score", "label": "Score", "type": "text", "kind": "ai", "node_id": NODE},
 ]
 
 

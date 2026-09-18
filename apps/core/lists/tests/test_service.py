@@ -14,7 +14,10 @@ from lists.constants import ListOrigin
 from lists.models import List, ListRow
 from lists.services.lists import FolderNotFound, ListNotFound, ListService, ListsFull
 
-_COLUMNS = [{"key": "domain", "label": "Domain", "type": "url"}, {"key": "name", "label": "Name", "type": "text"}]
+_COLUMNS = [
+    {"kind": "plain", "key": "domain", "label": "Domain", "type": "url"},
+    {"kind": "plain", "key": "name", "label": "Name", "type": "text"},
+]
 
 
 def _service(account="01AC" + "A" * 22, user="01US" + "A" * 22) -> ListService:
@@ -101,7 +104,7 @@ class CellClampTests(TestCase):
         target = service.create(
             owner_id="01US" + "A" * 22,
             label="Sheet",
-            columns=[{"key": "a", "label": "A", "type": "text"}],
+            columns=[{"kind": "plain", "key": "a", "label": "A", "type": "text"}],
             origin=ListOrigin.MANUAL,
         )
         # And the clamp is LOGGED: a cut value is data the sheet no
@@ -128,8 +131,8 @@ class CellNormalizeTests(TestCase):
             owner_id="01US" + "A" * 22,
             label="Typed",
             columns=[
-                {"key": "score", "label": "Score", "type": "number"},
-                {"key": "when", "label": "When", "type": "date"},
+                {"kind": "plain", "key": "score", "label": "Score", "type": "number"},
+                {"kind": "plain", "key": "when", "label": "When", "type": "date"},
             ],
             origin=ListOrigin.MANUAL,
         )
@@ -146,7 +149,7 @@ class CellNormalizeTests(TestCase):
         target = service.create(
             owner_id="01US" + "A" * 22,
             label="Typed",
-            columns=[{"key": "score", "label": "Score", "type": "number"}],
+            columns=[{"kind": "plain", "key": "score", "label": "Score", "type": "number"}],
             origin=ListOrigin.CSV,
         )
         service.add_rows(target, [{"score": "banana"}])

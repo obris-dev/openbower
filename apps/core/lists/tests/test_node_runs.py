@@ -21,6 +21,8 @@ from unittest.mock import MagicMock, patch
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
+from openbower_schema.lists import AiColumn
+
 from ..constants import NodeRunStatus
 from ..ingest.consumer import handle_ingest_event
 from ..ingest.events import IngestEvent
@@ -54,7 +56,7 @@ class AutofillHarness(TransactionTestCase):
         sheet = self.lists.create(
             owner_id=USER,
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         self.lists.add_rows(sheet, [{"company": f"seed{n}.com"} for n in range(rows)])
@@ -63,14 +65,14 @@ class AutofillHarness(TransactionTestCase):
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )
         sheet.refresh_from_db()
-        node_id = next(column.fill.node_id for column in sheet.columns if column.fill is not None)
+        node_id = next(column.node_id for column in sheet.columns if isinstance(column, AiColumn))
         return sheet, node_id, fill
 
     def _plain_sheet(self):
         return self.lists.create(
             owner_id=USER,
             label="Plain",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
 
@@ -117,7 +119,7 @@ class EnqueueTests(AutofillHarness):
 
     def test_a_push_that_overrides_an_ai_column_skips_that_node(self) -> None:
         sheet, node_id, _ = self._ai_sheet()
-        ai_key = next(c.key for c in sheet.columns if c.fill is not None)
+        ai_key = next(c.key for c in sheet.columns if isinstance(c, AiColumn))
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
 
         # One row pins the AI column (an override), one leaves it blank.
@@ -151,9 +153,9 @@ class EnqueueTests(AutofillHarness):
             owner_id=USER,
             label="Multi",
             columns=[
-                {"key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "fill": {"node_id": node_id}},
-                {"key": "b", "label": "B", "type": "text", "fill": {"node_id": node_id}},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_id},
+                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
             ],
             origin="manual",
         )
@@ -179,9 +181,9 @@ class EnqueueTests(AutofillHarness):
             owner_id=USER,
             label="Two nodes",
             columns=[
-                {"key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "fill": {"node_id": node_a}},
-                {"key": "b", "label": "B", "type": "text", "fill": {"node_id": node_b}},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_a},
+                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_b},
             ],
             origin="manual",
         )

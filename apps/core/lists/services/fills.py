@@ -12,7 +12,7 @@ from django.db import models
 
 from agents.constants import ToolStatus
 from openbower_schema.fills import CellRunResult, ColumnFillSummary, FillCounters, FillError
-from openbower_schema.lists import CellStateWire
+from openbower_schema.lists import AiColumn, CellStateWire
 
 from ..constants import (
     LIVE_FILL_STATUSES,
@@ -204,12 +204,12 @@ class FillService:
         diagnosed and a live fill has re-queued is being worked on now,
         and that is what the user should see.
         """
-        fill_keys = {column.key for column in target_list.columns if column.fill is not None}
-        if not fill_keys or not rows:
+        ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
+        if not ai_keys or not rows:
             return {}
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
-        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=fill_keys)
+        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=ai_keys)
         for row_id, column_key, state, tools in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())
@@ -217,7 +217,7 @@ class FillService:
                 continue
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         live = {
-            str(fill_run_id): [key for key in (keys or ()) if key in fill_keys]
+            str(fill_run_id): [key for key in (keys or ()) if key in ai_keys]
             for fill_run_id, keys in Fill.objects.filter(
                 account_id=self.account_id,
                 list_id=str(target_list.id),
@@ -262,10 +262,10 @@ class FillService:
         column was asked to do. Pairing `filled` with the SHEET's row
         count answers a different question and makes a scoped fill read
         as a failure."""
-        fill_columns = [(column, column.fill) for column in target_list.columns if column.fill is not None]
+        fill_columns = [column for column in target_list.columns if isinstance(column, AiColumn)]
         if not fill_columns:
             return []
-        keys = [column.key for column, _fill in fill_columns]
+        keys = [column.key for column in fill_columns]
         filled: dict[str, int] = {}
         attempted: dict[str, int] = {}
         rows = self.cell_states.iter_counts_by_column(str(target_list.id), column_keys=keys)
@@ -277,7 +277,7 @@ class FillService:
         # name: one query keyed by those ids, bounded by the sheet's
         # fill columns, and PROJECTED to the three facts it feeds (the
         # snapshot must not ride the poll through a side channel either).
-        current_by_key = {column.key: fill.current_fill_id for column, fill in fill_columns}
+        current_by_key = {column.key: column.current_fill_id for column in fill_columns}
         runs_by_id = {
             str(fill_run_id): (status, code, message)
             for fill_run_id, status, code, message in Fill.objects.filter(
@@ -287,7 +287,7 @@ class FillService:
             ).values_list("id", "status", "error_code", "error_message")
         }
         summaries: list[ColumnFillSummary] = []
-        for column, _fill in fill_columns:
+        for column in fill_columns:
             current_id = current_by_key[column.key]
             status, code, message = runs_by_id.get(current_id, ("", "", ""))
             # Both legs travel together (tier 1), gated on the

@@ -1,13 +1,21 @@
 """The typed column array: in memory `List.columns` is a list of the
-contract's ListColumn values, at rest it is the JSON array of their
-dumps. One seam, so no reader restates the shape by hand (`column.get(
-"fill") or {}`) and a key the contract does not know fails at parse
-time, not wherever a reader next trips over it.
+contract's ListColumn values (one kind each: plain, AI, webhook), at
+rest it is the JSON array of their dumps. One seam, so no reader
+restates the shape by hand and a column the contract refuses (an
+unknown kind, a missing key) fails at parse time, not wherever a
+reader next trips over it.
 
 Coerces on ASSIGNMENT as well as on load: a caller that sets dicts
-(the create serializer, a CSV import, a test) finds typed values the
-moment it reads them back, never a mixed list that depends on whether
-the row was reloaded.
+(a test fixture) finds typed values the moment it reads them back,
+never a mixed list that depends on whether the row was reloaded. Every
+value goes through the union, typed or not: a typed member passes
+through unchanged, and anything that is not a member (a bare base
+instance, which has no kind) is refused rather than stored tag-less.
+
+A local database from before columns carried a kind holds rows this
+seam refuses on read; nothing is released, so the answer is a reset or
+a one-off rewrite of the stored array (fill -> ai, webhook -> webhook,
+neither -> plain), never an inferred kind here.
 
 Presents itself to migrations as a plain JSONField: the column IS a
 plain jsonb, and a migration that imported this module would break a
@@ -21,8 +29,11 @@ from typing import Any
 
 from django.db import models
 from django.db.models.query_utils import DeferredAttribute
+from pydantic import TypeAdapter
 
 from openbower_schema.lists import ListColumn
+
+_COLUMN = TypeAdapter(ListColumn)
 
 
 def parse_columns(value: Any) -> list[ListColumn]:
@@ -32,7 +43,7 @@ def parse_columns(value: Any) -> list[ListColumn]:
         return []
     if isinstance(value, str):
         value = json.loads(value)
-    return [column if isinstance(column, ListColumn) else ListColumn.model_validate(column) for column in value]
+    return [_COLUMN.validate_python(column) for column in value]
 
 
 def dump_columns(value: Any) -> list[dict[str, Any]]:

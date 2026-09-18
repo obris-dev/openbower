@@ -52,7 +52,7 @@ class RefillTestCase(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
@@ -481,7 +481,7 @@ class ResumeScopeTests(RefillTestCase):
         sheet = theirs.create(
             owner_id=TEST_IDENTITY["id"],
             label="Theirs",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         theirs.add_rows(sheet, [{"company": "secret.io"}, {"company": "private.io"}])
@@ -689,8 +689,8 @@ class OutputDriftTests(RefillTestCase):
         self.assertIn("phantom", keys)
         self.assertIn("phantom", resp.json()["column_keys"])
         appended = next(column for column in self.sheet.columns if column.key == "phantom")
-        self.assertEqual(appended.fill.current_fill_id, resp.json()["id"])
-        self.assertEqual(fill_agent_id(appended.fill), str(agent.id))
+        self.assertEqual(appended.current_fill_id, resp.json()["id"])
+        self.assertEqual(fill_agent_id(appended), str(agent.id))
 
     def test_a_refill_still_runs_over_its_own_answered_column(self):
         # The collision rule must not read a fill's OWN previous

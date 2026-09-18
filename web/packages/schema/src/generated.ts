@@ -9,6 +9,9 @@ export type AgentOutput = z.infer<typeof AgentOutputSchema>;
 export const AgentToolsSchema = z.object({ "find_contacts": z.boolean().default(false), "web_search": z.boolean().default(false) }).describe("The tool REGISTRY, one typed field per tool: the wire itself\ncarries the key set, so the web derives its tool list from this\nshape instead of hand-retyping it. Unknown keys are TOLERATED\n(dropped) here because this model validates on every read, and a\nserver that adds a tool must not fail stored rows or a browser\nholding the old bundle; the REQUEST leg's serializer is where\nunknown keys refuse, which is what keeps the set closed on the\nway in.");
 export type AgentTools = z.infer<typeof AgentToolsSchema>;
 
+export const AiColumnSchema = z.object({ "current_fill_id": z.string().describe("The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time. Blank until a run opens for it.").default(""), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("ai").default("ai"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "node_id": z.string().describe("The node that fills this column (an agent bound to this sheet)."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A column an agent fills. The column binds to the NODE that fills\nit; the agent, and its ephemeral-vs-roster custody, hangs off the\nnode, so editing what fills a column goes through the column,\nnever this id.");
+export type AiColumn = z.infer<typeof AiColumnSchema>;
+
 export const AuthUserSchema = z.object({ "account_id": z.string().describe("The user's primary account ULID."), "email": z.string().describe("The user's email address."), "id": z.string().describe("The user's cloud-issued ULID.") }).describe("The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.");
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 
@@ -21,14 +24,8 @@ export type CellAssessment = z.infer<typeof CellAssessmentSchema>;
 export const CellStateWireSchema = z.object({ "state": z.enum(["pending","filled","no_evidence","no_answer","unverified","unparseable","type_mismatch","model_error","transient","tool_not_configured","tool_unavailable"]), "tools": z.record(z.string(), z.string()).default({}) }).describe("One AI cell's state and the tool statuses of the run that wrote\nit: `tools` is tool -> status code (a base ToolStatus code or the\ntool's own; \"open\" for a tool that served), empty for a pending\ncell or a run before tools reported statuses. The client resolves\ncopy by (tool, code) and tolerates a code it has not heard of.");
 export type CellStateWire = z.infer<typeof CellStateWireSchema>;
 
-export const ColumnFillSchema = z.object({ "current_fill_id": z.string().describe("The fill run that speaks for this column, stored here when it opens. Blank on a column filled before it was recorded. Clients read it off ColumnFillSummary, which the fills poll serves; it is declared here because this model is what the column's own structure is, and an undeclared key is dropped on every list read.").default(""), "node_id": z.string().describe("The node that fills this column (today, always an agent bound to this sheet). Per-row work keys on it; the agent hangs off the node, so editing what fills a column goes through the column, never this id.") }).describe("A column's fill linkage: present exactly on AI columns. The\ncolumn binds to the NODE that fills it; the agent, and its\nephemeral-vs-roster custody, hangs off the node.");
-export type ColumnFill = z.infer<typeof ColumnFillSchema>;
-
 export const ColumnPromptWireSchema = z.object({ "model": z.string(), "prompt": z.string(), "source": z.string() }).describe("The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). Live fills keep their frozen\nsnapshot; an edit reaches the NEXT fill's admission, so surfaces\npeeking at \"what fills this column\" read HERE, never a fill's\nsnapshot.");
 export type ColumnPromptWire = z.infer<typeof ColumnPromptWireSchema>;
-
-export const ColumnWebhookSchema = z.object({ "node_id": z.string().describe("The webhook node this column is; its config and the wait node's hang off the path.") }).describe("A column's webhook linkage: present exactly on Send webhook\ncolumns. The column binds to the webhook NODE at rank 1 of its own\npath (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.");
-export type ColumnWebhook = z.infer<typeof ColumnWebhookSchema>;
 
 export const CompanySchema = z.object({ "country": z.string().describe("Country; empty when unknown."), "domain": z.string().describe("Canonical lowercased bare domain."), "founded_year": z.union([z.number().int(), z.null()]).describe("Founding year when known.").default(null), "id": z.string().describe("The company's ULID in the universe."), "industry": z.string().describe("Industry label; empty when unknown."), "linkedin_url": z.string().describe("LinkedIn company URL; empty when unknown."), "locality": z.string().describe("City/locality; empty when unknown."), "name": z.string().describe("Company display name."), "region": z.string().describe("Region/state; empty when unknown."), "size_band": z.string().describe("Coarse employee band, e.g. 1-10; empty when unknown."), "snapshot_date": z.union([z.string(), z.null()]).describe("ISO date the row's data was current.").default(null), "source": z.string().describe("Provenance of the row, e.g. pdl_free.") }).describe("One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.");
 export type Company = z.infer<typeof CompanySchema>;
@@ -51,20 +48,11 @@ export type FoldersList = z.infer<typeof FoldersListSchema>;
 export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "event_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.");
 export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
 
-export const ListColumnSchema = z.object({ "fill": z.union([z.lazy(() => ColumnFillSchema), z.null()]).describe("Present exactly on AI columns.").default(null), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only."), "webhook": z.union([z.lazy(() => ColumnWebhookSchema), z.null()]).describe("Present exactly on Send webhook columns; never together with fill.").default(null) });
-export type ListColumn = z.infer<typeof ListColumnSchema>;
-
 export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "position": z.number().int().describe("1-based dense display/paging order."), "states": z.record(z.string(), z.lazy(() => CellStateWireSchema)).describe("AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.").default({}), "webhooks": z.record(z.string(), z.literal("waiting")).describe("Send webhook cell states keyed by column key: present for a row that is complete for every column the webhook waits on and not yet sent; absent for a row still filling.").default({}) });
 export type ListRowWire = z.infer<typeof ListRowWireSchema>;
 
 export const ListRowsPageSchema = z.object({ "items": z.array(z.lazy(() => ListRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last position when more rows exist.").default(null) });
 export type ListRowsPage = z.infer<typeof ListRowsPageSchema>;
-
-export const ListSummarySchema = z.object({ "columns": z.array(z.lazy(() => ListColumnSchema)).describe("Display order.").default([]), "created_at": z.string(), "folder_id": z.string().describe("The containing folder; empty = loose at the root.").default(""), "id": z.string(), "label": z.string(), "origin": z.enum(["discover","csv","manual"]).describe("How the list came to exist."), "origin_ref": z.string().describe("e.g. the source run id for discover snapshots.").default(""), "row_count": z.number().int().describe("Total rows (the sheet may page far beyond one response)."), "updated_at": z.string() }).describe("One list as the index shows it (and the save-list response).");
-export type ListSummary = z.infer<typeof ListSummarySchema>;
-
-export const ListsPageSchema = z.object({ "items": z.array(z.lazy(() => ListSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more lists exist.").default(null) });
-export type ListsPage = z.infer<typeof ListsPageSchema>;
 
 export const LookalikeGroupSchema = z.object({ "elbow_rank": z.union([z.number().int(), z.null()]).describe("This group's own boundary: the knee of ITS score decay (null when too short/flat).").default(null), "label": z.string().describe("Human label; empty for the single homogeneous group.").default(""), "seed_domains": z.array(z.string()).default([]), "size": z.number().int().describe("Results this group contributed to the run.").default(0) }).describe("One seed group of a run: heterogeneous cohorts split into distinct\ngroups, each searched by its own centroid and labeled.");
 export type LookalikeGroup = z.infer<typeof LookalikeGroupSchema>;
@@ -75,11 +63,17 @@ export type LookalikeItem = z.infer<typeof LookalikeItemSchema>;
 export const LookalikeListResponseSchema = z.object({ "detail": z.union([z.string(), z.null()]).describe("Failure detail when status is failed.").default(null), "engine": z.string().describe("Which engine ranked these, e.g. embedding_v1."), "groups": z.array(z.lazy(() => LookalikeGroupSchema)).describe("The run's seed-group breakdown; single unlabeled entry for homogeneous cohorts.").default([]), "items": z.array(z.lazy(() => LookalikeItemSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("Opaque cursor for the next page.").default(null), "outlier_domains": z.array(z.string()).describe("Seeds set aside by clustering as misfits (excluded from generation, shown to the user).").default([]), "result_count": z.union([z.number().int(), z.null()]).describe("TOTAL results in the completed run (the full lead-list size, independent of page size).").default(null), "run_id": z.union([z.string(), z.null()]).describe("The run to poll; null only when no run exists (e.g. an empty cohort).").default(null), "status": z.enum(["pending","running","complete","failed","canceled"]).describe("Run lifecycle. Terminal: complete | failed | canceled; keep polling: pending | running.").default("complete"), "unresolved_domains": z.array(z.string()).describe("Inline seed domains that are not in the universe.").default([]) }).describe("The look-alike envelope (data service and app proxy alike), for both\nthe query POST and the run-status poll.\n\n`status` drives the async lifecycle: \"complete\" carries the page in\n`items`; \"pending\"/\"running\" mean poll the run (HTTP 202, empty items);\n\"failed\" carries `detail`; \"canceled\" is terminal by request (a fresh\nquery revives the run). The engine computes in a worker, so a cold\ncohort answers pending first and is polled by `run_id`; a cached cohort\nanswers complete inline.");
 export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
 
+export const PlainColumnSchema = z.object({ "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("plain").default("plain"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A column the user or an import fills by hand.");
+export type PlainColumn = z.infer<typeof PlainColumnSchema>;
+
 export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
 export const SearchToolCallSchema = z.object({ "attempts": z.number().int(), "discarded": z.number().int(), "hits": z.number().int(), "kind": z.literal("search").default("search"), "provider": z.string(), "query": z.string(), "status": z.string(), "tool": z.string() }).describe("One search-tool call's record: `status` is what the provider\nsaid (open, and hits, possibly zero, is the honest answer; any\nother code is the tool's own failure code saying why there are\nnone), `provider` which provider served it, `attempts` how many\ntries the seam made for this one query (a rate limit is retried,\nsame query, before it counts), and `tool` which tool called, so a\nreader can tell whose call refused. `hits` counts what the tool\nKEPT; `discarded` counts served hits the tool dropped as off-scope\n(an engine that runs dry on a demanded site: relaxes the query and\nserves off-site pages dressed as answers), so a thin answer shows\nwhether the provider ran dry or ran off. Every field REQUIRED: the\none writer sets them all, and a stored record is the same shape as\na served one.");
 export type SearchToolCall = z.infer<typeof SearchToolCallSchema>;
+
+export const WebhookColumnSchema = z.object({ "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("webhook").default("webhook"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "node_id": z.string().describe("The webhook node this column is; its config and the wait node's hang off the path."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A Send webhook column. It IS the webhook node at rank 1 of its\nown path (the wait node at rank 0 names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.");
+export type WebhookColumn = z.infer<typeof WebhookColumnSchema>;
 
 export const WebhookColumnConfigWireSchema = z.object({ "destination_id": z.string(), "destination_label": z.string(), "enabled": z.boolean().default(true), "interval_seconds": z.number().int(), "node_id": z.string(), "payload_keys": z.array(z.string()), "wait_keys": z.array(z.string()) }).describe("A Send webhook column as configured: what it waits for (derived\nback from the paths its wait node names, in sheet order), where it\nsends, what rides, how often, and whether it is running.");
 export type WebhookColumnConfigWire = z.infer<typeof WebhookColumnConfigWireSchema>;
@@ -120,7 +114,7 @@ export type AgentsList = z.infer<typeof AgentsListSchema>;
 export const CellRunResultSchema = z.object({ "assessments": z.record(z.string(), z.lazy(() => CellAssessmentSchema)).default({}), "blamed_tool": z.string().default(""), "cells": z.record(z.string(), z.string()).default({}), "declined_cause": z.string().default(""), "evidence": z.array(z.string()).default([]), "tool_calls": z.array(z.lazy(() => SearchToolCallSchema)).default([]), "tools": z.record(z.string(), z.string()).default({}) }).describe("What ONE row's run produced, stored verbatim on the task that\nran it: the cells it would write ({} = nothing, honestly), the\nevidence the model saw, each tool call's diagnosis, and the causes\nbehind any blank.\n\nONE shape for both landings. A NORMAL row's answers land in sheet\ncolumns; a TEST row lands on its own task; both store this record,\nso a reader that had to ask which landing produced it would be\nreading two contracts through one field. The bench reads it\nVERBATIM off the run-detail wire (FillRunDetail carries it whole),\nso there is no second projection to drift.\n\nWhat LANDED is the sheet row plus its cell states; the difference\nbetween the two is the audit story (an answer write-if-blank\nrefused, a value the confidence floor dropped, a shape the column\nwould not take), which is why this is stored whole rather than\nreduced to what survived.");
 export type CellRunResult = z.infer<typeof CellRunResultSchema>;
 
-export const ColumnFillSummarySchema = z.object({ "attempted": z.number().int().describe("Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted cell ends in exactly one of those two places, so their sum is what the column was asked to do. It is the honest denominator for filled; the sheet's row count is a different question."), "column_key": z.string(), "current_fill_id": z.string().describe("The newest fill run naming this column; \"\" when none is exposed."), "current_status": z.union([z.enum(["pending","running","complete","failed","cancelled"]), z.literal("")]).describe("The status of the run current_fill_id names; \"\" when the column has never run. The page's runs list is LIVE runs only, so this is where a terminal story lands."), "filled": z.number().int().describe("Cells in this column that hold a value."), "last_error": z.union([z.lazy(() => FillErrorSchema), z.null()]).describe("The newest run's error, both legs (tier 1: the message renders verbatim); None unless that run FAILED, so a newer clean run clears it and a stopped run carries none.") }).describe("Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.");
+export const ColumnFillSummarySchema = z.object({ "attempted": z.number().int().describe("Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted cell ends in exactly one of those two places, so their sum is what the column was asked to do. It is the honest denominator for filled; the sheet's row count is a different question."), "column_key": z.string(), "current_fill_id": z.string().describe("The run the column currently names (AiColumn.current_fill_id, its stored pointer), never the newest by time; \"\" when none is exposed."), "current_status": z.union([z.enum(["pending","running","complete","failed","cancelled"]), z.literal("")]).describe("The status of the run current_fill_id names; \"\" when the column has never run. The page's runs list is LIVE runs only, so this is where a terminal story lands."), "filled": z.number().int().describe("Cells in this column that hold a value."), "last_error": z.union([z.lazy(() => FillErrorSchema), z.null()]).describe("The newest run's error, both legs (tier 1: the message renders verbatim); None unless that run FAILED, so a newer clean run clears it and a stopped run carries none.") }).describe("Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.");
 export type ColumnFillSummary = z.infer<typeof ColumnFillSummarySchema>;
 
 export const FillRunDetailSchema = z.object({ "agent_id": z.string(), "column_keys": z.array(z.string()).describe("The columns this run owns, frozen at consent."), "confirmed_row_count": z.number().int().describe("Rows this run TARGETED, fixed when it opened: the progress denominator. The consent echo is a REQUEST field of the same name that admission compares against the sheet, 409ing on drift; what ships here is what the walk actually consented to, which a scoped fill makes smaller than the sheet."), "counters": z.lazy(() => FillCountersSchema), "created_at": z.string(), "error": z.union([z.lazy(() => FillErrorSchema), z.null()]).describe("This run's error, both legs (tier 1: the message renders verbatim); None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.").default(null), "heartbeat_at": z.union([z.string(), z.null()]).describe("The latest state change across this run's tasks (derived); the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).").default(null), "id": z.string(), "kind": z.enum(["normal","test"]).default("normal"), "list_id": z.string(), "result": z.union([z.lazy(() => CellRunResultSchema), z.null()]).describe("A test run's stored result (its one task's record), served whenever that task FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not strand a paid result); None while the task is unfinished, and always for kind=normal (a normal fill's results live on the sheet).").default(null), "started_by": z.string().describe("User id, ATTRIBUTION only; authorization is account membership."), "status": z.enum(["pending","running","complete","failed","cancelled"]), "updated_at": z.string() }).describe("One run, read by id (GET /v1/fills/{id}): the poll envelope's\nfields plus what a single-run read can afford. `result` is the\ncompleted TEST run's stored CellRunResult (its one task's record);\nthe `result` field below owns the full predicate. A test run\ncarries no sheet, so `list_id` and `agent_id` are blank (\"\") for\nkind=test, and `confirmed_row_count`/`column_keys` describe the\nhand-fed row rather than a consent echo.");
@@ -129,8 +123,14 @@ export type FillRunDetail = z.infer<typeof FillRunDetailSchema>;
 export const FillRunPageSchema = z.object({ "columns": z.array(z.lazy(() => ColumnFillSummarySchema)).describe("One summary per AI column of the list this page belongs to.").default([]), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more runs exist.").default(null), "runs": z.array(z.lazy(() => FillRunWireSchema)).describe("LIVE runs only. Named for what it holds rather than the house `items`, because this page carries a second collection (`columns`) and `items` beside it would name neither.") }).describe("LIVE runs plus the per-column summaries. Terminal runs do not\nride the poll: a finished run's story (its status, its error) lands\non the column summary the moment it leaves this list, so the page\ncarries the in-flight work and the summaries carry everything a\ncolumn needs to say about its past.");
 export type FillRunPage = z.infer<typeof FillRunPageSchema>;
 
-export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
-export type ImportResult = z.infer<typeof ImportResultSchema>;
+export const ListColumnSchema = z.discriminatedUnion("kind", [PlainColumnSchema, AiColumnSchema, WebhookColumnSchema]).describe("One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), or webhook (a Send webhook column). Narrow on `kind`.");
+export type ListColumn = z.infer<typeof ListColumnSchema>;
+
+export const ListSummarySchema = z.object({ "columns": z.array(z.lazy(() => ListColumnSchema)).describe("Display order.").default([]), "created_at": z.string(), "folder_id": z.string().describe("The containing folder; empty = loose at the root.").default(""), "id": z.string(), "label": z.string(), "origin": z.enum(["discover","csv","manual"]).describe("How the list came to exist."), "origin_ref": z.string().describe("e.g. the source run id for discover snapshots.").default(""), "row_count": z.number().int().describe("Total rows (the sheet may page far beyond one response)."), "updated_at": z.string() }).describe("One list as the index shows it (and the save-list response).");
+export type ListSummary = z.infer<typeof ListSummarySchema>;
+
+export const ListsPageSchema = z.object({ "items": z.array(z.lazy(() => ListSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more lists exist.").default(null) });
+export type ListsPage = z.infer<typeof ListsPageSchema>;
 
 export const WebhookDeliveriesPageSchema = z.object({ "items": z.array(z.lazy(() => WebhookDeliveryWireSchema)), "next_cursor": z.union([z.string(), z.null()]).default(null) });
 export type WebhookDeliveriesPage = z.infer<typeof WebhookDeliveriesPageSchema>;
@@ -141,40 +141,11 @@ export type WebhookDestinationCreated = z.infer<typeof WebhookDestinationCreated
 export const WebhookDigestDataSchema = z.object({ "items": z.array(z.lazy(() => WebhookDigestItemSchema)), "sheet": z.lazy(() => WebhookSheetRefSchema), "type": z.literal("digest").default("digest"), "waited_on": z.array(z.string()).describe("The columns whose settling makes a row complete; the keys each item's states report on.") }).describe("Rows that completed since the last delivery, for one sheet.");
 export type WebhookDigestData = z.infer<typeof WebhookDigestDataSchema>;
 
-export const WebhookEnvelopeSchema = z.object({ "data": z.any().superRefine((x, ctx) => {
-    const schemas = [z.lazy(() => WebhookPingDataSchema), z.lazy(() => WebhookDigestDataSchema)];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }), "id": z.string(), "test": z.boolean().default(false), "timestamp": z.string(), "type": z.enum(["ping","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.");
+export const WebhookEnvelopeSchema = z.object({ "data": z.discriminatedUnion("type", [WebhookPingDataSchema, WebhookDigestDataSchema]), "id": z.string(), "test": z.boolean().default(false), "timestamp": z.string(), "type": z.enum(["ping","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.");
 export type WebhookEnvelope = z.infer<typeof WebhookEnvelopeSchema>;
+
+export const ImportResultSchema = z.object({ "list": z.lazy(() => ListSummarySchema), "rows": z.number().int().describe("Rows imported."), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
+export type ImportResult = z.infer<typeof ImportResultSchema>;
 
 export const WebhookColumnPreviewResponseSchema = z.object({ "envelope": z.lazy(() => WebhookEnvelopeSchema) }).describe("The envelope a test send of these choices would carry, rendered by\nthe server and sent nowhere, so the sheet shows the truth before a\nsend rather than a reconstruction.");
 export type WebhookColumnPreviewResponse = z.infer<typeof WebhookColumnPreviewResponseSchema>;
@@ -194,7 +165,23 @@ export const WIRE_BOUNDS = {
       "maxLength": 80
     }
   },
-  "ListColumn": {
+  "AiColumn": {
+    "key": {
+      "maxLength": 40
+    },
+    "label": {
+      "maxLength": 80
+    }
+  },
+  "PlainColumn": {
+    "key": {
+      "maxLength": 40
+    },
+    "label": {
+      "maxLength": 80
+    }
+  },
+  "WebhookColumn": {
     "key": {
       "maxLength": 40
     },

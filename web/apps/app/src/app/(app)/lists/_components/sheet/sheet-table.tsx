@@ -16,7 +16,6 @@ import {
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
-import { columnKind } from "./lib/column-kind";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
@@ -133,7 +132,7 @@ export function SheetTable({
   // The tracker row exists only once an AI column does: a sheet of
   // plain columns has no fill state to track, and an all-empty row
   // would be dead height between header and rows.
-  const tracker = fills !== undefined && columns.some((column) => columnKind(column) === "ai") ? fills : undefined;
+  const tracker = fills !== undefined && columns.some((column) => column.kind === "ai") ? fills : undefined;
 
   return (
     // closestCenter over a horizontal strip: the pointer sits inside
@@ -198,7 +197,7 @@ export function SheetTable({
             <td className="sticky top-11 bg-surface" />
             {columns.map((column) => (
               <td key={column.key} className="sticky top-11 bg-surface px-3 pb-2">
-                {columnKind(column) === "ai" && (
+                {column.kind === "ai" && (
                   <FillTrackerCell
                     listId={tracker.listId}
                     column={column}
@@ -229,7 +228,7 @@ export function SheetTable({
               // had a degraded tool. Both come off THIS row
               // object, so they are one encoding rather than two
               // reads that can disagree.
-              const kind = columnKind(column);
+              const kind = column.kind;
               const value = row.data[column.key] ?? "";
               const entry = kind === "ai" ? row.states?.[column.key] : undefined;
               const state = !value ? entry : undefined;

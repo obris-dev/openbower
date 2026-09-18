@@ -15,7 +15,7 @@ from lists.services import cell_truth
 from lists.services.cell_states import CellStateService
 from lists.services.lists import ListService
 
-COLUMNS = [{"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": "01ND" + "A" * 22}}]
+COLUMNS = [{"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": "01ND" + "A" * 22}]
 
 
 class CellStateScopingTests(TestCase):

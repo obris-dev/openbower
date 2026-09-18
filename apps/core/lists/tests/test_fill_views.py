@@ -21,7 +21,7 @@ from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
-from openbower_schema.lists import ColumnFill, ListRowsPage
+from openbower_schema.lists import AiColumn, ListRowsPage
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, FillStatus, StoredCellState
 from ..models import Fill
@@ -77,7 +77,7 @@ class FillViewsTestCase(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
@@ -166,7 +166,10 @@ class AiColumnPostTests(FillViewsTestCase):
         # refuses. The old rule asked whether any cell held a value,
         # which is an unindexed scan of the sheet under the List lock
         # to decide something the user can already see.
-        self.sheet.columns = [*self.sheet.columns, {"key": "answer", "label": "Answer", "type": "text"}]
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"kind": "plain", "key": "answer", "label": "Answer", "type": "text"},
+        ]
         self.sheet.save(update_fields=["columns"])
         resp = self.post_ai()
         self.assertEqual(resp.status_code, 400)
@@ -317,8 +320,8 @@ class ColumnSummaryTests(FillViewsTestCase):
         # The legacy shape: the fill config exists (the column IS an AI
         # column) but predates the current_fill_id write.
         for column in self.sheet.columns:
-            if column.fill is not None:
-                column.fill = ColumnFill(node_id=column.fill.node_id)
+            if isinstance(column, AiColumn):
+                column.current_fill_id = ""
         self.sheet.save(update_fields=["columns"])
         _, by_key = self._summaries()
         self.assertEqual(by_key["answer"].current_status, "")
