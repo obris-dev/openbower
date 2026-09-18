@@ -198,7 +198,9 @@ class WebhookDestinationWire(BaseModel):
         default=None,
         description="When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.",
     )
-    column_count: int = Field(default=0, description="How many Send webhook columns send here; delete is refused while any do.")
+    column_count: int = Field(
+        default=0, description="How many Send webhook columns send here; delete is refused while any do."
+    )
     created_at: str
 
 

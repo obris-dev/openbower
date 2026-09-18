@@ -14,7 +14,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from openbower_schema.lists import ColumnWebhook
+from openbower_schema.lists import ColumnWebhook, WebhookCellState
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
@@ -119,6 +119,36 @@ class WebhookColumnService:
             target_list.columns = [*target_list.columns, {"key": key, "label": label, "type": "text", "webhook": link}]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
+
+    def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, WebhookCellState]]:
+        """row id -> {webhook column key: state} for one page of rows,
+        the webhook columns' half of what the AI states are to theirs.
+        A row is WAITING for a webhook column once every column it
+        waits on is done for that row, by the digest's own completion
+        rule, so the cell and the payload can never disagree about
+        which rows are due; a row still filling or never attempted has
+        no entry and shows nothing. Nothing is sent before the flush,
+        so waiting is the one word today; sent and failed join it then.
+        One records read over the union of the waited-on columns."""
+        webhook_columns = [column for column in target_list.columns if column.get("webhook")]
+        if not webhook_columns or not rows:
+            return {}
+        wait_keys_by_column: dict[str, list[str]] = {}
+        for column in webhook_columns:
+            webhook_node = self.workflows.get_node(column["webhook"]["node_id"])
+            wait_keys_by_column[column["key"]] = self._wait_keys(target_list, webhook_node)
+        watched = {key for keys in wait_keys_by_column.values() for key in keys}
+        row_ids = [str(row.id) for row in rows]
+        records: dict[str, dict[str, tuple[str, datetime]]] = {}
+        recorded = self.cell_states.iter_records(str(target_list.id), row_ids=row_ids, column_keys=watched)
+        for row_id, column_key, state, updated_at in recorded:
+            records.setdefault(row_id, {})[column_key] = (state, updated_at)
+        states: dict[str, dict[str, WebhookCellState]] = {}
+        for row_id, row_records in records.items():
+            for key, wait_keys in wait_keys_by_column.items():
+                if wait_keys and completion_of(row_records, wait_keys) is not None:
+                    states.setdefault(row_id, {})[key] = "waiting"
+        return states
 
     def config(self, target_list_id: str, key: str) -> WebhookColumnConfigWire:
         target_list = self.lists.get(target_list_id)
@@ -287,12 +317,17 @@ class WebhookColumnService:
         path_by_node = {str(node.id): node.path_id for node in agent_nodes}
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)
 
-    def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
+    def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
+        """The columns a webhook column waits on, in sheet order: its
+        wait node's inbound paths resolved to the columns they fill."""
         wait_node, _webhook = self.workflows.nodes_on_path(webhook_node.path_id)
         wait = config_as(wait_node, WaitUntil)
-        webhook = config_as(webhook_node, Webhook)
         agent_nodes = Node.objects.filter(account_id=self.account_id, path_id__in=wait.inbound_path_ids)
         node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
+        return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
+
+    def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
+        webhook = config_as(webhook_node, Webhook)
         try:
             destination_label = self.destinations.get(webhook.destination_id).label
         except DestinationNotFound as e:
@@ -301,7 +336,7 @@ class WebhookColumnService:
             node_id=str(webhook_node.id),
             destination_id=webhook.destination_id,
             destination_label=destination_label,
-            wait_keys=wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path),
+            wait_keys=self._wait_keys(target_list, webhook_node),
             payload_keys=webhook.payload_keys,
             interval_seconds=webhook.interval_seconds,
             enabled=webhook.enabled,

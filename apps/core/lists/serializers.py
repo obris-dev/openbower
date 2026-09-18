@@ -13,7 +13,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import CellStateWire, IngestColumn
+from openbower_schema.lists import CellStateWire, IngestColumn, WebhookCellState
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -288,11 +288,17 @@ def fill_run_detail_wire(fill: Fill, result: CellRunResult | None) -> dict[str, 
     return WireFillRunDetail(**fill_run_wire(fill), kind=fill.kind, result=result).model_dump()
 
 
-def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> dict[str, Any]:
-    """A sheet row with its AI cell states beside its values. ONE
-    shape rather than two paged reads walking in lockstep, which was a
-    client-side join carried over the network."""
-    return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
+def row_wire(
+    row: ListRow,
+    states: dict[str, CellStateWire] | None = None,
+    webhooks: dict[str, WebhookCellState] | None = None,
+) -> dict[str, Any]:
+    """A sheet row with its AI cell states and its webhook cell states
+    beside its values. ONE shape rather than paged reads walking in
+    lockstep, which was a client-side join carried over the network."""
+    return WireListRow(
+        id=str(row.id), position=row.position, data=row.data, states=states or {}, webhooks=webhooks or {}
+    ).model_dump()
 
 
 def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:

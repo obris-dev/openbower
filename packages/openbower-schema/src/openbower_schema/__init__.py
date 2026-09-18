@@ -45,6 +45,7 @@ from .lists import (
     ListsPage,
     ListSummary,
     RowsAdded,
+    WebhookCellState,
 )
 from .webhooks import (
     WebhookColumnConfigWire,
@@ -74,9 +75,9 @@ __all__ = [
     "CatalogModel",
     "CellRunResult",
     "ColumnFill",
-    "ColumnWebhook",
     "ColumnFillSummary",
     "ColumnPromptWire",
+    "ColumnWebhook",
     "Company",
     "FillCounters",
     "FillError",
@@ -96,6 +97,7 @@ __all__ = [
     "LookalikeItem",
     "LookalikeListResponse",
     "RowsAdded",
+    "WebhookCellState",
     "WebhookColumnConfigWire",
     "WebhookColumnPreviewResponse",
     "WebhookColumnTestResponse",

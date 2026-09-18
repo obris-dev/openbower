@@ -247,7 +247,7 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
             data: { answer: "x" },
             states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
           },
-          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
+          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" }, webhooks: { crm: "waiting" } },
         ],
         next_cursor: null,
       }),
@@ -262,6 +262,10 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   assert.deepEqual(degraded!.states.answer, { state: "filled", tools: { web_search: "rate_limited" } });
   assert.deepEqual(bare!.states.answer, { state: "no_evidence", tools: {} });
   assert.ok(!(CELL_STATES as readonly string[]).includes(UNKNOWN_CELL_STATE));
+  // Webhook cell words ride the row too; a page from before they
+  // shipped reads as no words.
+  assert.deepEqual(bare!.webhooks, { crm: "waiting" });
+  assert.deepEqual(future!.webhooks, {});
 });
 
 test("reorderColumns sends the WHOLE key order, and nothing about the columns", async (t) => {

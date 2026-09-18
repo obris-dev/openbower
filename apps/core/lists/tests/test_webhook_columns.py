@@ -219,6 +219,48 @@ class WebhookColumnTests(TestCase):
         unscoped = event_id_of(scope=str(self.sheet.id), row_id=row_id, stamp=item.completed_at, test=True)
         self.assertNotEqual(item.event_id, unscoped)
 
+    def _settle(self, row_id: str, states: dict[str, StoredCellState]) -> None:
+        cell_truth.write(
+            account_id=self.account_id,
+            list_id=str(self.sheet.id),
+            row_id=row_id,
+            fill_run_id=None,
+            config_fingerprint="",
+            states=states,
+            tools={},
+        )
+
+    def test_rows_read_waiting_only_once_every_waited_on_column_is_done(self):
+        """The cell tracks the digest's completion rule: an answer or a
+        settled blank on EVERY waited-on column, and nothing before.
+        Waiting on `answer` waits on its PATH, so `score` (the same
+        agent's other output) counts too."""
+        self._add(wait_keys=["country", "answer"])
+        filling, done, blank, fresh = (
+            str(row.id)
+            for row in [
+                *self.rows,
+                *self.lists.add_rows(self.sheet, [{"company": "b.com"}, {"company": "c.com"}, {"company": "d.com"}]),
+            ]
+        )
+        filled = StoredCellState.FILLED
+        # Two of three done: the retryable third keeps the row filling.
+        self._settle(filling, {"country": filled, "answer": filled, "score": StoredCellState.TRANSIENT})
+        self._settle(done, {"country": filled, "answer": filled, "score": filled})
+        self._settle(blank, {"country": StoredCellState.NO_EVIDENCE, "answer": filled, "score": filled})
+        resp = self.client.get(reverse("lists_rows", kwargs={"id": str(self.sheet.id)}))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        by_row = {item["id"]: item["webhooks"] for item in resp.json()["items"]}
+        self.assertEqual(
+            by_row,
+            {
+                filling: {},
+                done: {"crm_sync": "waiting"},
+                blank: {"crm_sync": "waiting"},
+                fresh: {},
+            },
+        )
+
     def test_deleting_the_webhook_column_removes_its_path_and_nodes_only(self):
         self._add()
         resp = self.client.delete(reverse("lists_column_detail", kwargs={"id": str(self.sheet.id), "key": "crm_sync"}))

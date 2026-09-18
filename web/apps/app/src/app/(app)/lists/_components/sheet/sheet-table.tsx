@@ -239,9 +239,9 @@ export function SheetTable({
                   className={`px-4 py-2.5 ${isNumericColumn(column) ? "text-right tabular-nums" : ""}`}
                 >
                   {kind === "webhook" ? (
-                    // No value and no state to read: the column holds
-                    // nothing until the flush writes delivery state.
-                    <WebhookCell />
+                    // No value to read: the row's webhook word is the
+                    // whole cell, present only once the row is due.
+                    <WebhookCell state={row.webhooks[column.key]} />
                   ) : state !== undefined ? (
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's

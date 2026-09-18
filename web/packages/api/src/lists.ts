@@ -64,6 +64,11 @@ export type { FillError, ListColumn, ListRowWire, WebhookColumnConfigWire } from
  * entry IS filled and clean, and never-attempted is an absence. */
 export type CellStateWire = ListRowWire["states"][string];
 export type CellState = CellStateWire["state"];
+/** A Send webhook column's per-row word, derived server-side: present
+ * once the row is complete for every column the webhook waits on and
+ * not yet sent; a row still filling has no entry and shows nothing. */
+export type WebhookCellState = ListRowWire["webhooks"][string];
+export const WEBHOOK_CELL_WAITING: WebhookCellState = "waiting";
 /** Tool -> the status code its door reported for the run that wrote
  * a cell ("open" for a tool that served). The vocabularies per tool
  * come off the contract (TOOL_STATUSES): base codes every tool shares
@@ -230,7 +235,12 @@ export type RenderableCellState = CellState | typeof UNKNOWN_CELL_STATE;
 export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolStatuses };
 /** A row as the CLIENT holds it: the states record admits the unknown
  * member the tolerant read produces, which the wire type cannot. */
-export type RenderableListRow = Omit<ListRowWire, "states"> & { states: Record<string, RenderableCellStateWire> };
+export type RenderableListRow = Omit<ListRowWire, "states" | "webhooks"> & {
+  states: Record<string, RenderableCellStateWire>;
+  /** Webhook cell words as strings: a word this bundle has not heard
+   * of renders as nothing rather than failing the page. */
+  webhooks: Record<string, string>;
+};
 export type RenderableListRowsPage = Omit<ListRowsPage, "items"> & { items: RenderableListRow[] };
 // Rows parse states TOLERANTLY: strict-parsing an unknown cause would
 // fail the whole page, and a sheet that will not render is a worse
@@ -242,7 +252,12 @@ const TolerantCellStateSchema = z.union([
   z.object({ state: z.string(), tools: z.record(z.string(), z.string()).default({}) }),
 ]);
 export const TolerantListRowsPageSchema = ListRowsPageSchema.extend({
-  items: z.array(ListRowWireSchema.extend({ states: z.record(z.string(), TolerantCellStateSchema).default({}) })),
+  items: z.array(
+    ListRowWireSchema.extend({
+      states: z.record(z.string(), TolerantCellStateSchema).default({}),
+      webhooks: z.record(z.string(), z.string()).default({}),
+    }),
+  ),
 });
 type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
 
