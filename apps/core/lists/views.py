@@ -169,10 +169,11 @@ class ListsView(_ScopedView):
         serializer = ListCreateRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        columns = [PlainColumn(**column) for column in data["columns"]]
         target_list = self.lists.create(
             owner_id=self.request.user.id,
             label=data["label"],
-            columns=[PlainColumn(**column) for column in data["columns"]],
+            columns=columns,
             origin=ListOrigin.MANUAL,
         )
         return Response(list_wire(target_list), status=201)

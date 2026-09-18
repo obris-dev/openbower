@@ -4,7 +4,7 @@
 
 import type { ListColumn, WebhookColumnConfig, WebhookColumnConfigWire } from "@bower/api";
 
-import { exportableColumns } from "../../lib/column-kind.ts";
+import { exportableColumns } from "../../lib/exportable-columns.ts";
 
 export type WebhookDraft = {
   destinationId: string;

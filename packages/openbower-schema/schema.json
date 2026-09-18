@@ -264,7 +264,7 @@
       "properties": {
         "current_fill_id": {
           "default": "",
-          "description": "The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time. Blank until a run opens for it.",
+          "description": "The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time; \"\" when the column has never run.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -496,7 +496,7 @@
           "type": "string"
         },
         "current_fill_id": {
-          "description": "The run the column currently names (AiColumn.current_fill_id, its stored pointer), never the newest by time; \"\" when none is exposed.",
+          "description": "The run the column currently names (AiColumn.current_fill_id, its stored pointer), never the newest by time; \"\" when the column has never run.",
           "title": "Current Fill Id",
           "type": "string"
         },
@@ -2018,22 +2018,7 @@
       "description": "What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.",
       "properties": {
         "data": {
-          "discriminator": {
-            "mapping": {
-              "digest": "#/$defs/WebhookDigestData",
-              "ping": "#/$defs/WebhookPingData"
-            },
-            "propertyName": "type"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/WebhookPingData"
-            },
-            {
-              "$ref": "#/$defs/WebhookDigestData"
-            }
-          ],
-          "title": "Data"
+          "$ref": "#/$defs/WebhookEnvelopeData"
         },
         "id": {
           "title": "Id",
@@ -2070,6 +2055,23 @@
       ],
       "title": "WebhookEnvelope",
       "type": "object"
+    },
+    "WebhookEnvelopeData": {
+      "discriminator": {
+        "mapping": {
+          "digest": "#/$defs/WebhookDigestData",
+          "ping": "#/$defs/WebhookPingData"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/WebhookPingData"
+        },
+        {
+          "$ref": "#/$defs/WebhookDigestData"
+        }
+      ]
     },
     "WebhookPingData": {
       "description": "A destination's Test button: nothing from a sheet, just proof\nthat a signed delivery reaches the receiver.",

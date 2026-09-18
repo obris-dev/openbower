@@ -60,16 +60,21 @@ export type { AiColumn, FillError, ListRowWire, PlainColumn, WebhookColumn, Webh
 
 /** A column kind this bundle has never heard of. A CLIENT member, not
  * one of the server's: the sheet renders its values like a plain
- * column's (the least a column can be) but claims nothing else for it,
- * so it stays out of the CSV export and the webhook payload picker and
- * gets no tracker cell or fill verbs. Mapping it onto `plain` would
- * assert the column holds hand-written data, which the bundle cannot
- * know. */
+ * column's and the export and payload picker carry them (they are
+ * data the user can see), but it claims nothing else for the column:
+ * no tracker cell, no fill verbs, no place among the columns a webhook
+ * waits on. Mapping it onto `plain` would assert the column holds
+ * hand-written data, which the bundle cannot know. */
 export const UNKNOWN_COLUMN_KIND = "unknown_kind" as const;
 export type UnknownColumn = Pick<PlainColumn, "key" | "label" | "type"> & { kind: typeof UNKNOWN_COLUMN_KIND };
 /** A column as the CLIENT holds it: the contract's kinds plus the
  * unknown member the tolerant read produces. App code narrows on
- * `kind`; the contract's members keep their fields. */
+ * `kind`; the contract's members keep their fields. These carry the
+ * wire names on purpose, unlike the Renderable* row types: the
+ * widening happens inside the parse (a transform), so the parsed value
+ * IS the client shape and the strict wire twin is unreachable from app
+ * code, which is what "app code imports only @bower/api" buys. The
+ * row types widen after the parse and so need a second name. */
 export type ListColumn = WireListColumn | UnknownColumn;
 export type ColumnKind = ListColumn["kind"];
 export type ListSummary = Omit<WireListSummary, "columns"> & { columns: ListColumn[] };
@@ -81,12 +86,23 @@ export type ImportResult = Omit<WireImportResult, "list"> & { list: ListSummary 
 // parse. A column carrying an unheard-of tag keeps its base fields and
 // reads as the unknown member; a column with NO tag still refuses, as
 // the server refuses it (nothing the server writes lacks one).
-const TolerantListColumnSchema = z.union([
-  ListColumnSchema,
-  PlainColumnSchema.omit({ kind: true })
-    .extend({ kind: z.string() })
-    .transform((column) => ({ ...column, kind: UNKNOWN_COLUMN_KIND })),
-]);
+// The catch-all admits only a tag the contract does not know: a known
+// kind whose body fails its own member is a broken column, refused
+// like any other bad response rather than hidden as unknown. It reads
+// the base fields with the same skew tolerance: a display type this
+// bundle has not heard of renders as text (type drives rendering
+// only), and the label bound is the server's to enforce.
+const KNOWN_COLUMN_KINDS = new Set<string>(ListColumnSchema.options.map((member) => member.shape.kind.unwrap().value));
+const KNOWN_COLUMN_TYPES = new Set<string>(PlainColumnSchema.shape.type.options);
+const UnknownColumnSchema = z
+  .object({
+    kind: z.string().refine((kind) => !KNOWN_COLUMN_KINDS.has(kind)),
+    key: z.string(),
+    label: z.string(),
+    type: z.string().transform((type) => (KNOWN_COLUMN_TYPES.has(type) ? type : "text") as ColumnType),
+  })
+  .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
+const TolerantListColumnSchema = z.union([ListColumnSchema, UnknownColumnSchema]);
 export const TolerantListSummarySchema = ListSummarySchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
 export const TolerantListsPageSchema = ListsPageSchema.extend({ items: z.array(TolerantListSummarySchema) });
 const TolerantImportResultSchema = ImportResultSchema.extend({ list: TolerantListSummarySchema });

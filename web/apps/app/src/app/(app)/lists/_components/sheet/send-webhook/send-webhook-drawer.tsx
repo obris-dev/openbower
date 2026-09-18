@@ -52,6 +52,7 @@ import {
   WAIT_HINT,
   WAIT_LEGEND,
 } from "./copy";
+import { exportableColumns } from "../lib/exportable-columns";
 import { DestinationPicker } from "./destination-picker";
 import { cadenceLabel, cadenceOptions } from "./lib/cadence";
 import { bodyFor, initialDraft, isDirty, type WebhookDraft } from "./lib/config";
@@ -193,7 +194,7 @@ function WebhookEditor({
   const waitGap = draft.waitKeys.size === 0 ? GAP_WAIT : null;
   const rowsGap = sampleRow === null ? NO_ROWS_LINE : null;
   const body = bodyFor(draft, columns);
-  const missingColumns = columns.filter((c) => c.kind !== "webhook" && !draft.payloadKeys.has(c.key));
+  const missingColumns = exportableColumns(columns).filter((c) => !draft.payloadKeys.has(c.key));
   const dirty = saved === null || isDirty(draft, saved);
 
   // The preview asks the server once the body is previewable; the

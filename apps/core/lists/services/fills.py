@@ -252,10 +252,8 @@ class FillService:
         story off one projected read of the runs the columns name.
 
         `current_fill_id` is READ off the column, where admission wrote
-        it. It used to be reconstructed by walking every fill the sheet
-        had ever had; a column that predates the write reads as the
-        contract's documented empty string (this service supplies it),
-        so nothing needs backfilling.
+        it, never reconstructed by walking the sheet's fills; a column
+        whose run has not opened reads as the contract's empty string.
 
         `attempted` is the honest denominator for `filled`: a targeted
         cell resolves to exactly one state, so their sum is what the

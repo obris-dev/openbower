@@ -11,6 +11,7 @@ import {
   type ColumnType,
   type ListColumn,
   type RenderableListRow,
+  type WebhookColumn,
 } from "@bower/api";
 
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
@@ -97,7 +98,7 @@ export function SheetTable({
    * render a refusal (a column a webhook waits on) in place. */
   onDeleteColumn?: (column: ListColumn) => Promise<ColumnOutcome>;
   /** Reopens the Send webhook drawer on an existing webhook column. */
-  onEditWebhook?: (column: ListColumn) => void;
+  onEditWebhook?: (column: WebhookColumn) => void;
   fills?: SheetFills;
   onAddColumn?: (kind: AddColumnKind) => void;
 }) {

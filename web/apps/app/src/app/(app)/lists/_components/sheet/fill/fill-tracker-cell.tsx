@@ -8,7 +8,7 @@ import {
   updateColumnPrompt,
   type ColumnFillSummary,
   type ColumnPromptWire,
-  type ListColumn,
+  type AiColumn,
 } from "@bower/api";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
@@ -61,7 +61,7 @@ export function FillTrackerCell({
   onRefill,
 }: {
   listId: string;
-  column: ListColumn;
+  column: AiColumn;
   summary: ColumnFillSummary | undefined;
   pollTrouble: boolean;
   runs: LiveRun[];

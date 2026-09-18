@@ -5,6 +5,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
+import { ListColumnSchema, ListSummarySchema, WIRE_BOUNDS } from "@bower/schema";
+
 import {
   CELL_STATES,
   SETTLED_CELL_STATES,
@@ -23,8 +25,8 @@ import {
   reorderColumns,
   updateColumnWebhook,
   UNKNOWN_COLUMN_KIND,
+  COLUMN_LABEL_MAX_LENGTH,
 } from "../src/lists.ts";
-import { ListColumnSchema, ListSummarySchema } from "@bower/schema";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -466,4 +468,22 @@ test("a column kind from the future reads as the unknown member; the known kinds
   assert.ok(ai!.kind === "ai" && ai!.node_id === "01NODE" && ai!.current_fill_id === "01RUN");
   assert.ok(webhook!.kind === "webhook" && webhook!.node_id === "01HOOK");
   assert.deepEqual(later, { kind: UNKNOWN_COLUMN_KIND, key: "later", label: "Later", type: "text" });
+});
+
+test("a known kind with a broken body refuses instead of reading as unknown", async (t) => {
+  // The catch-all exists for a kind this bundle has not heard of. A
+  // kind it HAS heard of, arriving without the fields the contract
+  // gives it, is a broken column, and hiding it as unknown would
+  // strip an AI column of its node without a word.
+  const summary = { ...SUMMARY, columns: [{ kind: "ai", key: "answer", label: "Answer", type: "text" }] };
+  stubFetch(t, summary);
+  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "error");
+});
+
+test("every column kind shares the base's label bound the client enforces", () => {
+  // The client reads the bound off one member; the base is not a
+  // definition of its own, so this is what pins the other members to it.
+  assert.equal(WIRE_BOUNDS.AiColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
+  assert.equal(WIRE_BOUNDS.WebhookColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
 });

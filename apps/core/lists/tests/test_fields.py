@@ -13,7 +13,7 @@ from django.db import connection
 from django.test import TestCase
 from pydantic import ValidationError
 
-from openbower_schema.lists import AiColumn, ColumnBase, PlainColumn
+from openbower_schema.lists import AiColumn, ColumnBase, PlainColumn, WebhookColumn
 
 from ..fields import ListColumnsField
 from ..models import List
@@ -51,6 +51,7 @@ class ListColumnsFieldTests(TestCase):
         sheet.columns = [
             PlainColumn(key="company", label="Company", type="text"),
             AiColumn(key="answer", label="Answer", type="text", node_id=NODE_ID, current_fill_id="01RUN" + "A" * 21),
+            WebhookColumn(key="crm_sync", label="CRM sync", type="text", node_id="01HOOK" + "A" * 20),
         ]
         sheet.save(update_fields=["columns", "updated_at"])
         with connection.cursor() as cursor:
@@ -69,6 +70,13 @@ class ListColumnsFieldTests(TestCase):
                     "node_id": NODE_ID,
                     "current_fill_id": "01RUN" + "A" * 21,
                 },
+                {
+                    "kind": "webhook",
+                    "key": "crm_sync",
+                    "label": "CRM sync",
+                    "type": "text",
+                    "node_id": "01HOOK" + "A" * 20,
+                },
             ],
         )
 
@@ -85,6 +93,31 @@ class ListColumnsFieldTests(TestCase):
         ):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 sheet.columns = [bad]
+
+    def test_a_stored_column_with_no_kind_is_refused_on_read(self) -> None:
+        """A row from before columns carried a kind fails the read that
+        meets it (a values read as much as a model load) rather than
+        being inferred into a kind."""
+        sheet = self.lists.create(owner_id=USER, label="Prospects", columns=[], origin="manual")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE lists_list SET columns = %s WHERE id = %s",
+                [json.dumps([{"key": "company", "label": "Company", "type": "text"}]), str(sheet.id)],
+            )
+        with self.assertRaises(ValidationError):
+            List.objects.get(id=str(sheet.id))
+        with self.assertRaises(ValidationError):
+            list(List.objects.filter(id=str(sheet.id)).values_list("columns", flat=True))
+
+    def test_a_values_read_is_typed_without_the_descriptor(self) -> None:
+        sheet = self.lists.create(
+            owner_id=USER,
+            label="Prospects",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+        )
+        [columns] = List.objects.filter(id=str(sheet.id)).values_list("columns", flat=True)
+        self.assertEqual(columns, [PlainColumn(key="company", label="Company", type="text")])
 
     def test_the_field_migrates_as_a_plain_json_field(self) -> None:
         field = List._meta.get_field("columns")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # A CLOSED union on purpose: codegen emits a zod enum, so an unknown
 # type is a parse error, never a silently unstyled column. Types drive
@@ -54,7 +54,14 @@ def derive_column_key(label: str, *, key: str = "") -> str:
 class ColumnBase(BaseModel):
     """What every column has, whichever kind it is. Never a column on
     its own: the kinds below are the members, and a reader narrows on
-    their `kind`."""
+    their `kind`. Every member extends this and only ADDS: a client that
+    has never heard of a kind still renders its key, label, and type,
+    and the shared bounds the client projects come off one member. A
+    member that drops or retypes one of these breaks every older
+    bundle. Frozen, so a column is typed at construction and a writer
+    replaces rather than mutates (a stored instance can be shared)."""
+
+    model_config = ConfigDict(frozen=True)
 
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
     label: str = Field(
@@ -81,7 +88,7 @@ class AiColumn(ColumnBase):
         default="",
         description="The fill run that speaks for this column, stored here when it opens and "
         "served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never "
-        "the newest by time. Blank until a run opens for it.",
+        'the newest by time; "" when the column has never run.',
     )
 
 
@@ -91,6 +98,8 @@ class WebhookColumn(ColumnBase):
     column holds no row data, its cells show delivery state."""
 
     kind: Literal["webhook"] = "webhook"
+    # `type` rides on every kind so the base projection holds; a
+    # webhook column\'s is never read.
     node_id: str = Field(
         description="The webhook node this column is; its config and the wait node's hang off the path."
     )
@@ -104,7 +113,9 @@ class WebhookColumn(ColumnBase):
 # ListColumn schema to narrow on) and the discriminator travels with
 # the type into every TypeAdapter that parses it. The vocabulary is
 # CLOSED on purpose, unlike the node-kind registry: the client renders
-# per kind, so a new kind is a client change, not a roster entry.
+# per kind, so a new kind is a client change, not a roster entry;
+# until that change ships, a client reads an unheard-of kind off the
+# base fields alone and claims nothing else for it.
 type ListColumn = Annotated[
     PlainColumn | AiColumn | WebhookColumn,
     Field(

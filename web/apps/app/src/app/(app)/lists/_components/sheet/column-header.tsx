@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ArrowUpRight, ChevronDown, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
 import { Input, Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 import { useState } from "react";
-import { isNumericColumn, type ListColumn, type ColumnKind } from "@bower/api";
+import { isNumericColumn, type ListColumn, type WebhookColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { canMove, nudgeColumn } from "./lib/column-order";
@@ -52,7 +52,6 @@ export function useColumnSensors() {
 function ColumnMenu({
   column,
   columns,
-  kind,
   close,
   onMove,
   onRename,
@@ -61,7 +60,6 @@ function ColumnMenu({
 }: {
   column: ListColumn;
   columns: ListColumn[];
-  kind: ColumnKind;
   close: () => void;
   onMove: (direction: -1 | 1) => void;
   onRename?: () => void;
@@ -95,7 +93,7 @@ function ColumnMenu({
           // No cell count: it is a sheet-wide fact the client cannot
           // know from paged rows, and a number we cannot stand behind
           // is worse than none.
-          consequence={kind === "webhook" ? DELETE_WEBHOOK_COLUMN_CONSEQUENCE : "This deletes the column and everything in it."}
+          consequence={column.kind === "webhook" ? DELETE_WEBHOOK_COLUMN_CONSEQUENCE : "This deletes the column and everything in it."}
           busy={deleting}
           refusal={refusal}
           onCancel={() => setConfirming(false)}
@@ -121,7 +119,7 @@ function ColumnMenu({
           </span>
         </PopoverItem>
       )}
-      {kind === "webhook" && onEditWebhook && (
+      {column.kind === "webhook" && onEditWebhook && (
         <PopoverItem onClick={() => { close(); onEditWebhook(); }}>
           <span className="flex items-center gap-2">
             <ArrowUpRight aria-hidden className="h-4 w-4 text-faint" />
@@ -217,10 +215,9 @@ export function ColumnHeader({
   onReorder?: (keys: string[]) => void;
   onRename?: (key: string, label: string) => void;
   onDelete?: (column: ListColumn) => Promise<ColumnOutcome>;
-  onEditWebhook?: (column: ListColumn) => void;
+  onEditWebhook?: (column: WebhookColumn) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
-  const kind = column.kind;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: column.key,
     disabled: !onReorder,
@@ -300,11 +297,10 @@ export function ColumnHeader({
                 <ColumnMenu
                   column={column}
                   columns={columns}
-                  kind={kind}
                   close={close}
                   onMove={(direction) => nudge(direction)}
                   onRename={onRename && (() => setRenaming(true))}
-                  onEditWebhook={onEditWebhook && (() => onEditWebhook(column))}
+                  onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
                   onDelete={onDelete && (() => onDelete(column))}
                 />
               )}

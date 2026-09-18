@@ -4,6 +4,7 @@ the runtime tests' precedent."""
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from django.db import connection
@@ -111,15 +112,17 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual({t.list_id for t in tasks}, {str(self.sheet.id)})
         self.assertEqual({t.node_id for t in tasks}, {str(node.id)})
 
-    def test_the_stored_fill_member_is_exactly_the_wire_shape(self) -> None:
-        # The parity seam: what admission stores under `column.fill` is
-        # what ColumnFill declares, key for key, so no stored key is
-        # dropped on a list read and no wire key goes unwritten.
+    def test_the_stored_ai_column_lands_at_rest_as_the_wire_shape(self) -> None:
+        # Read raw: what admission wrote to the jsonb is the AI member's
+        # dump, key for key, so no wire key goes unwritten.
         self.admit()
-        self.sheet.refresh_from_db()
-        stored = next(c for c in self.sheet.columns if c.key == "answer")
-        self.assertIsInstance(stored, AiColumn)
-        self.assertEqual(set(stored.model_dump()), set(AiColumn.model_fields))
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT columns FROM lists_list WHERE id = %s", [str(self.sheet.id)])
+            [(raw,)] = cursor.fetchall()
+        stored = json.loads(raw) if isinstance(raw, str) else raw
+        [answer] = [column for column in stored if column["key"] == "answer"]
+        self.assertEqual(answer["kind"], "ai")
+        self.assertEqual(set(answer), set(AiColumn.model_fields))
 
     def test_multi_output_columns_are_the_outputs_own_keys(self) -> None:
         config = quick_config(

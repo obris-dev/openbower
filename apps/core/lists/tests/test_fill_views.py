@@ -317,11 +317,11 @@ class ColumnSummaryTests(FillViewsTestCase):
     def test_a_column_from_before_the_pointer_reads_as_never_run(self) -> None:
         self.post_ai()
         self.sheet.refresh_from_db()
-        # The legacy shape: the fill config exists (the column IS an AI
-        # column) but predates the current_fill_id write.
-        for column in self.sheet.columns:
-            if isinstance(column, AiColumn):
-                column.current_fill_id = ""
+        # An AI column whose run has not opened: the pointer is blank.
+        self.sheet.columns = [
+            column.model_copy(update={"current_fill_id": ""}) if isinstance(column, AiColumn) else column
+            for column in self.sheet.columns
+        ]
         self.sheet.save(update_fields=["columns"])
         _, by_key = self._summaries()
         self.assertEqual(by_key["answer"].current_status, "")

@@ -3,17 +3,18 @@ import { test } from "node:test";
 
 import { UNKNOWN_COLUMN_KIND } from "@bower/api";
 
-import { exportableColumns } from "./column-kind.ts";
+import { exportableColumns } from "./exportable-columns.ts";
 
-test("exportableColumns keeps the kinds that hold row data", () => {
+test("exportableColumns drops webhook columns only", () => {
   const columns = [
     { key: "company", kind: "plain" as const },
     { key: "answer", kind: "ai" as const },
     { key: "crm_sync", kind: "webhook" as const },
+    // Renders its values like a plain column, so the file carries them.
     { key: "later", kind: UNKNOWN_COLUMN_KIND },
   ];
   assert.deepEqual(
     exportableColumns(columns).map((column) => column.key),
-    ["company", "answer"],
+    ["company", "answer", "later"],
   );
 });

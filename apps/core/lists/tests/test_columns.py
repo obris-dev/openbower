@@ -16,7 +16,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn, ListSummary
+from openbower_schema.lists import AiColumn, ListSummary, PlainColumn
 
 from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
 from ..models import Fill, ListCellState, ListRow, Node
@@ -68,10 +68,10 @@ class ColumnsViewTests(TestCase):
         self.assertEqual(added.key, "contact_email")
         self.assertEqual(added.label, "Contact Email")
         self.assertEqual(added.type, "email")
-        # Blank means blank: a plain column, ever. The add starts
-        # nothing, and a column that exists refuses an AI column that
-        # would land on the same key.
-        self.assertEqual(added.kind, "plain")
+        # Blank means blank: a plain column, never an AI one. The add
+        # starts nothing, and a column that exists refuses an AI column
+        # that would land on the same key.
+        self.assertIsInstance(added, PlainColumn)
         self.sheet.refresh_from_db()
         self.assertEqual([column.key for column in self.sheet.columns], ["company", "contact_email"])
 

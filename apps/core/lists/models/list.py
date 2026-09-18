@@ -11,13 +11,16 @@ class List(UserScopedModel):
     """A named SHEET with its own schema: `columns` is the contract's
     ListColumn values in display order (a JSON array of their dumps at
     rest, typed on both load and assignment by ListColumnsField); rows
-    carry data keyed by those columns. Content-agnostic on purpose: companies are one KIND of
-    content, and company-ness is a use-time interpretation of a column
-    (nothing here stores company references)."""
+    carry data keyed by those columns. Content-agnostic on purpose:
+    companies are one KIND of content, and company-ness is a use-time
+    interpretation of a column (nothing here stores company
+    references)."""
 
     folder_id = models.CharField(_("folder id"), max_length=26, blank=True, default="")
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
-    columns = ListColumnsField(_("columns"), default=list, help_text=_("[{key, label, type}] in display order"))
+    columns = ListColumnsField(
+        _("columns"), default=list, help_text=_("The contract's ListColumn dumps, in display order")
+    )
     origin = models.CharField(_("origin"), max_length=ORIGIN_MAX_LENGTH, help_text=_("ListOrigin"))
     origin_ref = models.CharField(
         _("origin ref"), max_length=64, blank=True, default="", help_text=_("e.g. the source run id")
