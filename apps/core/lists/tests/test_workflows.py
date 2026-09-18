@@ -16,6 +16,7 @@ from openbower_schema.agents import AgentOutput
 
 from ..models import Node, NodePath, NodeRun, Workflow
 from ..nodes.base import NodeConfig
+from ..nodes.column_agent import BENCH_IDENTITY
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from ..services.fill_admission import NoEligibleRows
@@ -73,7 +74,8 @@ class NodeGetOrCreateTests(AdmissionTestCase):
         second = self.workflows.get_or_create_bench_node()
         self.assertEqual(first.id, second.id)
         self.assertEqual(
-            (first.workflow_id, first.path_id, first.identity, first.config), ("", "", "", {"agent_id": ""})
+            (first.workflow_id, first.path_id, first.identity, first.config),
+            ("", "", BENCH_IDENTITY, {"agent_id": ""}),
         )
         self.assertEqual((NodePath.objects.count(), Workflow.objects.count()), (0, 0))
         # A sheet node for the same account is a different row: the
@@ -182,7 +184,7 @@ class ListDeleteTests(AdmissionTestCase):
 
 class PathTests(AdmissionTestCase):
     """The kind-blind path writers: configs built in memory, persisted
-    in rank order and bound to the path they land on."""
+    in rank order on the path they land on."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -195,14 +197,15 @@ class PathTests(AdmissionTestCase):
         webhook = Webhook(destination_id=destination_id, payload_keys=["company"], interval_seconds=3600)
         return [wait, webhook]
 
-    def test_create_path_stores_the_configs_in_rank_order_bound_to_the_new_path(self) -> None:
+    def test_create_path_stores_the_configs_in_rank_order_on_the_new_path(self) -> None:
         path, nodes = self.workflows.create_path(self.sheet, self._configs())
         self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (3, 2, 1))
+        # The path kinds carry no identity: the slot is the rank.
         self.assertEqual(
             [(n.kind, n.rank, n.path_id, n.identity) for n in nodes],
             [
-                (WaitUntil.KIND, 0, str(path.id), str(path.id)),
-                (Webhook.KIND, 1, str(path.id), str(path.id)),
+                (WaitUntil.KIND, 0, str(path.id), ""),
+                (Webhook.KIND, 1, str(path.id), ""),
             ],
         )
         self.assertEqual(config_as(nodes[0], WaitUntil).inbound_path_ids, [self.agent_node.path_id])
@@ -210,6 +213,18 @@ class PathTests(AdmissionTestCase):
         self.assertEqual(self.workflows.nodes_on_path(str(path.id)), nodes)
         # The agent node's path is untouched and still holds one node at 0.
         self.assertEqual([n.rank for n in self.workflows.nodes_on_path(self.agent_node.path_id)], [0])
+
+    def test_a_path_may_hold_several_webhook_nodes_and_a_workflow_several_paths(self) -> None:
+        # FAILS if a blank identity were still under the identity key:
+        # the second webhook node, and the second path's wait node,
+        # would collide on (account, workflow, kind, "").
+        wait, webhook = self._configs()
+        second = Webhook(destination_id="01DST" + "B" * 21, payload_keys=["company"])
+        path, nodes = self.workflows.create_path(self.sheet, [wait, webhook, second])
+        self.assertEqual([(n.kind, n.rank) for n in nodes], [(WaitUntil.KIND, 0), (Webhook.KIND, 1), (Webhook.KIND, 2)])
+        other, _ = self.workflows.create_path(self.sheet, self._configs())
+        self.assertNotEqual(other.id, path.id)
+        self.assertEqual(Node.objects.filter(kind=WaitUntil.KIND).count(), 2)
 
     def test_a_failed_node_write_rolls_the_path_back(self) -> None:
         # FAILS if create_path loses its transaction: the path survives.
@@ -232,7 +247,6 @@ class PathTests(AdmissionTestCase):
         replaced = self.workflows.replace_path_nodes(str(path.id), self._configs(destination_id="01DST" + "B" * 21))
         self.assertEqual([n.id for n in replaced], [n.id for n in nodes])
         self.assertEqual(config_as(replaced[1], Webhook).destination_id, "01DST" + "B" * 21)
-        self.assertEqual(replaced[1].identity, str(path.id))
         with self.assertRaises(WrongNodeKind):
             self.workflows.replace_path_nodes(str(path.id), self._configs()[:1])
 

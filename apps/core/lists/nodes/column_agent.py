@@ -11,6 +11,11 @@ from typing import ClassVar
 from .base import NodeConfig
 from .registry import COLUMN_AGENT, register
 
+# The bench node's identity: a fixed word, since it has no agent and a
+# blank identity would leave the account's one bench node out of the
+# get-or-create key.
+BENCH_IDENTITY = "bench"
+
 
 class ColumnAgent(NodeConfig):
     KIND: ClassVar[str] = COLUMN_AGENT
@@ -19,6 +24,8 @@ class ColumnAgent(NodeConfig):
     agent_id: str = ""
 
     def _identity(self) -> str:
+        if self.agent_id == "":
+            return BENCH_IDENTITY
         return self.agent_id
 
 

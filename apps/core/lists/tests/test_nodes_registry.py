@@ -20,14 +20,13 @@ from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH
 from ..models import Node
 from ..nodes import registry
 from ..nodes.base import NodeConfig
-from ..nodes.column_agent import ColumnAgent
+from ..nodes.column_agent import BENCH_IDENTITY, ColumnAgent
 from ..nodes.registry import COLUMN_AGENT, all_kinds, parse_config, register, validate_node_kinds
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from ..services.workflows import config_of
 
 AGENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-PATH_ID = "01PATH" + "A" * 20
 BOOT_ROSTER = sorted([COLUMN_AGENT, WaitUntil.KIND, Webhook.KIND])
 
 
@@ -110,30 +109,21 @@ class ConfigSeamTests(SimpleTestCase):
         self.assertEqual(config_of(node), config)
         self.assertEqual(ColumnAgent.model_validate(node.config), config)
 
-    def test_identity_is_the_agent_id_and_blank_for_the_bench(self):
+    def test_identity_is_the_agent_id_and_the_bench_word_for_the_bench(self):
         self.assertEqual(ColumnAgent(agent_id=AGENT_ID).identity(), AGENT_ID)
-        self.assertEqual(ColumnAgent().identity(), "")
+        # A real word, not blank: a blank identity sits outside the
+        # get-or-create key, and the bench is found through that key.
+        self.assertEqual(ColumnAgent().identity(), BENCH_IDENTITY)
 
-    def test_the_path_kinds_bind_their_identity_to_the_path_they_are_written_on(self):
+    def test_the_path_kinds_declare_no_identity(self):
         wait = WaitUntil(inbound_path_ids=["01UP" + "A" * 22])
         webhook = Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"])
-        # In memory, before a path exists, neither has an identity yet.
         self.assertEqual((wait.identity(), webhook.identity()), ("", ""))
-        bound_wait = wait.bound_to_path(PATH_ID)
-        bound_webhook = webhook.bound_to_path(PATH_ID)
-        self.assertEqual((bound_wait.identity(), bound_webhook.identity()), (PATH_ID, PATH_ID))
-        # A copy, never a mutation: the in-memory config stays unbound.
-        self.assertEqual(wait.path_id, "")
-        # The default binding leaves a kind whose identity is not its path alone.
-        agent = ColumnAgent(agent_id=AGENT_ID)
-        self.assertIs(agent.bound_to_path(PATH_ID), agent)
 
     def test_the_path_kinds_round_trip_through_the_registry(self):
         for config in (
-            WaitUntil(inbound_path_ids=["01UP" + "A" * 22], path_id=PATH_ID),
-            Webhook(
-                destination_id="01DST" + "A" * 21, payload_keys=["company"], interval_seconds=3600, path_id=PATH_ID
-            ),
+            WaitUntil(inbound_path_ids=["01UP" + "A" * 22]),
+            Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"], interval_seconds=3600),
         ):
             with self.subTest(kind=config.KIND):
                 node = Node(kind=config.KIND, config=config.model_dump())

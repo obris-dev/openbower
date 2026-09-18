@@ -18,10 +18,10 @@ agent_id_of over it); every caller that needs any of the three reads it
 here.
 
 Path persistence is KIND-BLIND: a caller builds typed configs in
-memory and hands them over in rank order; the writer creates the path,
-binds each config to it (NodeConfig.bound_to_path), and stores what the
-config says it is. What a webhook column's path looks like is that
-column's service's knowledge, not this module's.
+memory and hands them over in rank order; the writer creates the path
+and stores each config at its rank as what the config says it is. What
+a webhook column's path looks like is that column's service's
+knowledge, not this module's.
 """
 
 from __future__ import annotations
@@ -140,10 +140,9 @@ class WorkflowService:
 
     def create_path(self, target_list: List, nodes: Sequence[NodeConfig]) -> tuple[NodePath, list[Node]]:
         """A new path on the sheet's workflow holding `nodes` in order,
-        rank = position, each config bound to the path before it is
-        stored. One transaction, path FIRST: unlike get-or-create there
-        is no identity to race on, so a failed node write rolls the path
-        back with it."""
+        rank = position. One transaction, path FIRST: unlike
+        get-or-create there is no identity to race on, so a failed node
+        write rolls the path back with it."""
         with transaction.atomic():
             workflow = self.ensure_workflow(target_list)
             path = NodePath.objects.create(account_id=self.account_id, workflow_id=str(workflow.id))
@@ -154,25 +153,23 @@ class WorkflowService:
         return path, stored
 
     def _store(self, config: NodeConfig, *, rank: int, workflow_id: str, path_id: str) -> Node:
-        bound = config.bound_to_path(path_id)
         return Node.objects.create(
             account_id=self.account_id,
             workflow_id=workflow_id,
             path_id=path_id,
-            kind=bound.KIND,
-            identity=bound.identity(),
-            config=bound.model_dump(),
+            kind=config.KIND,
+            identity=config.identity(),
+            config=config.model_dump(),
             rank=rank,
         )
 
     def save_node(self, node: Node, config: NodeConfig) -> Node:
-        """A new config on an existing node, bound to the node's path.
-        A config of another kind is a caller bug, refused at the hop."""
+        """A new config on an existing node. A config of another kind
+        is a caller bug, refused at the hop."""
         if node.kind != config.KIND:
             raise WrongNodeKind(f"node {node.id} is {node.kind!r}, cannot hold a {config.KIND!r} config")
-        bound = config.bound_to_path(node.path_id)
-        node.identity = bound.identity()
-        node.config = bound.model_dump()
+        node.identity = config.identity()
+        node.config = config.model_dump()
         node.save(update_fields=["identity", "config", "updated_at"])
         return node
 

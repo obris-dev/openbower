@@ -16,7 +16,9 @@ class Node(AccountScopedModel):
     the dynamic read), never touched raw, so this generic row never names a
     kind's field. `identity` is the kind-declared projection of the
     config that makes get-or-create indexable: the one writer derives it
-    from the typed config, and nothing edits it.
+    from the typed config, and nothing edits it. A kind addressed by its
+    path and rank alone (a wait node, a webhook node) declares NO
+    identity and stores a blank one, which the identity key ignores.
 
     `rank` is the node's dense position on its path: a column_agent path
     holds one node at 0; a webhook column's path holds its wait node at
@@ -48,10 +50,13 @@ class Node(AccountScopedModel):
         verbose_name = _("node")
         verbose_name_plural = _("nodes")
         constraints = [
-            # The get-or-create key: a sheet node is (account, workflow,
-            # kind, identity); the bench node is (account, "", kind, "").
+            # The get-or-create key for kinds that declare an identity: a
+            # sheet node is (account, workflow, kind, identity); the bench
+            # node is (account, "", kind, bench). A blank identity is a
+            # kind that is never looked up this way, and stays out.
             models.UniqueConstraint(
                 fields=["account_id", "workflow_id", "kind", "identity"],
+                condition=~models.Q(identity=""),
                 name="node_identity_uniq",
             ),
             # One node per slot on a path; the bench node has no path.
