@@ -13,7 +13,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import CellStateWire, IngestColumn, WebhookCellState
+from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookCellState, WebhookColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -232,10 +232,10 @@ def ingest_schema_wire(target: List) -> dict[str, Any]:
     columns and may leave the AI ones blank for autofill, or send a value
     to pin its own (write-if-blank keeps it)."""
     columns = [
-        IngestColumn(key=c.key, label=c.label, type=c.type, autopopulated=c.fill is not None)
+        IngestColumn(key=c.key, label=c.label, type=c.type, autopopulated=isinstance(c, AiColumn))
         for c in target.columns
         # A webhook column holds no data: a producer never sends into it.
-        if c.webhook is None
+        if not isinstance(c, WebhookColumn)
     ]
     return WireIngestSchema(columns=columns).model_dump()
 
@@ -256,7 +256,7 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     column for autofill). Capped at MAX_INGEST_PROBLEMS."""
     from .services.lists import cells_for_storage
 
-    types = {column.key: column.type for column in target.columns if column.webhook is None}
+    types = {column.key: column.type for column in target.columns if not isinstance(column, WebhookColumn)}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):

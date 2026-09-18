@@ -14,7 +14,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from openbower_schema.lists import ColumnWebhook, ListColumn, WebhookCellState
+from openbower_schema.lists import AiColumn, WebhookCellState, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
@@ -115,8 +115,8 @@ class WebhookColumnService:
                 destination_id=destination_id, interval_seconds=interval_seconds, payload_keys=payload_keys
             )
             _path, nodes = self.workflows.create_path(target_list, [wait, webhook])
-            link = ColumnWebhook(node_id=str(nodes[1].id))
-            target_list.columns = [*target_list.columns, ListColumn(key=key, label=label, type="text", webhook=link)]
+            column = WebhookColumn(key=key, label=label, type="text", node_id=str(nodes[1].id))
+            target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
 
@@ -130,12 +130,12 @@ class WebhookColumnService:
         no entry and shows nothing. Nothing is sent before the flush,
         so waiting is the one word today; sent and failed join it then.
         One records read over the union of the waited-on columns."""
-        webhook_columns = [column for column in target_list.columns if column.webhook is not None]
+        webhook_columns = [column for column in target_list.columns if isinstance(column, WebhookColumn)]
         if not webhook_columns or not rows:
             return {}
         wait_keys_by_column: dict[str, list[str]] = {}
         for column in webhook_columns:
-            webhook_node = self.workflows.get_node(column.webhook.node_id)
+            webhook_node = self.workflows.get_node(column.node_id)
             wait_keys_by_column[column.key] = self._wait_keys(target_list, webhook_node)
         watched = {key for keys in wait_keys_by_column.values() for key in keys}
         row_ids = [str(row.id) for row in rows]
@@ -292,7 +292,7 @@ class WebhookColumnService:
             column = by_key.get(key)
             if column is None:
                 raise WebhookColumnUnknown(key)
-            if column.fill is None:
+            if not isinstance(column, AiColumn):
                 raise WebhookColumnNotAi(column.label)
         for key in payload_keys:
             if key not in by_key:
@@ -306,12 +306,12 @@ class WebhookColumnService:
         column = next((column for column in target_list.columns if column.key == key), None)
         if column is None:
             raise WebhookColumnUnknown(key)
-        if column.webhook is None:
+        if not isinstance(column, WebhookColumn):
             raise WebhookColumnNotWebhook(column.label)
-        return self.workflows.get_node(column.webhook.node_id)
+        return self.workflows.get_node(column.node_id)
 
     def _inbound_paths(self, target_list: List, wait_keys: list[str]) -> list[str]:
-        node_ids = [column.fill.node_id for column in target_list.columns if column.fill is not None]
+        node_ids = [column.node_id for column in target_list.columns if isinstance(column, AiColumn)]
         agent_nodes = Node.objects.filter(account_id=self.account_id, id__in=node_ids)
         path_by_node = {str(node.id): node.path_id for node in agent_nodes}
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)

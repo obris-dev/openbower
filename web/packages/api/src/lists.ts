@@ -14,7 +14,7 @@ import {
   FoldersListSchema,
   FolderSummarySchema,
   ImportResultSchema,
-  ListColumnSchema,
+  PlainColumnSchema,
   ListRowsPageSchema,
   ListsPageSchema,
   ListSummarySchema,
@@ -130,8 +130,10 @@ export type AiColumnBody = {
 // Column-type OPTIONS derive from the generated contract (a type
 // added or removed server-side reaches every consumer through the
 // regen, never through a hand-retyped list).
-export const COLUMN_TYPES = ListColumnSchema.shape.type.options;
-export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.ListColumn.label.maxLength;
+// Every kind shares the base's key, label, and type, so any one
+// kind's projection is the base's; plain is the kind with nothing else.
+export const COLUMN_TYPES = PlainColumnSchema.shape.type.options;
+export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.label.maxLength;
 export type ColumnType = ListColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the

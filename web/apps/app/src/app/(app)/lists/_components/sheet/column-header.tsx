@@ -9,7 +9,7 @@ import { useState } from "react";
 import { isNumericColumn, type ListColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
-import { columnKind, type ColumnKind } from "./lib/column-kind";
+import type { ColumnKind } from "./lib/column-kind";
 import { canMove, nudgeColumn } from "./lib/column-order";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";
@@ -221,7 +221,7 @@ export function ColumnHeader({
   onEditWebhook?: (column: ListColumn) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
-  const kind = columnKind(column);
+  const kind = column.kind;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: column.key,
     disabled: !onReorder,

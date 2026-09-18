@@ -66,7 +66,7 @@ def _make_list() -> str:
     lst = ListService(account_id=_ACCT).create(
         owner_id=TEST_IDENTITY["id"],
         label="webhook target",
-        columns=[{"key": "domain", "label": "Domain", "type": "url"}],
+        columns=[{"kind": "plain", "key": "domain", "label": "Domain", "type": "url"}],
         origin=ListOrigin.MANUAL,
     )
     return str(lst.id)
@@ -176,7 +176,7 @@ class IngestSessionTests(TestCase):
         login_session(self.client)
         self.list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "t", "columns": [{"key": "domain", "label": "Domain", "type": "url"}]},
+            {"label": "t", "columns": [{"kind": "plain", "key": "domain", "label": "Domain", "type": "url"}]},
             content_type="application/json",
         ).json()["id"]
 
@@ -207,9 +207,9 @@ class IngestValidationTests(TestCase):
                 owner_id=TEST_IDENTITY["id"],
                 label="typed target",
                 columns=[
-                    {"key": "domain", "label": "Domain", "type": "url"},
-                    {"key": "score", "label": "Score", "type": "number"},
-                    {"key": "rank", "label": "Rank", "type": "number", "fill": {"node_id": "01ND" + "A" * 22}},
+                    {"kind": "plain", "key": "domain", "label": "Domain", "type": "url"},
+                    {"kind": "plain", "key": "score", "label": "Score", "type": "number"},
+                    {"key": "rank", "label": "Rank", "type": "number", "kind": "ai", "node_id": "01ND" + "A" * 22},
                 ],
                 origin=ListOrigin.MANUAL,
             )

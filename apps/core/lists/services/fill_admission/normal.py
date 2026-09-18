@@ -192,10 +192,10 @@ class FillAdmissionService(AdmissionBase):
         The agent resolve and the model probe also run before the
         transaction entirely: network IO must not hold any of it."""
         peek = self._list_or_raise(list_id)
-        fill = require_fill_column(peek, column_key)
+        column = require_fill_column(peek, column_key)
         # A missing NODE raises as the corruption it is (nodes die only
         # with their list); a missing AGENT is the allowed orphaning.
-        node = self.workflows.get_node(fill.node_id)
+        node = self.workflows.get_node(column.node_id)
         try:
             agent = self.agents.get_for_fill(agent_id_of(node))
         except AgentNotFound as e:

@@ -15,7 +15,7 @@ from django.db.models import Value
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import ListColumn, derive_column_key
+from openbower_schema.lists import AiColumn, PlainColumn, WebhookColumn, derive_column_key
 
 from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
@@ -150,7 +150,7 @@ class ColumnService:
         with transaction.atomic():
             target_list = self._locked(target_list_id)
             key = claim_key(target_list, label=label)
-            target_list.columns = [*target_list.columns, ListColumn(key=key, label=label, type=column_type)]
+            target_list.columns = [*target_list.columns, PlainColumn(key=key, label=label, type=column_type)]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
 
@@ -239,8 +239,8 @@ class ColumnService:
                 raise ColumnNotFound(key)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
-            node_id = doomed.fill.node_id if doomed.fill is not None else ""
-            webhook_node_id = doomed.webhook.node_id if doomed.webhook is not None else ""
+            node_id = doomed.node_id if isinstance(doomed, AiColumn) else ""
+            webhook_node_id = doomed.node_id if isinstance(doomed, WebhookColumn) else ""
             workflows = WorkflowService(account_id=self.account_id)
             if node_id:
                 self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
@@ -297,7 +297,7 @@ class ColumnService:
         labels = [
             column.label
             for column in target_list.columns
-            if column.webhook is not None and column.webhook.node_id in webhook_node_ids
+            if isinstance(column, WebhookColumn) and column.node_id in webhook_node_ids
         ]
         if labels:
             raise ColumnWaitedOn(labels=labels)
@@ -352,7 +352,7 @@ class ColumnService:
         except List.DoesNotExist as e:
             raise ListNotFound(target_list_id) from e
         column = next((column for column in target_list.columns if column.key == column_key), None)
-        if column is None or column.fill is None:
+        if not isinstance(column, AiColumn):
             raise FillColumnNotFound(column_key)
-        node = WorkflowService(account_id=self.account_id).get_node(column.fill.node_id)
+        node = WorkflowService(account_id=self.account_id).get_node(column.node_id)
         return agents.get_for_fill(agent_id_of(node))

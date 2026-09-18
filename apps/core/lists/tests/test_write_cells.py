@@ -16,11 +16,11 @@ from lists.services.lists import ListNotFound, ListService, RowNotFound
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
 _COLUMNS = [
-    {"key": "name", "label": "Name", "type": "text"},
-    {"key": "employees", "label": "Employees", "type": "number"},
-    {"key": "revenue", "label": "Revenue", "type": "currency"},
-    {"key": "founded", "label": "Founded", "type": "date"},
-    {"key": "domain", "label": "Domain", "type": "url"},
+    {"kind": "plain", "key": "name", "label": "Name", "type": "text"},
+    {"kind": "plain", "key": "employees", "label": "Employees", "type": "number"},
+    {"kind": "plain", "key": "revenue", "label": "Revenue", "type": "currency"},
+    {"kind": "plain", "key": "founded", "label": "Founded", "type": "date"},
+    {"kind": "plain", "key": "domain", "label": "Domain", "type": "url"},
 ]
 
 

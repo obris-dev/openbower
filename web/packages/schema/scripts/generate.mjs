@@ -79,6 +79,13 @@ const parserOverride = (schema) => {
   if (schema && typeof schema.$ref === "string") {
     return `z.lazy(() => ${constName(schema)})`;
   }
+  // (3) a discriminated union (pydantic emits oneOf + discriminator)
+  //     becomes a plain z.union of its members: the library's own oneOf
+  //     rendering is an untyped refinement (z.any), which would erase
+  //     the inferred type every consumer narrows on.
+  if (Array.isArray(schema?.oneOf) && schema.discriminator) {
+    return `z.union([${schema.oneOf.map((member) => parserOverride(member) ?? jsonSchemaToZod(member, { module: "none", type: false, parserOverride })).join(", ")}])`;
+  }
   if (schema?.type === "string" && schema.format === "date-time") {
     return "z.iso.datetime({ offset: true })";
   }

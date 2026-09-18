@@ -8,7 +8,7 @@ company behavior interprets a chosen column's values at use time.
 from __future__ import annotations
 
 import re
-from typing import Literal, get_args
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -51,47 +51,57 @@ def derive_column_key(label: str, *, key: str = "") -> str:
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 
-class ColumnFill(BaseModel):
-    """A column's fill linkage: present exactly on AI columns. The
-    column binds to the NODE that fills it; the agent, and its
-    ephemeral-vs-roster custody, hangs off the node."""
+class ColumnBase(BaseModel):
+    """What every column has, whichever kind it is. The kinds below
+    are ONE discriminated union: a column is exactly one of them by
+    construction, so a reader narrows on `kind` and nothing has to
+    rule out a column that is two things at once."""
 
-    node_id: str = Field(
-        description="The node that fills this column (today, always an agent bound to this sheet). "
-        "Per-row work keys on it; the agent hangs off the node, so editing what fills a "
-        "column goes through the column, never this id.",
-    )
-    current_fill_id: str = Field(
-        default="",
-        description="The fill run that speaks for this column, stored here when it opens. "
-        "Blank on a column filled before it was recorded. Clients read it off "
-        "ColumnFillSummary, which the fills poll serves; it is declared here because "
-        "this model is what the column's own structure is, and an undeclared key is "
-        "dropped on every list read.",
-    )
-
-
-class ColumnWebhook(BaseModel):
-    """A column's webhook linkage: present exactly on Send webhook
-    columns. The column binds to the webhook NODE at rank 1 of its own
-    path (the wait node at rank 0 names the paths it waits on); the
-    column holds no row data, its cells show delivery state."""
-
-    node_id: str = Field(
-        description="The webhook node this column is; its config and the wait node's hang off the path."
-    )
-
-
-class ListColumn(BaseModel):
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
     label: str = Field(
         max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label, as the user (or the CSV header) wrote it."
     )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
-    fill: ColumnFill | None = Field(default=None, description="Present exactly on AI columns.")
-    webhook: ColumnWebhook | None = Field(
-        default=None, description="Present exactly on Send webhook columns; never together with fill."
+
+
+class PlainColumn(ColumnBase):
+    """A column the user or an import fills by hand."""
+
+    kind: Literal["plain"] = "plain"
+
+
+class AiColumn(ColumnBase):
+    """A column an agent fills. The column binds to the NODE that fills
+    it; the agent, and its ephemeral-vs-roster custody, hangs off the
+    node, so editing what fills a column goes through the column,
+    never this id."""
+
+    kind: Literal["ai"] = "ai"
+    node_id: str = Field(description="The node that fills this column (an agent bound to this sheet).")
+    current_fill_id: str = Field(
+        default="",
+        description="The fill run that speaks for this column, stored here when it opens. "
+        "Read by the poll (the tracker follows this run, not the newest), never walked back "
+        "from the runs. Blank until the first run opens.",
     )
+
+
+class WebhookColumn(ColumnBase):
+    """A Send webhook column. It IS the webhook node at rank 1 of its
+    own path (the wait node at rank 0 names the paths it waits on); the
+    column holds no row data, its cells show delivery state."""
+
+    kind: Literal["webhook"] = "webhook"
+    node_id: str = Field(
+        description="The webhook node this column is; its config and the wait node's hang off the path."
+    )
+
+
+# A named alias (PEP 695) so the union is ONE definition in the contract
+# document, referenced by every model that carries columns, rather than
+# inlined at each use.
+type ListColumn = Annotated[PlainColumn | AiColumn | WebhookColumn, Field(discriminator="kind")]
+ColumnKind = Literal["plain", "ai", "webhook"]
 
 
 class IngestColumn(BaseModel):

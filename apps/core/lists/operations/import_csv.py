@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 
 from openbower_kernel.domains import normalize_domain
-from openbower_schema.lists import derive_column_key
+from openbower_schema.lists import PlainColumn, derive_column_key
 
 from ..constants import (
     COLUMN_KEY_MAX_LENGTH,
@@ -149,7 +149,7 @@ def parse_csv(raw: bytes) -> tuple[list[dict], list[dict], int]:
             raise CsvTooLarge(f"a list holds at most {MAX_LIST_ROWS} rows")
 
     columns = [
-        {"key": key, "label": label or key, "type": infer_type([r[key] for r in rows])}
+        PlainColumn(key=key, label=label or key, type=infer_type([r[key] for r in rows]))
         for key, label in zip(keys, labels, strict=True)
     ]
     return columns, rows, skipped

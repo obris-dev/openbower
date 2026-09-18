@@ -22,7 +22,15 @@ from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
-from openbower_schema.lists import FoldersList, ImportResult, IngestAccepted, ListRowsPage, ListsPage, RowsAdded
+from openbower_schema.lists import (
+    FoldersList,
+    ImportResult,
+    IngestAccepted,
+    ListRowsPage,
+    ListsPage,
+    PlainColumn,
+    RowsAdded,
+)
 from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
 from webhooks.serializers import delivery_model
@@ -162,7 +170,10 @@ class ListsView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         target_list = self.lists.create(
-            owner_id=self.request.user.id, label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL
+            owner_id=self.request.user.id,
+            label=data["label"],
+            columns=[PlainColumn(**column) for column in data["columns"]],
+            origin=ListOrigin.MANUAL,
         )
         return Response(list_wire(target_list), status=201)
 

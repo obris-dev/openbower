@@ -29,7 +29,7 @@ class ListsViewsTests(TestCase):
     def test_create_index_detail_rename_delete(self):
         created = self.client.post(
             reverse("lists_index"),
-            {"label": "My sheet", "columns": [{"key": "a", "label": "A", "type": "text"}]},
+            {"label": "My sheet", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         )
         self.assertEqual(created.status_code, 201)
@@ -58,9 +58,9 @@ class ListsViewsTests(TestCase):
             owner_id=TEST_IDENTITY["id"],
             label="Push target",
             columns=[
-                {"key": "company", "label": "Company", "type": "url"},
-                {"key": "contact", "label": "Contact", "type": "text"},
-                {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": "01ND" + "A" * 22}},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "url"},
+                {"kind": "plain", "key": "contact", "label": "Contact", "type": "text"},
+                {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": "01ND" + "A" * 22},
             ],
             origin=ListOrigin.MANUAL,
         )
@@ -79,7 +79,7 @@ class ListsViewsTests(TestCase):
         # deleted in another tab.
         list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "Movable", "columns": [{"key": "a", "label": "A", "type": "text"}]},
+            {"label": "Movable", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         ).json()["id"]
         resp = self.client.patch(
@@ -92,7 +92,7 @@ class ListsViewsTests(TestCase):
     def test_rows_append_and_keyset_page(self):
         list_id = self.client.post(
             reverse("lists_index"),
-            {"label": "Rows", "columns": [{"key": "a", "label": "A", "type": "text"}]},
+            {"label": "Rows", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
             content_type="application/json",
         ).json()["id"]
         added = self.client.post(
@@ -147,7 +147,7 @@ class FoldersViewsTests(TestCase):
         for n in range(3):
             list_id = self.client.post(
                 reverse("lists_index"),
-                {"label": f"Sheet {n}", "columns": [{"key": "a", "label": "A", "type": "text"}]},
+                {"label": f"Sheet {n}", "columns": [{"kind": "plain", "key": "a", "label": "A", "type": "text"}]},
                 content_type="application/json",
             ).json()["id"]
             self.client.patch(

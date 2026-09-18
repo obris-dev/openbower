@@ -42,6 +42,7 @@ from lists.services.lists import ListNotFound, ListService, ListsFull
 from openbower_kernel.domains import normalize_domain
 from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import LookalikeListResponse
+from openbower_schema.lists import PlainColumn
 
 from .constants import (
     MAX_INLINE_DOMAINS,
@@ -249,12 +250,12 @@ class LookalikeRunSaveListView(ScopedView):
     target answers 409."""
 
     _COLUMNS = [
-        {"key": "domain", "label": "Domain", "type": ColumnType.URL},
-        {"key": "name", "label": "Name", "type": ColumnType.TEXT},
-        {"key": "industry", "label": "Industry", "type": ColumnType.TEXT},
-        {"key": "size", "label": "Size", "type": ColumnType.TEXT},
-        {"key": "score", "label": "Score", "type": ColumnType.NUMBER},
-        {"key": "group", "label": "Group", "type": ColumnType.TEXT},
+        PlainColumn(key="domain", label="Domain", type=ColumnType.URL),
+        PlainColumn(key="name", label="Name", type=ColumnType.TEXT),
+        PlainColumn(key="industry", label="Industry", type=ColumnType.TEXT),
+        PlainColumn(key="size", label="Size", type=ColumnType.TEXT),
+        PlainColumn(key="score", label="Score", type=ColumnType.NUMBER),
+        PlainColumn(key="group", label="Group", type=ColumnType.TEXT),
     ]
 
     def post(self, request, id: str) -> Response:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, ColumnFill, ListColumn
+from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, AiColumn, ListColumn
 
 from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS
 from ...models import Fill, List
@@ -145,14 +145,13 @@ def check_account_cap(account_id: str, *, opening: str = "") -> None:
         raise AccountFillsFull()
 
 
-def require_fill_column(target_list: List, column_key: str) -> ColumnFill:
-    """The named column's fill member, or the 404-shaped refusal
-    (a column the sheet does not have, or a plain one, is not a
-    refill target)."""
+def require_fill_column(target_list: List, column_key: str) -> AiColumn:
+    """The named AI column, or the 404-shaped refusal (a column the
+    sheet does not have, or a plain one, is not a refill target)."""
     column = next((column for column in target_list.columns if column.key == column_key), None)
-    if column is None or column.fill is None:
+    if not isinstance(column, AiColumn):
         raise FillColumnNotFound(column_key)
-    return column.fill
+    return column
 
 
 def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[str] = frozenset()) -> list[str]:
@@ -173,7 +172,7 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
         claimed[key] = output.label
         keys.append(key)
     stored_types = {column.key: column.type for column in target_list.columns}
-    filled_keys = {column.key for column in target_list.columns if column.fill is not None}
+    filled_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
     outputs_by_key = {output.key: output for output in config.outputs}
     for key in keys:
         # `owned` is what the caller has already established it may
@@ -233,13 +232,16 @@ def append_columns(
     every later one TYPE_MISMATCH. Resolution refuses the case
     rather than choosing which way to be wrong."""
     outputs_by_key = {output.key: output for output in config.outputs}
-    link = ColumnFill(node_id=node_id, current_fill_id=fill_run_id)
     columns: list[ListColumn] = []
     existing = {column.key for column in target_list.columns}
     for column in target_list.columns:
         output = outputs_by_key.get(column.key)
         if output is not None and column.key in column_keys:
-            column = column.model_copy(update={"fill": link})
+            # A plain column becomes an AI column; an AI column is
+            # re-pointed at this run.
+            column = AiColumn(
+                key=column.key, label=column.label, type=column.type, node_id=node_id, current_fill_id=fill_run_id
+            )
         columns.append(column)
     for key in column_keys:
         if key in existing:
@@ -249,6 +251,14 @@ def append_columns(
         # upstream; this is the write-side backstop).
         existing.add(key)
         output = outputs_by_key[key]
-        columns.append(ListColumn(key=key, label=output.label[:COLUMN_LABEL_MAX_LENGTH], type=output.type, fill=link))
+        columns.append(
+            AiColumn(
+                key=key,
+                label=output.label[:COLUMN_LABEL_MAX_LENGTH],
+                type=output.type,
+                node_id=node_id,
+                current_fill_id=fill_run_id,
+            )
+        )
     target_list.columns = columns
     target_list.save(update_fields=["columns", "updated_at"])

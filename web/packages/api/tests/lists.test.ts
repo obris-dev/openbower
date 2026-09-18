@@ -348,7 +348,7 @@ const SUMMARY = {
   id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
   label: "Prospects",
   folder_id: "",
-  columns: [{ key: "crm_sync", label: "CRM sync", type: "text", fill: null, webhook: { node_id: "01NODE" } }],
+  columns: [{ key: "crm_sync", label: "CRM sync", type: "text", kind: "webhook" as const, node_id: "01NODE" }],
   row_count: 0,
   origin: "manual",
   created_at: "2026-01-01T00:00:00Z",
@@ -387,7 +387,11 @@ test("postColumnWebhook posts the config with its label and parses the summary w
   const body = { label: "CRM sync", destination_id: "01DST", wait_keys: ["answer"], payload_keys: ["company"], interval_seconds: 3600 };
   const res = await postColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", body);
   assert.equal(res.status, "ok");
-  if (res.status === "ok") assert.equal(res.data.columns[0]!.webhook?.node_id, "01NODE");
+  if (res.status === "ok") {
+    const column = res.data.columns[0]!;
+    assert.equal(column.kind, "webhook");
+    assert.equal(column.kind === "webhook" ? column.node_id : null, "01NODE");
+  }
   assert.ok(calls[0]!.url.endsWith("/columns/webhook"));
   assert.equal(calls[0]!.init.method, "POST");
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), body);

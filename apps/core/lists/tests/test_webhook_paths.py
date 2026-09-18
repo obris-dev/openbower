@@ -16,10 +16,10 @@ PATH_A = "01PTA" + "A" * 21
 PATH_B = "01PTB" + "B" * 21
 COLUMNS = parse_columns(
     [
-        {"key": "company", "label": "Company", "type": "text"},
-        {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": NODE_A}},
-        {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": NODE_A}},
-        {"key": "country", "label": "Country", "type": "text", "fill": {"node_id": NODE_B}},
+        {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+        {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": NODE_A},
+        {"key": "score", "label": "Score", "type": "text", "kind": "ai", "node_id": NODE_A},
+        {"key": "country", "label": "Country", "type": "text", "kind": "ai", "node_id": NODE_B},
     ]
 )
 PATH_BY_NODE = {NODE_A: PATH_A, NODE_B: PATH_B}
