@@ -15,7 +15,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from lists.constants import FillErrorCode, StoredCellState, WebhookColumnErrorCode
+from lists.constants import CellSource, FillErrorCode, StoredCellState, WebhookColumnErrorCode
 from lists.models import Node, NodePath
 from lists.nodes.wait_until import WaitUntil
 from lists.nodes.webhook import Webhook
@@ -193,6 +193,7 @@ class WebhookColumnTests(TestCase):
             config_fingerprint="",
             states={"country": StoredCellState.FILLED},
             tools={},
+            source=CellSource.FILL,
         )
         fake = _FakeSender()
         body = {
@@ -228,6 +229,7 @@ class WebhookColumnTests(TestCase):
             config_fingerprint="",
             states=states,
             tools={},
+            source=CellSource.FILL,
         )
 
     def test_rows_read_waiting_only_once_every_waited_on_column_is_done(self):

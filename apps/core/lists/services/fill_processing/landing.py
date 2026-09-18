@@ -26,7 +26,7 @@ from django.db import transaction
 
 from openbower_schema.fills import CellRunResult
 
-from ...constants import StoredCellState
+from ...constants import CellSource, StoredCellState
 from ...models import Fill
 from .. import cell_truth
 from ..lists import ListService
@@ -139,6 +139,7 @@ def land_row(
                 config_fingerprint=ctx.config_fingerprint,
                 states=states,
                 tools=run.tools,
+                source=CellSource.FILL,
             )
     except ClaimLost:
         return None

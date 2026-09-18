@@ -15,7 +15,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from lists.constants import CELL_MAX_LENGTH, StoredCellState, WebhookColumnErrorCode
+from lists.constants import CELL_MAX_LENGTH, CellSource, StoredCellState, WebhookColumnErrorCode
 from lists.services import cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
@@ -63,6 +63,7 @@ class ColumnWebhookTestTests(TestCase):
             config_fingerprint="",
             states=states,
             tools={},
+            source=CellSource.FILL,
         )
 
     def _post(self, route: str = "lists_columns_webhook_test", **overrides):

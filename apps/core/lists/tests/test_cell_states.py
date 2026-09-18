@@ -32,6 +32,7 @@ class CellStateScopingTests(TestCase):
             config_fingerprint="fp",
             states={"answer": StoredCellState.FILLED},
             tools={},
+            source=CellSource.FILL,
         )
         self.mine = CellStateService(account_id=self.account_id)
         self.theirs = CellStateService(account_id="01ACCT" + "Z" * 20)
@@ -62,7 +63,12 @@ class CellSourceTests(TestCase):
         [row] = lists.add_rows(sheet, [{"company": "acme.com"}])
         write = {"account_id": TEST_IDENTITY["account_id"], "list_id": str(sheet.id), "row_id": str(row.id)}
         cell_truth.write(
-            **write, fill_run_id=None, config_fingerprint="", states={"answer": StoredCellState.FILLED}, tools={}
+            **write,
+            fill_run_id=None,
+            config_fingerprint="",
+            states={"answer": StoredCellState.FILLED},
+            tools={},
+            source=CellSource.FILL,
         )
         record = ListCellState.objects.get(list_id=str(sheet.id), column_key="answer")
         self.assertEqual(record.source, CellSource.FILL)
@@ -78,7 +84,12 @@ class CellSourceTests(TestCase):
         self.assertEqual(record.source, CellSource.MANUAL)
         # And a fill writing over it takes the cell back.
         cell_truth.write(
-            **write, fill_run_id=None, config_fingerprint="", states={"answer": StoredCellState.FILLED}, tools={}
+            **write,
+            fill_run_id=None,
+            config_fingerprint="",
+            states={"answer": StoredCellState.FILLED},
+            tools={},
+            source=CellSource.FILL,
         )
         record.refresh_from_db()
         self.assertEqual(record.source, CellSource.FILL)

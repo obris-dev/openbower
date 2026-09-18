@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
+from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..models import Fill, ListRow, Node, NodeRun
 from ..services import cell_truth
 from ..services.lists import ListService
@@ -83,6 +83,7 @@ def settle(
             config_fingerprint=fill.config_fingerprint,
             states=states,
             tools=tools or {},
+            source=CellSource.FILL,
         )
 
 

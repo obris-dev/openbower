@@ -40,7 +40,7 @@ def write(
     config_fingerprint: str,
     states: dict[str, StoredCellState],
     tools: dict[str, str],
-    source: CellSource = CellSource.FILL,
+    source: CellSource,
 ) -> None:
     """One row's cell states, written inside the terminal transaction
     that also writes the sheet row and closes the task.
@@ -60,8 +60,10 @@ def write(
     NEVER ATTEMPTED and nothing else. `tools` is the run's per-tool
     provider statuses, the same on every column of the row: a filled cell
     keeps the record of a degraded tool beside its value. `source` says
-    who wrote it: every caller today is a fill; the grid's edit path
-    will write MANUAL once it exists, and completion reads both alike."""
+    who wrote it, and every caller says so (no default: a writer that
+    did not think about attribution should not compile). Every caller
+    today is a fill; the grid's edit path will write MANUAL once it
+    exists, and completion reads both alike."""
     if not states:
         return
     ListCellState.objects.bulk_create(
