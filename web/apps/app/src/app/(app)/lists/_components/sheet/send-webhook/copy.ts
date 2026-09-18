@@ -3,7 +3,24 @@
 // same thing. "Send webhook" and "destination" are the terms this
 // audience already uses for the thing, so they stay.
 
-export const LEDE = "Pick a destination and the columns to wait for, then send one row as a test.";
+export const ADD_TITLE = "Send webhook";
+export const EDIT_TITLE = "Edit webhook";
+export const LEDE = "Pick a destination and the columns to wait for, then add the column or send one row as a test.";
+export const EDIT_LEDE = "Change where this column sends, what it waits for, and what rides along.";
+export const COLUMN_NAME_LABEL = "Column name";
+export const COLUMN_NAME_PLACEHOLDER = "CRM sync";
+export const GAP_COLUMN_NAME = "Name this column.";
+export const CADENCE_LABEL = "Send every";
+export const CADENCE_HINT = "Rows that complete are batched and sent on this schedule.";
+export const ENABLED_LABEL = "Sending";
+export const ENABLED_HINT = "Paused keeps the column and its settings; nothing is sent until it is resumed.";
+export const ADD_COLUMN_ACTION = "Add column";
+export const SAVE_ACTION = "Save changes";
+export const SEND_TEST_ACTION = "Send test";
+export const CONFIG_FAILED_LINE = "This webhook's settings did not load.";
+export const RETRY = "Retry";
+export const PREVIEW_WAITING_LINE = "Choose a destination and the columns to wait for to see the payload.";
+export const PREVIEW_FAILED_LINE = "The payload preview did not load.";
 
 export const WAIT_LEGEND = "Send once these columns complete";
 export const WAIT_HINT =
@@ -11,7 +28,7 @@ export const WAIT_HINT =
 
 export const PREVIEW_LEGEND = "What your receiver gets";
 export const PREVIEW_HINT =
-  "One row, as the test will send it. Edit a value in place; only the cells shown are sent, normalized to their column's type. Switching rows replaces your edits.";
+  "One row, as a test will send it. Edit a value in place; only the cells shown are sent. Switching rows replaces your edits.";
 export const SENT_HINT = "What your receiver got, exactly as sent.";
 export const NOT_SENT_LINE = "Not yet sent";
 export const EXAMPLE_PAYLOAD_TITLE = "Example payload";
@@ -26,6 +43,10 @@ export const DESTINATIONS_LOADING_LINE = "Loading destinations…";
 export const DESTINATIONS_FAILED_LINE = "Destinations did not load.";
 export const DESTINATION_PLACEHOLDER = "Destination…";
 export const NO_ROWS_LINE = "Add rows to this sheet to send a sample.";
+
+export const WEBHOOK_CELL_WORD = "Waiting";
+export const EDIT_WEBHOOK_VERB = "Edit webhook";
+export const DELETE_WEBHOOK_COLUMN_CONSEQUENCE = "This stops sending; nothing else changes.";
 
 export const GAP_DESTINATION = "Choose a destination.";
 export const GAP_WAIT = "Choose at least one column to wait for.";

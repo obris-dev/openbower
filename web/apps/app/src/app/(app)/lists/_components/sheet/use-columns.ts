@@ -4,17 +4,22 @@ import { useCallback, useRef, useState } from "react";
 import { useToast } from "@bower/ui";
 import {
   COLUMN_ORDER_STALE_CODE,
+  COLUMN_WAITED_ON_CODE,
   ROW_COUNT_CHANGED_CODE,
   deleteColumn,
   fetchList,
   postAiColumn,
   postColumn,
+  postColumnWebhook,
   renameColumn,
   reorderColumns,
+  updateColumnWebhook,
   updateList,
   type ColumnType,
   type ListColumn,
   type ListSummary,
+  type WebhookColumnBody,
+  type WebhookColumnPatchBody,
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
@@ -42,8 +47,10 @@ export function useColumns(initialDetail: ListSummary): {
   pendingColumn: { type: ColumnType } | null;
   reorder: (keys: string[]) => Promise<void>;
   rename: (key: string, label: string) => Promise<void>;
-  remove: (column: ListColumn) => Promise<boolean>;
+  remove: (column: ListColumn) => Promise<ColumnOutcome>;
   addAi: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  addWebhook: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
+  saveWebhook: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
   refreshDetail: () => Promise<void>;
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
@@ -140,17 +147,50 @@ export function useColumns(initialDetail: ListSummary): {
     [detail, toast],
   );
 
-  // Confirmed in the menu panel that asked, so this just does it. True
+  // Confirmed in the menu panel that asked, so this just does it. Ok
   // when the column is gone (its values went with it, which the caller
-  // reflects in the rows it holds).
+  // reflects in the rows it holds). A refusal in use (a webhook column
+  // waits on it) comes BACK as the outcome so the tier that asked
+  // renders the server's sentence in place; any other failure toasts
+  // here and returns an empty outcome, so the tier folds.
   const remove = useCallback(
-    async (column: ListColumn): Promise<boolean> => {
+    async (column: ListColumn): Promise<ColumnOutcome> => {
       const res = await deleteColumn(detail.id, column.key);
-      if (!ensureOk(res, toast, { title: "Column not deleted" })) return false;
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") {
+        if (res.code === COLUMN_WAITED_ON_CODE) return { ok: false, error: res.code, detail: res.message };
+        toast.error(res.message, "Column not deleted");
+        return LEAVING;
+      }
       setDetail(res.data);
-      return true;
+      return { ok: true };
     },
     [detail.id, toast],
+  );
+
+  // The webhook add echoes the summary (the column is a structural
+  // write, nothing starts), so the new column renders straight from
+  // the response; a save rewrites the nodes and echoes nothing the
+  // summary shows.
+  const addWebhook = useCallback(
+    async (body: WebhookColumnBody): Promise<ColumnOutcome> => {
+      const res = await postColumnWebhook(detail.id, body);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
+      setDetail(res.data);
+      return { ok: true };
+    },
+    [detail.id],
+  );
+
+  const saveWebhook = useCallback(
+    async (key: string, body: WebhookColumnPatchBody): Promise<ColumnOutcome> => {
+      const res = await updateColumnWebhook(detail.id, key, body);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
+      return { ok: true };
+    },
+    [detail.id],
   );
 
   // The blank add starts nothing: the 200 body IS the updated summary,
@@ -209,5 +249,18 @@ export function useColumns(initialDetail: ListSummary): {
     [detail.id, toast],
   );
 
-  return { detail, pendingColumn, reorder, rename, remove, addAi, refreshDetail, startPending, namePending, renameList };
+  return {
+    detail,
+    pendingColumn,
+    reorder,
+    rename,
+    remove,
+    addAi,
+    addWebhook,
+    saveWebhook,
+    refreshDetail,
+    startPending,
+    namePending,
+    renameList,
+  };
 }

@@ -22,11 +22,13 @@ import {
   webRoutes,
   type RenderableListRowsPage,
   type ListSummary,
+  type WebhookColumnBody,
+  type WebhookColumnPatchBody,
 } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { AddColumnMenuItems, type ColumnKind } from "./add-column";
+import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { UseAiDrawer, type AiColumnPayload } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
@@ -67,7 +69,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // Add column menu), so half-open states are unrepresentable and the
   // two drawers (the AI column, the Send webhook column) can never be
   // open together.
-  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook" } | null>(null);
+  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: ListColumn | null } | null>(
+    null,
+  );
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
@@ -132,13 +136,18 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // Only the AI kind keeps the drawer, where a prompt, a model,
   // outputs and tools have to be chosen; a plain column is named in
   // the grid.
-  function openAddColumn(kind: ColumnKind) {
+  function openAddColumn(kind: AddColumnKind) {
     if (kind !== "ai" && kind !== "webhook") {
       columns.startPending(kind);
       return;
     }
     addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setOpenDrawer({ kind });
+    setOpenDrawer(kind === "ai" ? { kind } : { kind, column: null });
+  }
+  // The same drawer on an existing webhook column, prefilled from its config.
+  function openEditWebhook(column: ListColumn) {
+    addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpenDrawer({ kind: "webhook", column });
   }
   function closeAddColumn() {
     setOpenDrawer(null);
@@ -146,11 +155,29 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     addColumnInvokerRef.current = null;
   }
 
-  async function removeColumn(column: ListColumn) {
-    if (!(await columns.remove(column))) return;
+  async function removeColumn(column: ListColumn): Promise<ColumnOutcome> {
+    const outcome = await columns.remove(column);
+    if (!outcome.ok) return outcome;
     // The values left with the column, so the loaded rows still
     // carry a key the sheet no longer has a header for.
     await refreshLoaded();
+    return outcome;
+  }
+
+  // The webhook column is a structural write: nothing starts and no
+  // row changes, so the summary echo is the whole reaction.
+  async function submitWebhookColumn(body: WebhookColumnBody): Promise<ColumnOutcome> {
+    const outcome = await columns.addWebhook(body);
+    if (!outcome.ok) return outcome;
+    closeAddColumn();
+    router.refresh();
+    return outcome;
+  }
+
+  async function saveWebhookColumn(key: string, body: WebhookColumnPatchBody): Promise<ColumnOutcome> {
+    const outcome = await columns.saveWebhook(key, body);
+    if (outcome.ok) closeAddColumn();
+    return outcome;
   }
 
   async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
@@ -326,7 +353,10 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
       />
       <SendWebhookDrawer
         open={openDrawer?.kind === "webhook"}
+        column={openDrawer?.kind === "webhook" ? openDrawer.column : null}
         onClose={closeAddColumn}
+        onAdd={submitWebhookColumn}
+        onSave={saveWebhookColumn}
         onAddAiColumn={() => {
           closeAddColumn();
           openAddColumn("ai");
@@ -355,6 +385,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
           onReorder={columns.reorder}
           onRenameColumn={columns.rename}
           onDeleteColumn={removeColumn}
+          onEditWebhook={openEditWebhook}
           pendingColumn={columns.pendingColumn}
           onNamePending={(label) => void columns.namePending(label)}
         />

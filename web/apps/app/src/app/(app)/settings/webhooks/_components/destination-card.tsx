@@ -4,6 +4,7 @@ import Link from "next/link";
 import { webRoutes, type RenderableDestination } from "@bower/api";
 
 import { deliveryRead, hostOf, TONE_CLASS } from "../../../_components/webhook-delivery";
+import { usageLine } from "./copy";
 
 /** One destination on the roster: name, host, its header names, and
  * how its newest delivery went. The whole card links to the detail. */
@@ -22,6 +23,9 @@ export function DestinationCard({ destination }: { destination: RenderableDestin
           )}
         </div>
         <p className="truncate text-xs text-muted">{hostOf(destination.url)}</p>
+        {usageLine(destination.column_count) && (
+          <p className="text-xs text-faint">{usageLine(destination.column_count)}</p>
+        )}
         {destination.header_names.length > 0 && (
           <p className="truncate text-xs text-faint">Headers: {destination.header_names.join(" | ")}</p>
         )}

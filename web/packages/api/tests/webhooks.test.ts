@@ -9,6 +9,7 @@ import {
   UNKNOWN_DELIVERY_STATUS,
   WEBHOOK_HEADER_NAME_GRAMMAR,
   WEBHOOK_HEADER_VALUE_GRAMMAR,
+  rotateWebhook,
 } from "../src/webhooks.ts";
 
 const DELIVERY = {
@@ -62,4 +63,34 @@ test("the header grammar and the reserved set come off the contract, never hand-
   assert.ok(RESERVED_WEBHOOK_HEADER_NAMES.includes("webhook-signature"));
   assert.ok(RESERVED_WEBHOOK_HEADER_NAMES.includes("content-type"));
   assert.ok(MAX_WEBHOOK_HEADERS > 0);
+});
+
+test("rotateWebhook posts to the rotate route and parses the secret shown once", async (t) => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return new Response(
+      JSON.stringify({ destination: { ...DESTINATION, rotated_at: "2026-09-18T12:00:00+00:00", column_count: 2 }, signing_secret: "whsec_new" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  const res = await rotateWebhook("01DST");
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    assert.equal(res.data.signing_secret, "whsec_new");
+    assert.equal(res.data.destination.column_count, 2);
+    assert.equal(res.data.destination.rotated_at, "2026-09-18T12:00:00+00:00");
+  }
+  assert.ok(calls[0]!.url.endsWith("/webhooks/01DST/rotate"));
+  assert.equal(calls[0]!.init.method, "POST");
+});
+
+test("a destination from before rotation and usage counts parses with their defaults", () => {
+  const parsed = TolerantWebhookDestinationWireSchema.parse(DESTINATION);
+  assert.equal(parsed.rotated_at, null);
+  assert.equal(parsed.column_count, 0);
 });

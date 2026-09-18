@@ -64,7 +64,7 @@ export function PayloadLines({ lines, cells }: { lines: PreviewLine[]; cells: Ce
           <div
             key={index}
             style={{ paddingLeft: line.depth * INDENT_PX }}
-            className={line.placeholder ? "flex items-center italic text-faint" : "flex items-center gap-1"}
+            className="flex items-center gap-1"
           >
             {line.add ? (
               <IncludeColumn cells={{ ...cells, onAdd: include }} />

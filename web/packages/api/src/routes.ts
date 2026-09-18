@@ -54,6 +54,8 @@ export const apiRoutes = {
     detail: (id: string) => `/${API_VERSION}/webhooks/${id}`,
     // POST: one signed test delivery, sent now; 200 with the delivery.
     test: (id: string) => `/${API_VERSION}/webhooks/${id}/test`,
+    // POST: a new signing secret, shown once (the create response's shape).
+    rotate: (id: string) => `/${API_VERSION}/webhooks/${id}/rotate`,
     // GET: keyset deliveries by -id (?after=&limit=).
     deliveries: (id: string) => `/${API_VERSION}/webhooks/${id}/deliveries`,
   },
@@ -89,6 +91,13 @@ export const apiRoutes = {
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
     // POST: one sample digest to a destination, sent now; 200 with the delivery.
     columnWebhookTest: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/test`,
+    // POST {label, destination_id, wait_keys, payload_keys, interval_seconds}: add a webhook column; 201 with the summary.
+    columnWebhook: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook`,
+    // POST: the envelope a test of this body would carry, rendered server-side, sent nowhere.
+    columnWebhookPreview: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/preview`,
+    // GET / PATCH one webhook column's config.
+    columnWebhookConfig: (id: string, key: string) =>
+      `/${API_VERSION}/lists/${id}/columns/webhook/${encodeURIComponent(key)}`,
     // POST: refill a column's unanswered rows (a NEW run, fresh snapshot).
     columnRefill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/refill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).

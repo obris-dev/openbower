@@ -19,7 +19,10 @@ import {
   ListsPageSchema,
   ListSummarySchema,
   RowsAddedSchema,
+  WebhookColumnConfigWireSchema,
+  WebhookColumnPreviewResponseSchema,
   WebhookColumnTestResponseSchema,
+  WIRE_BOUNDS,
   WIRE_CONSTANTS,
   type AgentConfig,
   type ColumnFillSummary,
@@ -34,6 +37,7 @@ import {
   type ListsPage,
   type ListSummary,
   type RowsAdded,
+  type WebhookColumnConfigWire,
 } from "@bower/schema";
 
 import { z } from "zod";
@@ -50,7 +54,7 @@ export const ROWS_PAGE_LIMIT = 200;
 export type { ColumnFillSummary, ColumnPromptWire, FillRunPage, FillRunWire, FoldersList, FolderSummary, ImportResult, ListRowsPage, ListSummary, ListsPage, RowsAdded };
 // Re-exported so app code never imports @bower/schema directly (the
 // schema package has exactly one consumer: this one).
-export type { FillError, ListColumn, ListRowWire } from "@bower/schema";
+export type { FillError, ListColumn, ListRowWire, WebhookColumnConfigWire } from "@bower/schema";
 
 /** One cell's wire state, derived from the sidecar's own record so a
  * cause added server-side reaches every consumer through the regen:
@@ -122,6 +126,7 @@ export type AiColumnBody = {
 // added or removed server-side reaches every consumer through the
 // regen, never through a hand-retyped list).
 export const COLUMN_TYPES = ListColumnSchema.shape.type.options;
+export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.ListColumn.label.maxLength;
 export type ColumnType = ListColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the
@@ -471,6 +476,8 @@ export type WebhookColumnTestBody = {
   payload_keys: string[];
   row_id: string;
   cells: Record<string, string>;
+  /** The column, once it exists: the digest is then scoped to its node. */
+  key?: string;
 };
 // The refusal codes the drawer acts on (lists.constants
 // WebhookColumnErrorCode): a vanished row re-reads the rows, a vanished
@@ -495,4 +502,58 @@ export async function postColumnWebhookTest(
   body: WebhookColumnTestBody,
 ): Promise<ApiResult<WebhookColumnTestResult>> {
   return http.post(apiRoutes.lists.columnWebhookTest(id), TolerantWebhookColumnTestResponseSchema, body);
+}
+
+// The persisted column. Its cadence is a CHOICE off the contract (the
+// presets and the default), never a retyped number; `key` on a test or
+// preview scopes it to an existing column.
+export const WEBHOOK_CADENCE_SECONDS: readonly number[] = WIRE_CONSTANTS.WEBHOOK_CADENCE_SECONDS;
+export const DEFAULT_WEBHOOK_CADENCE_SECONDS: number = WIRE_CONSTANTS.DEFAULT_WEBHOOK_CADENCE_SECONDS;
+// Refusal codes the sheet branches on: deleting an AI column a webhook
+// waits on (409, rendered at the confirm tier), and the name field's
+// own refusals on add.
+export const COLUMN_WAITED_ON_CODE = "column_waited_on";
+export const COLUMN_EXISTS_CODE = "column_exists";
+export const WEBHOOK_COLUMN_UNKNOWN_CODE = "column_unknown";
+export const WEBHOOK_COLUMN_NOT_AI_CODE = "column_not_ai";
+
+export type WebhookColumnConfig = {
+  destination_id: string;
+  wait_keys: string[];
+  payload_keys: string[];
+  interval_seconds: number;
+};
+export type WebhookColumnBody = WebhookColumnConfig & { label: string };
+export type WebhookColumnPatchBody = WebhookColumnConfig & { enabled: boolean };
+export type WebhookColumnPreview = { envelope: WebhookEnvelopeJson };
+
+const TolerantWebhookColumnPreviewResponseSchema = WebhookColumnPreviewResponseSchema.extend({
+  envelope: z.record(z.string(), z.unknown()),
+});
+
+/** Add a webhook column; the 201 body IS the summary, the shape every columns write returns. */
+export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<ListSummary>> {
+  return http.post(apiRoutes.lists.columnWebhook(id), ListSummarySchema, body);
+}
+
+export async function getColumnWebhook(id: string, key: string): Promise<ApiResult<WebhookColumnConfigWire>> {
+  return http.get(apiRoutes.lists.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema);
+}
+
+/** The whole config, rewritten. */
+export async function updateColumnWebhook(
+  id: string,
+  key: string,
+  body: WebhookColumnPatchBody,
+): Promise<ApiResult<WebhookColumnConfigWire>> {
+  return http.patch(apiRoutes.lists.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema, body);
+}
+
+/** The envelope a test of this body would carry, rendered by the server
+ * and sent nowhere; read as plain JSON like the test's. */
+export async function postColumnWebhookPreview(
+  id: string,
+  body: WebhookColumnTestBody,
+): Promise<ApiResult<WebhookColumnPreview>> {
+  return http.post(apiRoutes.lists.columnWebhookPreview(id), TolerantWebhookColumnPreviewResponseSchema, body);
 }

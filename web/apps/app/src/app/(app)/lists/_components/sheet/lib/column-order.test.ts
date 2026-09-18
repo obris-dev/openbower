@@ -4,9 +4,9 @@ import { test } from "node:test";
 import { canMove, columnsInKeyOrder, moveColumn, nudgeColumn } from "./column-order.ts";
 
 const columns = [
-  { key: "a", label: "A", type: "text" as const, fill: null },
-  { key: "b", label: "B", type: "text" as const, fill: null },
-  { key: "c", label: "C", type: "text" as const, fill: null },
+  { key: "a", label: "A", type: "text" as const, fill: null, webhook: null },
+  { key: "b", label: "B", type: "text" as const, fill: null, webhook: null },
+  { key: "c", label: "C", type: "text" as const, fill: null, webhook: null },
 ];
 
 test("a move returns the resulting key order", () => {

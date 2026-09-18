@@ -55,6 +55,10 @@ export const WEBHOOK_SECRET_PREFIX = WIRE_CONSTANTS.WEBHOOK_SECRET_PREFIX;
 // 400s carrying the server's own detail; the drawer routes each to the
 // surface it names.
 export const DESTINATIONS_FULL_CODE = "destinations_full";
+// 409 on DELETE while a webhook column sends here; rendered at the confirm tier.
+export const DESTINATION_IN_USE_CODE = "destination_in_use";
+// After a rotation the old secret keeps signing for this long.
+export const WEBHOOK_ROTATION_GRACE_SECONDS: number = WIRE_CONSTANTS.WEBHOOK_ROTATION_GRACE_SECONDS;
 export const WEBHOOK_URL_BLOCKED_CODE = "url_blocked";
 export const WEBHOOK_HEADER_RESERVED_CODE = "header_reserved";
 
@@ -133,6 +137,12 @@ export async function updateWebhook(id: string, patch: DestinationPatchBody): Pr
 
 export async function deleteWebhook(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.webhooks.detail(id));
+}
+
+/** A new signing secret, shown ONCE in the create response's shape;
+ * the old one keeps signing for the grace window. */
+export async function rotateWebhook(id: string): Promise<ApiResult<RenderableDestinationCreated>> {
+  return http.post(apiRoutes.webhooks.rotate(id), TolerantWebhookDestinationCreatedSchema, {});
 }
 
 /** One signed test ping, sent now. Answers ok with the delivery

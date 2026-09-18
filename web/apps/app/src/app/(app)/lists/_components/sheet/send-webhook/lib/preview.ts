@@ -1,18 +1,12 @@
-// The live preview of what a receiver gets: the envelope as the
-// drawer's current choices would send it, with the server-minted values
-// marked rather than guessed, and the same line renderer for the real
-// envelope once a test has been sent. Pure, so the shape and the
-// rendering are tested without a renderer.
+// The payload box's lines: the server's envelope (a preview or the one
+// a test sent) rendered one JSON value per line, with the cells the
+// client controls marked editable so they render as inputs, and an
+// add slot after them while a column is missing. Pure.
 
 // Markers are branded with a symbol key. Column keys are user-derived,
-// so a key named `placeholder` or `editable` is legal; a plain object
-// from the sheet or from a parsed response can never carry a symbol.
+// so a key named `editable` is legal; a plain object from a parsed
+// response can never carry a symbol.
 const MARK: unique symbol = Symbol("preview-marker");
-
-/** A value only the server sets (an id, a clock, a stored state):
- * rendered as a marker, never as a made-up literal. */
-export type Placeholder = { readonly [MARK]: "placeholder" };
-export const SET_WHEN_SENT: Placeholder = { [MARK]: "placeholder" };
 
 /** A value the user controls (a cell of the sample): rendered as an
  * input where it sits in the payload, so editing happens on the thing
@@ -32,20 +26,15 @@ export type PreviewValue =
   | number
   | boolean
   | null
-  | Placeholder
   | Editable
   | AddSlot
   | PreviewValue[]
   | { [key: string]: PreviewValue };
 
-function markOf(value: PreviewValue): "placeholder" | "editable" | "add" | null {
+function markOf(value: PreviewValue): "editable" | "add" | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   if (!(MARK in value)) return null;
-  return (value as { [MARK]: "placeholder" | "editable" | "add" })[MARK];
-}
-
-function isPlaceholder(value: PreviewValue): value is Placeholder {
-  return markOf(value) === "placeholder";
+  return (value as { [MARK]: "editable" | "add" })[MARK];
 }
 
 function isEditable(value: PreviewValue): value is Editable {
@@ -56,52 +45,8 @@ function isAddSlot(value: PreviewValue): value is AddSlot {
   return markOf(value) === "add";
 }
 
-export type PreviewInput = {
-  sheet: { id: string; label: string };
-  waitKeys: readonly string[];
-  payloadKeys: readonly string[];
-  row: { id: string; position: number };
-  values: Record<string, string>;
-  /** Whether some column is still outside the payload. */
-  canAddColumns: boolean;
-};
-
-/** The envelope a test send of these choices produces, mirroring the
- * contract's WebhookEnvelope for a digest of one item. Everything the
- * drawer knows is literal; everything the server derives is a marker. */
-export function previewEnvelope(input: PreviewInput): PreviewValue {
-  return {
-    id: SET_WHEN_SENT,
-    type: "digest",
-    version: 1,
-    test: true,
-    timestamp: SET_WHEN_SENT,
-    data: {
-      type: "digest",
-      sheet: { id: input.sheet.id, label: input.sheet.label },
-      waited_on: [...input.waitKeys],
-      items: [
-        {
-          event_id: SET_WHEN_SENT,
-          row_id: input.row.id,
-          position: input.row.position,
-          completed_at: SET_WHEN_SENT,
-          cells: {
-            ...Object.fromEntries(input.payloadKeys.map((key) => [key, editable(key, input.values[key] ?? "")])),
-            ...(input.canAddColumns ? { "": ADD_SLOT } : {}),
-          },
-          // The server reports only the columns that have a record, so
-          // the map's keys are its to decide, not just the values.
-          states: SET_WHEN_SENT,
-        },
-      ],
-    },
-  };
-}
-
-/** Plain JSON (a parsed response) as a preview tree: the same renderer
- * shows the envelope a test actually sent. Anything JSON cannot hold is
- * shown as its string form rather than dropped. */
+/** Plain JSON (a parsed response) as a preview tree. Anything JSON
+ * cannot hold is shown as its string form rather than dropped. */
 export function fromJson(value: unknown): PreviewValue {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return value;
@@ -113,22 +58,55 @@ export function fromJson(value: unknown): PreviewValue {
   return String(value);
 }
 
-/** One rendered line. A marker line is flagged; an editable line
- * carries its input's key and value with the text split around it
- * (`text` before, `suffix` after), so the renderer places the input
- * where the JSON value would be. */
+export type EditableCells = { keys: readonly string[]; values: Record<string, string>; canAddColumns: boolean };
+
+/** The server's envelope with the client's cells in it: `data.items[0]
+ * .cells` is REPLACED by an editable entry per payload key (the
+ * client's values are what `cells` will send; the server normalizes at
+ * send time), plus the add slot while a column is missing. Everything
+ * else (ids, timestamps, states) is the server's, untouched. An
+ * envelope of another shape (no items, no cells) returns as it came,
+ * with no inputs. */
+export function withEditableCells(envelope: Record<string, unknown>, cells: EditableCells): PreviewValue {
+  const tree = fromJson(envelope);
+  const root = asObject(tree);
+  if (root === null) return tree;
+  const data = asObject(root.data);
+  if (data === null) return tree;
+  const items = data.items;
+  if (!Array.isArray(items) || items.length === 0) return tree;
+  const [head, ...rest] = items;
+  const first = asObject(head);
+  if (first === null || !("cells" in first)) return tree;
+  const edited: { [key: string]: PreviewValue } = Object.fromEntries(
+    cells.keys.map((key) => [key, editable(key, cells.values[key] ?? "")]),
+  );
+  if (cells.canAddColumns) edited[""] = ADD_SLOT;
+  return { ...root, data: { ...data, items: [{ ...first, cells: edited }, ...rest] } };
+}
+
+/** A plain object node of the tree, or null for anything else (a
+ * scalar, an array, a marker). fromJson never produces markers, so a
+ * parsed envelope's objects are all plain. */
+function asObject(value: PreviewValue | undefined): { [key: string]: PreviewValue } | null {
+  if (value === undefined || typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  if (markOf(value) !== null) return null;
+  return value as { [key: string]: PreviewValue };
+}
+
+/** One rendered line. An editable line carries its input's key and
+ * value with the text split around it (`text` before, `suffix` after),
+ * so the renderer places the input where the JSON value would be. */
 export type PreviewLine = {
   depth: number;
   text: string;
-  placeholder: boolean;
   editable?: { key: string; value: string; suffix: string };
   /** The add-a-column line, which renders a control and no JSON. */
   add?: true;
 };
 
-/** JSON, one line per value, with markers flagged so the renderer can
- * set them apart. Indentation is the line's depth, applied by the
- * renderer, so the text stays a plain string a test can read. */
+/** JSON, one line per value. Indentation is the line's depth, applied
+ * by the renderer, so the text stays a plain string a test can read. */
 export function previewLines(value: PreviewValue): PreviewLine[] {
   const lines: PreviewLine[] = [];
   emit(lines, value, 0, "", "");
@@ -136,22 +114,18 @@ export function previewLines(value: PreviewValue): PreviewLine[] {
 }
 
 function emit(lines: PreviewLine[], value: PreviewValue, depth: number, prefix: string, suffix: string): void {
-  if (isPlaceholder(value)) {
-    lines.push({ depth, text: `${prefix}set when sent${suffix}`, placeholder: true });
-    return;
-  }
   if (isEditable(value)) {
-    lines.push({ depth, text: prefix, placeholder: false, editable: { key: value.key, value: value.value, suffix } });
+    lines.push({ depth, text: prefix, editable: { key: value.key, value: value.value, suffix } });
     return;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) {
-      lines.push({ depth, text: `${prefix}[]${suffix}`, placeholder: false });
+      lines.push({ depth, text: `${prefix}[]${suffix}` });
       return;
     }
-    lines.push({ depth, text: `${prefix}[`, placeholder: false });
+    lines.push({ depth, text: `${prefix}[` });
     value.forEach((item, index) => emit(lines, item, depth + 1, "", index < value.length - 1 ? "," : ""));
-    lines.push({ depth, text: `]${suffix}`, placeholder: false });
+    lines.push({ depth, text: `]${suffix}` });
     return;
   }
   if (typeof value === "object" && value !== null) {
@@ -160,16 +134,16 @@ function emit(lines: PreviewLine[], value: PreviewValue, depth: number, prefix: 
     const entries = Object.entries(value).filter(([, item]) => !isAddSlot(item));
     const addable = Object.values(value).some(isAddSlot);
     if (entries.length === 0 && !addable) {
-      lines.push({ depth, text: `${prefix}{}${suffix}`, placeholder: false });
+      lines.push({ depth, text: `${prefix}{}${suffix}` });
       return;
     }
-    lines.push({ depth, text: `${prefix}{`, placeholder: false });
+    lines.push({ depth, text: `${prefix}{` });
     entries.forEach(([key, item], index) =>
       emit(lines, item, depth + 1, `${JSON.stringify(key)}: `, index < entries.length - 1 ? "," : ""),
     );
-    if (addable) lines.push({ depth: depth + 1, text: "", placeholder: false, add: true });
-    lines.push({ depth, text: `}${suffix}`, placeholder: false });
+    if (addable) lines.push({ depth: depth + 1, text: "", add: true });
+    lines.push({ depth, text: `}${suffix}` });
     return;
   }
-  lines.push({ depth, text: `${prefix}${JSON.stringify(value)}${suffix}`, placeholder: false });
+  lines.push({ depth, text: `${prefix}${JSON.stringify(value)}${suffix}` });
 }

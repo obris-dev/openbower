@@ -3,37 +3,47 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, useToast } from "@bower/ui";
-import { deleteWebhook, webRoutes, type RenderableDestination } from "@bower/api";
+import { DESTINATION_IN_USE_CODE, deleteWebhook, webRoutes, type RenderableDestination } from "@bower/api";
 
-import { ensureOk } from "@/lib/ensure-ok";
+import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../../_components/breadcrumbs";
-import { SECRET_RECOVERY_NOTE } from "../copy";
+import { SECRET_RECOVERY_NOTE, usageLine } from "../copy";
 import { DeliveryLog } from "../delivery-log";
 import { hostOf } from "../../../../_components/webhook-delivery";
 import { useDeliveries } from "../use-deliveries";
 import { VerifyGuide } from "../verify-guide";
-import { DetailFooter } from "./footer";
+import { DetailFooter, type DeleteOutcome } from "./footer";
+import { RotateSecret } from "./rotate-secret";
 import { SettingsForm } from "./settings-form";
 import { TestPanel } from "./test-panel";
 import { useDestinationForm } from "./use-destination-form";
 
 /** One destination: the orchestrator holds the saved destination and
- * composes the settings form, the test panel, the verify guide, the
- * delivery log, and the footer. The secret is not here: it was shown
- * once at create. */
+ * composes the settings form, the test panel, the verify guide with
+ * the rotate action, the delivery log, and the footer. The secret is
+ * not here: it was shown once at create, and shows once again on a
+ * rotate. */
 export function Detail({ initialDestination }: { initialDestination: RenderableDestination }) {
   const router = useRouter();
   const toast = useToast();
   const [destination, setDestination] = useState(initialDestination);
   const form = useDestinationForm(destination, setDestination);
   const deliveries = useDeliveries(destination.id);
+  const usage = usageLine(destination.column_count);
 
-  async function remove(): Promise<boolean> {
+  // A refusal in use (a webhook column sends here) comes BACK to the
+  // confirm tier in the server's words; any other failure toasts.
+  async function remove(): Promise<DeleteOutcome> {
     const res = await deleteWebhook(destination.id);
-    if (!ensureOk(res, toast, { title: "Destination not deleted" })) return false;
+    if (redirectIfUnauthenticated(res)) return { status: "failed" };
+    if (res.status !== "ok") {
+      if (res.code === DESTINATION_IN_USE_CODE) return { status: "refused", detail: res.message };
+      toast.error(res.message, "Destination not deleted");
+      return { status: "failed" };
+    }
     toast.success("Destination deleted.", destination.label);
     router.push(webRoutes.settingsWebhooks);
-    return true;
+    return { status: "deleted" };
   }
 
   return (
@@ -47,6 +57,7 @@ export function Detail({ initialDestination }: { initialDestination: RenderableD
         />
         <h1 className="truncate text-2xl font-bold text-foreground">{destination.label}</h1>
         <p className="text-sm text-muted">{hostOf(destination.url)}</p>
+        {usage && <p className="text-xs text-faint">{usage}</p>}
       </div>
 
       <Card className="p-6">
@@ -71,6 +82,11 @@ export function Detail({ initialDestination }: { initialDestination: RenderableD
           </div>
         </details>
         <p className="text-xs text-faint">{SECRET_RECOVERY_NOTE}</p>
+        <RotateSecret
+          destinationId={destination.id}
+          label={destination.label}
+          onRotated={(rotated) => setDestination((prev) => ({ ...prev, rotated_at: rotated.rotated_at }))}
+        />
       </Card>
 
       <Card className="space-y-4 p-6">

@@ -1,6 +1,7 @@
 import { fetchListRows, isNumericColumn, ROWS_PAGE_LIMIT, type ListSummary } from "@bower/api";
 
 import { csvField, saveCsvFile } from "./csv";
+import { exportableColumns } from "./lib/column-kind";
 
 /** Build the sheet's CSV client-side from the same rows pages the table
  * reads (the house rule: no server CSV surface). Pages by position via
@@ -9,7 +10,9 @@ export async function downloadSheetCsv(
   detail: ListSummary,
   { onUnauthenticated }: { onUnauthenticated: () => void },
 ): Promise<void> {
-  const lines = [detail.columns.map((c) => csvField(c.label)).join(",")];
+  // A webhook column holds no row data, so it is not a column of the file.
+  const columns = exportableColumns(detail.columns);
+  const lines = [columns.map((c) => csvField(c.label)).join(",")];
   let cursor: string | undefined;
   for (;;) {
     const res = await fetchListRows(detail.id, { after: cursor, limit: ROWS_PAGE_LIMIT });
@@ -19,11 +22,7 @@ export async function downloadSheetCsv(
     }
     if (res.status !== "ok") throw new Error(res.message);
     for (const row of res.data.items) {
-      lines.push(
-        detail.columns
-          .map((c) => csvField(row.data[c.key] ?? "", { numeric: isNumericColumn(c) }))
-          .join(","),
-      );
+      lines.push(columns.map((c) => csvField(row.data[c.key] ?? "", { numeric: isNumericColumn(c) })).join(","));
     }
     if (!res.data.next_cursor) break;
     // A cursor that fails to advance would loop forever; today's server
