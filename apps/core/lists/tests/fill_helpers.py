@@ -21,7 +21,7 @@ from openbower_schema.lists import AiColumn
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..models import Fill, ListRow, Node, NodeRun
-from ..services import cell_truth
+from ..services import cell_truth, webhook_runs
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
 from ..services.workflows import agent_id_of
@@ -87,6 +87,7 @@ def settle(
             tools=tools or {},
             source=CellSource.FILL,
         )
+        webhook_runs.advance_row(account_id=fill.account_id, list_id=fill.list_id, row_id=row_id, node_id=task.node_id)
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:

@@ -198,6 +198,17 @@ class WebhookColumnErrorCode(StrEnum):
     COLUMN_NOT_DATA = "column_not_data"
 
 
+class WebhookRunOutcome(StrEnum):
+    """What a webhook run's stored result says about its delivery. SENT
+    and FAILED are what a DONE run holds; RETRYING rides a run parked
+    after a transient failure, so the last attempt's delivery and
+    error stay readable while the run waits for its next window."""
+
+    SENT = "sent"
+    FAILED = "failed"
+    RETRYING = "retrying"
+
+
 # Rows per fetch when a fill service STREAMS the sheet (binary,
 # matched to the write batch so a scan and the insert it feeds move in
 # the same size steps). Admission reads the sheet lazily so a SCOPED

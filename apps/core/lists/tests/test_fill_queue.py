@@ -84,7 +84,7 @@ def land(fill: Fill, task: NodeRun, *, worker: str = "test:1", state=None) -> bo
         run = CellRunResult(declined_cause=state)
     return (
         land_row(
-            LandingContext.from_fill(fill),
+            LandingContext.from_fill(fill, node_id=task.node_id),
             claimed.row_id,
             run,
             close=partial(flow.settle, claimed.id, status=NodeRunStatus.DONE),
@@ -123,7 +123,7 @@ class TerminalWriteTests(TestCase):
         # The original claimant's terminal write now misses.
         self.assertFalse(
             land_row(
-                LandingContext.from_fill(fill),
+                LandingContext.from_fill(fill, node_id=task.node_id),
                 claimed.row_id,
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
                 close=partial(original.settle, claimed.id, status=NodeRunStatus.DONE),

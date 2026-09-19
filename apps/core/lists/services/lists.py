@@ -18,7 +18,7 @@ from openbower_schema.lists import ListColumn
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
 from ..models import Fill, Folder, List, ListRow, NodeRun
-from . import cell_truth
+from . import cell_truth, webhook_runs
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -366,6 +366,10 @@ class ListService:
             # the fills queryset that produced these ids is already
             # list-scoped under an account-scoped lock.
             NodeRun.objects.filter(fill_run_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
+            # The sheet's webhook runs go the same way, by list id: no
+            # picker ever finds one through its row, so unlike an
+            # autofill run it cannot retire itself.
+            webhook_runs.purge_for_list(str(target.id))
             # The columns' ephemeral agents die with the columns that
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,

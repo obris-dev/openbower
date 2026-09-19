@@ -35,8 +35,8 @@ class Node(AccountScopedModel):
     An agent node is durable: removing its column never removes it,
     because ABANDONED runs (the consent record) keep pointing at it, and
     a node with no columns is inert; it goes only with its list. A
-    webhook column's two nodes are its own (no run points at them) and
-    go with the column. The agent a config points at dangles after an
+    webhook column's two nodes are its own and go with the column, its
+    runs with them. The agent a config points at dangles after an
     agent delete exactly as the column did; that orphaning is deliberate
     (fill_admission/errors.py), so no hook."""
 

@@ -8,6 +8,7 @@ lists service."""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 
 from django.db import transaction
@@ -18,15 +19,16 @@ from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
-from ..constants import WebhookColumnErrorCode
-from ..models import List, ListRow, Node
+from ..constants import FILL_SCAN_CHUNK, FILL_WRITE_BATCH, WebhookColumnErrorCode
+from ..models import List, ListRow, Node, NodeRun
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
-from .webhook_paths import inbound_paths_for, wait_keys_for
+from .webhook_paths import inbound_paths_for
+from .webhook_runs import runs_for_complete_row, wait_keys_of
 from .workflows import NodeNotFound, WorkflowService, config_as
 
 
@@ -117,6 +119,7 @@ class WebhookColumnService:
             column = WebhookColumn(key=key, label=label, type=DEFAULT_COLUMN_TYPE, node_id=str(nodes[1].id))
             target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
+            self._backfill(target_list, wait=wait, webhook_nodes=[nodes[1]])
         return target_list
 
     def config(self, target_list_id: str, key: str) -> WebhookColumnConfigWire:
@@ -136,13 +139,17 @@ class WebhookColumnService:
         enabled: bool,
     ) -> WebhookColumnConfigWire:
         """Both node configs rewritten in one transaction; the path keeps
-        its shape."""
+        its shape. A changed wait SET is a new definition of complete,
+        so the rows complete under it are backfilled; an unchanged one
+        backfills nothing (a Save that touched only the cadence must not
+        re-send the sheet)."""
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             webhook_node = self._webhook_node(target_list, key)
             self._validate(
                 target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=True
             )
+            before = self._wait_of(webhook_node)
             wait = WaitUntil(inbound_path_ids=self._inbound_paths(target_list, wait_keys))
             webhook = Webhook(
                 destination_id=destination_id,
@@ -151,7 +158,45 @@ class WebhookColumnService:
                 enabled=enabled,
             )
             _wait_node, webhook_node = self.workflows.replace_path_nodes(webhook_node.path_id, [wait, webhook])
+            if set(before.inbound_path_ids) != set(wait.inbound_path_ids):
+                self._backfill(target_list, wait=wait, webhook_nodes=[webhook_node])
         return self._wire(target_list, webhook_node)
+
+    def _backfill(self, target_list: List, *, wait: WaitUntil, webhook_nodes: list[Node]) -> int:
+        """Every row already complete for the wait set gains a run now,
+        at the next window, so a column added over a filled sheet sends
+        what is already done instead of only what completes later. Pages
+        the sheet inside the caller's transaction, bounded by
+        MAX_LIST_ROWS; the open-run key makes a re-run of this over a
+        pending row a no-op. Returns the runs offered."""
+        wait_keys = wait_keys_of(account_id=self.account_id, target_list=target_list, wait=wait)
+        if not wait_keys:
+            return 0
+        list_id = str(target_list.id)
+        now = timezone.now()
+        offered = 0
+        after_position = 0
+        while page := self.lists.rows_page(target_list, after_position=after_position, limit=FILL_SCAN_CHUNK):
+            after_position = page[-1].position
+            row_ids = [str(row.id) for row in page]
+            records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
+            for row_id, column_key, state, updated_at in self.cell_states.iter_records(
+                list_id, row_ids=row_ids, column_keys=wait_keys
+            ):
+                records[row_id][column_key] = (state, updated_at)
+            runs: list[NodeRun] = []
+            for row in page:
+                if completion_of(records[str(row.id)], wait_keys) is None:
+                    continue
+                runs.extend(
+                    runs_for_complete_row(
+                        account_id=self.account_id, list_id=list_id, row=row, webhook_nodes=webhook_nodes, now=now
+                    )
+                )
+            if runs:
+                NodeRun.objects.bulk_create(runs, ignore_conflicts=True, batch_size=FILL_WRITE_BATCH)
+                offered += len(runs)
+        return offered
 
     # The sends.
 
@@ -314,17 +359,18 @@ class WebhookColumnService:
                 raise WebhookColumnUnknown(key)
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)
 
-    def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
-        """The columns a webhook column waits on, in sheet order: its
-        wait node's inbound paths resolved to the columns they fill."""
+    def _wait_of(self, webhook_node: Node) -> WaitUntil:
+        """The wait node's config off a webhook node: rank 0 of its path
+        whatever else the path holds."""
         nodes = self.workflows.nodes_on_path(webhook_node.path_id)
         if not nodes:
             raise NodeNotFound(webhook_node.path_id)
-        # The wait node is rank 0 whatever else the path holds.
-        wait = config_as(nodes[0], WaitUntil)
-        agent_nodes = Node.objects.filter(account_id=self.account_id, path_id__in=wait.inbound_path_ids)
-        node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
-        return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
+        return config_as(nodes[0], WaitUntil)
+
+    def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
+        """The columns a webhook column waits on, in sheet order: its
+        wait node's inbound paths resolved to the columns they fill."""
+        return wait_keys_of(account_id=self.account_id, target_list=target_list, wait=self._wait_of(webhook_node))
 
     def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
         webhook = config_as(webhook_node, Webhook)

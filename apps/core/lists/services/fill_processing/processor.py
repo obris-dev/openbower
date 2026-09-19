@@ -165,6 +165,7 @@ class AutofillRun(ProcessNodeRun):
             column_keys=column_keys,
             fill_run_id=None,
             config_fingerprint=config_fingerprint(config),
+            node_id=task.node_id,
         )
         if self.flow.exhausted(task):
             land_row(ctx, task.row_id, self._give_up_blank(), close=self._close())
@@ -201,7 +202,7 @@ class FillBackedRun(ProcessNodeRun):
 
     @cached_property
     def ctx(self) -> LandingContext:
-        return LandingContext.from_fill(self.fill)
+        return LandingContext.from_fill(self.fill, node_id=self.task.node_id)
 
     def finish(self) -> None:
         fill_progress.try_finish(str(self.fill.id))

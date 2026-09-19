@@ -1,13 +1,15 @@
 """Landing a run on its row: the ONE writer of a resolved row.
 
-A row is resolved when three writes land together: the sheet value
-(write-if-blank, through ListService), the cell truth (one
-ListCellState per column the fill owns, carrying the run's tool
-statuses), and the task's close with the run stored on it. They share
-ONE transaction on purpose: a task whose lease was reclaimed mid-run
-must produce NOTHING, never a value from one attempt wearing a
+A row is resolved when four writes land together: the sheet value
+(write-if-blank, through ListService), the task's close with the run
+stored on it, the cell truth (one ListCellState per column the fill
+owns, carrying the run's tool statuses), and the fan-in advance (a
+webhook run for every wait node the landing completes the row for).
+They share ONE transaction on purpose: a task whose lease was reclaimed
+mid-run must produce NOTHING, never a value from one attempt wearing a
 diagnosis from another, so a close that misses rolls the value write
-back with it.
+back with it; and a row can never be complete on the sheet with no
+webhook run owed for it.
 
 Two callers land rows, and before this module each restated the
 writes: the consumer's terminal path, and its give-up past the
@@ -28,7 +30,7 @@ from openbower_schema.fills import CellRunResult
 
 from ...constants import CellSource, StoredCellState
 from ...models import Fill
-from .. import cell_truth
+from .. import cell_truth, webhook_runs
 from ..lists import ListService
 
 
@@ -37,22 +39,25 @@ class LandingContext(NamedTuple):
     need. A fill-backed caller builds it from its Fill (`from_fill`); the
     automatic path (autofill) builds it from the task plus the agent's
     resolved column set, with `fill_run_id` NULL (the cell belongs to no
-    run)."""
+    run). `node_id` is the task's node on both lanes: the advance asks
+    which wait nodes name its path."""
 
     account_id: str
     list_id: str
     column_keys: tuple[str, ...]
     fill_run_id: str | None
     config_fingerprint: str
+    node_id: str
 
     @classmethod
-    def from_fill(cls, fill: Fill) -> LandingContext:
+    def from_fill(cls, fill: Fill, *, node_id: str) -> LandingContext:
         return cls(
             account_id=fill.account_id,
             list_id=fill.list_id,
             column_keys=tuple(fill.column_keys),
             fill_run_id=str(fill.id),
             config_fingerprint=fill.config_fingerprint,
+            node_id=node_id,
         )
 
 
@@ -141,6 +146,9 @@ def land_row(
                 tools=run.tools,
                 source=CellSource.FILL,
             )
+            # The advance INSERTS (it locks no existing row), so it rides
+            # last, after the truth it judges completion from.
+            webhook_runs.advance_row(account_id=ctx.account_id, list_id=ctx.list_id, row_id=row_id, node_id=ctx.node_id)
     except ClaimLost:
         return None
     return Landed(frozenset(answered), declined)

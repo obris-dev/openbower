@@ -3,9 +3,11 @@ starts with. Its config names the PATHS it waits on (never nodes: a
 node appended or reordered on an upstream path later still means
 "after that path ends"), each of which ends in a column_agent node. No
 identity: nothing looks a wait node up by one, it is the path's rank 0
-(the rank key keeps that slot unique). Inert structure until the
-per-row engine lands; the flush finds it as the path's rank 0 and
-resolves the columns that end the paths it names."""
+(the rank key keeps that slot unique). A barrier, not a ledger: when
+every column ending the paths it names is done for a row, the only
+effect is a run for each node behind it on the path (the advance in
+services/webhook_runs.py); the flush finds it as the path's rank 0 to
+re-resolve those columns at claim time."""
 
 from __future__ import annotations
 

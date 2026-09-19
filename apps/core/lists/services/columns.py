@@ -20,7 +20,7 @@ from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookCol
 from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
 from ..nodes.webhook import Webhook
-from . import cell_truth
+from . import cell_truth, webhook_runs
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
 from .fill_progress import stop_fill
 from .lists import ListNotFound
@@ -277,9 +277,11 @@ class ColumnService:
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
             self._retire_ephemeral(target_list, node_id=node_id)
-            # A webhook column IS its path: no run points at its nodes,
-            # so unlike an agent's they go with the column.
+            # A webhook column IS its path, and its runs are its own:
+            # both go with the column, the runs first (they point at the
+            # node), unconditionally (a gone node still has runs by id).
             if webhook_node_id:
+                webhook_runs.purge_for_node(webhook_node_id)
                 try:
                     webhook_node = workflows.get_node(webhook_node_id)
                 except NodeNotFound:
