@@ -148,7 +148,7 @@ function toolSentence(tool: ToolKey, code: string, searchProvider: SearchProvide
  * stays as the desktop quick peek). The Popover primitive carries the
  * floor (aria-expanded, Escape, outside-click, focus return), and its
  * panel portals to body, so the sheet's own overflow never clips it. */
-function CauseMark({ cause, fact, children }: { cause: string; fact: string; children: React.ReactNode }) {
+export function CauseMark({ cause, fact, children }: { cause: string; fact: string; children: React.ReactNode }) {
   const sentence = `${cause}. ${fact}`;
   return (
     <Popover className="flex h-5 items-center">

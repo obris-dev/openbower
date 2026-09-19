@@ -19,7 +19,7 @@ from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
-from ..constants import FILL_SCAN_CHUNK, FILL_WRITE_BATCH, WebhookColumnErrorCode
+from ..constants import FILL_SCAN_CHUNK, FILL_WRITE_BATCH, WebhookCellWord, WebhookColumnErrorCode
 from ..models import List, ListRow, Node, NodeRun
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
@@ -28,7 +28,7 @@ from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 from .webhook_paths import inbound_paths_for
-from .webhook_runs import runs_for_complete_row, wait_keys_of
+from .webhook_runs import cell_words_for, runs_for_complete_row, wait_keys_of
 from .workflows import NodeNotFound, WorkflowService, config_as
 
 
@@ -197,6 +197,25 @@ class WebhookColumnService:
                 NodeRun.objects.bulk_create(runs, ignore_conflicts=True, batch_size=FILL_WRITE_BATCH)
                 offered += len(runs)
         return offered
+
+    # The cells.
+
+    def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, WebhookCellWord]]:
+        """row id -> {webhook column key: word} for a page of rows, one
+        query for the whole page (none for a sheet without a webhook
+        column). Rows with nothing to say are absent."""
+        key_by_node = {
+            column.node_id: column.key for column in target_list.columns if isinstance(column, WebhookColumn)
+        }
+        if not key_by_node or not rows:
+            return {}
+        words = cell_words_for(
+            account_id=self.account_id, node_ids=list(key_by_node), row_ids=[str(row.id) for row in rows]
+        )
+        by_row: dict[str, dict[str, WebhookCellWord]] = defaultdict(dict)
+        for (row_id, node_id), word in words.items():
+            by_row[row_id][key_by_node[node_id]] = word
+        return dict(by_row)
 
     # The sends.
 

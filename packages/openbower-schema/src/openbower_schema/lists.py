@@ -241,6 +241,15 @@ class CellStateWire(BaseModel):
     tools: dict[str, str] = {}
 
 
+# A Send webhook column's per-row word, derived from the row's NEWEST
+# run for that column: `waiting` while a run is owed (the row completed
+# and its digest has not gone out, or went out and is being retried),
+# `sent` once one delivered, `failed` when the last one gave up. A row
+# with no entry has never been due for that column (never complete, or
+# the column was added after and the row was not complete then).
+WebhookCellState = Literal["waiting", "sent", "failed"]
+
+
 class ListRowWire(BaseModel):
     id: str
     position: int = Field(description="1-based dense display/paging order.")
@@ -251,6 +260,11 @@ class ListRowWire(BaseModel):
         "filled cells whose run had a degraded tool. Slim on absences by contract, so a "
         "long-filled sheet carries almost nothing here. A value in `data` with no entry here "
         "IS filled and clean, and never-attempted is likewise an absence.",
+    )
+    webhooks: dict[str, WebhookCellState] = Field(
+        default={},
+        description="Send webhook cell words keyed by the webhook column's key, off the row's newest "
+        "run for that column. Absent for a row that has never been due for the column.",
     )
 
 

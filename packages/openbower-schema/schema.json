@@ -1115,6 +1115,20 @@
           "description": "AI cell states keyed by column key: every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean, and never-attempted is likewise an absence.",
           "title": "States",
           "type": "object"
+        },
+        "webhooks": {
+          "additionalProperties": {
+            "enum": [
+              "waiting",
+              "sent",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "default": {},
+          "description": "Send webhook cell words keyed by the webhook column's key, off the row's newest run for that column. Absent for a row that has never been due for the column.",
+          "title": "Webhooks",
+          "type": "object"
         }
       },
       "required": [

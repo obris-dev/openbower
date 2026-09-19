@@ -26,6 +26,9 @@ import {
   updateColumnWebhook,
   UNKNOWN_COLUMN_KIND,
   COLUMN_LABEL_MAX_LENGTH,
+  WEBHOOK_CELL_STATES,
+  UNKNOWN_WEBHOOK_CELL_STATE,
+  renderablePage,
 } from "../src/lists.ts";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
@@ -482,4 +485,30 @@ test("every column kind shares the base's label bound the client enforces", () =
   // definition of its own, so this is what pins the other members to it.
   assert.equal(WIRE_BOUNDS.AiColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
   assert.equal(WIRE_BOUNDS.WebhookColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
+});
+
+test("the webhook cell words come off the contract and a future word reads as waiting", () => {
+  assert.deepEqual([...WEBHOOK_CELL_STATES].sort(), ["failed", "sent", "waiting"]);
+  const page = renderablePage({
+    items: [
+      { states: {}, webhooks: { crm_sync: "sent" } },
+      // The server's next word: the page must still render, and the
+      // cell must claim no more than that something is owed.
+      { states: {}, webhooks: { crm_sync: "throttled" } },
+      { states: {}, webhooks: {} },
+    ],
+  });
+  assert.deepEqual(
+    page.items.map((item) => item.webhooks),
+    [{ crm_sync: "sent" }, { crm_sync: UNKNOWN_WEBHOOK_CELL_STATE }, {}],
+  );
+  assert.equal(UNKNOWN_WEBHOOK_CELL_STATE, "waiting");
+});
+
+test("a rows page without the webhooks key parses with none", async (t) => {
+  // A server from before the flush shipped: the key is absent, not empty.
+  stubFetch(t, { items: [{ id: "01ROW", position: 1, data: { company: "acme.com" } }], next_cursor: null });
+  const res = await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  assert.deepEqual(res.status === "ok" ? res.data.items[0]!.webhooks : null, {});
 });

@@ -13,7 +13,7 @@ from django.test import SimpleTestCase
 from lists import constants
 from openbower_schema.lists import ColumnType as WireColumnType
 from openbower_schema.lists import ListOrigin as WireListOrigin
-from openbower_schema.lists import WireCellState
+from openbower_schema.lists import WebhookCellState, WireCellState
 
 
 class WireEnumParityTests(SimpleTestCase):
@@ -29,3 +29,6 @@ class WireEnumParityTests(SimpleTestCase):
         # typed over the wire vocabulary, so a new stored state must
         # reach it.
         self.assertEqual(set(get_args(WireCellState)) - {"pending"}, {v.value for v in constants.StoredCellState})
+
+    def test_webhook_cell_state_parity(self):
+        self.assertEqual(set(get_args(WebhookCellState)), {v.value for v in constants.WebhookCellWord})

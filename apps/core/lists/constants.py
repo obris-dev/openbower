@@ -198,6 +198,15 @@ class WebhookColumnErrorCode(StrEnum):
     COLUMN_NOT_DATA = "column_not_data"
 
 
+class WebhookCellWord(StrEnum):
+    """What a Send webhook cell says for a row, off its newest run: the
+    server side of the wire's WebhookCellState (parity pinned)."""
+
+    WAITING = "waiting"
+    SENT = "sent"
+    FAILED = "failed"
+
+
 class WebhookRunOutcome(StrEnum):
     """What a webhook run's stored result says about its delivery. SENT
     and FAILED are what a DONE run holds; RETRYING rides a run parked

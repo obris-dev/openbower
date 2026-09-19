@@ -215,8 +215,9 @@ class ListRowsView(_ScopedView):
             raise ValidationError("?after= must be a row position")
         rows = self.lists.rows_page(target_list, after_position=int(raw_after), limit=limit)
         states = self.fills.cell_states_for_rows(target_list, rows)
+        webhooks = self.webhook_columns.cell_states_for_rows(target_list, rows)
         next_cursor = str(rows[-1].position) if len(rows) == limit else None
-        items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
+        items = [row_wire(r, states.get(str(r.id), {}), webhooks.get(str(r.id), {})) for r in rows]
         page = ListRowsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 

@@ -20,6 +20,7 @@ import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
+import { WebhookCellState } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";
 
 /** The tracker row's inputs, one object because they only travel
@@ -238,9 +239,9 @@ export function SheetTable({
                   className={`px-4 py-2.5 ${isNumericColumn(column) ? "text-right tabular-nums" : ""}`}
                 >
                   {kind === "webhook" ? (
-                    // The column holds no value and shows no word yet:
-                    // its per-row state arrives with the flush.
-                    null
+                    // The column holds no value: its cell is the word
+                    // the row's newest send left, off THIS row object.
+                    <WebhookCellState word={row.webhooks[column.key]} />
                   ) : state !== undefined ? (
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's

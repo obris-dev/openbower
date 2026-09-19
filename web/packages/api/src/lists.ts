@@ -281,9 +281,16 @@ export type RenderableCellState = CellState | typeof UNKNOWN_CELL_STATE;
 /** One cell's state as the CLIENT holds it: the word (admitting the
  * unknown member) plus the tool statuses of the run that wrote it. */
 export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolStatuses };
+/** A Send webhook cell's word, and the vocabulary off the contract. */
+export type WebhookCellState = ListRowWire["webhooks"][string];
+export const WEBHOOK_CELL_STATES = ListRowWireSchema.shape.webhooks.unwrap().valueType.options;
 /** A row as the CLIENT holds it: the states record admits the unknown
- * member the tolerant read produces, which the wire type cannot. */
-export type RenderableListRow = Omit<ListRowWire, "states"> & { states: Record<string, RenderableCellStateWire> };
+ * member the tolerant read produces, which the wire type cannot; the
+ * webhooks record is narrowed to the words this bundle can render. */
+export type RenderableListRow = Omit<ListRowWire, "states" | "webhooks"> & {
+  states: Record<string, RenderableCellStateWire>;
+  webhooks: Record<string, WebhookCellState>;
+};
 export type RenderableListRowsPage = Omit<ListRowsPage, "items"> & { items: RenderableListRow[] };
 // Rows parse states TOLERANTLY: strict-parsing an unknown cause would
 // fail the whole page, and a sheet that will not render is a worse
@@ -298,6 +305,10 @@ export const TolerantListRowsPageSchema = ListRowsPageSchema.extend({
   items: z.array(
     ListRowWireSchema.extend({
       states: z.record(z.string(), TolerantCellStateSchema).default({}),
+      // The same tolerance for the webhook words: the server owns the
+      // vocabulary, and a word this bundle has not heard of must not
+      // fail the page.
+      webhooks: z.record(z.string(), z.string()).default({}),
     }),
   ),
 });
@@ -320,21 +331,30 @@ export async function fetchListRows(
  * this bundle can render. Exported because the SERVER fetch parses
  * the same endpoint, where a strict enum would fail the whole page
  * render rather than one poll. */
-export function renderablePage(page: { items: { states: Record<string, TolerantCellState> }[] }): RenderableListRowsPage {
+export function renderablePage(page: {
+  items: { states: Record<string, TolerantCellState>; webhooks: Record<string, string> }[];
+}): RenderableListRowsPage {
   const known = new Set<string>(CELL_STATES);
   const narrow = (entry: TolerantCellState): RenderableCellStateWire => {
     const state = typeof entry === "string" ? entry : entry.state;
     const tools = typeof entry === "string" ? {} : entry.tools;
     return { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
   };
+  const knownWords = new Set<string>(WEBHOOK_CELL_STATES);
+  // An unheard-of word maps to the member that promises LEAST: waiting
+  // claims only that nothing this bundle can name has happened.
+  const narrowWord = (word: string): WebhookCellState =>
+    (knownWords.has(word) ? word : UNKNOWN_WEBHOOK_CELL_STATE) as WebhookCellState;
   return {
     ...(page as unknown as RenderableListRowsPage),
     items: page.items.map((item) => ({
       ...(item as unknown as RenderableListRow),
       states: Object.fromEntries(Object.entries(item.states).map(([key, entry]) => [key, narrow(entry)])),
+      webhooks: Object.fromEntries(Object.entries(item.webhooks).map(([key, word]) => [key, narrowWord(word)])),
     })),
   };
 }
+export const UNKNOWN_WEBHOOK_CELL_STATE: WebhookCellState = "waiting";
 
 export async function updateList(
   id: string,
