@@ -22,7 +22,7 @@ live in fills.py.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 from django.db import models
 from django.utils import timezone
@@ -181,6 +181,82 @@ class NodeRunFlow:
             )
             == 1
         )
+
+    # The deferred lane: a webhook node's runs, claimed in a batch by the
+    # flush at their window and settled or parked together.
+
+    @staticmethod
+    def iter_due_webhook_nodes(*, now: datetime.datetime) -> Iterator[str]:
+        """The webhook nodes with a DEFERRED run due at or before `now`,
+        each once, LAZILY: the flush materializes the list before it
+        claims, since claiming mutates what this reads."""
+        due = NodeRun.objects.filter(kind=WEBHOOK, status=NodeRunStatus.DEFERRED, not_before__lte=now)
+        yield from due.values_list("node_id", flat=True).distinct().iterator()
+
+    def claim_webhook_batch(self, node_id: str, *, now: datetime.datetime, limit: int) -> list[NodeRun]:
+        """DEFERRED -> PROCESSING for up to `limit` of one webhook node's
+        due runs, in sheet order, stamping this worker and the attempt.
+        The UPDATE matches status DEFERRED again, so two flush ticks
+        overlapping on one node split its due rows between them instead
+        of both sending the same digest; what this worker won is
+        re-read by its stamp. Returns the claimed runs in (position, id)
+        order, empty when another tick got there first."""
+        due = NodeRun.objects.filter(kind=WEBHOOK, node_id=node_id, status=NodeRunStatus.DEFERRED, not_before__lte=now)
+        ids = list(due.order_by("position", "id").values_list("id", flat=True)[:limit])
+        if not ids:
+            return []
+        NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.DEFERRED).update(
+            status=NodeRunStatus.PROCESSING,
+            processing_at=now,
+            last_state_change_at=now,
+            leased_by=self.worker_id,
+            attempts=models.F("attempts") + 1,
+        )
+        won = NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.PROCESSING, leased_by=self.worker_id)
+        return list(won.order_by("position", "id"))
+
+    def settle_many(self, task_ids: Sequence[str], result: dict, *, status: NodeRunStatus) -> int:
+        """PROCESSING -> a terminal state for a batch this worker holds,
+        one statement, owner CAS: a run the reclaim took back mid-flight
+        is left alone. Returns how many closed."""
+        if not task_ids:
+            return 0
+        now = timezone.now()
+        return NodeRun.objects.filter(
+            id__in=list(task_ids), status=NodeRunStatus.PROCESSING, leased_by=self.worker_id
+        ).update(status=status, result=result, settled_at=now, last_state_change_at=now)
+
+    def park_batch(
+        self,
+        task_ids: Sequence[str],
+        *,
+        not_before: datetime.datetime,
+        result: dict | None = None,
+        restore_attempt: bool = False,
+    ) -> int:
+        """PROCESSING -> DEFERRED at a later window for a batch this
+        worker holds, owner CAS. With `result` the park records a failed
+        attempt (a transient delivery); with `restore_attempt` it hands
+        the claim's attempt back, for a run that made no delivery (the
+        row was not complete at claim, or its wait resolved to nothing)
+        and must not walk toward the cap for it."""
+        if not task_ids:
+            return 0
+        now = timezone.now()
+        fields: dict = {
+            "status": NodeRunStatus.DEFERRED,
+            "not_before": not_before,
+            "last_state_change_at": now,
+            "leased_by": "",
+        }
+        if result is not None:
+            fields["result"] = result
+            fields["parked"] = True
+        if restore_attempt:
+            fields["attempts"] = models.F("attempts") - 1
+        return NodeRun.objects.filter(
+            id__in=list(task_ids), status=NodeRunStatus.PROCESSING, leased_by=self.worker_id
+        ).update(**fields)
 
     @staticmethod
     def reclaim_stale_processing(*, now: datetime.datetime | None = None) -> int:

@@ -219,6 +219,10 @@ FILL_SCAN_CHUNK = 1000
 # admission materializes a fill's queue, cancel abandons what is left
 # of it, list delete purges, the cron sweep pages its deletes.
 FILL_WRITE_BATCH = 1000
+# Rows per digest: what one flush tick claims for one webhook node
+# (binary). A node with more due rows sends the rest on later ticks,
+# each digest its own delivery.
+WEBHOOK_FLUSH_BATCH = 256
 
 
 # Stable codes for a fill that DIED, distinct from the admission
