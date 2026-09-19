@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from ..constants import NodeRunStatus
 from ..models import List, NodeRun
+from ..nodes.registry import COLUMN_AGENT
 from .workflows import columns_by_node
 
 
@@ -51,6 +52,9 @@ def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
                     account_id=account_id,
                     fill_run_id=None,
                     node_id=node_id,
+                    # An AiColumn binds a column_agent node by contract,
+                    # so the kind needs no node read here.
+                    kind=COLUMN_AGENT,
                     row_id=str(row.id),
                     list_id=str(target_list.id),
                     status=NodeRunStatus.READY,

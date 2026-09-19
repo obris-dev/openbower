@@ -26,6 +26,7 @@ from ..constants import (
     NodeRunStatus,
 )
 from ..models import Fill, ListRow, Node, NodeRun
+from ..nodes.registry import COLUMN_AGENT
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.sweep_test_fills import SweepTestFillsOperation
 from ..services.fill_admission import (
@@ -69,7 +70,7 @@ def _test_fill() -> Fill:
         confirmed_row_count=1,
         status=FillStatus.RUNNING,
     )
-    NodeRun.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), row_id=None, position=0)
+    NodeRun.objects.create(account_id=ACCOUNT, fill_run_id=str(fill.id), kind=COLUMN_AGENT, row_id=None, position=0)
     return fill
 
 
@@ -154,7 +155,12 @@ class TestAdmissionTests(TestCase):
         fill = self._admit()
         first = NodeRun.objects.get(fill_run_id=str(fill.id))
         NodeRun.objects.create(
-            account_id=ACCOUNT, fill_run_id=str(fill.id), node_id=first.node_id, row_id=first.row_id, position=1
+            account_id=ACCOUNT,
+            fill_run_id=str(fill.id),
+            node_id=first.node_id,
+            kind=first.kind,
+            row_id=first.row_id,
+            position=1,
         )
         self.assertEqual(NodeRun.objects.filter(fill_run_id=str(fill.id)).count(), 2)
 

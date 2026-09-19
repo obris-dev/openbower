@@ -389,6 +389,7 @@ class FillAdmissionService(AdmissionBase):
                         account_id=self.account_id,
                         fill_run_id=str(fill.id),
                         node_id=str(node.id),
+                        kind=node.kind,
                         row_id=row_id,
                         list_id=fill.list_id,
                         position=position,

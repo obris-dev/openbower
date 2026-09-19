@@ -10,7 +10,10 @@ slow) and no in-memory task state.
 Both fill lanes ride this one flow: the autofill firehose (null-run
 tasks) and the manual, fill-backed tasks. The provisioners pick READY
 tasks (globally for autofill, per-fill for manual) and the shared
-consumer claims/settles/parks them.
+consumer claims/settles/parks them. A DEFERRED run (a webhook run,
+waiting for its window) belongs to its kind's own processor and never
+enters these lanes: the picks and claims gate on READY|QUEUED, and the
+reclaim returns a stale one to DEFERRED rather than READY.
 
 Not account-scoped: the workers are trusted processes; user-facing reads
 live in fills.py.
@@ -26,6 +29,7 @@ from django.utils import timezone
 
 from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus
 from ..models import NodeRun
+from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 
 # The owner tolerates death, not slowness: a task PROCESSING longer than
 # this was abandoned by a dead consumer (run_cell is timeout-bounded, so
@@ -51,10 +55,12 @@ class NodeRunFlow:
         is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick
         narrows to its lists. Streamed via .iterator() so a growing queue
-        never materializes as one list."""
+        never materializes as one list. The kind filter names the lane
+        beside the status gate (a webhook run is never READY, but the
+        pick that defines the agent lane says so itself)."""
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
-        qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True)
+        qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
         yield from qs.defer("result").order_by("list_id", "position", "id")[:limit].iterator()
 
     @staticmethod
@@ -184,15 +190,16 @@ class NodeRunFlow:
         still walks toward the cap. Deliberately does NOT touch QUEUED: a
         backed-up or offline consumer is normal and the transport is
         durable, so a QUEUED task drains on its own; re-handing it would
-        only duplicate work the consumer's claim CAS already drops."""
+        only duplicate work the consumer's claim CAS already drops.
+
+        A stale WEBHOOK run (a flush that died mid-batch) returns to
+        DEFERRED instead: READY would hand it to the agent worker, which
+        cannot run it. Its `not_before` is left as the window that was
+        already due, so the next flush tick re-batches it."""
         now = now or timezone.now()
         stale_before = now - datetime.timedelta(seconds=PROCESSING_STALE_SECONDS)
-        return NodeRun.objects.filter(
-            status=NodeRunStatus.PROCESSING,
-            last_state_change_at__lt=stale_before,
-        ).update(
-            status=NodeRunStatus.READY,
-            processing_at=None,
-            leased_by="",
-            last_state_change_at=now,
-        )
+        stale = NodeRun.objects.filter(status=NodeRunStatus.PROCESSING, last_state_change_at__lt=stale_before)
+        released = {"processing_at": None, "leased_by": "", "last_state_change_at": now}
+        agent_runs = stale.exclude(kind=WEBHOOK).update(status=NodeRunStatus.READY, **released)
+        webhook_runs = stale.filter(kind=WEBHOOK).update(status=NodeRunStatus.DEFERRED, **released)
+        return agent_runs + webhook_runs

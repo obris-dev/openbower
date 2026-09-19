@@ -231,7 +231,15 @@ class NodeRunStatus(StrEnum):
     lease to renew, because run_cell is time-bounded, so a task
     PROCESSING past the worst-case run means a DEAD consumer, and the
     reclaim scan (reclaim_stale_processing) returns it to READY off
-    last_state_change_at.
+    last_state_change_at (to DEFERRED for a deferred kind, which the
+    worker never runs).
+
+    DEFERRED is the run whose processing is put off to a later time AND
+    to its node kind's own processor: not skipped, not ready, not
+    queued for the shared worker. `not_before` holds the time; the kind
+    (a webhook run, claimed by the flush in a batch at its window) says
+    who claims it. The agent lanes pick READY and claim READY|QUEUED, so
+    a DEFERRED run is invisible to them by status alone.
 
     ABANDONED is the durable record of consent granted and NOT spent.
     Cancel writes it over the fill's unclaimed tasks in one statement,
@@ -253,10 +261,12 @@ class NodeRunStatus(StrEnum):
     # The non-terminal lifecycle, in order: READY (admitted, eligible,
     # not yet handed to the transport), QUEUED (handed off / published,
     # not re-provisioned), PROCESSING (a consumer owns it and is
-    # running). All three SHIMMER; the terminals below do not.
+    # running), DEFERRED (owed, but to a later time and another
+    # processor). All four are open; the terminals below are not.
     READY = "ready"
     QUEUED = "queued"
     PROCESSING = "processing"
+    DEFERRED = "deferred"
     DONE = "done"
     ABANDONED = "abandoned"
     ROW_MISSING = "row_missing"
@@ -264,13 +274,16 @@ class NodeRunStatus(StrEnum):
 
 
 # The states a task still owes work in: it shimmers on the sheet, the
-# reclaim scan watches it, and a fill is complete only when it has none. The
+# reclaim scan watches it, a fill is complete only when it has none, and
+# the automatic lane admits ONE run per (row, node) in them. The
 # terminals are everything else; keeping the NON-terminal set explicit
-# is what the reclaim scan's partial index and the pending derivation key on.
+# is what the reclaim scan's partial index, the open-run key, and the
+# pending derivation key on.
 NON_TERMINAL_NODE_RUN_STATES = (
     NodeRunStatus.READY,
     NodeRunStatus.QUEUED,
     NodeRunStatus.PROCESSING,
+    NodeRunStatus.DEFERRED,
 )
 
 

@@ -5,14 +5,17 @@ from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
     LEASED_BY_MAX_LENGTH,
+    NODE_KIND_MAX_LENGTH,
     NODE_RUN_STATUS_MAX_LENGTH,
     NON_TERMINAL_NODE_RUN_STATES,
     NodeRunStatus,
 )
+from ..nodes.registry import WEBHOOK
 
 
 class NodeRun(AccountScopedModel):
-    """One consented agent run, AND the queue itself.
+    """One run of one node for one row, AND the queue itself: the
+    per-row ledger of every node kind.
 
     One task per sheet row, materialized at admission, so the queue is
     simultaneously the work list, the pending signal the sheet renders
@@ -21,13 +24,15 @@ class NodeRun(AccountScopedModel):
     only honest answer to "what did this still owe", which a queue
     holding only what a planner had reached could not give.
 
-    Every task carries its `node_id` from birth: the node it is a run
-    of, fill-backed and automatic alike (a fill-backed task's node is
-    the column_agent node for its Fill's agent on the sheet; a TEST
-    task's is the account's bench node). A task with NO fill run
-    (`fill_run_id` NULL) is the automatic path (autofill): the same
-    queue and the same worker, minus the consent a Fill records,
-    resolving its list and user from its row.
+    Every task carries its `node_id` and the node's `kind` from birth.
+    A column_agent run is an agent run, fill-backed or automatic (a
+    fill-backed task's node is the column_agent node for its Fill's
+    agent on the sheet; a TEST task's is the account's bench node). A
+    task with NO fill run (`fill_run_id` NULL) is the automatic path:
+    autofill rides the same queue and the same worker, minus the
+    consent a Fill records, resolving its list and user from its row; a
+    webhook run is DEFERRED at birth and claimed by the flush at its
+    window, never by the worker.
 
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on ListCellState. No word appears in
@@ -62,6 +67,12 @@ class NodeRun(AccountScopedModel):
     # agent produces all its outputs together), so one task per
     # (row, node) is the grain.
     node_id = models.CharField(_("node id"), max_length=26)
+    # The node's kind, DENORMALIZED so a lane filters without a join
+    # (the flush claims webhook runs by kind; the reclaim returns a
+    # stale webhook run to DEFERRED and an agent run to READY). No
+    # default: a CharField stores "" when a writer forgets it, and the
+    # check constraint below turns that into a failed insert.
+    kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
     # WHERE this task's row lives, by kind. NORMAL: the row's sheet
     # position, 1-based and snapshot-coherent (positions are
     # append-only), so claims ordered by it march TOP TO BOTTOM down
@@ -122,14 +133,18 @@ class NodeRun(AccountScopedModel):
             # distinct in SQL, so this only binds fill-backed tasks; the
             # automatic path is deduped by its own key below.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
-            # The automatic path's idempotency: one autofill run per row
-            # per node (one run fills that node's whole column set), so
-            # re-enqueueing a row's autofill is a no-op.
+            # The automatic path's idempotency: one OPEN run per (row,
+            # node) (one run fills a node's whole column set), so
+            # re-enqueueing a row's autofill or re-completing a row for
+            # its webhook while a run is pending is a no-op. A settled
+            # run is history: a row that completes again after its
+            # webhook run sent gets a new run.
             models.UniqueConstraint(
                 fields=["row_id", "node_id"],
-                condition=models.Q(fill_run_id__isnull=True),
-                name="node_run_autofill_uniq",
+                condition=models.Q(fill_run_id__isnull=True, status__in=NON_TERMINAL_NODE_RUN_STATES),
+                name="node_run_open_uniq",
             ),
+            models.CheckConstraint(condition=~models.Q(kind=""), name="node_run_kind_named"),
         ]
         indexes = [
             # The provisioner's READY pick, SPLIT by lane: a fill-backed
@@ -155,12 +170,29 @@ class NodeRun(AccountScopedModel):
             # leads straight into the (list_id, position, id) order with no
             # IS NULL in the key. list_id sits BEFORE the sort columns, so a
             # per-list or set-sharded pick (list_id = ANY(...)) SEEKS its
-            # lists rather than scanning.
+            # lists rather than scanning. `kind` rides the leaf beside
+            # not_before so the pick's lane filter stays index-only.
             models.Index(
                 fields=["status", "list_id", "position", "id"],
-                include=["not_before"],
+                include=["not_before", "kind"],
                 name="node_run_autofill_idx",
                 condition=models.Q(fill_run_id__isnull=True),
+            ),
+            # The flush's claim: a webhook node's DEFERRED runs due at or
+            # before now, in (position, id) order. Partial on the kind so
+            # the agent lanes' rows never widen it.
+            models.Index(
+                fields=["node_id", "status", "not_before", "position", "id"],
+                name="node_run_webhook_due_idx",
+                condition=models.Q(kind=WEBHOOK),
+            ),
+            # The rows page's cell word: the NEWEST run per (row, webhook
+            # node) for one page of rows. The due index leads with the
+            # node and would walk its whole history to answer for a page.
+            models.Index(
+                fields=["row_id", "node_id", "-id"],
+                name="node_run_webhook_cell_idx",
+                condition=models.Q(kind=WEBHOOK),
             ),
             # The reclaim scan's access path: find tasks stuck in a
             # non-terminal state too long, oldest first. PARTIAL on the

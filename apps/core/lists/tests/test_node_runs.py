@@ -18,6 +18,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+from django.db import IntegrityError
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
@@ -27,6 +28,7 @@ from ..constants import NodeRunStatus
 from ..ingest.consumer import handle_ingest_event
 from ..ingest.events import IngestEvent
 from ..models import ListRow, NodeRun
+from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 from ..operations.provision import AutofillProvisionOperation
 from ..services import autofill
 from ..services.fill_admission import FillAdmissionService
@@ -110,6 +112,7 @@ class EnqueueTests(AutofillHarness):
         for task in tasks:
             self.assertIsNone(task.fill_run_id)
             self.assertEqual(task.node_id, node_id)
+            self.assertEqual(task.kind, COLUMN_AGENT)
             self.assertEqual(task.account_id, ACCOUNT)
             # Denormalized from the target sheet: an autofill run has no
             # Fill, so its list comes off the List it was pushed to.
@@ -359,3 +362,92 @@ class ReaperTests(AutofillHarness):
         self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 0)  # nothing reclaimed
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.QUEUED)  # still QUEUED, untouched
+
+    def test_a_stale_webhook_run_returns_to_deferred_never_ready(self) -> None:
+        # A flush that died mid-batch leaves its webhook runs PROCESSING.
+        # READY would hand them to the agent worker, which cannot run a
+        # webhook; DEFERRED puts them back where the next flush tick
+        # finds them, at the window that was already due. FAILS if the
+        # reclaim stops branching on kind.
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        now = timezone.now()
+        window = now - timedelta(seconds=120)
+        stale_at = now - timedelta(seconds=PROCESSING_STALE_SECONDS + 60)
+        webhook_run = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.PROCESSING, not_before=window)
+        NodeRun.objects.filter(id__in=[agent_run.id, webhook_run.id]).update(
+            status=NodeRunStatus.PROCESSING, leased_by="dead:1", last_state_change_at=stale_at
+        )
+
+        self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 2)
+
+        agent_run.refresh_from_db()
+        webhook_run.refresh_from_db()
+        self.assertEqual(agent_run.status, NodeRunStatus.READY)
+        self.assertEqual((webhook_run.status, webhook_run.leased_by, webhook_run.processing_at), ("deferred", "", None))
+        self.assertEqual(webhook_run.not_before, window)
+
+    def test_the_agent_pick_never_sees_a_webhook_run(self) -> None:
+        # The lane gate the provisioner relies on: a due webhook run in
+        # any status the agent lane could otherwise read is invisible to
+        # its pick. FAILS if the pick drops its kind filter AND a webhook
+        # run ever reaches READY.
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.READY, not_before=None)
+        picked = list(NodeRunFlow.iter_ready(limit=10))
+        self.assertEqual([t.id for t in picked], [agent_run.id])
+
+
+def _webhook_run(sheet, row_id: str, *, status: NodeRunStatus, not_before) -> NodeRun:
+    return NodeRun.objects.create(
+        account_id=ACCOUNT,
+        fill_run_id=None,
+        node_id="01NODEWEBHOOK" + "0" * 13,
+        kind=WEBHOOK,
+        row_id=row_id,
+        list_id=str(sheet.id),
+        position=1,
+        status=status,
+        not_before=not_before,
+        last_state_change_at=timezone.now(),
+    )
+
+
+class OpenRunKeyTests(AutofillHarness):
+    """The automatic lane's idempotency key: one OPEN run per (row,
+    node), settled runs being history."""
+
+    def test_a_second_open_run_for_the_row_and_node_is_refused(self) -> None:
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+        with self.assertRaises(IntegrityError):
+            _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+
+    def test_a_settled_run_lets_the_row_and_node_open_a_new_one(self) -> None:
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        first = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DONE, not_before=None)
+        second = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(NodeRun.objects.filter(kind=WEBHOOK, row_id=agent_run.row_id).count(), 2)
+
+    def test_a_run_with_no_kind_is_refused_at_the_insert(self) -> None:
+        # The kind is a lane, and a CharField silently stores "" when a
+        # writer forgets it; the check constraint makes that an error at
+        # the insert instead of a run no lane will ever claim.
+        with self.assertRaises(IntegrityError):
+            NodeRun.objects.create(
+                account_id=ACCOUNT,
+                fill_run_id=None,
+                node_id="01NODEKINDLESS" + "0" * 12,
+                row_id="01ROW" + "0" * 21,
+                list_id="01LIST" + "0" * 20,
+                status=NodeRunStatus.READY,
+                last_state_change_at=timezone.now(),
+            )

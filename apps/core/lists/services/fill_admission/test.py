@@ -84,6 +84,7 @@ class TestFillAdmission(AdmissionBase):
                 account_id=self.account_id,
                 fill_run_id=str(fill.id),
                 node_id=str(bench.id),
+                kind=bench.kind,
                 row_id=None,
                 list_id=fill.list_id,  # "" by construction: a bench fill points at no sheet
                 position=0,

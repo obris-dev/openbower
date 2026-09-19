@@ -22,6 +22,7 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import Fill, ListCellState, NodeRun
+from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.fills import FillNotFound, FillService, derive_counters
@@ -50,6 +51,7 @@ def make_run(*, status: str = FillStatus.PENDING, rows: int = 3) -> Fill:
         NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
+            kind=COLUMN_AGENT,
             row_id=f"01ROW{n:021d}",
             position=n + 1,
             status=NodeRunStatus.READY,
