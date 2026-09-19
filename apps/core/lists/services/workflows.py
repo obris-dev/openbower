@@ -13,18 +13,32 @@ BEFORE path, so a racing loser mints no orphan path.
 
 The module-level readers are the ONE spelling of a node's at-rest
 config (config_of), of "which columns does a node fill" (a run fills a
-node's whole set), and of the node -> agent hop; every caller that needs
-any of the three reads it here.
+node's whole set), and of the node -> typed config hop (config_as, and
+agent_id_of over it); every caller that needs any of the three reads it
+here.
+
+Path persistence is KIND-BLIND: a caller builds typed configs in
+memory and hands them over in rank order; the writer creates the path
+and stores each config at its rank as what the config says it is. What
+a webhook column's path looks like is that column's service's
+knowledge, not this module's.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from django.db import transaction
+from django.db.models import QuerySet
+
+from openbower_schema.lists import AiColumn
 
 from ..models import List, Node, NodePath, Workflow
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import ColumnAgent
 from ..nodes.registry import parse_config
+from ..nodes.wait_until import WaitUntil
+from ..nodes.webhook import Webhook
 
 
 class NodeNotFound(Exception):
@@ -42,9 +56,8 @@ def columns_by_node(target_list: List) -> dict[str, list[str]]:
     agent is one node)."""
     mapping: dict[str, list[str]] = {}
     for column in target_list.columns:
-        fill = column.get("fill")
-        if fill and fill.get("node_id"):
-            mapping.setdefault(fill["node_id"], []).append(column["key"])
+        if isinstance(column, AiColumn):
+            mapping.setdefault(column.node_id, []).append(column.key)
     return mapping
 
 
@@ -61,13 +74,18 @@ def config_of(node: Node) -> NodeConfig:
     return parse_config(node.kind, node.config)
 
 
+def config_as[ConfigT: NodeConfig](node: Node, cls: type[ConfigT]) -> ConfigT:
+    """A node's config as the kind a caller expects. Any other kind
+    refuses HERE, at the hop, rather than wherever the caller next trips
+    over a missing field."""
+    if node.kind != cls.KIND:
+        raise WrongNodeKind(f"node {node.id} is {node.kind!r}, expected {cls.KIND!r}")
+    return cls.model_validate(node.config)
+
+
 def agent_id_of(node: Node) -> str:
-    """The ONE node -> agent hop. Every lane runs column_agent nodes
-    today, so any other kind refuses HERE, at the hop, rather than
-    wherever the caller next trips over a missing agent."""
-    if node.kind != ColumnAgent.KIND:
-        raise WrongNodeKind(f"node {node.id} is {node.kind!r}, expected {ColumnAgent.KIND!r}")
-    return ColumnAgent.model_validate(node.config).agent_id
+    """The ONE node -> agent hop: every fill lane runs column_agent nodes."""
+    return config_as(node, ColumnAgent).agent_id
 
 
 class WorkflowService:
@@ -123,10 +141,96 @@ class WorkflowService:
         except Node.DoesNotExist as e:
             raise NodeNotFound(node_id) from e
 
+    def create_path(self, target_list: List, nodes: Sequence[NodeConfig]) -> tuple[NodePath, list[Node]]:
+        """A new path on the sheet's workflow holding `nodes` in order,
+        rank = position. One transaction, path FIRST: unlike
+        get-or-create there is no identity to race on, so a failed node
+        write rolls the path back with it."""
+        with transaction.atomic():
+            workflow = self.ensure_workflow(target_list)
+            path = NodePath.objects.create(account_id=self.account_id, workflow_id=str(workflow.id))
+            stored = [
+                self._store(config, rank=rank, workflow_id=str(workflow.id), path_id=str(path.id))
+                for rank, config in enumerate(nodes)
+            ]
+        return path, stored
+
+    def _store(self, config: NodeConfig, *, rank: int, workflow_id: str, path_id: str) -> Node:
+        return Node.objects.create(
+            account_id=self.account_id,
+            workflow_id=workflow_id,
+            path_id=path_id,
+            kind=config.KIND,
+            identity=config.identity(),
+            config=config.model_dump(),
+            rank=rank,
+        )
+
+    def save_node(self, node: Node, config: NodeConfig) -> Node:
+        """A new config on an existing node. A config of another kind
+        is a caller bug, refused at the hop."""
+        if node.kind != config.KIND:
+            raise WrongNodeKind(f"node {node.id} is {node.kind!r}, cannot hold a {config.KIND!r} config")
+        node.identity = config.identity()
+        node.config = config.model_dump()
+        node.save(update_fields=["identity", "config", "updated_at"])
+        return node
+
+    def replace_path_nodes(self, path_id: str, nodes: Sequence[NodeConfig]) -> list[Node]:
+        """New configs for a path's nodes, rank by rank, in one
+        transaction. The path keeps its shape: a config count or kind
+        that differs from what is there is a caller bug."""
+        with transaction.atomic():
+            existing = self.nodes_on_path(path_id)
+            if len(existing) != len(nodes):
+                raise WrongNodeKind(f"path {path_id} holds {len(existing)} nodes, got {len(nodes)} configs")
+            return [self.save_node(node, config) for node, config in zip(existing, nodes, strict=True)]
+
+    def delete_path(self, path_id: str) -> None:
+        """A path and its nodes, one transaction. Only for a path whose
+        nodes no run points at (a webhook column's); an agent path is
+        durable, see Node."""
+        with transaction.atomic():
+            Node.objects.filter(account_id=self.account_id, path_id=path_id).delete()
+            NodePath.objects.filter(account_id=self.account_id, id=path_id).delete()
+
+    def nodes_by_id(self, node_ids: Sequence[str]) -> list[Node]:
+        """The account's nodes among `node_ids`, one read; a gone id is
+        simply absent."""
+        if not node_ids:
+            return []
+        return list(Node.objects.filter(account_id=self.account_id, id__in=list(node_ids)))
+
+    def nodes_on_path(self, path_id: str) -> list[Node]:
+        return list(Node.objects.filter(account_id=self.account_id, path_id=path_id).order_by("rank"))
+
+    # The two config QUERIES (as against parses), named here so no other
+    # module spells a JSON lookup against this table.
+
+    def wait_nodes_naming(self, path_id: str) -> QuerySet[Node]:
+        """The account's wait nodes whose inbound set names a path: what
+        makes an AI column's delete refuse."""
+        return Node.objects.filter(
+            account_id=self.account_id, kind=WaitUntil.KIND, config__inbound_path_ids__contains=[path_id]
+        )
+
+    def webhook_nodes_for(self, destination_id: str) -> QuerySet[Node]:
+        """The account's webhook nodes sending to a destination: what
+        makes its delete refuse, and its usage count."""
+        return Node.objects.filter(account_id=self.account_id, kind=Webhook.KIND, config__destination_id=destination_id)
+
+    def path_of_column(self, target_list: List, key: str) -> str:
+        """The path an AI column's node sits on, the id a wait node
+        names; raises NodeNotFound for a column with no node."""
+        for column in target_list.columns:
+            if column.key == key and isinstance(column, AiColumn):
+                return self.get_node(column.node_id).path_id
+        raise NodeNotFound(key)
+
     def delete_for_list(self, list_id: str) -> None:
         """Called from ListService.delete AFTER the runs are purged (they
         point at nodes): nodes, then paths, then the workflow, as one
-        transaction. No-op for a sheet that never gained an AI column."""
+        transaction. No-op for a sheet that never gained a node."""
         with transaction.atomic():
             workflow = Workflow.objects.filter(account_id=self.account_id, list_id=list_id).first()
             if workflow is None:

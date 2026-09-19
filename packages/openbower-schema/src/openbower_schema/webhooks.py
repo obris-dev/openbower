@@ -3,7 +3,7 @@ deliveries made to them, and the envelope a receiver gets."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -24,6 +24,18 @@ WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH = 1024
 # destination in the account.
 MAX_WEBHOOK_DESTINATIONS = 32
 MAX_WEBHOOK_HEADERS = 8
+# How often a webhook column's completed rows are batched and sent. The
+# presets are what the drawer OFFERS (seconds, decimal: clock durations,
+# not invented bounds); the wire accepts any positive integer, and a
+# stored value outside the presets renders as its own option.
+WEBHOOK_CADENCE_SECONDS: tuple[int, ...] = (300, 900, 3_600, 21_600, 86_400)
+DEFAULT_WEBHOOK_CADENCE_SECONDS = 900
+# After a secret rotation, deliveries carry a signature under the old
+# secret too for this long: 2^17 s, about 36 hours (binary by house
+# rule, and above the 24 h the Standard Webhooks reference
+# implementation keeps), so a receiver switches at its own pace. A
+# second rotation inside the window is refused.
+WEBHOOK_ROTATION_GRACE_SECONDS = 131_072
 # The signature triple every delivery carries, and the shape of what
 # rides in it: the Standard Webhooks scheme, so a receiver library
 # verifies with the secret as shown.
@@ -114,7 +126,9 @@ class WebhookDigestData(BaseModel):
     items: list[WebhookDigestItem]
 
 
-WebhookEnvelopeData = WebhookPingData | WebhookDigestData
+# A PEP 695 alias for the same reason as ListColumn: one named definition
+# the client narrows on, the discriminator travelling with the type.
+type WebhookEnvelopeData = Annotated[WebhookPingData | WebhookDigestData, Field(discriminator="type")]
 
 
 class WebhookEnvelope(BaseModel):
@@ -138,7 +152,7 @@ class WebhookEnvelope(BaseModel):
     version: int = 1
     test: bool = False
     timestamp: str
-    data: WebhookEnvelopeData = Field(discriminator="type")
+    data: WebhookEnvelopeData
 
     @model_validator(mode="after")
     def _type_matches_data(self) -> WebhookEnvelope:
@@ -184,6 +198,16 @@ class WebhookDestinationWire(BaseModel):
     last_delivery: WebhookDeliveryWire | None = Field(
         default=None, description="The newest delivery on record, the destination's health; null before any."
     )
+    rotated_at: str | None = Field(
+        default=None,
+        description="When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.",
+    )
+    column_count: int | None = Field(
+        default=None,
+        description="How many Send webhook columns send here: delete is refused while any do. Carried by "
+        "the single-destination reads (detail, create, patch, rotate) and null on the roster, which does "
+        "not pay for it.",
+    )
     created_at: str
 
 
@@ -192,10 +216,9 @@ class WebhookDestinationsList(BaseModel):
 
 
 class WebhookDestinationCreated(BaseModel):
-    """The create response: the ONE time the signing secret is on the
-    wire. It is minted server-side, stored encrypted, and never returned
-    again; a lost secret means deleting the destination and adding it
-    again."""
+    """The create and rotate response: the ONE time a signing secret is
+    on the wire. It is minted server-side, stored encrypted, and never
+    returned again; a lost secret is replaced by rotating."""
 
     destination: WebhookDestinationWire
     signing_secret: str
@@ -213,3 +236,34 @@ class WebhookColumnTestResponse(BaseModel):
 
     delivery: WebhookDeliveryWire
     envelope: WebhookEnvelope
+
+
+class WebhookColumnPreviewResponse(BaseModel):
+    """The envelope a test send of these choices would carry, rendered by
+    the server and sent nowhere, so the sheet shows the truth before a
+    send rather than a reconstruction."""
+
+    envelope: WebhookEnvelope
+
+
+class WebhookColumnConfigWire(BaseModel):
+    """A Send webhook column as configured, served by GET and echoed by
+    PATCH on /lists/{id}/columns/{key}/webhook: what it waits for, where
+    it sends, what rides, how often, and whether it is running."""
+
+    node_id: str = Field(description="The webhook node the column is; the drawer's test send scopes to it.")
+    destination_id: str
+    destination_label: str = Field(description="The destination's label at read time, for display; the id is the link.")
+    wait_keys: list[str] = Field(
+        description="The AI columns a row must complete before it is due, in sheet order. Derived back from the "
+        "paths the wait node names, so waiting on one output of an agent lists every column that agent fills."
+    )
+    payload_keys: list[str] = Field(
+        description="The columns whose values ride in each sent item, in sheet order; a waited-on column rides "
+        "only if named here too. Never empty, never a webhook column."
+    )
+    interval_seconds: int = Field(
+        gt=0,
+        description="Seconds between sends of due rows: any positive integer; WEBHOOK_CADENCE_SECONDS are the offered presets.",
+    )
+    enabled: bool = Field(default=True, description="False pauses sending; due rows wait until it is resumed.")

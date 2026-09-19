@@ -44,6 +44,8 @@ from openbower_schema import (
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookColumnConfigWire,
+    WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDestinationCreated,
@@ -69,14 +71,17 @@ from openbower_schema.fills import (
     SETTLED_CELL_STATES,
 )
 from openbower_schema.webhooks import (
+    DEFAULT_WEBHOOK_CADENCE_SECONDS,
     MAX_WEBHOOK_DESTINATIONS,
     MAX_WEBHOOK_HEADERS,
     RESERVED_WEBHOOK_HEADER_NAMES,
+    WEBHOOK_CADENCE_SECONDS,
     WEBHOOK_HEADER_NAME_GRAMMAR,
     WEBHOOK_HEADER_NAME_MAX_LENGTH,
     WEBHOOK_HEADER_VALUE_GRAMMAR,
     WEBHOOK_HEADER_VALUE_MAX_LENGTH,
     WEBHOOK_ID_HEADER,
+    WEBHOOK_ROTATION_GRACE_SECONDS,
     WEBHOOK_SECRET_PREFIX,
     WEBHOOK_SIGNATURE_HEADER,
     WEBHOOK_SIGNATURE_VERSION,
@@ -106,6 +111,8 @@ CONTRACT_MODELS: list[type[Any]] = [
     ListSummary,
     LookalikeListResponse,
     RowsAdded,
+    WebhookColumnConfigWire,
+    WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
     WebhookDeliveriesPage,
     WebhookDestinationCreated,
@@ -180,6 +187,11 @@ def build_schema() -> dict[str, Any]:
             "WEBHOOK_SIGNATURE_HEADER": WEBHOOK_SIGNATURE_HEADER,
             "WEBHOOK_SIGNATURE_VERSION": WEBHOOK_SIGNATURE_VERSION,
             "WEBHOOK_SECRET_PREFIX": WEBHOOK_SECRET_PREFIX,
+            # A webhook column's schedule is a choice, and rotation's
+            # grace is a fact the settings page states.
+            "WEBHOOK_CADENCE_SECONDS": list(WEBHOOK_CADENCE_SECONDS),
+            "DEFAULT_WEBHOOK_CADENCE_SECONDS": DEFAULT_WEBHOOK_CADENCE_SECONDS,
+            "WEBHOOK_ROTATION_GRACE_SECONDS": WEBHOOK_ROTATION_GRACE_SECONDS,
         },
     }
 

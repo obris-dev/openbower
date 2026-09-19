@@ -1,4 +1,5 @@
-// The Send webhook family: the drawer and what it composes. The sheet
-// reaches for the drawer only.
+// The Send webhook family: the drawer and the cell the sheet composes,
+// and the strings its header menu speaks for a webhook column.
 export { SendWebhookDrawer } from "./send-webhook-drawer";
+export { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "./copy";
 export type { SampleRow } from "./lib/sample";

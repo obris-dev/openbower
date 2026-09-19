@@ -5,16 +5,27 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
+import { ListColumnSchema, ListSummarySchema, WIRE_BOUNDS } from "@bower/schema";
+
 import {
   CELL_STATES,
   SETTLED_CELL_STATES,
   UNKNOWN_CELL_STATE,
   addListRows,
+  fetchList,
   fetchListRows,
   getFills,
+  DEFAULT_WEBHOOK_CADENCE_SECONDS,
+  WEBHOOK_CADENCE_SECONDS,
+  getColumnWebhook,
+  postColumnWebhook,
+  postColumnWebhookPreview,
   postColumnWebhookTest,
   postFillRefill,
   reorderColumns,
+  updateColumnWebhook,
+  UNKNOWN_COLUMN_KIND,
+  COLUMN_LABEL_MAX_LENGTH,
 } from "../src/lists.ts";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
@@ -332,4 +343,143 @@ test("postColumnWebhookTest parses the delivery and keeps the envelope as JSON",
     assert.equal(res.data.delivery.status, "ok");
     assert.deepEqual(res.data.envelope, envelope);
   }
+});
+
+const SUMMARY = {
+  id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+  label: "Prospects",
+  folder_id: "",
+  columns: [{ key: "crm_sync", label: "CRM sync", type: "text", kind: "webhook" as const, node_id: "01NODE" }],
+  row_count: 0,
+  origin: "manual",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const CONFIG = {
+  node_id: "01NODE",
+  destination_id: "01DST",
+  destination_label: "CRM",
+  wait_keys: ["answer"],
+  payload_keys: ["company"],
+  interval_seconds: 3600,
+  enabled: true,
+};
+
+function stubFetch(t: { after: (fn: () => void) => void }, body: unknown, status = 200) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  return calls;
+}
+
+test("the cadence presets and their default come off the contract", () => {
+  assert.ok(WEBHOOK_CADENCE_SECONDS.length > 0);
+  assert.ok(WEBHOOK_CADENCE_SECONDS.includes(DEFAULT_WEBHOOK_CADENCE_SECONDS));
+});
+
+test("postColumnWebhook posts the config with its label and parses the summary with the webhook member", async (t) => {
+  const calls = stubFetch(t, SUMMARY, 201);
+  const body = { label: "CRM sync", destination_id: "01DST", wait_keys: ["answer"], payload_keys: ["company"], interval_seconds: 3600 };
+  const res = await postColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", body);
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    const column = res.data.columns[0]!;
+    assert.equal(column.kind, "webhook");
+    assert.equal(column.kind === "webhook" ? column.node_id : null, "01NODE");
+  }
+  assert.ok(calls[0]!.url.endsWith("/columns/webhook"));
+  assert.equal(calls[0]!.init.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), body);
+});
+
+test("getColumnWebhook and updateColumnWebhook address the column under its own key and parse the config", async (t) => {
+  const calls = stubFetch(t, CONFIG);
+  const got = await getColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", "crm_sync");
+  assert.equal(got.status, "ok");
+  if (got.status === "ok") assert.deepEqual(got.data, CONFIG);
+  assert.ok(calls[0]!.url.endsWith("/columns/crm_sync/webhook"));
+  assert.equal(calls[0]!.init.method ?? "GET", "GET");
+  const patch = { destination_id: "01DST", wait_keys: ["answer"], payload_keys: ["company"], interval_seconds: 300, enabled: false };
+  await updateColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", "crm_sync", patch);
+  assert.equal(calls[1]!.init.method, "PATCH");
+  const sent = JSON.parse(String(calls[1]!.init.body));
+  assert.deepEqual(sent, patch);
+  assert.ok(!("label" in sent));
+});
+
+test("postColumnWebhookPreview keeps a future envelope as JSON and sends the column key when given", async (t) => {
+  const envelope = { id: "01ENV", type: "future", test: true, data: { type: "future" } };
+  const calls = stubFetch(t, { envelope });
+  const res = await postColumnWebhookPreview("01AAAAAAAAAAAAAAAAAAAAAAAA", {
+    key: "crm_sync",
+    destination_id: "01DST",
+    wait_keys: ["answer"],
+    payload_keys: ["company"],
+    row_id: "01ROW",
+    cells: { company: "acme.com" },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.deepEqual(res.data.envelope, envelope);
+  assert.ok(calls[0]!.url.endsWith("/columns/webhook/preview"));
+  assert.equal(JSON.parse(String(calls[0]!.init.body)).key, "crm_sync");
+});
+
+test("the column union is discriminated: no tag and an unknown tag both refuse", () => {
+  // A plain z.union would let a column with no kind match its first
+  // member and read as plain, dropping an AI column's node on the
+  // floor while the server refuses the same blob.
+  const base = { key: "answer", label: "Answer", type: "text" };
+  assert.equal(ListColumnSchema.safeParse({ ...base, node_id: "01NODE" }).success, false);
+  assert.equal(ListColumnSchema.safeParse({ ...base, kind: "formula" }).success, false);
+  const ai = ListColumnSchema.safeParse({ ...base, kind: "ai", node_id: "01NODE" });
+  assert.ok(ai.success && ai.data.kind === "ai" && ai.data.node_id === "01NODE");
+});
+
+test("a column kind from the future reads as the unknown member; the known kinds keep their fields", async (t) => {
+  const columns = [
+    { kind: "plain", key: "company", label: "Company", type: "text" },
+    { kind: "ai", key: "answer", label: "Answer", type: "text", node_id: "01NODE", current_fill_id: "01RUN" },
+    { kind: "webhook", key: "crm_sync", label: "CRM sync", type: "text", node_id: "01HOOK" },
+    { kind: "formula", key: "later", label: "Later", type: "text", expression: "1 + 1" },
+  ];
+  const summary = { ...SUMMARY, columns };
+  // The strict contract refuses the whole summary over the fourth
+  // column; the tolerant read is what keeps the sheet rendering.
+  assert.equal(ListSummarySchema.safeParse(summary).success, false);
+  stubFetch(t, summary);
+  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual(
+    res.data.columns.map((column) => column.kind),
+    ["plain", "ai", "webhook", UNKNOWN_COLUMN_KIND],
+  );
+  const [, ai, webhook, later] = res.data.columns;
+  assert.ok(ai!.kind === "ai" && ai!.node_id === "01NODE" && ai!.current_fill_id === "01RUN");
+  assert.ok(webhook!.kind === "webhook" && webhook!.node_id === "01HOOK");
+  assert.deepEqual(later, { kind: UNKNOWN_COLUMN_KIND, key: "later", label: "Later", type: "text" });
+});
+
+test("a known kind with a broken body refuses instead of reading as unknown", async (t) => {
+  // The catch-all exists for a kind this bundle has not heard of. A
+  // kind it HAS heard of, arriving without the fields the contract
+  // gives it, is a broken column, and hiding it as unknown would
+  // strip an AI column of its node without a word.
+  const summary = { ...SUMMARY, columns: [{ kind: "ai", key: "answer", label: "Answer", type: "text" }] };
+  stubFetch(t, summary);
+  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "error");
+});
+
+test("every column kind shares the base's label bound the client enforces", () => {
+  // The client reads the bound off one member; the base is not a
+  // definition of its own, so this is what pins the other members to it.
+  assert.equal(WIRE_BOUNDS.AiColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
+  assert.equal(WIRE_BOUNDS.WebhookColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
 });

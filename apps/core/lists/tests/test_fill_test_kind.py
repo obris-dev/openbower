@@ -417,7 +417,10 @@ class TestKindWorkerTests(TransactionTestCase):
 
         lists = ListService(account_id=ACCOUNT)
         sheet = lists.create(
-            owner_id=USER, label="P", columns=[{"key": "company", "label": "Company", "type": "text"}], origin="manual"
+            owner_id=USER,
+            label="P",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
         )
         lists.add_rows(sheet, [{"company": "acme.com"}])
         real = self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)

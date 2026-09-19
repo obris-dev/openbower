@@ -3,13 +3,22 @@
 import { MouseSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
 import { Input, Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 import { useState } from "react";
-import { isNumericColumn, type ListColumn } from "@bower/api";
+import { isNumericColumn, type ListColumn, type WebhookColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
+
+/** The column menu button's id: what an edit gesture opened from the
+ * menu hands focus back to, since the menu item itself is gone by
+ * the time the drawer closes. */
+export function menuButtonId(key: string): string {
+  return `column-menu-${key}`;
+}
 import { canMove, nudgeColumn } from "./lib/column-order";
+import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "./send-webhook";
+import type { ColumnOutcome } from "./use-columns";
 
 /** The one sensor a column drag listens to: the MOUSE.
  *
@@ -53,6 +62,7 @@ function ColumnMenu({
   close,
   onMove,
   onRename,
+  onEditWebhook,
   onDelete,
 }: {
   column: ListColumn;
@@ -60,9 +70,27 @@ function ColumnMenu({
   close: () => void;
   onMove: (direction: -1 | 1) => void;
   onRename?: () => void;
-  onDelete?: () => void;
+  onEditWebhook?: () => void;
+  onDelete?: () => Promise<ColumnOutcome>;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // A refusal the server answered stays IN the tier that asked, so the
+  // user reads why on the column they were deleting.
+  const [refusal, setRefusal] = useState<string | null>(null);
+
+  async function confirmDelete() {
+    if (!onDelete) return;
+    setDeleting(true);
+    setRefusal(null);
+    const outcome = await onDelete();
+    if (outcome.ok || !outcome.detail) {
+      close();
+      return;
+    }
+    setDeleting(false);
+    setRefusal(outcome.detail);
+  }
 
   if (confirming && onDelete) {
     return (
@@ -72,12 +100,11 @@ function ColumnMenu({
           // No cell count: it is a sheet-wide fact the client cannot
           // know from paged rows, and a number we cannot stand behind
           // is worse than none.
-          consequence="This deletes the column and everything in it."
+          consequence={column.kind === "webhook" ? DELETE_WEBHOOK_COLUMN_CONSEQUENCE : "This deletes the column and everything in it."}
+          busy={deleting}
+          refusal={refusal}
           onCancel={() => setConfirming(false)}
-          onDelete={() => {
-            close();
-            onDelete();
-          }}
+          onDelete={() => void confirmDelete()}
         />
       </div>
     );
@@ -96,6 +123,14 @@ function ColumnMenu({
           <span className="flex items-center gap-2">
             <Pencil aria-hidden className="h-4 w-4 text-faint" />
             Rename
+          </span>
+        </PopoverItem>
+      )}
+      {column.kind === "webhook" && onEditWebhook && (
+        <PopoverItem onClick={() => { close(); onEditWebhook(); }}>
+          <span className="flex items-center gap-2">
+            <ArrowUpRight aria-hidden className="h-4 w-4 text-faint" />
+            {EDIT_WEBHOOK_VERB}
           </span>
         </PopoverItem>
       )}
@@ -180,12 +215,14 @@ export function ColumnHeader({
   onReorder,
   onRename,
   onDelete,
+  onEditWebhook,
 }: {
   column: ListColumn;
   columns: ListColumn[];
   onReorder?: (keys: string[]) => void;
   onRename?: (key: string, label: string) => void;
-  onDelete?: (column: ListColumn) => void;
+  onDelete?: (column: ListColumn) => Promise<ColumnOutcome>;
+  onEditWebhook?: (column: WebhookColumn) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -244,6 +281,7 @@ export function ColumnHeader({
           {label}
           <Popover className="relative">
             <PopoverButton
+              id={menuButtonId(column.key)}
               // The menu button sits INSIDE the drag surface, so its
               // press must not reach the cell's drag listeners. Stated
               // here rather than left to Headless UI cancelling its
@@ -270,6 +308,7 @@ export function ColumnHeader({
                   close={close}
                   onMove={(direction) => nudge(direction)}
                   onRename={onRename && (() => setRenaming(true))}
+                  onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
                   onDelete={onDelete && (() => onDelete(column))}
                 />
               )}

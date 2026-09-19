@@ -9,14 +9,14 @@ import { COLUMN_TYPE_META, columnTypeLabel } from "../../../../_components/colum
 /** The kind chosen at the gesture: Use AI, Send webhook, or one of the
  * sheet's OWN column types (the backend's ColumnType set, values from
  * the generated schema, dress from the one column-type-meta home). */
-export type ColumnKind = "ai" | "webhook" | ColumnType;
+export type AddColumnKind = "ai" | "webhook" | ColumnType;
 
 /** The Add column menu's items, shared by the toolbar primary and the
  * grid's "+" header cell: one gesture vocabulary from every entry
  * point, and new column kinds land here once. The two outbound kinds
  * lead ("Use AI" the sheet's headline capability, "Send webhook" what
  * leaves it); the plain types follow. */
-export function AddColumnMenuItems({ onPick }: { onPick: (kind: ColumnKind) => void }) {
+export function AddColumnMenuItems({ onPick }: { onPick: (kind: AddColumnKind) => void }) {
   return (
     <>
       <DropdownItem onClick={() => onPick("ai")}>

@@ -16,7 +16,14 @@ class Node(AccountScopedModel):
     the dynamic read), never touched raw, so this generic row never names a
     kind's field. `identity` is the kind-declared projection of the
     config that makes get-or-create indexable: the one writer derives it
-    from the typed config, and nothing edits it.
+    from the typed config, and nothing edits it. A kind addressed by its
+    path and rank alone (a wait node, a webhook node) declares NO
+    identity and stores a blank one, which the identity key ignores.
+
+    `rank` is the node's dense position on its path: a column_agent path
+    holds one node at 0; a webhook column's path holds its wait node at
+    0 and its webhook node at 1. Unique per path, so two nodes can never
+    claim one slot.
 
     A sheet node points at its workflow and path. The bench node points
     at neither (workflow_id and path_id blank, exactly as a TEST fill's
@@ -25,28 +32,43 @@ class Node(AccountScopedModel):
     account-level singleton with no parent, the no-cascades rule's named
     exception, deleted by nothing.
 
-    Durable: removing a column never removes a node, because ABANDONED
-    runs (the consent record) keep pointing at it, and a node with no
-    columns is inert. Deleted only by ListService.delete. The agent a
-    config points at dangles after an agent delete exactly as the column
-    did; that orphaning is deliberate (fill_admission/errors.py), so no
-    hook."""
+    An agent node is durable: removing its column never removes it,
+    because ABANDONED runs (the consent record) keep pointing at it, and
+    a node with no columns is inert; it goes only with its list. A
+    webhook column's two nodes are its own (no run points at them) and
+    go with the column. The agent a config points at dangles after an
+    agent delete exactly as the column did; that orphaning is deliberate
+    (fill_admission/errors.py), so no hook."""
 
     workflow_id = models.CharField(_("workflow id"), max_length=26, blank=True, default="")
     path_id = models.CharField(_("path id"), max_length=26, blank=True, default="")
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
     config = models.JSONField(_("config"), default=dict)
     identity = models.CharField(_("identity"), max_length=NODE_IDENTITY_MAX_LENGTH, blank=True, default="")
+    rank = models.IntegerField(_("rank"), default=0)
 
     class Meta:
         verbose_name = _("node")
         verbose_name_plural = _("nodes")
+        # Every service read of nodes is per account and kind (a wait
+        # node naming a path, the webhook nodes naming a destination);
+        # the JSON condition then filters that handful in memory.
+        indexes = [models.Index(fields=["account_id", "kind"], name="node_account_kind_idx")]
         constraints = [
-            # The get-or-create key: a sheet node is (account, workflow,
-            # kind, identity); the bench node is (account, "", kind, "").
+            # The get-or-create key for kinds that declare an identity: a
+            # sheet node is (account, workflow, kind, identity); the bench
+            # node is (account, "", kind, bench). A blank identity is a
+            # kind that is never looked up this way, and stays out.
             models.UniqueConstraint(
                 fields=["account_id", "workflow_id", "kind", "identity"],
+                condition=~models.Q(identity=""),
                 name="node_identity_uniq",
+            ),
+            # One node per slot on a path; the bench node has no path.
+            models.UniqueConstraint(
+                fields=["path_id", "rank"],
+                condition=~models.Q(path_id=""),
+                name="node_path_rank_uniq",
             ),
         ]
 

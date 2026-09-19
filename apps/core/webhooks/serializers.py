@@ -118,7 +118,11 @@ def delivery_model(delivery: WebhookDelivery) -> WebhookDeliveryWire:
 
 
 def destination_wire(
-    destination: WebhookDestination, *, header_names: list[str], newest: WebhookDelivery | None
+    destination: WebhookDestination,
+    *,
+    header_names: list[str],
+    newest: WebhookDelivery | None,
+    column_count: int | None = None,
 ) -> dict[str, Any]:
     return WebhookDestinationWire(
         id=str(destination.id),
@@ -127,6 +131,8 @@ def destination_wire(
         header_names=header_names,
         enabled=destination.enabled,
         last_delivery=delivery_model(newest) if newest is not None else None,
+        rotated_at=destination.rotated_at.isoformat() if destination.rotated_at else None,
+        column_count=column_count,
         created_at=destination.created_at.isoformat(),
     ).model_dump()
 

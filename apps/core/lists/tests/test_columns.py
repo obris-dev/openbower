@@ -16,7 +16,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import ListSummary
+from openbower_schema.lists import AiColumn, ListSummary, PlainColumn
 
 from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
 from ..models import Fill, ListCellState, ListRow, Node
@@ -46,7 +46,7 @@ class ColumnsViewTests(TestCase):
         self.sheet = self.lists.create(
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
-            columns=[{"key": "company", "label": "Company", "type": "text"}],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
 
@@ -68,12 +68,12 @@ class ColumnsViewTests(TestCase):
         self.assertEqual(added.key, "contact_email")
         self.assertEqual(added.label, "Contact Email")
         self.assertEqual(added.type, "email")
-        # Blank means blank: no fill member, ever. The add starts
-        # nothing, and a column that exists refuses an AI column that
-        # would land on the same key.
-        self.assertIsNone(added.fill)
+        # Blank means blank: a plain column, never an AI one. The add
+        # starts nothing, and a column that exists refuses an AI column
+        # that would land on the same key.
+        self.assertIsInstance(added, PlainColumn)
         self.sheet.refresh_from_db()
-        self.assertEqual([column["key"] for column in self.sheet.columns], ["company", "contact_email"])
+        self.assertEqual([column.key for column in self.sheet.columns], ["company", "contact_email"])
 
     def test_duplicate_key_refuses_with_the_envelope(self) -> None:
         resp = self.post_column(label="Company!", type="text")
@@ -89,7 +89,9 @@ class ColumnsViewTests(TestCase):
         self.assertEqual(self.post_column(label="!!!", type="text").json()["error"], "reserved_key")
 
     def test_column_cap_refuses(self) -> None:
-        self.sheet.columns = [{"key": f"col_{n}", "label": f"Col {n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)]
+        self.sheet.columns = [
+            {"kind": "plain", "key": f"col_{n}", "label": f"Col {n}", "type": "text"} for n in range(MAX_LIST_COLUMNS)
+        ]
         self.sheet.save(update_fields=["columns"])
         resp = self.post_column()
         self.assertEqual(resp.status_code, 400)
@@ -120,12 +122,12 @@ class ColumnOrderTests(TestCase):
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
             # Labels deliberately NOT derivable from their keys, and
-            # one carrying a fill member: this is what proves the
-            # column dicts are carried across rather than rebuilt.
+            # one AI column: this is what proves the columns are
+            # carried across rather than rebuilt.
             columns=[
-                {"key": "company", "label": "Company Name", "type": "text"},
-                {"key": "contact", "label": "Primary Contact", "type": "email", "fill": {"node_id": "01NODE"}},
-                {"key": "notes", "label": "Free Notes", "type": "text"},
+                {"kind": "plain", "key": "company", "label": "Company Name", "type": "text"},
+                {"key": "contact", "label": "Primary Contact", "type": "email", "kind": "ai", "node_id": "01NODE"},
+                {"kind": "plain", "key": "notes", "label": "Free Notes", "type": "text"},
             ],
             origin="manual",
         )
@@ -143,16 +145,16 @@ class ColumnOrderTests(TestCase):
         wire = ListSummary(**resp.json())
         self.assertEqual([c.key for c in wire.columns], ["notes", "company", "contact"])
         self.sheet.refresh_from_db()
-        self.assertEqual([c["key"] for c in self.sheet.columns], ["notes", "company", "contact"])
+        self.assertEqual([c.key for c in self.sheet.columns], ["notes", "company", "contact"])
 
     def test_it_carries_each_column_across_verbatim(self) -> None:
         # The guard that keeps this from being a mutation path: the
         # request names keys and nothing else, so a label, a type, or a
-        # fill member cannot be edited through an ordering request.
-        before = {c["key"]: dict(c) for c in self.sheet.columns}
+        # linkage cannot be edited through an ordering request.
+        before = {c.key: c for c in self.sheet.columns}
         self.assertEqual(self.reorder(["notes", "contact", "company"]).status_code, 200)
         self.sheet.refresh_from_db()
-        self.assertEqual({c["key"]: dict(c) for c in self.sheet.columns}, before)
+        self.assertEqual({c.key: c for c in self.sheet.columns}, before)
 
     def test_a_missing_key_refuses(self) -> None:
         resp = self.reorder(["company", "contact"])
@@ -179,7 +181,7 @@ class ColumnOrderTests(TestCase):
         resp = self.reorder(["company", "contact", "notes", "notes"])
         self.assertEqual(resp.status_code, 400, resp.content)
         self.sheet.refresh_from_db()
-        self.assertEqual([c["key"] for c in self.sheet.columns], ["company", "contact", "notes"])
+        self.assertEqual([c.key for c in self.sheet.columns], ["company", "contact", "notes"])
 
     def test_a_duplicate_that_also_drops_a_key_is_a_bad_request(self) -> None:
         resp = self.reorder(["company", "company", "contact"])
@@ -197,7 +199,7 @@ class ColumnOrderTests(TestCase):
         with self.assertRaises(ColumnOrderStale):
             columns.reorder(str(self.sheet.id), keys=["company", "contact", "gone"])
         self.sheet.refresh_from_db()
-        self.assertEqual([c["key"] for c in self.sheet.columns], ["company", "contact", "notes"])
+        self.assertEqual([c.key for c in self.sheet.columns], ["company", "contact", "notes"])
 
     def test_a_key_no_column_could_have_is_a_bad_request(self) -> None:
         # The round-trip that was answering "try the move again" to a
@@ -208,13 +210,13 @@ class ColumnOrderTests(TestCase):
                 resp = self.reorder(["company", bad])
                 self.assertEqual(resp.status_code, 400, resp.content)
         self.sheet.refresh_from_db()
-        self.assertEqual([c["key"] for c in self.sheet.columns], ["company", "contact", "notes"])
+        self.assertEqual([c.key for c in self.sheet.columns], ["company", "contact", "notes"])
 
     def test_a_foreign_sheet_reads_as_missing(self) -> None:
         other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB").create(
             owner_id=TEST_IDENTITY["id"],
             label="Theirs",
-            columns=[{"key": "a", "label": "A", "type": "text"}],
+            columns=[{"kind": "plain", "key": "a", "label": "A", "type": "text"}],
             origin="manual",
         )
         self.assertEqual(self.reorder(["a"], list_id=str(other.id)).status_code, 404)
@@ -233,9 +235,9 @@ class ColumnDeleteTests(TestCase):
             owner_id=TEST_IDENTITY["id"],
             label="Prospects",
             columns=[
-                {"key": "company", "label": "Company", "type": "text"},
-                {"key": "contact_name", "label": "Contact", "type": "text"},
-                {"key": "contact_url", "label": "Profile", "type": "url"},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {"kind": "plain", "key": "contact_name", "label": "Contact", "type": "text"},
+                {"kind": "plain", "key": "contact_url", "label": "Profile", "type": "url"},
             ],
             origin="manual",
         )
@@ -244,8 +246,13 @@ class ColumnDeleteTests(TestCase):
         self.node = WorkflowService(account_id=TEST_IDENTITY["account_id"]).get_or_create_column_agent_node(
             self.sheet, agent_id=str(self.agent.id)
         )
-        for column in self.sheet.columns[1:]:
-            column["fill"] = {"node_id": str(self.node.id)}
+        self.sheet.columns = [
+            self.sheet.columns[0],
+            *[
+                AiColumn(key=column.key, label=column.label, type=column.type, node_id=str(self.node.id))
+                for column in self.sheet.columns[1:]
+            ],
+        ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.lists.add_rows(
             self.sheet,
@@ -269,7 +276,7 @@ class ColumnDeleteTests(TestCase):
 
     def columns(self) -> list[str]:
         self.sheet.refresh_from_db()
-        return [c["key"] for c in self.sheet.columns]
+        return [c.key for c in self.sheet.columns]
 
     def test_deleting_a_column_takes_its_values_out_of_every_row(self) -> None:
         resp = self.client.delete(self.url("contact_name"))
@@ -340,7 +347,7 @@ class ColumnDeleteTests(TestCase):
         other = ListService(account_id="01OTHERACCOUNTBBBBBBBBBBBB").create(
             owner_id=TEST_IDENTITY["id"],
             label="Theirs",
-            columns=[{"key": "a", "label": "A", "type": "text"}],
+            columns=[{"kind": "plain", "key": "a", "label": "A", "type": "text"}],
             origin="manual",
         )
         self.assertEqual(self.client.delete(self.url("a", list_id=str(other.id))).status_code, 404)
@@ -349,10 +356,10 @@ class ColumnDeleteTests(TestCase):
         resp = self.client.patch(self.url("contact_name"), {"label": "Decision maker"}, content_type="application/json")
         self.assertEqual(resp.status_code, 200, resp.content)
         self.sheet.refresh_from_db()
-        column = next(c for c in self.sheet.columns if c["key"] == "contact_name")
-        self.assertEqual(column["label"], "Decision maker")
+        column = next(c for c in self.sheet.columns if c.key == "contact_name")
+        self.assertEqual(column.label, "Decision maker")
         # The key stays, so the cells it holds stay reachable.
-        self.assertEqual(column["fill"], {"node_id": str(self.node.id)})
+        self.assertEqual((column.kind, column.node_id), ("ai", str(self.node.id)))
         for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
             self.assertIn("contact_name", row.data)
 

@@ -8,9 +8,9 @@ company behavior interprets a chosen column's values at use time.
 from __future__ import annotations
 
 import re
-from typing import Literal, get_args
+from typing import Annotated, Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # A CLOSED union on purpose: codegen emits a zod enum, so an unknown
 # type is a parse error, never a silently unstyled column. Types drive
@@ -51,33 +51,79 @@ def derive_column_key(label: str, *, key: str = "") -> str:
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 
-class ColumnFill(BaseModel):
-    """A column's fill linkage: present exactly on AI columns. The
-    column binds to the NODE that fills it; the agent, and its
-    ephemeral-vs-roster custody, hangs off the node."""
+class ColumnBase(BaseModel):
+    """What every column has, whichever kind it is. Never a column on
+    its own: the kinds below are the members, and a reader narrows on
+    their `kind`. Every member extends this and only ADDS: a client that
+    has never heard of a kind still renders its key, label, and type,
+    and the shared bounds the client projects come off one member. A
+    member that drops or retypes one of these breaks every older
+    bundle. Frozen, so a column is typed at construction and a writer
+    replaces rather than mutates (a stored instance can be shared)."""
 
-    node_id: str = Field(
-        description="The node that fills this column (today, always an agent bound to this sheet). "
-        "Per-row work keys on it; the agent hangs off the node, so editing what fills a "
-        "column goes through the column, never this id.",
-    )
-    current_fill_id: str = Field(
-        default="",
-        description="The fill run that speaks for this column, stored here when it opens. "
-        "Blank on a column filled before it was recorded. Clients read it off "
-        "ColumnFillSummary, which the fills poll serves; it is declared here because "
-        "this model is what the column's own structure is, and an undeclared key is "
-        "dropped on every list read.",
-    )
+    model_config = ConfigDict(frozen=True)
 
-
-class ListColumn(BaseModel):
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Stable snake_case key; row data dicts key on it.")
     label: str = Field(
         max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label, as the user (or the CSV header) wrote it."
     )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
-    fill: ColumnFill | None = Field(default=None, description="Present exactly on AI columns.")
+
+
+class PlainColumn(ColumnBase):
+    """A column the user or an import fills by hand."""
+
+    kind: Literal["plain"] = "plain"
+
+
+class AiColumn(ColumnBase):
+    """A column an agent fills. The column binds to the NODE that fills
+    it; the agent, and its ephemeral-vs-roster custody, hangs off the
+    node, so editing what fills a column goes through the column,
+    never this id."""
+
+    kind: Literal["ai"] = "ai"
+    node_id: str = Field(description="The node that fills this column (an agent bound to this sheet).")
+    current_fill_id: str = Field(
+        default="",
+        description="The fill run that speaks for this column, stored here when it opens and "
+        "served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never "
+        'the newest by time; "" when the column has never run.',
+    )
+
+
+class WebhookColumn(ColumnBase):
+    """A Send webhook column. It IS the webhook node at rank 1 of its
+    own path (the wait node at rank 0 names the paths it waits on); the
+    column holds no row data, its cells show delivery state."""
+
+    kind: Literal["webhook"] = "webhook"
+    # `type` rides on every kind so the base projection holds; a
+    # webhook column\'s is never read.
+    node_id: str = Field(
+        description="The webhook node this column is; its config and the wait node's hang off the path."
+    )
+
+
+# A column is exactly ONE of these by construction: the union is
+# discriminated on `kind`, so nothing has to rule out a column that is
+# two things at once, and a stored column with no kind is refused
+# rather than guessed. A PEP 695 alias rather than a plain one so
+# pydantic emits the union as a NAMED definition (the client gets one
+# ListColumn schema to narrow on) and the discriminator travels with
+# the type into every TypeAdapter that parses it. The vocabulary is
+# CLOSED on purpose, unlike the node-kind registry: the client renders
+# per kind, so a new kind is a client change, not a roster entry;
+# until that change ships, a client reads an unheard-of kind off the
+# base fields alone and claims nothing else for it.
+type ListColumn = Annotated[
+    PlainColumn | AiColumn | WebhookColumn,
+    Field(
+        discriminator="kind",
+        description="One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), "
+        "or webhook (a Send webhook column). Narrow on `kind`.",
+    ),
+]
 
 
 class IngestColumn(BaseModel):

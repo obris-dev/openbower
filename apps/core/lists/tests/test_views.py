@@ -50,6 +50,22 @@ class ListsViewsTests(TestCase):
         self.assertEqual(gone.status_code, 204)
         self.assertEqual(self.client.get(reverse("lists_detail", kwargs={"id": list_id})).status_code, 404)
 
+    def test_a_create_body_cannot_choose_a_column_kind(self):
+        """The create request declares key, label, and type; a kind a
+        client sends is not part of it and never lands (the view builds
+        plain columns), so a round-tripped AI column stays plain."""
+        resp = self.client.post(
+            reverse("lists_index"),
+            {
+                "label": "Round trip",
+                "columns": [{"kind": "ai", "key": "a", "label": "A", "type": "text", "node_id": "x"}],
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        [column] = resp.json()["columns"]
+        self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text"})
+
     def test_ingest_get_marks_ai_columns_autopopulated(self):
         # The webhook is self-describing: GET returns every column a producer
         # can send, with the AI (fill-owned) columns marked autopopulated so a
@@ -58,9 +74,9 @@ class ListsViewsTests(TestCase):
             owner_id=TEST_IDENTITY["id"],
             label="Push target",
             columns=[
-                {"key": "company", "label": "Company", "type": "url"},
-                {"key": "contact", "label": "Contact", "type": "text"},
-                {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": "01ND" + "A" * 22}},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "url"},
+                {"kind": "plain", "key": "contact", "label": "Contact", "type": "text"},
+                {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": "01ND" + "A" * 22},
             ],
             origin=ListOrigin.MANUAL,
         )

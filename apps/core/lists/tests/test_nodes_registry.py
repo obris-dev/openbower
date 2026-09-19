@@ -20,11 +20,14 @@ from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH
 from ..models import Node
 from ..nodes import registry
 from ..nodes.base import NodeConfig
-from ..nodes.column_agent import ColumnAgent
+from ..nodes.column_agent import BENCH_IDENTITY, ColumnAgent
 from ..nodes.registry import COLUMN_AGENT, all_kinds, parse_config, register, validate_node_kinds
+from ..nodes.wait_until import WaitUntil
+from ..nodes.webhook import Webhook
 from ..services.workflows import config_of
 
 AGENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+BOOT_ROSTER = sorted([COLUMN_AGENT, WaitUntil.KIND, Webhook.KIND])
 
 
 def _roster() -> list[str]:
@@ -37,10 +40,10 @@ class RegistrationGuardTests(SimpleTestCase):
 
     def tearDown(self) -> None:
         # Each refusal must leave the roster exactly as boot built it.
-        self.assertEqual(_roster(), [COLUMN_AGENT])
+        self.assertEqual(_roster(), BOOT_ROSTER)
 
-    def test_the_roster_after_boot_is_the_one_kind(self):
-        self.assertEqual(_roster(), [COLUMN_AGENT])
+    def test_the_roster_after_boot_is_the_three_kinds(self):
+        self.assertEqual(_roster(), BOOT_ROSTER)
 
     def test_re_registering_the_same_class_is_a_no_op(self):
         register(ColumnAgent)
@@ -80,9 +83,18 @@ class RegistrationGuardTests(SimpleTestCase):
             with self.subTest(fragment=fragment), self.assertRaisesMessage(ValueError, fragment):
                 register(cls)
 
-    def test_the_boot_gate_refuses_a_roster_without_column_agent(self):
+    def test_the_boot_gate_refuses_a_roster_missing_any_kind_the_services_write(self):
         with patch.dict(registry._REGISTRY, clear=True), self.assertRaisesMessage(ImproperlyConfigured, COLUMN_AGENT):
             validate_node_kinds()
+        # One missing kind is enough, whichever it is.
+        for kind in (WaitUntil.KIND, Webhook.KIND):
+            with self.subTest(kind=kind):
+                roster = {k: v for k, v in registry._REGISTRY.items() if k != kind}
+                with (
+                    patch.dict(registry._REGISTRY, roster, clear=True),
+                    self.assertRaisesMessage(ImproperlyConfigured, kind),
+                ):
+                    validate_node_kinds()
         validate_node_kinds()
 
 
@@ -106,9 +118,27 @@ class ConfigSeamTests(SimpleTestCase):
         self.assertEqual(config_of(node), config)
         self.assertEqual(ColumnAgent.model_validate(node.config), config)
 
-    def test_identity_is_the_agent_id_and_blank_for_the_bench(self):
+    def test_identity_is_the_agent_id_and_the_bench_word_for_the_bench(self):
         self.assertEqual(ColumnAgent(agent_id=AGENT_ID).identity(), AGENT_ID)
-        self.assertEqual(ColumnAgent().identity(), "")
+        # A real word, not blank: a blank identity sits outside the
+        # get-or-create key, and the bench is found through that key.
+        self.assertEqual(ColumnAgent().identity(), BENCH_IDENTITY)
+
+    def test_the_path_kinds_declare_no_identity(self):
+        wait = WaitUntil(inbound_path_ids=["01UP" + "A" * 22])
+        webhook = Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"])
+        self.assertEqual((wait.identity(), webhook.identity()), ("", ""))
+
+    def test_the_path_kinds_round_trip_through_the_registry(self):
+        for config in (
+            WaitUntil(inbound_path_ids=["01UP" + "A" * 22]),
+            Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"], interval_seconds=3600),
+        ):
+            with self.subTest(kind=config.KIND):
+                node = Node(kind=config.KIND, config=config.model_dump())
+                self.assertEqual(config_of(node), config)
+                self.assertEqual(parse_config(config.KIND, node.config), config)
+        self.assertEqual(Webhook(destination_id="d", payload_keys=[]).interval_seconds, 900)
 
     def test_an_identity_past_the_column_bound_refuses(self):
         with self.assertRaisesMessage(ValueError, "identity exceeds"):

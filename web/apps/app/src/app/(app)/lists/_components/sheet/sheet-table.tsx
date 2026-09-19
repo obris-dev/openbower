@@ -11,14 +11,16 @@ import {
   type ColumnType,
   type ListColumn,
   type RenderableListRow,
+  type WebhookColumn,
 } from "@bower/api";
 
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
-import { AddColumnMenuItems, type ColumnKind } from "./add-column";
+import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
+import type { ColumnOutcome } from "./use-columns";
 
 /** The tracker row's inputs, one object because they only travel
  * together: the LIVE runs and the management verbs the popover's
@@ -74,6 +76,7 @@ export function SheetTable({
   onReorder,
   onRenameColumn,
   onDeleteColumn,
+  onEditWebhook,
   pendingColumn,
   onNamePending,
   searchProvider = null,
@@ -90,9 +93,13 @@ export function SheetTable({
   /** A plain column being named before it exists; null when none is. */
   pendingColumn?: { type: ColumnType } | null;
   onNamePending?: (label: string) => void;
-  onDeleteColumn?: (column: ListColumn) => void | Promise<void>;
+  /** Resolves with the outcome, so the confirm tier that asked can
+   * render a refusal (a column a webhook waits on) in place. */
+  onDeleteColumn?: (column: ListColumn) => Promise<ColumnOutcome>;
+  /** Reopens the Send webhook drawer on an existing webhook column. */
+  onEditWebhook?: (column: WebhookColumn) => void;
   fills?: SheetFills;
-  onAddColumn?: (kind: ColumnKind) => void;
+  onAddColumn?: (kind: AddColumnKind) => void;
 }) {
   // Hooks before any early return: the empty-sheet branch below is a
   // render path like any other.
@@ -125,7 +132,7 @@ export function SheetTable({
   // The tracker row exists only once an AI column does: a sheet of
   // plain columns has no fill state to track, and an all-empty row
   // would be dead height between header and rows.
-  const tracker = fills !== undefined && columns.some((column) => column.fill !== null) ? fills : undefined;
+  const tracker = fills !== undefined && columns.some((column) => column.kind === "ai") ? fills : undefined;
 
   return (
     // closestCenter over a horizontal strip: the pointer sits inside
@@ -149,6 +156,7 @@ export function SheetTable({
                 onReorder={onReorder}
                 onRename={onRenameColumn}
                 onDelete={onDeleteColumn}
+                onEditWebhook={onEditWebhook}
               />
             ))}
           </SortableContext>
@@ -189,7 +197,7 @@ export function SheetTable({
             <td className="sticky top-11 bg-surface" />
             {columns.map((column) => (
               <td key={column.key} className="sticky top-11 bg-surface px-3 pb-2">
-                {column.fill !== null && (
+                {column.kind === "ai" && (
                   <FillTrackerCell
                     listId={tracker.listId}
                     column={column}
@@ -220,15 +228,20 @@ export function SheetTable({
               // had a degraded tool. Both come off THIS row
               // object, so they are one encoding rather than two
               // reads that can disagree.
+              const kind = column.kind;
               const value = row.data[column.key] ?? "";
-              const entry = column.fill ? row.states?.[column.key] : undefined;
+              const entry = kind === "ai" ? row.states?.[column.key] : undefined;
               const state = !value ? entry : undefined;
               return (
                 <td
                   key={column.key}
                   className={`px-4 py-2.5 ${isNumericColumn(column) ? "text-right tabular-nums" : ""}`}
                 >
-                  {state !== undefined ? (
+                  {kind === "webhook" ? (
+                    // The column holds no value and shows no word yet:
+                    // its per-row state arrives with the flush.
+                    null
+                  ) : state !== undefined ? (
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's
                     // overflow-hidden would clip the focus tooltip.

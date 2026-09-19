@@ -1,1 +1,1 @@
-export { AddColumnMenuItems, type ColumnKind } from "./menu-items";
+export { AddColumnMenuItems, type AddColumnKind } from "./menu-items";

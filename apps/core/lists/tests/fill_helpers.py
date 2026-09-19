@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
+from openbower_schema.lists import AiColumn
+
+from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..models import Fill, ListRow, Node, NodeRun
 from ..services import cell_truth
 from ..services.lists import ListService
@@ -83,6 +85,7 @@ def settle(
             config_fingerprint=fill.config_fingerprint,
             states=states,
             tools=tools or {},
+            source=CellSource.FILL,
         )
 
 
@@ -128,10 +131,10 @@ def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
     ]
 
 
-def fill_agent_id(fill: dict) -> str:
-    """The agent behind a stored column `fill` member, through its
-    node: the column binds to the node, the node names the agent."""
-    return agent_id_of(Node.objects.get(id=fill["node_id"]))
+def fill_agent_id(column: AiColumn) -> str:
+    """The agent behind an AI column, through its node: the column
+    binds to the node, the node names the agent."""
+    return agent_id_of(Node.objects.get(id=column.node_id))
 
 
 def row_value(list_id: str, row_id: str, column_key: str) -> str:

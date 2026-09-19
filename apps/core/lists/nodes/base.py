@@ -3,7 +3,9 @@
 A kind is one module in this package exporting one class: a NodeConfig
 subclass whose class-level KIND and DISPLAY name it, whose fields are
 the per-node config at rest, and whose `_identity` is the projection
-the unique key indexes. The class is registered at the module's bottom
+the unique key indexes (blank for a kind that is never looked up by
+identity: its node is addressed by path and rank, and the key skips a
+blank). The class is registered at the module's bottom
 (`register(ColumnAgent)`); the roster is ListsConfig.ready()'s walk of
 this package. A consumer CONSTRUCTS an instance and works with it:
 `config.KIND`, `config.identity()`, `config.model_dump()`; a reader
@@ -32,9 +34,10 @@ class NodeConfig(BaseModel):
 
     def identity(self) -> str:
         """The projection of this config that identifies its node within
-        a workflow (the get-or-create key). Bounded HERE, once: a
-        projection that is not a str, or one past the column bound, is
-        refused rather than let the database truncate a key."""
+        a workflow (the get-or-create key), or "" for a kind with none.
+        Bounded HERE, once: a projection that is not a str, or one past
+        the column bound, is refused rather than let the database
+        truncate a key."""
         value = self._identity()
         if not isinstance(value, str):
             raise ValueError(f"node kind {self.KIND!r} identity must be a str, got {type(value).__name__}")

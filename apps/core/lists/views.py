@@ -22,8 +22,16 @@ from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
-from openbower_schema.lists import FoldersList, ImportResult, IngestAccepted, ListRowsPage, ListsPage, RowsAdded
-from openbower_schema.webhooks import WebhookColumnTestResponse
+from openbower_schema.lists import (
+    FoldersList,
+    ImportResult,
+    IngestAccepted,
+    ListRowsPage,
+    ListsPage,
+    PlainColumn,
+    RowsAdded,
+)
+from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
 from webhooks.serializers import delivery_model
 
@@ -54,6 +62,8 @@ from .serializers import (
     ListCreateRequest,
     ListPatchRequest,
     RowsAddRequest,
+    WebhookColumnAddRequest,
+    WebhookColumnPatchRequest,
     WebhookColumnTestRequest,
     fill_run_wire,
     fill_runs_wire,
@@ -68,6 +78,7 @@ from .services.fill_admission import FillAdmissionService, FillColumnNotFound, F
 from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
+from .services.workflows import NodeNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +100,7 @@ _FILL_CONFLICT_CODES = frozenset(
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
 # the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE})
+_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
 
 
 def _column_refusal_status(e: ColumnRefused) -> int:
@@ -159,8 +170,12 @@ class ListsView(_ScopedView):
         serializer = ListCreateRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        columns = [PlainColumn(**column) for column in data["columns"]]
         target_list = self.lists.create(
-            owner_id=self.request.user.id, label=data["label"], columns=data["columns"], origin=ListOrigin.MANUAL
+            owner_id=self.request.user.id,
+            label=data["label"],
+            columns=columns,
+            origin=ListOrigin.MANUAL,
         )
         return Response(list_wire(target_list), status=201)
 
@@ -201,7 +216,8 @@ class ListRowsView(_ScopedView):
         rows = self.lists.rows_page(target_list, after_position=int(raw_after), limit=limit)
         states = self.fills.cell_states_for_rows(target_list, rows)
         next_cursor = str(rows[-1].position) if len(rows) == limit else None
-        page = ListRowsPage(items=[row_wire(r, states.get(str(r.id), {})) for r in rows], next_cursor=next_cursor)
+        items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
+        page = ListRowsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
     def post(self, request: Request, id: str) -> Response:
@@ -365,6 +381,7 @@ class ColumnWebhookTestView(_ScopedView):
         try:
             sent = self.webhook_columns.test(
                 id,
+                key=data["key"],
                 destination_id=data["destination_id"],
                 wait_keys=data["wait_keys"],
                 payload_keys=data["payload_keys"],
@@ -373,11 +390,118 @@ class ColumnWebhookTestView(_ScopedView):
             )
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         delivery = delivery_model(sent.delivery)
         body = WebhookColumnTestResponse(delivery=delivery, envelope=sent.envelope)
         return Response(body.model_dump())
+
+
+class ColumnWebhookPreviewView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook/preview: the envelope a test
+    send of this body would carry, rendered and sent nowhere, so the
+    sheet shows the truth before a send. The test route's body."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnTestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            envelope = self.webhook_columns.preview(
+                id,
+                key=data["key"],
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                row_id=data["row_id"],
+                cells=data["cells"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        body = WebhookColumnPreviewResponse(envelope=envelope)
+        return Response(body.model_dump())
+
+
+class ColumnWebhookView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook: add a Send webhook column
+    (its path and two nodes with it). 201 with the list summary, the
+    shape every columns write returns. Body references refuse 400 with
+    a code; the column's own name refuses as a column add does."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnAddRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            target_list = self.webhook_columns.add(
+                id,
+                label=data["label"],
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                interval_seconds=data["interval_seconds"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(list_wire(target_list), status=201)
+
+
+class ColumnWebhookDetailView(_ScopedView):
+    """GET /v1/lists/{id}/columns/{key}/webhook: the column as
+    configured. PATCH: the whole config, rewritten. The key sits in its
+    own segment, as the refill and prompt routes place it, so no column
+    key can shadow a literal route (the `columns/ai` and
+    `columns/webhook` collections are the reserved keys)."""
+
+    def get(self, request: Request, id: str, key: str) -> Response:
+        try:
+            config = self.webhook_columns.config(id, key)
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(config.model_dump())
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = WebhookColumnPatchRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            config = self.webhook_columns.update(
+                id,
+                key,
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                interval_seconds=data["interval_seconds"],
+                enabled=data["enabled"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(config.model_dump())
 
 
 class ColumnDetailView(_ScopedView):
@@ -403,6 +527,8 @@ class ColumnDetailView(_ScopedView):
     def delete(self, request: Request, id: str, key: str) -> Response:
         try:
             target_list = self.columns.delete(id, key=key)
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except ListNotFound as e:

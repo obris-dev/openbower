@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { collidingKeys, landingKeys } from "./landing-keys.ts";
 
-const column = (key: string) => ({ key, label: key, type: "text" as const, fill: null });
+const column = (key: string) => ({ key, label: key, type: "text" as const, kind: "plain" as const });
 const output = (label: string, key = "") => ({ key, label, type: "text" as const, description: "" });
 
 test("each output's own key is its landing key, label-derived when blank", () => {

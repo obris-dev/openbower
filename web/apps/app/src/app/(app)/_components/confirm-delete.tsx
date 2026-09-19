@@ -1,17 +1,22 @@
 "use client";
 
-import { Button } from "@bower/ui";
+import { Button, ErrorMessage } from "@bower/ui";
 
 /** THE delete confirm ritual, shared by every surface that swaps one
  * in (footer bars, row-menu panels): the question, an optional quiet
  * consequence line, then Cancel BEFORE the destructive verb, with
  * focus landing on Cancel. One ritual, not three hand-written tiers
- * with three button orders. */
+ * with three button orders. A refusal the server answered (a 409, in
+ * the server's words) renders IN the tier, which stays open: the user
+ * reads why where they asked. `verb` names a non-delete destructive
+ * act (rotating a secret) in the same ritual. */
 export function ConfirmDelete({
   question,
   consequence,
   busy,
   inline = false,
+  verb = "Delete",
+  refusal = null,
   onCancel,
   onDelete,
 }: {
@@ -20,6 +25,8 @@ export function ConfirmDelete({
   busy?: boolean;
   /** Row layout (a footer bar) instead of the stacked panel form. */
   inline?: boolean;
+  verb?: string;
+  refusal?: string | null;
   onCancel: () => void;
   onDelete: () => void;
 }) {
@@ -31,7 +38,7 @@ export function ConfirmDelete({
         Cancel
       </Button>
       <Button size="sm" variant="danger" onClick={onDelete} loading={busy}>
-        Delete
+        {verb}
       </Button>
     </>
   );
@@ -40,6 +47,7 @@ export function ConfirmDelete({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-sm text-muted">{question}</span>
         {consequence && <span className="text-xs text-muted">{consequence}</span>}
+        {refusal && <ErrorMessage message={refusal} />}
         {buttons}
       </div>
     );
@@ -51,6 +59,13 @@ export function ConfirmDelete({
         // The consequence gets its own quiet line, so the question
         // never wraps mid-thought.
         <p className="mt-0.5 text-xs text-muted">{consequence}</p>
+      )}
+      {/* The answer reads before the choice, and is announced: it
+          appears after a click with focus still on the verb. */}
+      {refusal && (
+        <div className="mt-2">
+          <ErrorMessage message={refusal} />
+        </div>
       )}
       <div className="flex gap-1.5 pt-2">{buttons}</div>
     </div>

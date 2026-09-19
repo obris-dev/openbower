@@ -7,7 +7,7 @@ const columns = ["a", "b", "c", "d"].map((key) => ({
   key,
   label: key.toUpperCase(),
   type: "text" as const,
-  fill: null,
+  kind: "plain" as const,
 }));
 const landing = (active: string | number, over: string | number | null) => ({
   active: { id: active },

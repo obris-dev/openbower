@@ -1,5 +1,5 @@
 """Column custody: blank-column adds (the CSV-template flow; a blank
-column carries no fill member, and its key derives through the
+column is a plain column, and its key derives through the
 runtime's ONE derivation rule, because a key the sheet already has
 refuses an AI column that would land there and two derivation rules
 would make that refusal unpredictable), the column-scoped fill-prompt
@@ -15,15 +15,16 @@ from django.db.models import Value
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import derive_column_key
+from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
-from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
+from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
+from ..nodes.webhook import Webhook
 from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
 from .fill_progress import stop_fill
 from .lists import ListNotFound
-from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node
+from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +96,48 @@ class ColumnKeysNotUnique(ColumnRefused):
         super().__init__("That reorder named the same column twice.")
 
 
+class ColumnWaitedOn(ColumnRefused):
+    """A Send webhook column waits on this one: deleting it would leave
+    that webhook waiting on nothing, so the webhook columns go first
+    (a 409: the fix is elsewhere)."""
+
+    code = FillErrorCode.COLUMN_WAITED_ON
+
+    def __init__(self, *, labels: list[str]) -> None:
+        named = " and ".join(labels)
+        super().__init__(f"{named} waits on this column; edit or delete that webhook column first.")
+
+
 class ColumnNotFound(Exception):
     """No column on this sheet holds that key."""
 
     def __init__(self, key: str) -> None:
         super().__init__(f"no column {key}")
+
+
+def locked_list(account_id: str, list_id: str) -> List:
+    """The List row every columns writer takes before touching the
+    array, so a concurrent add cannot append to the version this read
+    is about to replace. Module-level: the webhook column's service
+    writes the same array."""
+    try:
+        return List.objects.select_for_update().get(id=list_id, account_id=account_id)
+    except List.DoesNotExist as e:
+        raise ListNotFound(list_id) from e
+
+
+def claim_key(target_list: List, *, label: str) -> str:
+    """The key a new column takes for `label`, through the ONE
+    derivation rule, refused when reserved, taken, or over the cap.
+    Under the list lock, by every path that appends a column."""
+    key = derive_column_key(label)
+    if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
+        raise ReservedColumnKey(label=label)
+    if key in {column.key for column in target_list.columns}:
+        raise ColumnExists(key=key)
+    if len(target_list.columns) >= MAX_LIST_COLUMNS:
+        raise ColumnsFull()
+    return key
 
 
 class ColumnService:
@@ -110,21 +148,9 @@ class ColumnService:
     def add_column(self, target_list_id: str, *, label: str, column_type: str) -> List:
         """Append one blank column and return the updated list."""
         with transaction.atomic():
-            # The same List lock every columns writer takes: without it
-            # a concurrent add (or a fill's admission) can append over
-            # this read and one write silently drops the other's column.
-            try:
-                target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
-            except List.DoesNotExist as e:
-                raise ListNotFound(target_list_id) from e
-            key = derive_column_key(label)
-            if not key or reserved_output_key(key):
-                raise ReservedColumnKey(label=label)
-            if key in {column["key"] for column in target_list.columns}:
-                raise ColumnExists(key=key)
-            if len(target_list.columns) >= MAX_LIST_COLUMNS:
-                raise ColumnsFull()
-            target_list.columns = [*target_list.columns, {"key": key, "label": label, "type": column_type}]
+            target_list = self._locked(target_list_id)
+            key = claim_key(target_list, label=label)
+            target_list.columns = [*target_list.columns, PlainColumn(key=key, label=label, type=column_type)]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
 
@@ -135,7 +161,7 @@ class ColumnService:
         The key SET must be unchanged, which is what keeps this from
         being a mutation path: every other columns writer decides what
         a column IS, and this one may only decide where it sits. It
-        carries each column's dict across VERBATIM, so a fill member,
+        carries each column across VERBATIM, so a kind's linkage,
         a type, and a label cannot be edited through an ordering
         request even if the caller sends them.
 
@@ -148,7 +174,7 @@ class ColumnService:
                 target_list = List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
             except List.DoesNotExist as e:
                 raise ListNotFound(target_list_id) from e
-            by_key = {column["key"]: column for column in target_list.columns}
+            by_key = {column.key: column for column in target_list.columns}
             # A repeat is judged FIRST and separately, because it is
             # the request being wrong rather than the sheet having
             # moved, and the two owe the caller different answers.
@@ -166,13 +192,7 @@ class ColumnService:
         return target_list
 
     def _locked(self, target_list_id: str) -> List:
-        """The List row every columns writer takes before touching the
-        array, so a concurrent add cannot append to the version this
-        read is about to replace."""
-        try:
-            return List.objects.select_for_update().get(id=target_list_id, account_id=self.account_id)
-        except List.DoesNotExist as e:
-            raise ListNotFound(target_list_id) from e
+        return locked_list(self.account_id, target_list_id)
 
     def rename(self, target_list_id: str, *, key: str, label: str) -> List:
         """Relabel one column. The KEY never moves, and that is the
@@ -185,9 +205,9 @@ class ColumnService:
         with transaction.atomic():
             target_list = self._locked(target_list_id)
             columns = list(target_list.columns)
-            for column in columns:
-                if column["key"] == key:
-                    column["label"] = label
+            for index, column in enumerate(columns):
+                if column.key == key:
+                    columns[index] = column.model_copy(update={"label": label})
                     break
             else:
                 raise ColumnNotFound(key)
@@ -214,13 +234,17 @@ class ColumnService:
         when it wakes, so it writes the deleted key back to nothing."""
         with transaction.atomic():
             target_list = self._locked(target_list_id)
-            doomed = next((column for column in target_list.columns if column["key"] == key), None)
+            doomed = next((column for column in target_list.columns if column.key == key), None)
             if doomed is None:
                 raise ColumnNotFound(key)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
-            node_id = str((doomed.get("fill") or {}).get("node_id", ""))
-            columns = [column for column in target_list.columns if column["key"] != key]
+            node_id = doomed.node_id if isinstance(doomed, AiColumn) else ""
+            webhook_node_id = doomed.node_id if isinstance(doomed, WebhookColumn) else ""
+            workflows = WorkflowService(account_id=self.account_id)
+            if node_id:
+                self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
+            columns = [column for column in target_list.columns if column.key != key]
 
             # ONE UPDATE over the sheet's rows, so an O(rows) write
             # dissolves inside the transaction rather than stranding
@@ -247,12 +271,59 @@ class ColumnService:
             cell_truth.purge_column(str(target_list.id), key)
             target_list.columns = columns
             target_list.save(update_fields=["columns", "updated_at"])
+            self._prune_payload_key(columns, workflows, key=key)
 
             # The ephemeral agent dies with the LAST column that used
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
             self._retire_ephemeral(target_list, node_id=node_id)
+            # A webhook column IS its path: no run points at its nodes,
+            # so unlike an agent's they go with the column.
+            if webhook_node_id:
+                try:
+                    webhook_node = workflows.get_node(webhook_node_id)
+                except NodeNotFound:
+                    # Corruption, the same shape retire handles: the delete
+                    # lands and the stranded path is litter, logged.
+                    logger.warning(
+                        "column delete: webhook node %s is gone; its path is left unremoved", webhook_node_id
+                    )
+                else:
+                    workflows.delete_path(webhook_node.path_id)
         return target_list
+
+    def _prune_payload_key(self, columns: list[ListColumn], workflows: WorkflowService, *, key: str) -> None:
+        """The sheet's webhook columns stop naming a column that is
+        gone, in the delete's own transaction, so a stored payload never
+        lies about the sheet. Bounded by the sheet: a payload key can
+        only name a column of its own sheet, so the read is the sheet's
+        webhook nodes by id, never a scan."""
+        node_ids = [column.node_id for column in columns if isinstance(column, WebhookColumn)]
+        for node in workflows.nodes_by_id(node_ids):
+            config = config_as(node, Webhook)
+            if key not in config.payload_keys:
+                continue
+            kept = [payload_key for payload_key in config.payload_keys if payload_key != key]
+            workflows.save_node(node, config.model_copy(update={"payload_keys": kept}))
+
+    def _refuse_if_waited_on(self, target_list: List, workflows: WorkflowService, *, node_id: str) -> None:
+        """An AI column's path named by any wait node is load-bearing
+        for a webhook column; name those columns and refuse. A node
+        that is already gone has no path to be named, so the delete
+        lands (the retire step logs that corruption)."""
+        try:
+            path_id = workflows.get_node(node_id).path_id
+        except NodeNotFound:
+            return
+        waits = workflows.wait_nodes_naming(path_id)
+        webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
+        labels = [
+            column.label
+            for column in target_list.columns
+            if isinstance(column, WebhookColumn) and column.node_id in webhook_node_ids
+        ]
+        if labels:
+            raise ColumnWaitedOn(labels=labels)
 
     def _retire_ephemeral(self, target_list: List, *, node_id: str) -> None:
         """The node stays (runs point at it, and a node with no columns
@@ -303,15 +374,8 @@ class ColumnService:
             target_list = List.objects.get(id=target_list_id, account_id=self.account_id)
         except List.DoesNotExist as e:
             raise ListNotFound(target_list_id) from e
-        fill = next(
-            (
-                column.get("fill")
-                for column in target_list.columns
-                if column["key"] == column_key and column.get("fill")
-            ),
-            None,
-        )
-        if fill is None:
+        column = next((column for column in target_list.columns if column.key == column_key), None)
+        if not isinstance(column, AiColumn):
             raise FillColumnNotFound(column_key)
-        node = WorkflowService(account_id=self.account_id).get_node(str(fill["node_id"]))
+        node = WorkflowService(account_id=self.account_id).get_node(column.node_id)
         return agents.get_for_fill(agent_id_of(node))

@@ -19,11 +19,14 @@ from .base import NodeConfig
 
 _REGISTRY: dict[str, type[NodeConfig]] = {}
 
-# The kind the services write by name; the boot gate refuses a roster
-# without it. Named here rather than read off the kind module because
-# the gate must not import the module it is checking for, or it could
-# never fail.
+# The kinds the services write by name; the boot gate refuses a roster
+# without any of them. Named here rather than read off the kind modules
+# because the gate must not import the module it is checking for, or it
+# could never fail.
 COLUMN_AGENT = "column_agent"
+WAIT_UNTIL = "wait_until"
+WEBHOOK = "webhook"
+SERVICE_WRITTEN_KINDS: tuple[str, ...] = (COLUMN_AGENT, WAIT_UNTIL, WEBHOOK)
 
 
 def register(cls: type[NodeConfig]) -> None:
@@ -73,11 +76,12 @@ def parse_config(kind: str, blob: dict) -> NodeConfig:
 
 
 def validate_node_kinds() -> None:
-    """The boot gate, run after the roster walk: the kind the services
+    """The boot gate, run after the roster walk: every kind the services
     write must be registered. When node kinds reach the wire, the parity
     pin holding the wire Literal to this roster attaches here."""
-    if COLUMN_AGENT not in _REGISTRY:
+    missing = [kind for kind in SERVICE_WRITTEN_KINDS if kind not in _REGISTRY]
+    if missing:
         raise ImproperlyConfigured(
-            f"node kind {COLUMN_AGENT!r} is not registered (roster: {sorted(_REGISTRY) or 'empty'}); "
-            "lists.nodes must contain its module"
+            f"node kinds {missing!r} are not registered (roster: {sorted(_REGISTRY) or 'empty'}); "
+            "lists.nodes must contain their modules"
         )

@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from lists.constants import CELL_MAX_LENGTH, StoredCellState, WebhookColumnErrorCode
+from lists.constants import CELL_MAX_LENGTH, CellSource, StoredCellState, WebhookColumnErrorCode
 from lists.services import cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
@@ -27,9 +27,9 @@ from webhooks.services import WebhookDestinationService
 
 NODE = "01ND" + "A" * 22
 COLUMNS = [
-    {"key": "company", "label": "Company", "type": "text"},
-    {"key": "answer", "label": "Answer", "type": "text", "fill": {"node_id": NODE}},
-    {"key": "score", "label": "Score", "type": "text", "fill": {"node_id": NODE}},
+    {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+    {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": NODE},
+    {"key": "score", "label": "Score", "type": "text", "kind": "ai", "node_id": NODE},
 ]
 
 
@@ -63,9 +63,10 @@ class ColumnWebhookTestTests(TestCase):
             config_fingerprint="",
             states=states,
             tools={},
+            source=CellSource.FILL,
         )
 
-    def _post(self, **overrides):
+    def _post(self, route: str = "lists_columns_webhook_test", **overrides):
         body = {
             "destination_id": str(self.destination.id),
             "wait_keys": ["answer", "score"],
@@ -77,11 +78,15 @@ class ColumnWebhookTestTests(TestCase):
         fake = _FakeSender()
         with patch("webhooks.services.destinations.WebhookSender", return_value=fake):
             resp = self.client.post(
-                reverse("lists_columns_webhook_test", kwargs={"id": str(self.sheet.id)}),
+                reverse(route, kwargs={"id": str(self.sheet.id)}),
                 body,
                 content_type="application/json",
             )
         return resp, fake
+
+    def test_a_blank_key_means_no_column_like_an_absent_one(self):
+        resp, _fake = self._post(key="")
+        self.assertEqual(resp.status_code, 200, resp.content)
 
     def test_sends_a_sample_digest_with_the_edited_cells_and_the_stored_states(self):
         self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED})
@@ -132,6 +137,27 @@ class ColumnWebhookTestTests(TestCase):
         )
         self.assertEqual(item.event_id, expected)
         self.assertEqual(set(item.states), {"answer", "score"})
+
+    def test_preview_renders_the_same_envelope_and_sends_nothing(self):
+        resp, fake = self._post(route="lists_columns_webhook_preview")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        envelope = WebhookEnvelope.model_validate(resp.json()["envelope"])
+        self.assertEqual((envelope.type, envelope.test), ("digest", True))
+        [item] = envelope.data.items
+        self.assertEqual(item.cells, {"company": "edited.example", "answer": "yes"})
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_a_key_naming_no_webhook_column_refuses(self):
+        for key, code in (
+            ("company", WebhookColumnErrorCode.COLUMN_NOT_WEBHOOK),
+            ("nope", WebhookColumnErrorCode.COLUMN_UNKNOWN),
+        ):
+            with self.subTest(key=key):
+                resp, fake = self._post(key=key)
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.json()["error"], code)
+                self.assertEqual(fake.calls, [])
 
     def test_a_row_whose_wait_key_ended_in_a_retryable_failure_is_not_complete(self):
         self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED, "score": StoredCellState.TRANSIENT})
@@ -208,3 +234,42 @@ class ColumnWebhookTestTests(TestCase):
         self.client.cookies.clear()
         resp, _ = self._post()
         self.assertEqual(resp.status_code, 401)
+
+
+class ColumnWebhookTestOutsideTransactionTests(TransactionTestCase):
+    """TestCase wraps every test in a transaction, which hides a row
+    lock taken where no transaction runs. The test send and preview
+    run in none, so they are pinned here, without that wrapper."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.account_id = TEST_IDENTITY["account_id"]
+        self.lists = ListService(account_id=self.account_id)
+        self.sheet = self.lists.create(
+            owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual"
+        )
+        self.rows = self.lists.add_rows(self.sheet, [{"company": "acme.com"}])
+        destinations = WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
+        self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
+
+    def test_the_preview_and_the_test_send_run_with_no_transaction_to_lock_in(self) -> None:
+        body = {
+            "destination_id": str(self.destination.id),
+            "wait_keys": ["answer"],
+            "payload_keys": ["company"],
+            "row_id": str(self.rows[0].id),
+            "cells": {"company": "acme.com"},
+        }
+        preview = self.client.post(
+            reverse("lists_columns_webhook_preview", kwargs={"id": str(self.sheet.id)}),
+            body,
+            content_type="application/json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        with patch("webhooks.services.destinations.WebhookSender", return_value=_FakeSender()):
+            sent = self.client.post(
+                reverse("lists_columns_webhook_test", kwargs={"id": str(self.sheet.id)}),
+                body,
+                content_type="application/json",
+            )
+        self.assertEqual(sent.status_code, 200, sent.content)

@@ -23,6 +23,8 @@ from openbower_schema.lists import (
 from openbower_schema.lists import (
     COLUMN_LABEL_MAX_LENGTH as COLUMN_LABEL_MAX_LENGTH,
 )
+from openbower_schema.webhooks import DEFAULT_WEBHOOK_CADENCE_SECONDS as DEFAULT_WEBHOOK_CADENCE_SECONDS
+from openbower_schema.webhooks import WEBHOOK_CADENCE_SECONDS as WEBHOOK_CADENCE_SECONDS
 
 LABEL_MAX_LENGTH = 120
 # Rows per list: sized to hold a full confident lead list.
@@ -46,6 +48,9 @@ MAX_ROWS_PAGE = 200
 DEFAULT_INDEX_PAGE = 50
 MAX_INDEX_PAGE = 200
 MAX_LIST_COLUMNS = 70
+# Column keys that would shadow a literal route under `columns/` (the
+# AI and webhook add collections): refused at every key claim.
+RESERVED_COLUMN_KEYS: frozenset[str] = frozenset({"ai", "webhook"})
 # Bounds the unpaged folder GET (the whole taxonomy ships at once).
 MAX_FOLDERS = 200
 # CSV uploads: a whole-CRM export fits comfortably; anything bigger is
@@ -153,6 +158,9 @@ class FillErrorCode(StrEnum):
     COLUMN_AGENT_MISSING = "column_agent_missing"
     DERIVED_KEY_COLLISION = "derived_key_collision"
     RESERVED_KEY = "reserved_key"
+    # A Send webhook column waits on this column's path; the user edits
+    # or deletes those columns first (409).
+    COLUMN_WAITED_ON = "column_waited_on"
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"
@@ -186,6 +194,8 @@ class WebhookColumnErrorCode(StrEnum):
     COLUMN_NOT_AI = "column_not_ai"
     ROW_UNKNOWN = "row_unknown"
     DESTINATION_UNKNOWN = "destination_unknown"
+    COLUMN_NOT_WEBHOOK = "column_not_webhook"
+    COLUMN_NOT_DATA = "column_not_data"
 
 
 # Rows per fetch when a fill service STREAMS the sheet (binary,
@@ -304,6 +314,19 @@ class FillStatus(StrEnum):
 # the admission gate, the cancel path, the derived-pending read, and
 # the test lane's supersede scan.
 LIVE_FILL_STATUSES = (FillStatus.PENDING, FillStatus.RUNNING)
+
+
+CELL_SOURCE_MAX_LENGTH = 8
+
+
+class CellSource(StrEnum):
+    """Who wrote a cell's state. A fill lands FILL; a hand-typed value
+    will land MANUAL once the grid can be edited (that writer does not
+    exist yet). Completion is source-agnostic: a filled cell is done
+    whoever filled it."""
+
+    FILL = "fill"
+    MANUAL = "manual"
 
 
 class StoredCellState(StrEnum):
