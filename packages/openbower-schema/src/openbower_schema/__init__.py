@@ -45,7 +45,6 @@ from .lists import (
     ListSummary,
     PlainColumn,
     RowsAdded,
-    WebhookCellState,
     WebhookColumn,
 )
 from .webhooks import (
@@ -98,7 +97,6 @@ __all__ = [
     "LookalikeListResponse",
     "PlainColumn",
     "RowsAdded",
-    "WebhookCellState",
     "WebhookColumn",
     "WebhookColumnConfigWire",
     "WebhookColumnPreviewResponse",

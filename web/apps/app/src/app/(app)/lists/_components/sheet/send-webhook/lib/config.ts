@@ -43,6 +43,24 @@ export function initialDraft(
   };
 }
 
+/** A wait-key change with the toggled columns' siblings carried
+ * along: the server waits on an agent's PATH, so every column that
+ * agent fills waits together, and a picker that let one be unchecked
+ * alone would show a choice the next read undoes. */
+export function withSiblings(
+  columns: readonly ListColumn[],
+  before: ReadonlySet<string>,
+  after: ReadonlySet<string>,
+): Set<string> {
+  const nodeOf = new Map(columns.flatMap((column) => (column.kind === "ai" ? [[column.key, column.node_id]] : [])));
+  const siblingsOf = (key: string) =>
+    columns.filter((column) => column.kind === "ai" && column.node_id === nodeOf.get(key)).map((column) => column.key);
+  const next = new Set(after);
+  for (const key of after) if (!before.has(key)) for (const sibling of siblingsOf(key)) next.add(sibling);
+  for (const key of before) if (!after.has(key)) for (const sibling of siblingsOf(key)) next.delete(sibling);
+  return next;
+}
+
 /** The request's lists in SHEET order (the order the user sees; the
  * server stores what it is given). */
 export function bodyFor(draft: WebhookDraft, columns: readonly ListColumn[]): WebhookColumnConfig {
@@ -55,17 +73,20 @@ export function bodyFor(draft: WebhookDraft, columns: readonly ListColumn[]): We
   };
 }
 
-/** Whether a save would change anything: key sets compared as sets. */
-export function isDirty(draft: WebhookDraft, saved: WebhookColumnConfigWire): boolean {
+/** Whether a save would change anything the user did: the draft
+ * against the draft the config SEEDED (both intersected with the
+ * sheet the same way), so a stored key the sheet has lost since the
+ * page loaded does not light Save on open. Key sets compared as sets. */
+export function isDirty(draft: WebhookDraft, seeded: WebhookDraft): boolean {
   return (
-    draft.destinationId !== saved.destination_id ||
-    draft.intervalSeconds !== saved.interval_seconds ||
-    draft.enabled !== saved.enabled ||
-    !sameSet(draft.waitKeys, saved.wait_keys) ||
-    !sameSet(draft.payloadKeys, saved.payload_keys)
+    draft.destinationId !== seeded.destinationId ||
+    draft.intervalSeconds !== seeded.intervalSeconds ||
+    draft.enabled !== seeded.enabled ||
+    !sameSet(draft.waitKeys, seeded.waitKeys) ||
+    !sameSet(draft.payloadKeys, seeded.payloadKeys)
   );
 }
 
-function sameSet(a: ReadonlySet<string>, b: readonly string[]): boolean {
-  return a.size === b.length && b.every((key) => a.has(key));
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...b].every((key) => a.has(key));
 }

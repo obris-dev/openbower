@@ -64,18 +64,6 @@ class CellStateService:
             .values_list("row_id", "column_key", "state", "tools")
         )
 
-    def iter_records(
-        self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
-    ) -> Iterator[tuple[str, str, str, datetime]]:
-        """(row id, column key, state, updated at) for a page of rows on
-        some columns, raw: the completion read, which needs the clean
-        filled records the wire reader drops."""
-        yield from (
-            self._scoped(list_id, row_ids=row_ids, column_keys=column_keys).values_list(
-                "row_id", "column_key", "state", "updated_at"
-            )
-        )
-
     def iter_counts_by_column(self, list_id: str, *, column_keys: Iterable[str]) -> Iterator[tuple[str, str, int]]:
         """(column key, state, count) across the whole sheet."""
         yield from (

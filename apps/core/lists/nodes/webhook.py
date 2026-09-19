@@ -12,17 +12,19 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from pydantic import Field
+
 from ..constants import DEFAULT_WEBHOOK_CADENCE_SECONDS
 from .base import NodeConfig
-from .registry import register
+from .registry import WEBHOOK, register
 
 
 class Webhook(NodeConfig):
-    KIND: ClassVar[str] = "webhook"
+    KIND: ClassVar[str] = WEBHOOK
     DISPLAY: ClassVar[str] = "Send webhook"
     destination_id: str
     payload_keys: list[str]
-    interval_seconds: int = DEFAULT_WEBHOOK_CADENCE_SECONDS
+    interval_seconds: int = Field(default=DEFAULT_WEBHOOK_CADENCE_SECONDS, gt=0)
     enabled: bool = True
 
     def _identity(self) -> str:

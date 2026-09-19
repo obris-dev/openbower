@@ -15,16 +15,16 @@ from django.db.models import Value
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import AiColumn, PlainColumn, WebhookColumn, derive_column_key
+from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
-from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, FillErrorCode, FillStatus
+from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode, FillStatus
 from ..models import Fill, List, ListRow
-from ..nodes.wait_until import WaitUntil
+from ..nodes.webhook import Webhook
 from . import cell_truth
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
 from .fill_progress import stop_fill
 from .lists import ListNotFound
-from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node
+from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ def claim_key(target_list: List, *, label: str) -> str:
     derivation rule, refused when reserved, taken, or over the cap.
     Under the list lock, by every path that appends a column."""
     key = derive_column_key(label)
-    if not key or reserved_output_key(key):
+    if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
         raise ReservedColumnKey(label=label)
     if key in {column.key for column in target_list.columns}:
         raise ColumnExists(key=key)
@@ -271,6 +271,7 @@ class ColumnService:
             cell_truth.purge_column(str(target_list.id), key)
             target_list.columns = columns
             target_list.save(update_fields=["columns", "updated_at"])
+            self._prune_payload_key(columns, workflows, key=key)
 
             # The ephemeral agent dies with the LAST column that used
             # it, never with the first: a multi-output agent's other
@@ -279,9 +280,31 @@ class ColumnService:
             # A webhook column IS its path: no run points at its nodes,
             # so unlike an agent's they go with the column.
             if webhook_node_id:
-                webhook_node = workflows.get_node(webhook_node_id)
-                workflows.delete_path(webhook_node.path_id)
+                try:
+                    webhook_node = workflows.get_node(webhook_node_id)
+                except NodeNotFound:
+                    # Corruption, the same shape retire handles: the delete
+                    # lands and the stranded path is litter, logged.
+                    logger.warning(
+                        "column delete: webhook node %s is gone; its path is left unremoved", webhook_node_id
+                    )
+                else:
+                    workflows.delete_path(webhook_node.path_id)
         return target_list
+
+    def _prune_payload_key(self, columns: list[ListColumn], workflows: WorkflowService, *, key: str) -> None:
+        """The sheet's webhook columns stop naming a column that is
+        gone, in the delete's own transaction, so a stored payload never
+        lies about the sheet. Bounded by the sheet: a payload key can
+        only name a column of its own sheet, so the read is the sheet's
+        webhook nodes by id, never a scan."""
+        node_ids = [column.node_id for column in columns if isinstance(column, WebhookColumn)]
+        for node in workflows.nodes_by_id(node_ids):
+            config = config_as(node, Webhook)
+            if key not in config.payload_keys:
+                continue
+            kept = [payload_key for payload_key in config.payload_keys if payload_key != key]
+            workflows.save_node(node, config.model_copy(update={"payload_keys": kept}))
 
     def _refuse_if_waited_on(self, target_list: List, workflows: WorkflowService, *, node_id: str) -> None:
         """An AI column's path named by any wait node is load-bearing
@@ -292,7 +315,7 @@ class ColumnService:
             path_id = workflows.get_node(node_id).path_id
         except NodeNotFound:
             return
-        waits = workflows.nodes_of_kind(WaitUntil.KIND, config__inbound_path_ids__contains=[path_id])
+        waits = workflows.wait_nodes_naming(path_id)
         webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
         labels = [
             column.label

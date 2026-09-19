@@ -241,14 +241,6 @@ class CellStateWire(BaseModel):
     tools: dict[str, str] = {}
 
 
-# The per-row word a Send webhook column shows. Derived on the rows
-# page, never stored: a row is `waiting` once EVERY column the webhook
-# waits on is done for it (an answer, or a blank with a reason) and it
-# has not been sent; absence is a row still filling or never attempted,
-# which shows nothing. Sent and failed join the vocabulary with the flush.
-WebhookCellState = Literal["waiting"]
-
-
 class ListRowWire(BaseModel):
     id: str
     position: int = Field(description="1-based dense display/paging order.")
@@ -259,11 +251,6 @@ class ListRowWire(BaseModel):
         "filled cells whose run had a degraded tool. Slim on absences by contract, so a "
         "long-filled sheet carries almost nothing here. A value in `data` with no entry here "
         "IS filled and clean, and never-attempted is likewise an absence.",
-    )
-    webhooks: dict[str, WebhookCellState] = Field(
-        default={},
-        description="Send webhook cell states keyed by column key: present for a row that is complete "
-        "for every column the webhook waits on and not yet sent; absent for a row still filling.",
     )
 
 

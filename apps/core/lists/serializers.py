@@ -13,7 +13,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookCellState, WebhookColumn
+from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -30,7 +30,6 @@ from .constants import (
     MAX_LIST_COLUMNS,
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
-    WEBHOOK_CADENCE_SECONDS,
     ColumnType,
     FillStatus,
 )
@@ -288,17 +287,11 @@ def fill_run_detail_wire(fill: Fill, result: CellRunResult | None) -> dict[str, 
     return WireFillRunDetail(**fill_run_wire(fill), kind=fill.kind, result=result).model_dump()
 
 
-def row_wire(
-    row: ListRow,
-    states: dict[str, CellStateWire] | None = None,
-    webhooks: dict[str, WebhookCellState] | None = None,
-) -> dict[str, Any]:
-    """A sheet row with its AI cell states and its webhook cell states
-    beside its values. ONE shape rather than paged reads walking in
-    lockstep, which was a client-side join carried over the network."""
-    return WireListRow(
-        id=str(row.id), position=row.position, data=row.data, states=states or {}, webhooks=webhooks or {}
-    ).model_dump()
+def row_wire(row: ListRow, states: dict[str, CellStateWire] | None = None) -> dict[str, Any]:
+    """A sheet row with its AI cell states beside its values. ONE
+    shape rather than two paged reads walking in lockstep, which was a
+    client-side join carried over the network."""
+    return WireListRow(id=str(row.id), position=row.position, data=row.data, states=states or {}).model_dump()
 
 
 def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:
@@ -373,7 +366,9 @@ class WebhookColumnTestRequest(serializers.Serializer):
     row_id = serializers.CharField(max_length=26)
     cells = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
     # The column, once it exists: the digest is then scoped to its node.
-    key = serializers.RegexField(COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH, required=False, default="")
+    key = serializers.RegexField(
+        COLUMN_KEY_GRAMMAR, max_length=COLUMN_KEY_MAX_LENGTH, required=False, allow_blank=True, default=""
+    )
 
     def validate_wait_keys(self, value: list[str]) -> list[str]:
         return _unique_keys(value)
@@ -390,10 +385,10 @@ class WebhookColumnTestRequest(serializers.Serializer):
         return attrs
 
 
-class WebhookColumnConfigRequest(serializers.Serializer):
-    """PATCH /v1/lists/{id}/columns/webhook/{key}: what the column waits
-    on, where it sends, what rides, how often (one of the presets), and
-    whether it runs."""
+class _WebhookColumnConfigFields(serializers.Serializer):
+    """What a webhook column waits on, where it sends, what rides, and
+    how often (one of the presets): the fields the add and the PATCH
+    share. Each adds only what it can honour."""
 
     destination_id = serializers.CharField(max_length=26)
     wait_keys = serializers.ListField(
@@ -406,10 +401,9 @@ class WebhookColumnConfigRequest(serializers.Serializer):
         min_length=1,
         max_length=MAX_LIST_COLUMNS,
     )
-    interval_seconds = serializers.ChoiceField(
-        choices=list(WEBHOOK_CADENCE_SECONDS), default=DEFAULT_WEBHOOK_CADENCE_SECONDS
-    )
-    enabled = serializers.BooleanField(default=True)
+    # Any positive number of seconds: the presets are the drawer's offer,
+    # not the wire's law.
+    interval_seconds = serializers.IntegerField(min_value=1, default=DEFAULT_WEBHOOK_CADENCE_SECONDS)
 
     def validate_wait_keys(self, value: list[str]) -> list[str]:
         return _unique_keys(value)
@@ -418,9 +412,17 @@ class WebhookColumnConfigRequest(serializers.Serializer):
         return _unique_keys(value)
 
 
-class WebhookColumnAddRequest(WebhookColumnConfigRequest):
+class WebhookColumnPatchRequest(_WebhookColumnConfigFields):
+    """PATCH /v1/lists/{id}/columns/{key}/webhook: the whole config,
+    rewritten, plus whether it runs."""
+
+    enabled = serializers.BooleanField(default=True)
+
+
+class WebhookColumnAddRequest(_WebhookColumnConfigFields):
     """POST /v1/lists/{id}/columns/webhook: the config plus the label the
-    column's key derives from."""
+    column's key derives from. A new column always runs, so `enabled` is
+    not a field here: a request cannot send what the add would ignore."""
 
     label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
 

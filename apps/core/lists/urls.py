@@ -19,13 +19,15 @@ urlpatterns = [
         views.ColumnWebhookPreviewView.as_view(),
         name="lists_columns_webhook_preview",
     ),
-    api_path(
-        "<str:id>/columns/webhook/<str:key>", views.ColumnWebhookDetailView.as_view(), name="lists_column_webhook"
-    ),
     api_path("<str:id>/column-order", views.ColumnOrderView.as_view(), name="lists_columns_order"),
     api_path("<str:id>/columns/<str:key>", views.ColumnDetailView.as_view(), name="lists_column_detail"),
     api_path("<str:id>/columns/<str:key>/refill", views.ColumnRefillView.as_view(), name="lists_column_refill"),
     api_path("<str:id>/columns/<str:key>/prompt", views.ColumnPromptView.as_view(), name="lists_column_prompt"),
+    api_path(
+        "<str:id>/columns/<str:key>/webhook",
+        views.ColumnWebhookDetailView.as_view(),
+        name="lists_column_webhook_config",
+    ),
     api_path("<str:id>/fills", views.ListFillsView.as_view(), name="lists_fills"),
     api_path("<str:id>/fills/<str:fill_run_id>/cancel", views.FillCancelView.as_view(), name="lists_fill_cancel"),
 ]

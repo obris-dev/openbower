@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bodyFor, initialDraft, isDirty } from "./config.ts";
+import { bodyFor, initialDraft, isDirty, withSiblings } from "./config.ts";
 
 const COLUMNS = [
   { key: "company", label: "Company", type: "text" as const, kind: "plain" as const },
@@ -41,10 +41,32 @@ test("bodyFor lists keys in sheet order whatever order they were chosen in", () 
   assert.deepEqual(bodyFor(draft, COLUMNS).wait_keys, ["answer", "score"]);
 });
 
-test("isDirty compares sets, not orders, and every scalar", () => {
-  const draft = initialDraft(COLUMNS, { ...SAVED, payload_keys: ["company"] }, { intervalSeconds: 900 });
-  assert.equal(isDirty(draft, { ...SAVED, payload_keys: ["company"] }), false);
-  assert.equal(isDirty({ ...draft, intervalSeconds: 300 }, { ...SAVED, payload_keys: ["company"] }), true);
-  assert.equal(isDirty({ ...draft, enabled: false }, { ...SAVED, payload_keys: ["company"] }), true);
-  assert.equal(isDirty({ ...draft, waitKeys: new Set(["answer"]) }, { ...SAVED, payload_keys: ["company"] }), true);
+test("isDirty compares the draft to the seeded draft: sets, not orders, and every scalar", () => {
+  const saved = { ...SAVED, payload_keys: ["company"] };
+  const seeded = initialDraft(COLUMNS, saved, { intervalSeconds: 900 });
+  assert.equal(isDirty(seeded, seeded), false);
+  assert.equal(isDirty({ ...seeded, intervalSeconds: 300 }, seeded), true);
+  assert.equal(isDirty({ ...seeded, enabled: false }, seeded), true);
+  assert.equal(isDirty({ ...seeded, waitKeys: new Set(["answer"]) }, seeded), true);
+});
+
+test("a stored key the sheet has lost does not make the form dirty on open", () => {
+  // The intersection drops the key from the draft; comparing against
+  // the raw config would read that drop as the user's change.
+  const stale = { ...SAVED, payload_keys: ["company", "gone"] };
+  const seeded = initialDraft(COLUMNS, stale, { intervalSeconds: 900 });
+  assert.equal(seeded.payloadKeys.has("gone"), false);
+  assert.equal(isDirty(seeded, initialDraft(COLUMNS, stale, { intervalSeconds: 900 })), false);
+});
+
+test("withSiblings carries an agent's other columns with the one toggled", () => {
+  // answer and score share a node; country has its own.
+  const all = new Set(["answer", "score", "country"]);
+  assert.deepEqual([...withSiblings(COLUMNS, all, new Set(["score", "country"]))].sort(), ["country"]);
+  assert.deepEqual([...withSiblings(COLUMNS, new Set(["country"]), new Set(["country", "answer"]))].sort(), [
+    "answer",
+    "country",
+    "score",
+  ]);
+  assert.deepEqual([...withSiblings(COLUMNS, all, new Set(["answer", "score"]))].sort(), ["answer", "score"]);
 });

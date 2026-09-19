@@ -32,12 +32,13 @@ class Node(AccountScopedModel):
     account-level singleton with no parent, the no-cascades rule's named
     exception, deleted by nothing.
 
-    Durable: removing a column never removes a node, because ABANDONED
-    runs (the consent record) keep pointing at it, and a node with no
-    columns is inert. Deleted only by ListService.delete. The agent a
-    config points at dangles after an agent delete exactly as the column
-    did; that orphaning is deliberate (fill_admission/errors.py), so no
-    hook."""
+    An agent node is durable: removing its column never removes it,
+    because ABANDONED runs (the consent record) keep pointing at it, and
+    a node with no columns is inert; it goes only with its list. A
+    webhook column's two nodes are its own (no run points at them) and
+    go with the column. The agent a config points at dangles after an
+    agent delete exactly as the column did; that orphaning is deliberate
+    (fill_admission/errors.py), so no hook."""
 
     workflow_id = models.CharField(_("workflow id"), max_length=26, blank=True, default="")
     path_id = models.CharField(_("path id"), max_length=26, blank=True, default="")
@@ -49,6 +50,10 @@ class Node(AccountScopedModel):
     class Meta:
         verbose_name = _("node")
         verbose_name_plural = _("nodes")
+        # Every service read of nodes is per account and kind (a wait
+        # node naming a path, the webhook nodes naming a destination);
+        # the JSON condition then filters that handful in memory.
+        indexes = [models.Index(fields=["account_id", "kind"], name="node_account_kind_idx")]
         constraints = [
             # The get-or-create key for kinds that declare an identity: a
             # sheet node is (account, workflow, kind, identity); the bench

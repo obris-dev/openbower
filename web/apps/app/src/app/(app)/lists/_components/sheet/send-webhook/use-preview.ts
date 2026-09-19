@@ -32,6 +32,10 @@ export function usePreview(listId: string, body: WebhookColumnTestBody | null): 
   // The body as a key: the effect re-runs when what would be sent
   // changes, not when the object holding it is rebuilt.
   const bodyKey = body === null ? "" : JSON.stringify(body);
+  // The attempt rides the key too: a Retry is a new request whose
+  // answer has not arrived, so the box reads as loading until it does
+  // and a repeat failure lands as a fresh answer.
+  const requestKey = bodyKey === "" ? "" : `${attempt}:${bodyKey}`;
 
   useEffect(() => {
     const mine = ++generation.current;
@@ -44,21 +48,21 @@ export function usePreview(listId: string, body: WebhookColumnTestBody | null): 
       if (mine !== generation.current) return;
       if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") {
-        setAnswer({ key: bodyKey, envelope: res.data.envelope, failure: null });
+        setAnswer({ key: requestKey, envelope: res.data.envelope, failure: null });
         return;
       }
       setAnswer((prev) => ({
-        key: bodyKey,
+        key: requestKey,
         // A failed refresh keeps the last envelope on screen beside its line.
         envelope: prev?.envelope ?? null,
         failure: { message: res.message, code: res.code ?? null },
       }));
     }
     return () => clearTimeout(timer);
-  }, [listId, bodyKey, attempt]);
+  }, [listId, bodyKey, requestKey]);
 
   const active = bodyKey !== "";
-  const answered = active && answer !== null && answer.key === bodyKey;
+  const answered = active && answer !== null && answer.key === requestKey;
   return {
     envelope: active ? (answer?.envelope ?? null) : null,
     loading: active && !answered,

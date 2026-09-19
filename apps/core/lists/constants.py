@@ -48,6 +48,9 @@ MAX_ROWS_PAGE = 200
 DEFAULT_INDEX_PAGE = 50
 MAX_INDEX_PAGE = 200
 MAX_LIST_COLUMNS = 70
+# Column keys that would shadow a literal route under `columns/` (the
+# AI and webhook add collections): refused at every key claim.
+RESERVED_COLUMN_KEYS: frozenset[str] = frozenset({"ai", "webhook"})
 # Bounds the unpaged folder GET (the whole taxonomy ships at once).
 MAX_FOLDERS = 200
 # CSV uploads: a whole-CRM export fits comfortably; anything bigger is
@@ -192,6 +195,7 @@ class WebhookColumnErrorCode(StrEnum):
     ROW_UNKNOWN = "row_unknown"
     DESTINATION_UNKNOWN = "destination_unknown"
     COLUMN_NOT_WEBHOOK = "column_not_webhook"
+    COLUMN_NOT_DATA = "column_not_data"
 
 
 # Rows per fetch when a fill service STREAMS the sheet (binary,

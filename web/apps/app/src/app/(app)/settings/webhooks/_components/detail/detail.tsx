@@ -7,7 +7,7 @@ import { DESTINATION_IN_USE_CODE, deleteWebhook, webRoutes, type RenderableDesti
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../../_components/breadcrumbs";
-import { SECRET_RECOVERY_NOTE, usageLine } from "../copy";
+import { SECRET_RECOVERY_NOTE, rotationLine, usageLine } from "../copy";
 import { DeliveryLog } from "../delivery-log";
 import { hostOf } from "../../../../_components/webhook-delivery";
 import { useDeliveries } from "../use-deliveries";
@@ -82,6 +82,7 @@ export function Detail({ initialDestination }: { initialDestination: RenderableD
           </div>
         </details>
         <p className="text-xs text-faint">{SECRET_RECOVERY_NOTE}</p>
+        {destination.rotated_at && <p className="text-xs text-faint">{rotationLine(destination.rotated_at)}</p>}
         <RotateSecret
           destinationId={destination.id}
           label={destination.label}

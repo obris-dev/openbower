@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, FieldError } from "@bower/ui";
+import { Button, ErrorMessage } from "@bower/ui";
 
 /** THE delete confirm ritual, shared by every surface that swaps one
  * in (footer bars, row-menu panels): the question, an optional quiet
@@ -47,8 +47,8 @@ export function ConfirmDelete({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-sm text-muted">{question}</span>
         {consequence && <span className="text-xs text-muted">{consequence}</span>}
+        {refusal && <ErrorMessage message={refusal} />}
         {buttons}
-        {refusal && <FieldError>{refusal}</FieldError>}
       </div>
     );
   }
@@ -60,8 +60,14 @@ export function ConfirmDelete({
         // never wraps mid-thought.
         <p className="mt-0.5 text-xs text-muted">{consequence}</p>
       )}
+      {/* The answer reads before the choice, and is announced: it
+          appears after a click with focus still on the verb. */}
+      {refusal && (
+        <div className="mt-2">
+          <ErrorMessage message={refusal} />
+        </div>
+      )}
       <div className="flex gap-1.5 pt-2">{buttons}</div>
-      {refusal && <FieldError>{refusal}</FieldError>}
     </div>
   );
 }

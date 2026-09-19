@@ -83,9 +83,18 @@ class RegistrationGuardTests(SimpleTestCase):
             with self.subTest(fragment=fragment), self.assertRaisesMessage(ValueError, fragment):
                 register(cls)
 
-    def test_the_boot_gate_refuses_a_roster_without_column_agent(self):
+    def test_the_boot_gate_refuses_a_roster_missing_any_kind_the_services_write(self):
         with patch.dict(registry._REGISTRY, clear=True), self.assertRaisesMessage(ImproperlyConfigured, COLUMN_AGENT):
             validate_node_kinds()
+        # One missing kind is enough, whichever it is.
+        for kind in (WaitUntil.KIND, Webhook.KIND):
+            with self.subTest(kind=kind):
+                roster = {k: v for k, v in registry._REGISTRY.items() if k != kind}
+                with (
+                    patch.dict(registry._REGISTRY, roster, clear=True),
+                    self.assertRaisesMessage(ImproperlyConfigured, kind),
+                ):
+                    validate_node_kinds()
         validate_node_kinds()
 
 

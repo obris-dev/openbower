@@ -250,18 +250,15 @@ class PathTests(AdmissionTestCase):
         with self.assertRaises(WrongNodeKind):
             self.workflows.replace_path_nodes(str(path.id), self._configs()[:1])
 
-    def test_nodes_of_kind_queries_the_config_and_is_account_scoped(self) -> None:
+    def test_the_config_queries_read_the_json_and_are_account_scoped(self) -> None:
         path, _ = self.workflows.create_path(self.sheet, self._configs())
-        naming = self.workflows.nodes_of_kind(
-            WaitUntil.KIND, config__inbound_path_ids__contains=[self.agent_node.path_id]
-        )
+        naming = self.workflows.wait_nodes_naming(self.agent_node.path_id)
         self.assertEqual([n.path_id for n in naming], [str(path.id)])
-        by_destination = self.workflows.nodes_of_kind(Webhook.KIND, config__destination_id="01DST" + "A" * 21)
-        self.assertEqual(by_destination.count(), 1)
-        self.assertEqual(self.workflows.node_counts_by(Webhook.KIND, "destination_id"), {"01DST" + "A" * 21: 1})
+        self.workflows.create_path(self.sheet, self._configs())
+        self.assertEqual(self.workflows.webhook_nodes_for("01DST" + "A" * 21).count(), 2)
         foreign = WorkflowService(account_id="01ACCT" + "Z" * 20)
-        self.assertEqual(foreign.nodes_of_kind(Webhook.KIND).count(), 0)
-        self.assertEqual(foreign.node_counts_by(Webhook.KIND, "destination_id"), {})
+        self.assertEqual(foreign.webhook_nodes_for("01DST" + "A" * 21).count(), 0)
+        self.assertEqual(foreign.wait_nodes_naming(self.agent_node.path_id).count(), 0)
 
     def test_path_of_column_walks_the_ai_column_to_its_node(self) -> None:
         self.sheet.columns = [

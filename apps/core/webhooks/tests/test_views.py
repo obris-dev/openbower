@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -229,6 +230,18 @@ class DeleteTests(_Base):
 
 
 class RotateTests(_Base):
+    def test_rotate_and_delete_take_the_destination_row_lock(self):
+        """FAILS if either write stops locking the row: two rotates
+        could both mint against one secret, and a delete could land
+        under a column binding to it."""
+        created = self._create()["destination"]
+        with CaptureQueriesContext(connection) as rotate_queries:
+            self.client.post(reverse("webhooks_rotate", kwargs={"id": created["id"]}))
+        self.assertTrue(any("FOR UPDATE" in q["sql"] for q in rotate_queries.captured_queries))
+        with CaptureQueriesContext(connection) as delete_queries:
+            self.client.delete(self._detail(created["id"]))
+        self.assertTrue(any("FOR UPDATE" in q["sql"] for q in delete_queries.captured_queries))
+
     def test_rotate_mints_a_new_secret_shown_once_and_keeps_the_old_one_signing(self):
         created = self._create()
         old_secret = created["signing_secret"]
@@ -245,10 +258,32 @@ class RotateTests(_Base):
         _, fake = self._test(created["destination"]["id"])
         self.assertEqual(fake.calls[0]["secrets"], [body["signing_secret"], old_secret])
 
+    def test_a_second_rotation_inside_the_grace_window_is_refused_until_it_closes(self):
+        created = self._create()
+        rotate_url = reverse("webhooks_rotate", kwargs={"id": created["destination"]["id"]})
+        first = self.client.post(rotate_url)
+        self.assertEqual(first.status_code, 200, first.content)
+        second = self.client.post(rotate_url)
+        self.assertEqual(second.status_code, 409, second.content)
+        self.assertEqual(second.json()["error"], WebhookErrorCode.ROTATION_IN_PROGRESS)
+        # The window closes: the next rotation lands and retires the first's secret.
+        WebhookDestination.objects.filter(id=created["destination"]["id"]).update(
+            rotated_at=timezone.now() - timedelta(seconds=WEBHOOK_ROTATION_GRACE_SECONDS + 1)
+        )
+        third = self.client.post(rotate_url)
+        self.assertEqual(third.status_code, 200, third.content)
+        stored = WebhookDestination.objects.get(id=created["destination"]["id"])
+        self.assertEqual(stored.previous_signing_secret, first.json()["signing_secret"])
+
     def test_the_retired_secret_stops_signing_after_the_grace_window(self):
         created = self._create()["destination"]
         self.client.post(reverse("webhooks_rotate", kwargs={"id": created["id"]}))
         stored = WebhookDestination.objects.get(id=created["id"])
+        # Just inside the window: both secrets still sign.
+        stored.rotated_at = timezone.now() - timedelta(seconds=WEBHOOK_ROTATION_GRACE_SECONDS - 1)
+        stored.save(update_fields=["rotated_at"])
+        _, fake = self._test(created["id"])
+        self.assertEqual(len(fake.calls[0]["secrets"]), 2)
         stored.rotated_at = timezone.now() - timedelta(seconds=WEBHOOK_ROTATION_GRACE_SECONDS + 1)
         stored.save(update_fields=["rotated_at"])
         _, fake = self._test(created["id"])
@@ -268,14 +303,22 @@ class InUseDeleteTests(_Base):
     def test_delete_is_refused_while_a_webhook_column_sends_here_and_the_wire_counts_it(self):
         created = self._create()["destination"]
         path_id = self._column_using(created["id"])
+        # A second column on a second sheet: the count is over the
+        # destination's nodes, never one row's.
+        second_path_id = self._column_using(created["id"])
         detail = self.client.get(self._detail(created["id"])).json()
-        self.assertEqual(detail["column_count"], 1)
+        self.assertEqual(detail["column_count"], 2)
+        # The roster does not count: null, never a zero that reads as unused.
+        [listed] = self.client.get(reverse("webhooks_index")).json()["items"]
+        self.assertIsNone(listed["column_count"])
         resp = self.client.delete(self._detail(created["id"]))
         self.assertEqual(resp.status_code, 409, resp.content)
         self.assertEqual(resp.json()["error"], WebhookErrorCode.DESTINATION_IN_USE)
-        self.assertIn("1 webhook column on 1 sheet", resp.json()["detail"])
+        self.assertIn("2 webhook columns on 2 sheets", resp.json()["detail"])
         self.assertEqual(WebhookDestination.objects.count(), 1)
-        WorkflowService(account_id=TEST_IDENTITY["account_id"]).delete_path(path_id)
+        workflows = WorkflowService(account_id=TEST_IDENTITY["account_id"])
+        workflows.delete_path(path_id)
+        workflows.delete_path(second_path_id)
         self.assertEqual(self.client.delete(self._detail(created["id"])).status_code, 204)
 
 

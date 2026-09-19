@@ -102,7 +102,7 @@ function Unsent({ preview, cells }: { preview: PreviewBox; cells: CellActions })
     return (
       <div className="space-y-2">
         <ErrorMessage message={preview.failure} />
-        <Button type="button" size="sm" variant="secondary" onClick={preview.onRetry}>
+        <Button type="button" size="sm" variant="secondary" loading={preview.loading} onClick={preview.onRetry}>
           {RETRY}
         </Button>
       </div>
@@ -112,7 +112,14 @@ function Unsent({ preview, cells }: { preview: PreviewBox; cells: CellActions })
   return (
     <div aria-busy={preview.loading || undefined}>
       <PayloadLines lines={preview.lines} cells={cells} />
-      {preview.failure && <p className="mt-1 text-xs text-danger">{preview.failure}</p>}
+      {preview.failure && (
+        <div className="mt-1 flex items-center gap-2">
+          <p className="text-xs text-danger">{preview.failure}</p>
+          <Button type="button" size="sm" variant="secondary" loading={preview.loading} onClick={preview.onRetry}>
+            {RETRY}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

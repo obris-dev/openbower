@@ -68,10 +68,17 @@ class SignatureTests(SimpleTestCase):
         body = b'{"a":"x"}'
         signature = sign(keys=[KEY, other], delivery_id="msg_2", timestamp=7, body=body)
         self.assertEqual(len(signature.values), 2)
-        self.assertEqual(signature.headers()["webhook-signature"], " ".join(signature.values))
         for key, value in zip([KEY, other], signature.values, strict=True):
             expected = hmac.new(key, b"msg_2.7." + body, hashlib.sha256).digest()
             self.assertEqual(value, "v1," + base64.b64encode(expected).decode("ascii"))
+        # The header itself, frozen: a change to the separator between
+        # the two values (the thing a receiver library splits on) fails
+        # here, not at a receiver.
+        headers = sign(keys=[KEY, other], delivery_id="01J", timestamp=1, body=b"{}").headers()
+        self.assertEqual(
+            headers["webhook-signature"],
+            "v1,Gyo1mNIiVs7IyzSg94gzpB6tq/OGaUL6Ez3PDlbKOoc= v1,nqG8YHMuXmi9AfMF9wpxaOQDY/4LpOeqlhOUnLrFPf0=",
+        )
 
     def test_body_bytes_are_compact_and_ordered_as_declared(self):
         # One serialization, no whitespace, field order as the model

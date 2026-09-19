@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from django.db import transaction
-from django.db.models import Count, QuerySet
+from django.db.models import QuerySet
 
 from openbower_schema.lists import AiColumn
 
@@ -37,6 +37,8 @@ from ..models import List, Node, NodePath, Workflow
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import ColumnAgent
 from ..nodes.registry import parse_config
+from ..nodes.wait_until import WaitUntil
+from ..nodes.webhook import Webhook
 
 
 class NodeNotFound(Exception):
@@ -192,22 +194,30 @@ class WorkflowService:
             Node.objects.filter(account_id=self.account_id, path_id=path_id).delete()
             NodePath.objects.filter(account_id=self.account_id, id=path_id).delete()
 
+    def nodes_by_id(self, node_ids: Sequence[str]) -> list[Node]:
+        """The account's nodes among `node_ids`, one read; a gone id is
+        simply absent."""
+        if not node_ids:
+            return []
+        return list(Node.objects.filter(account_id=self.account_id, id__in=list(node_ids)))
+
     def nodes_on_path(self, path_id: str) -> list[Node]:
         return list(Node.objects.filter(account_id=self.account_id, path_id=path_id).order_by("rank"))
 
-    def nodes_of_kind(self, kind: str, **config_filters: object) -> QuerySet[Node]:
-        """The account's nodes of one kind, narrowed by JSON lookups on
-        the config (`config__destination_id=...`,
-        `config__inbound_path_ids__contains=[...]`): the ONE place a
-        config is queried rather than parsed."""
-        return Node.objects.filter(account_id=self.account_id, kind=kind, **config_filters)
+    # The two config QUERIES (as against parses), named here so no other
+    # module spells a JSON lookup against this table.
 
-    def node_counts_by(self, kind: str, config_field: str) -> dict[str, int]:
-        """How many nodes of `kind` name each value of one config field
-        (a roster's per-destination counts), one grouped query."""
-        lookup = f"config__{config_field}"
-        rows = self.nodes_of_kind(kind).values_list(lookup).annotate(n=Count("id"))
-        return {str(value): n for value, n in rows}
+    def wait_nodes_naming(self, path_id: str) -> QuerySet[Node]:
+        """The account's wait nodes whose inbound set names a path: what
+        makes an AI column's delete refuse."""
+        return Node.objects.filter(
+            account_id=self.account_id, kind=WaitUntil.KIND, config__inbound_path_ids__contains=[path_id]
+        )
+
+    def webhook_nodes_for(self, destination_id: str) -> QuerySet[Node]:
+        """The account's webhook nodes sending to a destination: what
+        makes its delete refuse, and its usage count."""
+        return Node.objects.filter(account_id=self.account_id, kind=Webhook.KIND, config__destination_id=destination_id)
 
     def path_of_column(self, target_list: List, key: str) -> str:
         """The path an AI column's node sits on, the id a wait node
@@ -220,7 +230,7 @@ class WorkflowService:
     def delete_for_list(self, list_id: str) -> None:
         """Called from ListService.delete AFTER the runs are purged (they
         point at nodes): nodes, then paths, then the workflow, as one
-        transaction. No-op for a sheet that never gained an AI column."""
+        transaction. No-op for a sheet that never gained a node."""
         with transaction.atomic():
             workflow = Workflow.objects.filter(account_id=self.account_id, list_id=list_id).first()
             if workflow is None:

@@ -13,7 +13,7 @@ from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, AiColumn, ListColumn
 
-from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS
+from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS
 from ...models import Fill, List
 from ..fill_progress import live_fill_count
 from .errors import (
@@ -165,7 +165,7 @@ def resolve_columns(target_list: List, *, config: AgentConfig, owned: frozenset[
     claimed: dict[str, str] = {}
     for output in config.outputs:
         key = output.key
-        if not key or reserved_output_key(key):
+        if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
             raise ReservedColumnKey(label=output.label)
         if key in claimed:
             raise DerivedKeyCollision(first=claimed[key], second=output.label)

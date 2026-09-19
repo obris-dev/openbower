@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button, useToast } from "@bower/ui";
-import { rotateWebhook, type RenderableDestination } from "@bower/api";
+import { ROTATION_IN_PROGRESS_CODE, rotateWebhook, type RenderableDestination } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
@@ -25,11 +25,17 @@ export function RotateSecret({
   const [confirming, setConfirming] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   async function rotate() {
     setRotating(true);
+    setRefusal(null);
     const res = await rotateWebhook(destinationId);
     setRotating(false);
+    if (res.status === "error" && res.code === ROTATION_IN_PROGRESS_CODE) {
+      setRefusal(res.message);
+      return;
+    }
     if (!ensureOk(res, toast, { title: "Secret not rotated" })) return;
     setConfirming(false);
     setRevealed(res.data.signing_secret);
@@ -53,7 +59,11 @@ export function RotateSecret({
         question={ROTATE_QUESTION}
         consequence={ROTATE_CONSEQUENCE}
         busy={rotating}
-        onCancel={() => setConfirming(false)}
+        refusal={refusal}
+        onCancel={() => {
+          setConfirming(false);
+          setRefusal(null);
+        }}
         onDelete={() => void rotate()}
       />
     );

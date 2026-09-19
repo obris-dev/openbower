@@ -30,6 +30,7 @@ import {
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
+import { menuButtonId } from "./column-header";
 import { UseAiDrawer, type AiColumnPayload } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
@@ -147,7 +148,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   }
   // The same drawer on an existing webhook column, prefilled from its config.
   function openEditWebhook(column: WebhookColumn) {
-    addColumnInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // The menu item that was clicked is unmounting; the menu button
+    // that opened it survives and is where focus belongs afterwards.
+    addColumnInvokerRef.current = document.getElementById(menuButtonId(column.key));
     setOpenDrawer({ kind: "webhook", column });
   }
   function closeAddColumn() {

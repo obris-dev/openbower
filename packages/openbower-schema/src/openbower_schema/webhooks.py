@@ -24,15 +24,17 @@ WEBHOOK_RESPONSE_EXCERPT_MAX_LENGTH = 1024
 # destination in the account.
 MAX_WEBHOOK_DESTINATIONS = 32
 MAX_WEBHOOK_HEADERS = 8
-# How often a webhook column's completed rows are batched and sent: a
-# closed list of presets (seconds), so the drawer offers a choice rather
-# than a number, and the flush's tick can never be asked for a value it
-# would refuse.
-WEBHOOK_CADENCE_SECONDS: tuple[int, ...] = (300, 900, 3600, 21_600, 86_400)
+# How often a webhook column's completed rows are batched and sent. The
+# presets are what the drawer OFFERS (seconds, decimal: clock durations,
+# not invented bounds); the wire accepts any positive integer, and a
+# stored value outside the presets renders as its own option.
+WEBHOOK_CADENCE_SECONDS: tuple[int, ...] = (300, 900, 3_600, 21_600, 86_400)
 DEFAULT_WEBHOOK_CADENCE_SECONDS = 900
 # After a secret rotation, deliveries carry a signature under the old
-# secret too for this long (binary; above the 24 h the reference
-# implementation keeps), so a receiver switches at its own pace.
+# secret too for this long: 2^17 s, about 36 hours (binary by house
+# rule, and above the 24 h the Standard Webhooks reference
+# implementation keeps), so a receiver switches at its own pace. A
+# second rotation inside the window is refused.
 WEBHOOK_ROTATION_GRACE_SECONDS = 131_072
 # The signature triple every delivery carries, and the shape of what
 # rides in it: the Standard Webhooks scheme, so a receiver library
@@ -200,8 +202,11 @@ class WebhookDestinationWire(BaseModel):
         default=None,
         description="When the signing secret was last rotated; the previous secret keeps signing for the grace window after it.",
     )
-    column_count: int = Field(
-        default=0, description="How many Send webhook columns send here; delete is refused while any do."
+    column_count: int | None = Field(
+        default=None,
+        description="How many Send webhook columns send here: delete is refused while any do. Carried by "
+        "the single-destination reads (detail, create, patch, rotate) and null on the roster, which does "
+        "not pay for it.",
     )
     created_at: str
 
@@ -242,14 +247,23 @@ class WebhookColumnPreviewResponse(BaseModel):
 
 
 class WebhookColumnConfigWire(BaseModel):
-    """A Send webhook column as configured: what it waits for (derived
-    back from the paths its wait node names, in sheet order), where it
-    sends, what rides, how often, and whether it is running."""
+    """A Send webhook column as configured, served by GET and echoed by
+    PATCH on /lists/{id}/columns/{key}/webhook: what it waits for, where
+    it sends, what rides, how often, and whether it is running."""
 
-    node_id: str
+    node_id: str = Field(description="The webhook node the column is; the drawer's test send scopes to it.")
     destination_id: str
-    destination_label: str
-    wait_keys: list[str]
-    payload_keys: list[str]
-    interval_seconds: int
-    enabled: bool = True
+    destination_label: str = Field(description="The destination's label at read time, for display; the id is the link.")
+    wait_keys: list[str] = Field(
+        description="The AI columns a row must complete before it is due, in sheet order. Derived back from the "
+        "paths the wait node names, so waiting on one output of an agent lists every column that agent fills."
+    )
+    payload_keys: list[str] = Field(
+        description="The columns whose values ride in each sent item, in sheet order; a waited-on column rides "
+        "only if named here too. Never empty, never a webhook column."
+    )
+    interval_seconds: int = Field(
+        gt=0,
+        description="Seconds between sends of due rows: any positive integer; WEBHOOK_CADENCE_SECONDS are the offered presets.",
+    )
+    enabled: bool = Field(default=True, description="False pauses sending; due rows wait until it is resumed.")

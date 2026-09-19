@@ -17,21 +17,31 @@ export const DELETE_DESTINATION_CONSEQUENCE = "Its delivery log goes with it.";
 
 // The grace window, as the hours a person reads it in (the contract
 // holds seconds).
-export const ROTATION_GRACE_HOURS = Math.round(WEBHOOK_ROTATION_GRACE_SECONDS / 3600);
+// Floored: a deadline promise must never overstate the window.
+export const ROTATION_GRACE_HOURS = Math.floor(WEBHOOK_ROTATION_GRACE_SECONDS / 3600);
+const GRACE_HOURS_TEXT = ROTATION_GRACE_HOURS === 1 ? "1 hour" : `${ROTATION_GRACE_HOURS} hours`;
+/** When the previous secret stops signing, off the rotation's clock. */
+export function rotationLine(rotatedAt: string): string {
+  const stops = new Date(new Date(rotatedAt).getTime() + WEBHOOK_ROTATION_GRACE_SECONDS * 1000);
+  const stamp = stops.toISOString().slice(0, 16).replace("T", " ");
+  return `The secret was rotated; the previous one stops working ${stamp} UTC.`;
+}
 export const SECRET_REVEAL_NOTE =
   "This is the only time this secret will be shown, so copy it somewhere safe. If you lose it, rotate it from this destination's page.";
-export const SECRET_RECOVERY_NOTE = `The signing secret was shown once, when this destination was created. If you have lost it, rotate it: the new secret shows once, and the old one keeps working for ${ROTATION_GRACE_HOURS} hours so your receiver can switch.`;
+export const SECRET_RECOVERY_NOTE = `The signing secret was shown once, when this destination was created. If you have lost it, rotate it: the new secret shows once, and the old one keeps working for ${GRACE_HOURS_TEXT} so your receiver can switch.`;
 export const ROTATE_SECRET = "Rotate secret";
 export const ROTATE_QUESTION = "Rotate the signing secret?";
-export const ROTATE_CONSEQUENCE = `The old secret keeps working for ${ROTATION_GRACE_HOURS} hours, then stops.`;
-export const SECRET_ROTATED_NOTE = `This is the only time this secret will be shown, so copy it somewhere safe. Update your receiver within ${ROTATION_GRACE_HOURS} hours, while the old secret still works.`;
+export const ROTATE_CONSEQUENCE = `The old secret keeps working for ${GRACE_HOURS_TEXT}, then stops.`;
+export const SECRET_ROTATED_NOTE = `This is the only time this secret will be shown, so copy it somewhere safe. Update your receiver within ${GRACE_HOURS_TEXT}, while the old secret still works.`;
 export function rotatedLede(label: string): string {
   return `${label} has a new signing secret.`;
 }
 export const DONE = "Done";
 /** "Used by 1 column" | "Used by N columns" | null when none. */
-export function usageLine(count: number): string | null {
-  if (count <= 0) return null;
+export function usageLine(count: number | null): string | null {
+  // Null is a read that does not carry the count (the roster); zero is
+  // a destination nothing sends to. Neither gets a line.
+  if (count === null || count <= 0) return null;
   return count === 1 ? "Used by 1 column" : `Used by ${count} columns`;
 }
 

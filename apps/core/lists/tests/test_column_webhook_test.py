@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
@@ -83,6 +83,10 @@ class ColumnWebhookTestTests(TestCase):
                 content_type="application/json",
             )
         return resp, fake
+
+    def test_a_blank_key_means_no_column_like_an_absent_one(self):
+        resp, _fake = self._post(key="")
+        self.assertEqual(resp.status_code, 200, resp.content)
 
     def test_sends_a_sample_digest_with_the_edited_cells_and_the_stored_states(self):
         self._settle(str(self.rows[0].id), {"answer": StoredCellState.FILLED})
@@ -230,3 +234,42 @@ class ColumnWebhookTestTests(TestCase):
         self.client.cookies.clear()
         resp, _ = self._post()
         self.assertEqual(resp.status_code, 401)
+
+
+class ColumnWebhookTestOutsideTransactionTests(TransactionTestCase):
+    """TestCase wraps every test in a transaction, which hides a row
+    lock taken where no transaction runs. The test send and preview
+    run in none, so they are pinned here, without that wrapper."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.account_id = TEST_IDENTITY["account_id"]
+        self.lists = ListService(account_id=self.account_id)
+        self.sheet = self.lists.create(
+            owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual"
+        )
+        self.rows = self.lists.add_rows(self.sheet, [{"company": "acme.com"}])
+        destinations = WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
+        self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
+
+    def test_the_preview_and_the_test_send_run_with_no_transaction_to_lock_in(self) -> None:
+        body = {
+            "destination_id": str(self.destination.id),
+            "wait_keys": ["answer"],
+            "payload_keys": ["company"],
+            "row_id": str(self.rows[0].id),
+            "cells": {"company": "acme.com"},
+        }
+        preview = self.client.post(
+            reverse("lists_columns_webhook_preview", kwargs={"id": str(self.sheet.id)}),
+            body,
+            content_type="application/json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        with patch("webhooks.services.destinations.WebhookSender", return_value=_FakeSender()):
+            sent = self.client.post(
+                reverse("lists_columns_webhook_test", kwargs={"id": str(self.sheet.id)}),
+                body,
+                content_type="application/json",
+            )
+        self.assertEqual(sent.status_code, 200, sent.content)

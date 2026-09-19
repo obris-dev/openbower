@@ -24,7 +24,7 @@ export const PREVIEW_FAILED_LINE = "The payload preview did not load.";
 
 export const WAIT_LEGEND = "Send once these columns complete";
 export const WAIT_HINT =
-  "Complete means filled, or blank with a reason. A row is sent again whenever one of these columns is filled again. Fewer columns means faster sends.";
+  "Complete means filled, or blank with a reason. A row is sent again whenever one of these columns is filled again. Fewer columns means faster sends. Columns filled by one agent finish together, so they are chosen together.";
 
 export const PREVIEW_LEGEND = "What your receiver gets";
 export const PREVIEW_HINT =
@@ -44,7 +44,6 @@ export const DESTINATIONS_FAILED_LINE = "Destinations did not load.";
 export const DESTINATION_PLACEHOLDER = "Destination…";
 export const NO_ROWS_LINE = "Add rows to this sheet to send a sample.";
 
-export const WEBHOOK_CELL_WORD = "Waiting";
 export const EDIT_WEBHOOK_VERB = "Edit webhook";
 export const DELETE_WEBHOOK_COLUMN_CONSEQUENCE = "This stops sending; nothing else changes.";
 

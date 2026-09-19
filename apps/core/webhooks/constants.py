@@ -70,11 +70,13 @@ class DeliveryStatus(StrEnum):
 
 class WebhookErrorCode(StrEnum):
     """Refusal codes. Each is fixed by the caller changing the request
-    or the account, never by waiting: 400, except DESTINATION_IN_USE,
-    which is fixed by changing something ELSE (the columns sending
-    here), so it is a 409 like the other in-use conflicts."""
+    or the account: 400, except the two conflicts with live state, a
+    409 like the other in-use conflicts: DESTINATION_IN_USE (fixed by
+    changing the columns sending here) and ROTATION_IN_PROGRESS (fixed
+    by the grace window closing)."""
 
     DESTINATIONS_FULL = "destinations_full"
     URL_BLOCKED = "url_blocked"
     HEADER_RESERVED = "header_reserved"
     DESTINATION_IN_USE = "destination_in_use"
+    ROTATION_IN_PROGRESS = "rotation_in_progress"

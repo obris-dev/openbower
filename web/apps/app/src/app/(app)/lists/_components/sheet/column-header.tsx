@@ -9,6 +9,13 @@ import { useState } from "react";
 import { isNumericColumn, type ListColumn, type WebhookColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
+
+/** The column menu button's id: what an edit gesture opened from the
+ * menu hands focus back to, since the menu item itself is gone by
+ * the time the drawer closes. */
+export function menuButtonId(key: string): string {
+  return `column-menu-${key}`;
+}
 import { canMove, nudgeColumn } from "./lib/column-order";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";
@@ -274,6 +281,7 @@ export function ColumnHeader({
           {label}
           <Popover className="relative">
             <PopoverButton
+              id={menuButtonId(column.key)}
               // The menu button sits INSIDE the drag surface, so its
               // press must not reach the cell's drag listeners. Stated
               // here rather than left to Headless UI cancelling its

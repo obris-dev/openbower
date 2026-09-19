@@ -92,5 +92,5 @@ test("rotateWebhook posts to the rotate route and parses the secret shown once",
 test("a destination from before rotation and usage counts parses with their defaults", () => {
   const parsed = TolerantWebhookDestinationWireSchema.parse(DESTINATION);
   assert.equal(parsed.rotated_at, null);
-  assert.equal(parsed.column_count, 0);
+  assert.equal(parsed.column_count, null);
 });

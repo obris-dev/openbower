@@ -11,10 +11,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from django.db import transaction
-from django.db.models import QuerySet
 from django.utils import timezone
 
-from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookCellState, WebhookColumn
+from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
@@ -28,7 +27,7 @@ from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 from .webhook_paths import inbound_paths_for, wait_keys_for
-from .workflows import WorkflowService, config_as
+from .workflows import NodeNotFound, WorkflowService, config_as
 
 
 class WebhookColumnRefused(Exception):
@@ -60,6 +59,13 @@ class WebhookColumnNotWebhook(WebhookColumnRefused):
         super().__init__(f"{label} is not a Send webhook column.")
 
 
+class WebhookColumnNotData(WebhookColumnRefused):
+    code = WebhookColumnErrorCode.COLUMN_NOT_DATA
+
+    def __init__(self, label: str) -> None:
+        super().__init__(f"{label} is a Send webhook column; it holds no data to send.")
+
+
 class WebhookRowUnknown(WebhookColumnRefused):
     code = WebhookColumnErrorCode.ROW_UNKNOWN
 
@@ -83,15 +89,6 @@ class WebhookColumnService:
         self.destinations = WebhookDestinationService(account_id=account_id, user_id=user_id)
         self.workflows = WorkflowService(account_id=account_id)
 
-    # The two reads other custody asks of this column's nodes.
-
-    def waits_naming(self, path_id: str) -> QuerySet[Node]:
-        """The wait nodes whose inbound set names a path."""
-        return self.workflows.nodes_of_kind(WaitUntil.KIND, config__inbound_path_ids__contains=[path_id])
-
-    def webhooks_for_destination(self, destination_id: str) -> QuerySet[Node]:
-        return self.workflows.nodes_of_kind(Webhook.KIND, config__destination_id=destination_id)
-
     # Custody.
 
     def add(
@@ -109,7 +106,9 @@ class WebhookColumnService:
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             key = claim_key(target_list, label=label)
-            self._validate(target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id)
+            self._validate(
+                target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=True
+            )
             wait = WaitUntil(inbound_path_ids=self._inbound_paths(target_list, wait_keys))
             webhook = Webhook(
                 destination_id=destination_id, interval_seconds=interval_seconds, payload_keys=payload_keys
@@ -119,36 +118,6 @@ class WebhookColumnService:
             target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
         return target_list
-
-    def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, WebhookCellState]]:
-        """row id -> {webhook column key: state} for one page of rows,
-        the webhook columns' half of what the AI states are to theirs.
-        A row is WAITING for a webhook column once every column it
-        waits on is done for that row, by the digest's own completion
-        rule, so the cell and the payload can never disagree about
-        which rows are due; a row still filling or never attempted has
-        no entry and shows nothing. Nothing is sent before the flush,
-        so waiting is the one word today; sent and failed join it then.
-        One records read over the union of the waited-on columns."""
-        webhook_columns = [column for column in target_list.columns if isinstance(column, WebhookColumn)]
-        if not webhook_columns or not rows:
-            return {}
-        wait_keys_by_column: dict[str, list[str]] = {}
-        for column in webhook_columns:
-            webhook_node = self.workflows.get_node(column.node_id)
-            wait_keys_by_column[column.key] = self._wait_keys(target_list, webhook_node)
-        watched = {key for keys in wait_keys_by_column.values() for key in keys}
-        row_ids = [str(row.id) for row in rows]
-        records: dict[str, dict[str, tuple[str, datetime]]] = {}
-        recorded = self.cell_states.iter_records(str(target_list.id), row_ids=row_ids, column_keys=watched)
-        for row_id, column_key, state, updated_at in recorded:
-            records.setdefault(row_id, {})[column_key] = (state, updated_at)
-        states: dict[str, dict[str, WebhookCellState]] = {}
-        for row_id, row_records in records.items():
-            for key, wait_keys in wait_keys_by_column.items():
-                if wait_keys and completion_of(row_records, wait_keys) is not None:
-                    states.setdefault(row_id, {})[key] = "waiting"
-        return states
 
     def config(self, target_list_id: str, key: str) -> WebhookColumnConfigWire:
         target_list = self.lists.get(target_list_id)
@@ -171,7 +140,9 @@ class WebhookColumnService:
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             webhook_node = self._webhook_node(target_list, key)
-            self._validate(target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id)
+            self._validate(
+                target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=True
+            )
             wait = WaitUntil(inbound_path_ids=self._inbound_paths(target_list, wait_keys))
             webhook = Webhook(
                 destination_id=destination_id,
@@ -255,7 +226,7 @@ class WebhookColumnService:
             webhook_node = self._webhook_node(target_list, key)
             scope = str(webhook_node.id)
         destination = self._validate(
-            target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id
+            target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=False
         )
         row = ListRow.objects.filter(list_id=str(target_list.id), id=row_id).first()
         if row is None:
@@ -283,10 +254,19 @@ class WebhookColumnService:
     # Shared pieces.
 
     def _validate(
-        self, target_list: List, *, wait_keys: list[str], payload_keys: list[str], destination_id: str
+        self,
+        target_list: List,
+        *,
+        wait_keys: list[str],
+        payload_keys: list[str],
+        destination_id: str,
+        lock: bool,
     ) -> WebhookDestination:
         """Every body reference resolves: wait keys are AI columns,
-        payload keys are columns, the destination is this account's."""
+        payload keys are columns, the destination is this account's.
+        `lock` is the writers' choice: a binding takes the destination's
+        row lock for its transaction; a test send or preview, which
+        runs in none, only reads it."""
         by_key = {column.key: column for column in target_list.columns}
         for key in wait_keys:
             column = by_key.get(key)
@@ -295,9 +275,20 @@ class WebhookColumnService:
             if not isinstance(column, AiColumn):
                 raise WebhookColumnNotAi(column.label)
         for key in payload_keys:
-            if key not in by_key:
+            column = by_key.get(key)
+            if column is None:
                 raise WebhookColumnUnknown(key)
+            # The server is the guard of record; the picker's filter is
+            # a convenience.
+            if isinstance(column, WebhookColumn):
+                raise WebhookColumnNotData(column.label)
         try:
+            # A binding locks the row for the caller's transaction (the
+            # add and update hold the list lock already): a destination
+            # mid-delete cannot be bound, and a delete waits for the
+            # binding to land and then refuses.
+            if lock:
+                return self.destinations.lock(destination_id)
             return self.destinations.get(destination_id)
         except DestinationNotFound as e:
             raise WebhookDestinationUnknown() from e
@@ -314,13 +305,23 @@ class WebhookColumnService:
         node_ids = [column.node_id for column in target_list.columns if isinstance(column, AiColumn)]
         agent_nodes = Node.objects.filter(account_id=self.account_id, id__in=node_ids)
         path_by_node = {str(node.id): node.path_id for node in agent_nodes}
+        # Validation proved each wait key is an AI column; a node row
+        # that is gone (corruption) would otherwise drop out of the hop
+        # silently and store a wait on nothing.
+        node_by_key = {column.key: column.node_id for column in target_list.columns if isinstance(column, AiColumn)}
+        for key in wait_keys:
+            if not path_by_node.get(node_by_key.get(key, ""), ""):
+                raise WebhookColumnUnknown(key)
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)
 
     def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
         """The columns a webhook column waits on, in sheet order: its
         wait node's inbound paths resolved to the columns they fill."""
-        wait_node, _webhook = self.workflows.nodes_on_path(webhook_node.path_id)
-        wait = config_as(wait_node, WaitUntil)
+        nodes = self.workflows.nodes_on_path(webhook_node.path_id)
+        if not nodes:
+            raise NodeNotFound(webhook_node.path_id)
+        # The wait node is rank 0 whatever else the path holds.
+        wait = config_as(nodes[0], WaitUntil)
         agent_nodes = Node.objects.filter(account_id=self.account_id, path_id__in=wait.inbound_path_ids)
         node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
         return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)

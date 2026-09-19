@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import NamedTuple
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, NamedTuple
 
 import ulid
 from django.conf import settings
@@ -31,6 +32,9 @@ from ..models import WebhookDelivery, WebhookDestination
 from .deliveries import WebhookDeliveryService
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from lists.models import Node
 
 
 def envelope_of(*, test: bool, data: WebhookEnvelopeData) -> WebhookEnvelope:
@@ -85,6 +89,19 @@ class HeaderReserved(WebhookRefused):
         super().__init__(f"The {name} header is set by every delivery and cannot be configured.")
 
 
+class RotationInProgress(WebhookRefused):
+    """The previous secret is still signing: a second rotation inside
+    the grace window would retire it early and break every receiver
+    still on it, the promise the window makes (a 409: the fix is time)."""
+
+    code = WebhookErrorCode.ROTATION_IN_PROGRESS
+
+    def __init__(self, until: datetime) -> None:
+        super().__init__(
+            f"The previous secret keeps signing until {until:%Y-%m-%d %H:%M} UTC; rotate again after that."
+        )
+
+
 class DestinationInUse(WebhookRefused):
     """A Send webhook column sends here: deleting would strand it, so
     those columns go first (a 409: the fix is elsewhere)."""
@@ -113,6 +130,16 @@ class WebhookDestinationService:
     def get(self, destination_id: str) -> WebhookDestination:
         try:
             return WebhookDestination.objects.get(id=destination_id, account_id=self.account_id)
+        except WebhookDestination.DoesNotExist as e:
+            raise DestinationNotFound(destination_id) from e
+
+    def lock(self, destination_id: str) -> WebhookDestination:
+        """The row, locked for the caller's transaction: what a delete,
+        a rotate, and a webhook column binding to it all take, so a
+        column can never bind to a destination mid-delete and two
+        rotates can never both mint against one secret."""
+        try:
+            return WebhookDestination.objects.select_for_update().get(id=destination_id, account_id=self.account_id)
         except WebhookDestination.DoesNotExist as e:
             raise DestinationNotFound(destination_id) from e
 
@@ -174,34 +201,43 @@ class WebhookDestinationService:
         link, read here through the substrate's one config reader). A
         zero count means another delete won. A delivery recorded in the
         same instant can outlive this; the prune removes it."""
-        users = self._webhook_nodes_naming(destination)
-        if users:
-            sheets = len({node.workflow_id for node in users})
-            raise DestinationInUse(columns=len(users), sheets=sheets)
         with transaction.atomic():
-            deleted, _ = WebhookDestination.objects.filter(id=destination.id, account_id=self.account_id).delete()
-            if not deleted:
+            try:
+                locked = self.lock(str(destination.id))
+            except DestinationNotFound:
                 return
-            self.deliveries.delete_for(str(destination.id))
+            users = self._webhook_nodes_naming(locked)
+            if users:
+                sheets = len({node.workflow_id for node in users})
+                raise DestinationInUse(columns=len(users), sheets=sheets)
+            # Read before the delete clears the instance's id.
+            destination_id = str(locked.id)
+            locked.delete()
+            self.deliveries.delete_for(destination_id)
 
-    def _webhook_nodes_naming(self, destination: WebhookDestination) -> list[object]:
+    def _webhook_nodes_naming(self, destination: WebhookDestination) -> list[Node]:
         # Imported here: the lists app already depends on this one, and a
         # module-level import would make that a cycle.
-        from lists.nodes.webhook import Webhook
         from lists.services.workflows import WorkflowService
 
         workflows = WorkflowService(account_id=self.account_id)
-        return list(workflows.nodes_of_kind(Webhook.KIND, config__destination_id=str(destination.id)))
+        return list(workflows.webhook_nodes_for(str(destination.id)))
 
     def rotate(self, destination: WebhookDestination) -> tuple[WebhookDestination, str]:
         """A new signing secret, the old one kept to sign beside it for
         the grace window. Returns `(destination, raw_secret)`: the raw
         value exists only in this return and the response."""
         secret = mint_secret()
-        destination.previous_signing_secret = destination.signing_secret
-        destination.signing_secret = secret
-        destination.rotated_at = timezone.now()
-        destination.save(update_fields=["previous_signing_secret", "signing_secret", "rotated_at", "updated_at"])
+        with transaction.atomic():
+            destination = self.lock(str(destination.id))
+            if len(self.signing_secrets_of(destination)) > 1 and destination.rotated_at is not None:
+                raise RotationInProgress(
+                    until=destination.rotated_at + timedelta(seconds=WEBHOOK_ROTATION_GRACE_SECONDS)
+                )
+            destination.previous_signing_secret = destination.signing_secret
+            destination.signing_secret = secret
+            destination.rotated_at = timezone.now()
+            destination.save(update_fields=["previous_signing_secret", "signing_secret", "rotated_at", "updated_at"])
         return destination, secret
 
     def signing_secrets_of(self, destination: WebhookDestination) -> list[str]:

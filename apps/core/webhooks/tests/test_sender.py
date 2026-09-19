@@ -13,7 +13,7 @@ import base64
 import hashlib
 import hmac
 import socket
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from unittest.mock import patch
 
 import httpx
@@ -52,7 +52,12 @@ class _Transport:
     """A mock transport that records the request and answers as told:
     a status with a body, or an exception."""
 
-    def __init__(self, status: int = 200, body: bytes | Iterable[bytes] = b"", raise_: Exception | None = None) -> None:
+    def __init__(
+        self,
+        status: int = 200,
+        body: bytes | Iterable[bytes] | Callable[[httpx.Request], bytes] = b"",
+        raise_: Exception | None = None,
+    ) -> None:
         self.status = status
         self.body = body
         self.raise_ = raise_
@@ -62,7 +67,10 @@ class _Transport:
         self.requests.append(request)
         if self.raise_ is not None:
             raise self.raise_
-        return httpx.Response(self.status, content=self.body)
+        # A callable body answers from the request: a receiver that
+        # echoes what it was sent.
+        body = self.body(request) if callable(self.body) else self.body
+        return httpx.Response(self.status, content=body)
 
     def __enter__(self):
         # The shared client is built once per process: reset around the
@@ -297,13 +305,19 @@ class RotationSecretsTests(SimpleTestCase):
 
     def test_two_readable_secrets_put_two_values_in_the_header_both_masked(self):
         other = "whsec_" + base64.b64encode(bytes(range(24))).decode("ascii")
-        with _Transport(500, b"echo " + b"x") as transport:
+        # The receiver echoes the signature header back, so the excerpt
+        # would carry both values were they not masked.
+        echo = lambda request: b"echo " + request.headers["webhook-signature"].encode()  # noqa: E731
+        with _Transport(500, echo) as transport:
             result = _send(secrets=[SECRET, other])
         self.assertEqual(result.status, DeliveryStatus.TRANSIENT)
         header = transport.requests[0].headers["webhook-signature"]
         values = header.split(" ")
         self.assertEqual(len(values), 2)
         self.assertTrue(all(value.startswith("v1,") for value in values))
+        for value in values:
+            self.assertNotIn(value, result.response_excerpt)
+        self.assertEqual(result.response_excerpt.count(REDACTED), 2)
 
     def test_an_unreadable_retired_secret_is_dropped_and_the_current_one_signs(self):
         with _Transport(200, b"") as transport:

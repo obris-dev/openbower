@@ -12,11 +12,11 @@ from __future__ import annotations
 from typing import ClassVar
 
 from .base import NodeConfig
-from .registry import register
+from .registry import WAIT_UNTIL, register
 
 
 class WaitUntil(NodeConfig):
-    KIND: ClassVar[str] = "wait_until"
+    KIND: ClassVar[str] = WAIT_UNTIL
     DISPLAY: ClassVar[str] = "Wait until"
     inbound_path_ids: list[str]
 

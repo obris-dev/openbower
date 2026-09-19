@@ -252,7 +252,7 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
             data: { answer: "x" },
             states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
           },
-          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" }, webhooks: { crm: "waiting" } },
+          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
         ],
         next_cursor: null,
       }),
@@ -267,10 +267,6 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
   assert.deepEqual(degraded!.states.answer, { state: "filled", tools: { web_search: "rate_limited" } });
   assert.deepEqual(bare!.states.answer, { state: "no_evidence", tools: {} });
   assert.ok(!(CELL_STATES as readonly string[]).includes(UNKNOWN_CELL_STATE));
-  // Webhook cell words ride the row too; a page from before they
-  // shipped reads as no words.
-  assert.deepEqual(bare!.webhooks, { crm: "waiting" });
-  assert.deepEqual(future!.webhooks, {});
 });
 
 test("reorderColumns sends the WHOLE key order, and nothing about the columns", async (t) => {
@@ -402,12 +398,12 @@ test("postColumnWebhook posts the config with its label and parses the summary w
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), body);
 });
 
-test("getColumnWebhook and updateColumnWebhook address the column by an encoded key and parse the config", async (t) => {
+test("getColumnWebhook and updateColumnWebhook address the column under its own key and parse the config", async (t) => {
   const calls = stubFetch(t, CONFIG);
   const got = await getColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", "crm_sync");
   assert.equal(got.status, "ok");
   if (got.status === "ok") assert.deepEqual(got.data, CONFIG);
-  assert.ok(calls[0]!.url.endsWith("/columns/webhook/crm_sync"));
+  assert.ok(calls[0]!.url.endsWith("/columns/crm_sync/webhook"));
   assert.equal(calls[0]!.init.method ?? "GET", "GET");
   const patch = { destination_id: "01DST", wait_keys: ["answer"], payload_keys: ["company"], interval_seconds: 300, enabled: false };
   await updateColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", "crm_sync", patch);

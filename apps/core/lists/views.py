@@ -63,7 +63,7 @@ from .serializers import (
     ListPatchRequest,
     RowsAddRequest,
     WebhookColumnAddRequest,
-    WebhookColumnConfigRequest,
+    WebhookColumnPatchRequest,
     WebhookColumnTestRequest,
     fill_run_wire,
     fill_runs_wire,
@@ -78,6 +78,7 @@ from .services.fill_admission import FillAdmissionService, FillColumnNotFound, F
 from .services.fills import FillNotFound, FillService
 from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
+from .services.workflows import NodeNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -214,9 +215,8 @@ class ListRowsView(_ScopedView):
             raise ValidationError("?after= must be a row position")
         rows = self.lists.rows_page(target_list, after_position=int(raw_after), limit=limit)
         states = self.fills.cell_states_for_rows(target_list, rows)
-        webhooks = self.webhook_columns.cell_states_for_rows(target_list, rows)
         next_cursor = str(rows[-1].position) if len(rows) == limit else None
-        items = [row_wire(r, states.get(str(r.id), {}), webhooks.get(str(r.id), {})) for r in rows]
+        items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
         page = ListRowsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
@@ -390,6 +390,9 @@ class ColumnWebhookTestView(_ScopedView):
             )
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         delivery = delivery_model(sent.delivery)
@@ -418,6 +421,9 @@ class ColumnWebhookPreviewView(_ScopedView):
             )
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         body = WebhookColumnPreviewResponse(envelope=envelope)
@@ -445,6 +451,9 @@ class ColumnWebhookView(_ScopedView):
             )
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except ListNotFound as e:
@@ -453,21 +462,26 @@ class ColumnWebhookView(_ScopedView):
 
 
 class ColumnWebhookDetailView(_ScopedView):
-    """GET /v1/lists/{id}/columns/webhook/{key}: the column as
-    configured. PATCH: the whole config, rewritten. A column literally
-    keyed `webhook` is shadowed by this route, as `ai` already is."""
+    """GET /v1/lists/{id}/columns/{key}/webhook: the column as
+    configured. PATCH: the whole config, rewritten. The key sits in its
+    own segment, as the refill and prompt routes place it, so no column
+    key can shadow a literal route (the `columns/ai` and
+    `columns/webhook` collections are the reserved keys)."""
 
     def get(self, request: Request, id: str, key: str) -> Response:
         try:
             config = self.webhook_columns.config(id, key)
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         return Response(config.model_dump())
 
     def patch(self, request: Request, id: str, key: str) -> Response:
-        serializer = WebhookColumnConfigRequest(data=request.data)
+        serializer = WebhookColumnPatchRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
@@ -482,6 +496,9 @@ class ColumnWebhookDetailView(_ScopedView):
             )
         except WebhookColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
         return Response(config.model_dump())

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
@@ -19,11 +21,12 @@ from lists.constants import CellSource, FillErrorCode, StoredCellState, WebhookC
 from lists.models import Node, NodePath
 from lists.nodes.wait_until import WaitUntil
 from lists.nodes.webhook import Webhook
+from lists.serializers import WebhookColumnAddRequest, WebhookColumnPatchRequest
 from lists.services import cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
 from lists.services.workflows import WorkflowService, config_as
-from openbower_schema.lists import ListSummary
+from openbower_schema.lists import ListSummary, derive_column_key
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookEnvelope
 from webhooks.constants import DeliveryStatus
 from webhooks.delivery.protocol import DeliveryResult
@@ -89,7 +92,7 @@ class WebhookColumnTests(TestCase):
         )
 
     def _config_url(self, key: str = "crm_sync") -> str:
-        return reverse("lists_column_webhook", kwargs={"id": str(self.sheet.id), "key": key})
+        return reverse("lists_column_webhook_config", kwargs={"id": str(self.sheet.id), "key": key})
 
     def test_add_persists_the_column_with_its_path_and_two_nodes(self):
         resp = self._add()
@@ -123,6 +126,14 @@ class WebhookColumnTests(TestCase):
         self.assertEqual(wire.wait_keys, ["answer", "score", "country"])
         self.assertEqual((wire.destination_label, wire.interval_seconds, wire.enabled), ("CRM", 3600, True))
 
+    def test_add_locks_the_destination_it_binds_to(self):
+        # FAILS if the binding stops taking the destination's row lock:
+        # a concurrent destination delete could then land under it.
+        with CaptureQueriesContext(connection) as queries:
+            self.assertEqual(self._add().status_code, 201)
+        locked = [q["sql"] for q in queries.captured_queries if "FOR UPDATE" in q["sql"]]
+        self.assertTrue(any("webhooks_webhookdestination" in sql for sql in locked), locked)
+
     def test_add_refusals_leave_nothing_behind(self):
         cases = [
             ({"wait_keys": ["nope"]}, 400, WebhookColumnErrorCode.COLUMN_UNKNOWN),
@@ -140,10 +151,14 @@ class WebhookColumnTests(TestCase):
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
         self.assertEqual(len(ListService(account_id=self.account_id).get(str(self.sheet.id)).columns), 4)
 
-    def test_an_interval_outside_the_presets_is_a_shape_400(self):
+    def test_any_positive_interval_is_accepted_and_a_non_positive_one_is_a_shape_400(self):
         resp = self._add(interval_seconds=1234)
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(WebhookColumnConfigWire(**self.client.get(self._config_url()).json()).interval_seconds, 1234)
+        for bad in (0, -60):
+            with self.subTest(bad=bad):
+                resp = self._add(label=f"Other {bad}", interval_seconds=bad)
+                self.assertEqual(resp.status_code, 400, resp.content)
 
     def test_patch_rewrites_both_configs_in_place(self):
         self._add()
@@ -231,36 +246,63 @@ class WebhookColumnTests(TestCase):
             source=CellSource.FILL,
         )
 
-    def test_rows_read_waiting_only_once_every_waited_on_column_is_done(self):
-        """The cell tracks the digest's completion rule: an answer or a
-        settled blank on EVERY waited-on column, and nothing before.
-        Waiting on `answer` waits on its PATH, so `score` (the same
-        agent's other output) counts too."""
-        self._add(wait_keys=["country", "answer"])
-        filling, done, blank, fresh = (
-            str(row.id)
-            for row in [
-                *self.rows,
-                *self.lists.add_rows(self.sheet, [{"company": "b.com"}, {"company": "c.com"}, {"company": "d.com"}]),
-            ]
-        )
-        filled = StoredCellState.FILLED
-        # Two of three done: the retryable third keeps the row filling.
-        self._settle(filling, {"country": filled, "answer": filled, "score": StoredCellState.TRANSIENT})
-        self._settle(done, {"country": filled, "answer": filled, "score": filled})
-        self._settle(blank, {"country": StoredCellState.NO_EVIDENCE, "answer": filled, "score": filled})
-        resp = self.client.get(reverse("lists_rows", kwargs={"id": str(self.sheet.id)}))
+    def test_a_column_keyed_like_a_literal_route_still_reaches_its_config(self):
+        """The config route keeps the key in its own segment, so a
+        column whose derived key is `test` or `preview` (the add
+        drawer's action routes) is addressable like any other."""
+        for label in ("Test", "Preview"):
+            with self.subTest(label=label):
+                resp = self._add(label=label)
+                self.assertEqual(resp.status_code, 201, resp.content)
+                key = derive_column_key(label)
+                resp = self.client.get(self._config_url(key))
+                self.assertEqual(resp.status_code, 200, resp.content)
+                self.assertEqual(WebhookColumnConfigWire(**resp.json()).interval_seconds, 3600)
+
+    def test_a_key_that_would_shadow_a_collection_route_is_refused(self):
+        for label in ("Webhook", "AI"):
+            with self.subTest(label=label):
+                resp = self._add(label=label)
+                self.assertEqual(resp.status_code, 400, resp.content)
+                self.assertEqual(resp.json()["error"], FillErrorCode.RESERVED_KEY)
+
+    def test_a_gone_webhook_node_degrades_instead_of_breaking_the_sheet(self):
+        """Corruption the app never writes, handled as the AI half
+        handles it: the rows page lands, the column's config answers
+        not found, and the column can still be deleted."""
+        self._add(wait_keys=["country"])
+        column = next(c for c in self.lists.get(str(self.sheet.id)).columns if c.key == "crm_sync")
+        Node.objects.filter(id=column.node_id).delete()
+        rows = self.client.get(reverse("lists_rows", kwargs={"id": str(self.sheet.id)}))
+        self.assertEqual(rows.status_code, 200, rows.content)
+        self.assertEqual(self.client.get(self._config_url()).status_code, 404)
+        resp = self.client.delete(reverse("lists_column_detail", kwargs={"id": str(self.sheet.id), "key": "crm_sync"}))
         self.assertEqual(resp.status_code, 200, resp.content)
-        by_row = {item["id"]: item["webhooks"] for item in resp.json()["items"]}
-        self.assertEqual(
-            by_row,
-            {
-                filling: {},
-                done: {"crm_sync": "waiting"},
-                blank: {"crm_sync": "waiting"},
-                fresh: {},
-            },
-        )
+        self.assertNotIn("crm_sync", [c.key for c in self.lists.get(str(self.sheet.id)).columns])
+
+    def test_deleting_a_column_a_payload_names_prunes_it_from_the_stored_config(self):
+        self._add(payload_keys=["company", "country"])
+        resp = self.client.delete(reverse("lists_column_detail", kwargs={"id": str(self.sheet.id), "key": "company"}))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        config = WebhookColumnConfigWire(**self.client.get(self._config_url()).json())
+        self.assertEqual(config.payload_keys, ["country"])
+
+    def test_a_wait_key_whose_node_is_gone_is_refused_not_stored_as_a_wait_on_nothing(self):
+        Node.objects.filter(kind="column_agent", config__agent_id=OTHER_AGENT).delete()
+        resp = self._add(wait_keys=["country"])
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.COLUMN_UNKNOWN)
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] - 1, self.baseline[1]))
+
+    def test_a_webhook_column_is_refused_as_a_payload_key(self):
+        self._add()
+        resp = self._add(label="Second sync", payload_keys=["company", "crm_sync"])
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.COLUMN_NOT_DATA)
+
+    def test_the_add_request_declares_no_field_it_would_ignore(self):
+        self.assertNotIn("enabled", WebhookColumnAddRequest().fields)
+        self.assertIn("enabled", WebhookColumnPatchRequest().fields)
 
     def test_deleting_the_webhook_column_removes_its_path_and_nodes_only(self):
         self._add()

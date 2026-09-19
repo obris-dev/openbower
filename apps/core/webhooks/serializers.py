@@ -122,7 +122,7 @@ def destination_wire(
     *,
     header_names: list[str],
     newest: WebhookDelivery | None,
-    column_count: int = 0,
+    column_count: int | None = None,
 ) -> dict[str, Any]:
     return WebhookDestinationWire(
         id=str(destination.id),

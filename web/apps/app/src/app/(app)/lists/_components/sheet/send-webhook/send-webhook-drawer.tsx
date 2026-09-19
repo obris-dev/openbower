@@ -55,12 +55,12 @@ import {
 import { exportableColumns } from "../lib/exportable-columns";
 import { DestinationPicker } from "./destination-picker";
 import { cadenceLabel, cadenceOptions } from "./lib/cadence";
-import { bodyFor, initialDraft, isDirty, type WebhookDraft } from "./lib/config";
+import { bodyFor, initialDraft, isDirty, withSiblings, type WebhookDraft } from "./lib/config";
 import { fromJson, previewLines, withEditableCells } from "./lib/preview";
 import { cellsFor, sampleFrom, type SampleRow } from "./lib/sample";
 import { PayloadPreview } from "./payload-preview";
 import { usePreview } from "./use-preview";
-import { useWebhookConfig } from "./use-webhook-config";
+import { useWebhookConfig, type WebhookConfigLoad } from "./use-webhook-config";
 import type { ColumnOutcome } from "../use-columns";
 
 const FORM_ID = "send-webhook-form";
@@ -107,31 +107,12 @@ function DrawerContent(props: Props & { afterLeave: () => void }) {
   // while the panel is still sliding out, and a live prop would re-dress
   // the leaving panel as the other mode.
   const [column] = useState(props.column);
-  if (column === null) {
-    return <WebhookEditor {...props} column={null} saved={null} />;
-  }
-  return <EditLoader {...props} column={column} />;
-}
-
-function EditLoader(props: Props & { afterLeave: () => void; column: ListColumn }) {
-  const { load, retry } = useWebhookConfig(props.listId, props.column.key);
-  if (load.status === "ready") {
-    return <WebhookEditor {...props} saved={load.config} />;
-  }
-  return (
-    <Drawer open={props.open} onClose={props.onClose} afterLeave={props.afterLeave} title={EDIT_TITLE}>
-      {load.status === "failed" ? (
-        <div className="space-y-3">
-          <ErrorMessage message={CONFIG_FAILED_LINE} />
-          <Button type="button" variant="secondary" size="sm" onClick={retry}>
-            {RETRY}
-          </Button>
-        </div>
-      ) : (
-        <EditorSkeleton />
-      )}
-    </Drawer>
-  );
+  // One editor whatever the load state, so the Drawer element under it
+  // never changes type: a swap would remount the panel mid-transition,
+  // replay its entrance, and on an Escape during the load leave
+  // `afterLeave` unfired and this snapshot alive for the next open.
+  const { load, retry } = useWebhookConfig(props.listId, column?.key ?? null);
+  return <WebhookEditor {...props} column={column} load={load} retryLoad={retry} />;
 }
 
 /** The editor's shape, held while its config is on the way. */
@@ -156,19 +137,29 @@ function WebhookEditor({
   onClose,
   onAddAiColumn,
   column,
-  saved,
+  load,
+  retryLoad,
   onAdd,
   onSave,
   listId,
   columns,
   sampleRows,
-}: Props & { afterLeave: () => void; saved: WebhookColumnConfigWire | null }) {
+}: Props & { afterLeave: () => void; load: WebhookConfigLoad; retryLoad: () => void }) {
+  const ready = load.status === "ready";
+  const saved = load.status === "ready" ? load.config : null;
   const aiColumns = useMemo(() => columns.filter((c) => c.kind === "ai"), [columns]);
   const allKeys = useMemo(() => columns.map((c) => c.key), [columns]);
   const labels = useMemo(() => Object.fromEntries(columns.map((c) => [c.key, c.label])), [columns]);
   const [draft, setDraft] = useState<WebhookDraft>(() =>
     initialDraft(columns, saved, { intervalSeconds: DEFAULT_WEBHOOK_CADENCE_SECONDS }),
   );
+  // The draft seeds from the config the moment it arrives; setting
+  // state during render is how this file already latches its mount.
+  const [seededFrom, setSeededFrom] = useState<WebhookColumnConfigWire | null | undefined>(undefined);
+  if (ready && seededFrom !== saved) {
+    setSeededFrom(saved);
+    setDraft(initialDraft(columns, saved, { intervalSeconds: DEFAULT_WEBHOOK_CADENCE_SECONDS }));
+  }
   const [label, setLabel] = useState("");
   const [rosterAttempt, setRosterAttempt] = useState(0);
   const [sampleIndex, setSampleIndex] = useState(0);
@@ -178,7 +169,8 @@ function WebhookEditor({
   // sample follows, with the user's edits still winning.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const values = { ...sampleFrom(sampleRow, allKeys), ...overrides };
-  const [attempted, setAttempted] = useState(false);
+  // Which action last diagnosed a gap: each marks only the gaps it blocks on.
+  const [attempted, setAttempted] = useState<"submit" | "test" | null>(null);
   const [sending, setSending] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState<WebhookColumnTestResult | null>(null);
@@ -195,7 +187,8 @@ function WebhookEditor({
   const rowsGap = sampleRow === null ? NO_ROWS_LINE : null;
   const body = bodyFor(draft, columns);
   const missingColumns = exportableColumns(columns).filter((c) => !draft.payloadKeys.has(c.key));
-  const dirty = saved === null || isDirty(draft, saved);
+  const dirty =
+    saved === null || isDirty(draft, initialDraft(columns, saved, { intervalSeconds: DEFAULT_WEBHOOK_CADENCE_SECONDS }));
 
   // The preview asks the server once the body is previewable; the
   // client only marks the cells it controls on what comes back.
@@ -206,7 +199,9 @@ function WebhookEditor({
           wait_keys: body.wait_keys,
           payload_keys: body.payload_keys,
           row_id: sampleRow.id,
-          cells: cellsFor(values, body.payload_keys),
+          // The row's own values, not the edits: the client marks its
+          // edited cells over the answer, so a keystroke is not a request.
+          cells: cellsFor(sampleFrom(sampleRow, allKeys), body.payload_keys),
           ...(column ? { key: column.key } : {}),
         }
       : null;
@@ -256,10 +251,10 @@ function WebhookEditor({
   // a first attempt, then the first gap is brought into view. The two
   // actions need different things: a send needs a row, an add needs
   // a name.
-  function blockOn(gaps: (string | null)[], anchors: string[]): boolean {
+  function blockOn(action: "submit" | "test", gaps: (string | null)[], anchors: string[]): boolean {
     const first = gaps.findIndex((gap) => gap !== null);
     if (first === -1) return false;
-    setAttempted(true);
+    setAttempted(action);
     document.getElementById(anchors[first]!)?.scrollIntoView({ block: "nearest" });
     return true;
   }
@@ -280,9 +275,17 @@ function WebhookEditor({
       update({ destinationId: "" });
       setRosterAttempt((n) => n + 1);
     } else if (code === WEBHOOK_ROW_UNKNOWN_CODE) setSampleRefusal(message);
-    else if (code === COLUMN_EXISTS_CODE || code === RESERVED_KEY_CODE || code === DERIVED_KEY_COLLISION_CODE) {
+    else if (
+      (code === COLUMN_EXISTS_CODE || code === RESERVED_KEY_CODE || code === DERIVED_KEY_COLLISION_CODE) &&
+      column === null
+    ) {
       setLabelRefusal(message);
-    } else if (code === WEBHOOK_COLUMN_UNKNOWN_CODE || code === WEBHOOK_COLUMN_NOT_AI_CODE) setWaitRefusal(message);
+    } else if ((code === WEBHOOK_COLUMN_UNKNOWN_CODE || code === WEBHOOK_COLUMN_NOT_AI_CODE) && aiColumns.length > 0) {
+      setWaitRefusal(message);
+    }
+    // A surface that is not on screen (the name field in edit mode,
+    // the wait picker with no AI columns) cannot carry the words: the
+    // banner, always rendered, does.
     else setServerError(message);
   }
 
@@ -294,9 +297,9 @@ function WebhookEditor({
   }
 
   async function sendTest() {
-    if (blockOn([destinationGap, waitGap, rowsGap], [DESTINATION_ID, WAIT_ID, PREVIEW_ID]) || sending) return;
+    if (blockOn("test", [destinationGap, waitGap, rowsGap], [DESTINATION_ID, WAIT_ID, PREVIEW_ID]) || sending) return;
     if (sampleRow === null) return;
-    setAttempted(false);
+    setAttempted(null);
     setSending(true);
     // A new attempt supersedes the last result: a refusal must not land
     // under a row still claiming the previous send got through.
@@ -317,9 +320,9 @@ function WebhookEditor({
   }
 
   async function submit() {
-    if (blockOn([nameGap, destinationGap, waitGap], [NAME_ID, DESTINATION_ID, WAIT_ID]) || submitting) return;
+    if (blockOn("submit", [nameGap, destinationGap, waitGap], [NAME_ID, DESTINATION_ID, WAIT_ID]) || submitting) return;
     if (column !== null && !dirty) return;
-    setAttempted(false);
+    setAttempted(null);
     setSubmitting(true);
     clearRefusals();
     const outcome =
@@ -334,28 +337,12 @@ function WebhookEditor({
   const footer = (
     <>
       {serverError && <ErrorMessage message={serverError} />}
-      {attempted && rowsGap && <FieldError tone="warning">{rowsGap}</FieldError>}
-      <div>
-        <Label htmlFor={CADENCE_ID}>{CADENCE_LABEL}</Label>
-        <Select
-          id={CADENCE_ID}
-          value={String(draft.intervalSeconds)}
-          onChange={(event) => update({ intervalSeconds: Number(event.target.value) })}
-          className="mt-1"
-        >
-          {cadenceOptions(WEBHOOK_CADENCE_SECONDS, draft.intervalSeconds).map((seconds) => (
-            <option key={seconds} value={seconds}>
-              {cadenceLabel(seconds)}
-            </option>
-          ))}
-        </Select>
-        <p className="mt-1 text-xs text-muted">{CADENCE_HINT}</p>
-      </div>
+      {attempted === "test" && rowsGap && <FieldError tone="warning">{rowsGap}</FieldError>}
       <div className="flex gap-2">
         <Button type="button" variant="ghost" loading={sending} onClick={() => void sendTest()}>
           {SEND_TEST_ACTION}
         </Button>
-        <Button type="submit" form={FORM_ID} loading={submitting} className="flex-1">
+        <Button type="submit" form={FORM_ID} loading={submitting} disabled={column !== null && !dirty} className="flex-1">
           {column ? SAVE_ACTION : ADD_COLUMN_ACTION}
         </Button>
       </div>
@@ -368,8 +355,20 @@ function WebhookEditor({
       onClose={onClose}
       title={column ? EDIT_TITLE : ADD_TITLE}
       afterLeave={afterLeave}
-      footer={footer}
+      footer={ready ? footer : undefined}
     >
+      {!ready ? (
+        load.status === "failed" ? (
+          <div className="space-y-3">
+            <ErrorMessage message={CONFIG_FAILED_LINE} />
+            <Button type="button" variant="secondary" size="sm" onClick={retryLoad}>
+              {RETRY}
+            </Button>
+          </div>
+        ) : (
+          <EditorSkeleton />
+        )
+      ) : (
       <form
         id={FORM_ID}
         noValidate
@@ -393,9 +392,9 @@ function WebhookEditor({
               }}
               maxLength={COLUMN_LABEL_MAX_LENGTH}
               placeholder={COLUMN_NAME_PLACEHOLDER}
-              warned={attempted && nameGap !== null}
+              warned={attempted === "submit" && nameGap !== null}
               invalid={labelRefusal !== null}
-              aria-describedby={labelRefusal || (attempted && nameGap) ? NAME_ERROR_ID : undefined}
+              aria-describedby={labelRefusal || (attempted === "submit" && nameGap) ? NAME_ERROR_ID : undefined}
               className="mt-1"
             />
             {labelRefusal ? (
@@ -419,8 +418,8 @@ function WebhookEditor({
           }}
           attempt={rosterAttempt}
           onRefresh={() => setRosterAttempt((n) => n + 1)}
-          warned={attempted && destinationGap !== null}
-          gap={attempted ? destinationGap : null}
+          warned={attempted !== null && destinationGap !== null}
+          gap={attempted !== null ? destinationGap : null}
           refusal={destinationRefusal}
         />
         {aiColumns.length === 0 ? (
@@ -431,7 +430,7 @@ function WebhookEditor({
             <Button type="button" variant="ghost" size="sm" onClick={onAddAiColumn}>
               {ADD_AI_COLUMN}
             </Button>
-            {attempted && waitGap && (
+            {attempted !== null && waitGap && (
               <FieldError id={WAIT_ERROR_ID} tone="warning">
                 {waitGap}
               </FieldError>
@@ -446,11 +445,11 @@ function WebhookEditor({
               columns={aiColumns}
               selected={draft.waitKeys}
               onChange={(next) => {
-                update({ waitKeys: next });
+                update({ waitKeys: withSiblings(columns, draft.waitKeys, next) });
                 setWaitRefusal(null);
               }}
-              warned={attempted && waitGap !== null}
-              describedBy={waitRefusal || (attempted && waitGap) ? WAIT_ERROR_ID : undefined}
+              warned={attempted !== null && waitGap !== null}
+              describedBy={waitRefusal || (attempted !== null && waitGap) ? WAIT_ERROR_ID : undefined}
             />
             {waitRefusal ? (
               <FieldError id={WAIT_ERROR_ID}>{waitRefusal}</FieldError>
@@ -464,6 +463,22 @@ function WebhookEditor({
             )}
           </div>
         )}
+        <div>
+          <Label htmlFor={CADENCE_ID}>{CADENCE_LABEL}</Label>
+          <Select
+            id={CADENCE_ID}
+            value={String(draft.intervalSeconds)}
+            onChange={(event) => update({ intervalSeconds: Number(event.target.value) })}
+            className="mt-1"
+          >
+            {cadenceOptions(WEBHOOK_CADENCE_SECONDS, draft.intervalSeconds).map((seconds) => (
+              <option key={seconds} value={seconds}>
+                {cadenceLabel(seconds)}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-muted">{CADENCE_HINT}</p>
+        </div>
         {column !== null && (
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -508,6 +523,7 @@ function WebhookEditor({
           </div>
         )}
       </form>
+      )}
     </Drawer>
   );
 }

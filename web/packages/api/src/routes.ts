@@ -96,8 +96,7 @@ export const apiRoutes = {
     // POST: the envelope a test of this body would carry, rendered server-side, sent nowhere.
     columnWebhookPreview: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/preview`,
     // GET / PATCH one webhook column's config.
-    columnWebhookConfig: (id: string, key: string) =>
-      `/${API_VERSION}/lists/${id}/columns/webhook/${encodeURIComponent(key)}`,
+    columnWebhookConfig: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/webhook`,
     // POST: refill a column's unanswered rows (a NEW run, fresh snapshot).
     columnRefill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/refill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).

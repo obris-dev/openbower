@@ -57,6 +57,9 @@ export const WEBHOOK_SECRET_PREFIX = WIRE_CONSTANTS.WEBHOOK_SECRET_PREFIX;
 export const DESTINATIONS_FULL_CODE = "destinations_full";
 // 409 on DELETE while a webhook column sends here; rendered at the confirm tier.
 export const DESTINATION_IN_USE_CODE = "destination_in_use";
+// A second rotation inside the grace window: a 409 the confirm tier
+// renders in the server's words, since the fix is the window closing.
+export const ROTATION_IN_PROGRESS_CODE = "rotation_in_progress";
 // After a rotation the old secret keeps signing for this long.
 export const WEBHOOK_ROTATION_GRACE_SECONDS: number = WIRE_CONSTANTS.WEBHOOK_ROTATION_GRACE_SECONDS;
 export const WEBHOOK_URL_BLOCKED_CODE = "url_blocked";
