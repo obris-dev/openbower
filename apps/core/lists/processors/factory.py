@@ -6,15 +6,15 @@ mutation, a collision loud, re-registration idempotent."""
 from __future__ import annotations
 
 from ..models import Node
-from .base import NodeProcessor
+from .base import NodeProcessor, WalkScope
 
 _REGISTRY: dict[str, type[NodeProcessor]] = {}
 
 
 class UnknownProcessor(Exception):
     """No processor is registered for the node's kind: a walker cannot
-    materialize runs for it. Loud, because a kind that reaches a walker
-    without a processor is a deploy gap, not a per-row hazard."""
+    queue runs for it. Loud, because a kind that reaches a walker without
+    a processor is a deploy gap, not a per-row hazard."""
 
 
 def register(cls: type[NodeProcessor]) -> None:
@@ -31,13 +31,14 @@ def register(cls: type[NodeProcessor]) -> None:
     _REGISTRY[kind] = cls
 
 
-def processor_for(*, account_id: str, node: Node) -> NodeProcessor:
-    """The processor for one node, by its kind."""
+def processor_for(*, account_id: str, node: Node, scope: WalkScope | None = None) -> NodeProcessor:
+    """The processor for one node, by its kind, for one walk scope (a
+    structural pass when none is given)."""
     try:
         cls = _REGISTRY[node.kind]
     except KeyError as e:
         raise UnknownProcessor(node.kind) from e
-    return cls(account_id=account_id, node=node)
+    return cls(account_id=account_id, node=node, scope=scope or WalkScope())
 
 
 def registered_kinds() -> list[str]:

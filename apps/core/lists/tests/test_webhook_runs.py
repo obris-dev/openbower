@@ -152,31 +152,35 @@ class ProcessorTests(_SheetHarness):
         with self.assertRaises(UnknownProcessor):
             processor_for(account_id=ACCOUNT, node=self.first)
 
-    def test_needs_are_the_barriers_columns_in_sheet_order(self):
+    def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):
         node_id = self._add_webhook_column(["country", "answer"])
-        self.assertEqual(self._processor(node_id).needs(self.sheet), ["answer", "score", "country"])
+        self.assertEqual(self._processor(node_id).wait_keys(self.sheet), ["answer", "score", "country"])
 
-    def test_needs_are_empty_when_the_barrier_or_its_paths_are_gone(self):
+    def test_wait_keys_are_empty_when_the_barrier_or_its_paths_are_gone(self):
         node_id = self._add_webhook_column(["answer"])
         self.sheet.columns = [column for column in self.sheet.columns if column.key not in ("answer", "score")]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        self.assertEqual(self._processor(node_id).needs(self.sheet), [])
+        self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
         node = self.workflows.get_node(node_id)
         Node.objects.filter(path_id=node.path_id, rank=0).delete()
-        self.assertEqual(self._processor(node_id).needs(self.sheet), [])
+        self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
 
-    def test_materialize_births_a_deferred_run_at_the_window_for_a_complete_row_only(self):
+    def test_enqueue_runs_births_a_deferred_run_at_the_window_for_a_complete_row_only(self):
         node_id = self._add_webhook_column(["country"])
         processor = self._processor(node_id)
-        complete = {str(self.row.id): {"country": (StoredCellState.FILLED, NOW)}}
-        (run,) = processor.materialize(self.sheet, [self.row], complete, now=NOW)
+        # Never attempted: nothing owed. A retryable state: not complete.
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
+        self._settle(self.row, {"country": StoredCellState.TRANSIENT})
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
+        self._settle(self.row, {"country": StoredCellState.FILLED})
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 1)
+        (run,) = list(self._webhook_runs())
         self.assertEqual(
             (run.status, run.kind, run.node_id, run.row_id), ("deferred", WEBHOOK, node_id, str(self.row.id))
         )
-        self.assertEqual((run.not_before, run.position, run.pk is None), (next_window(NOW, INTERVAL), 1, False))
-        retrying = {str(self.row.id): {"country": (StoredCellState.TRANSIENT, NOW)}}
-        self.assertEqual(processor.materialize(self.sheet, [self.row], retrying, now=NOW), [])
-        self.assertEqual(processor.materialize(self.sheet, [self.row], {}, now=NOW), [])
+        self.assertEqual((run.not_before, run.position), (next_window(NOW, INTERVAL), 1))
+        # Offered again for the same completion: covered, nothing queued.
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
 
     def test_wait_ahead_of_is_the_paths_rank_zero_and_refuses_a_node_without_one(self):
         node_id = self._add_webhook_column(["country"])
@@ -184,6 +188,19 @@ class ProcessorTests(_SheetHarness):
         self.assertEqual(self.workflows.wait_ahead_of(node).inbound_path_ids, [self.second.path_id])
         with self.assertRaises(NodeNotFound):
             self.workflows.wait_ahead_of(self.first)
+
+    def _settle(self, row, states: dict[str, str], *, at: datetime = EARLIER) -> None:
+        with patch("django.utils.timezone.now", return_value=at):
+            cell_truth.write(
+                account_id=ACCOUNT,
+                list_id=str(self.sheet.id),
+                row_id=str(row.id),
+                fill_run_id=None,
+                config_fingerprint="",
+                states=states,
+                tools={},
+                source=CellSource.FILL,
+            )
 
 
 class AdvanceTests(_SheetHarness):

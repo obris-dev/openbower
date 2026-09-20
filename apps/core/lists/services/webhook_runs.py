@@ -29,7 +29,6 @@ from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, WebhookCell
 from ..models import List, ListRow, Node, NodeRun
 from ..nodes.registry import WEBHOOK
 from ..processors import processor_for
-from .cell_states import CellStateService
 from .workflows import WorkflowService
 
 
@@ -67,21 +66,12 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "position").first()
     if target_list is None or row is None:
         return 0
-    cell_states = CellStateService(account_id=account_id)
-    runs: list[NodeRun] = []
+    offered = 0
     for wait_node in waits:
         for webhook_node in webhook_nodes_on(workflows, wait_node.path_id):
             processor = processor_for(account_id=account_id, node=webhook_node)
-            keys = processor.needs(target_list)
-            if not keys:
-                continue
-            states = cell_states.iter_states(list_id, row_id=row_id, column_keys=keys)
-            records = {row_id: {key: (state, updated_at) for key, state, updated_at in states}}
-            runs.extend(processor.materialize(target_list, [row], records, now=now))
-    if not runs:
-        return 0
-    NodeRun.objects.bulk_create(runs, ignore_conflicts=True)
-    return len(runs)
+            offered += processor.enqueue_runs(target_list, [row], now=now)
+    return offered
 
 
 def cell_words_for(

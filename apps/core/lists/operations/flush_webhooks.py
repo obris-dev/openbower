@@ -38,8 +38,8 @@ from webhooks.services import Sent, WebhookDestinationService
 from ..constants import NODE_RUN_ATTEMPTS, WEBHOOK_FLUSH_BATCH, NodeRunStatus, WebhookRunOutcome
 from ..models import List, ListRow, Node, NodeRun
 from ..nodes.webhook import Webhook
-from ..processors import processor_for
-from ..processors.webhook import next_window
+from ..processors import WalkScope
+from ..processors.webhook import WebhookProcessor, next_window
 from ..services.cell_states import CellStateService
 from ..services.digest_payload import build_digest_data, build_digest_item, completion_of
 from ..services.node_runs import NodeRunFlow
@@ -116,7 +116,7 @@ class FlushWebhooksOperation:
         if target_list is None:
             self.flow.settle_many(claimed_ids, {}, status=NodeRunStatus.LIST_MISSING)
             return
-        wait_keys = processor_for(account_id=node.account_id, node=node).needs(target_list)
+        wait_keys = WebhookProcessor(account_id=node.account_id, node=node, scope=WalkScope()).wait_keys(target_list)
         if not wait_keys:
             # The wait resolves to no column (its agent's columns left the
             # sheet): nothing to judge completion against, so nothing is
@@ -133,7 +133,7 @@ class FlushWebhooksOperation:
             self.flow.settle_many(missing, {}, status=NodeRunStatus.ROW_MISSING)
         records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
         cell_states = CellStateService(account_id=node.account_id)
-        for row_id, column_key, state, updated_at in cell_states.iter_records(
+        for row_id, column_key, state, updated_at, _fingerprint in cell_states.iter_records(
             list_id, row_ids=list(rows), column_keys=wait_keys
         ):
             records[row_id][column_key] = (state, updated_at)

@@ -53,13 +53,14 @@ class CellStateService:
 
     def iter_records(
         self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
-    ) -> Iterator[tuple[str, str, str, datetime]]:
-        """(row id, column key, state, updated at) for a page of rows on
-        some columns, raw: what the completion judgement (a webhook
-        backfill, the flush's re-check) groups per row."""
+    ) -> Iterator[tuple[str, str, str, datetime, str]]:
+        """(row id, column key, state, updated at, config fingerprint)
+        for a page of rows on some columns, raw: what a processor's
+        per-page judgement groups per row (completion for a webhook, the
+        settled-under-this-config test for a refill)."""
         yield from (
             self._scoped(list_id, row_ids=row_ids, column_keys=column_keys).values_list(
-                "row_id", "column_key", "state", "updated_at"
+                "row_id", "column_key", "state", "updated_at", "config_fingerprint"
             )
         )
 
