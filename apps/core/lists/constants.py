@@ -109,10 +109,9 @@ AUTOFILL_PUBLISH_BATCH = 1000
 # a pass. It bounds a PASS, not the standing QUEUED depth (the consumers
 # drain at their own rate; Kafka buffers between).
 FILL_PUBLISH_BATCH = 1000
-# Live fills per ACCOUNT (binary). Every kind COUNTS into it (a live
-# test spends like any fill), but only NORMAL admissions run the
-# guard: the test admission is deliberately uncapped (the bench must
-# always answer; supersede bounds that lane instead).
+# Live fills per ACCOUNT (binary). A bench run is not a fill and never
+# counts: that lane is bounded at one live run per account by
+# supersede (the bench must always answer).
 MAX_ACTIVE_FILLS = 4
 
 FILL_STATUS_MAX_LENGTH = 16
@@ -163,13 +162,23 @@ class FillErrorCode(StrEnum):
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"
+
+
+# The bench's refusals, its own lane (a bench run is a NodeRun, never
+# a fill): the machine leg of the {error, detail} envelope
+# POST /v1/runs/bench answers with. The codes keep the "test" word
+# because that is the button the user pressed.
+class BenchErrorCode(StrEnum):
     # A teammate's test run is live: wait a moment (your OWN live test
-    # is superseded, never refused).
+    # is superseded, never refused). The one 409.
     TEST_ACTIVE = "test_active"
     # A hand-fed test row past the wire's bench bounds: too many
     # values, or a key or value over its length. Refused, never
     # truncated.
     TEST_ROW_INVALID = "test_row_invalid"
+    # The drafted config cannot run at all (no model, an unknown tool):
+    # refused before a run exists, the same gate fill admission runs.
+    MODEL_UNRUNNABLE = FillErrorCode.MODEL_UNRUNNABLE
 
 
 # The ingest webhook's wire error codes, its own lane (separate from the
@@ -310,28 +319,12 @@ NON_TERMINAL_NODE_RUN_STATES = (
 )
 
 
-class FillKind(StrEnum):
-    """A fill's OPERATING MODE. NORMAL writes a sheet; TEST is the
-    bench's one-row diagnostic run, landing its result on its task
-    instead of a sheet. The throwaway rides the real execution path on
-    purpose: every bench click regression-tests the machinery fills
-    depend on. A MODE, deliberately not a priority: it decides where
-    results land, which surfaces see the run, and its lifecycle; the
-    provisioner routing a TEST fill to its isolated topic is the
-    scheduling side-effect, not the concept."""
-
-    NORMAL = "normal"
-    TEST = "test"
-
-
-# Column width for the kind field (generous over exact).
-FILL_KIND_MAX_LENGTH = 8
-
-# Test-kind fills are throwaway diagnostics: the compose cron's
-# sweep_test_fills command deletes them past this age. A day, the
+# Bench runs (a NodeRun that owns its input, the agent builder's
+# one-row diagnostic) are throwaway: the compose cron's
+# prune_bench_runs command deletes them past this age. A day, the
 # baseline: generous next to any live poll (staleness reads in
-# seconds), so a sweep can never race a run anyone is watching.
-TEST_FILL_MAX_AGE_SECONDS = 86_400
+# seconds), so a prune can never race a run anyone is watching.
+BENCH_RUN_MAX_AGE_SECONDS = 86_400
 
 
 class FillStatus(StrEnum):
@@ -347,8 +340,7 @@ class FillStatus(StrEnum):
 
 # The statuses a fill can still be claimed into or cancelled from:
 # ONE definition, because "is this fill live" is asked by the queue,
-# the admission gate, the cancel path, the derived-pending read, and
-# the test lane's supersede scan.
+# the admission gate, the cancel path, and the derived-pending read.
 LIVE_FILL_STATUSES = (FillStatus.PENDING, FillStatus.RUNNING)
 
 

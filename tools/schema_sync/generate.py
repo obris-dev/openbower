@@ -32,7 +32,6 @@ from openbower_schema import (
     AgentSummary,
     AuthUser,
     ColumnPromptWire,
-    FillRunDetail,
     FillRunPage,
     FillRunWire,
     FoldersList,
@@ -43,6 +42,7 @@ from openbower_schema import (
     ListsPage,
     ListSummary,
     LookalikeListResponse,
+    NodeRunWire,
     RowsAdded,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
@@ -70,6 +70,7 @@ from openbower_schema.fills import (
     ROW_LEASE_STALE_SECONDS,
     SETTLED_CELL_STATES,
 )
+from openbower_schema.runs import OPEN_NODE_RUN_STATES
 from openbower_schema.webhooks import (
     DEFAULT_WEBHOOK_CADENCE_SECONDS,
     MAX_WEBHOOK_DESTINATIONS,
@@ -99,7 +100,6 @@ CONTRACT_MODELS: list[type[Any]] = [
     AgentSummary,
     AuthUser,
     ColumnPromptWire,
-    FillRunDetail,
     FillRunPage,
     FillRunWire,
     FoldersList,
@@ -110,6 +110,7 @@ CONTRACT_MODELS: list[type[Any]] = [
     ListsPage,
     ListSummary,
     LookalikeListResponse,
+    NodeRunWire,
     RowsAdded,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
@@ -171,6 +172,9 @@ def build_schema() -> dict[str, Any]:
             "TEST_ROW_MAX_KEYS": TEST_ROW_MAX_KEYS,
             "TEST_KEY_MAX_LENGTH": TEST_KEY_MAX_LENGTH,
             "TEST_VALUE_MAX_LENGTH": TEST_VALUE_MAX_LENGTH,
+            # The open partition of a run's status, so the bench poll derives
+            # its loop predicate instead of retyping it.
+            "OPEN_NODE_RUN_STATES": list(OPEN_NODE_RUN_STATES),
             # Header facts have no wire field (values never ride the
             # wire), so the client's header grammar mirrors these.
             "MAX_WEBHOOK_DESTINATIONS": MAX_WEBHOOK_DESTINATIONS,

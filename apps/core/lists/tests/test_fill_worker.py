@@ -414,23 +414,6 @@ class ProvisionerTests(ManualFillTestCase):
             self.assertEqual(task.status, NodeRunStatus.QUEUED)
             self.assertIsNotNone(task.queued_at)
 
-    def test_a_test_fill_routes_to_the_isolated_test_topic(self) -> None:
-        # A bench TEST fill must NOT ride the manual topic (it would queue
-        # behind a wide manual fill the user is not watching); the
-        # provisioner routes it to its own lane by kind.
-        from ..services.fill_admission import TestFillAdmission
-
-        with patch("lists.services.fill_admission.base.model_for"):
-            TestFillAdmission(account_id=ACCOUNT, user_id=USER).admit(
-                config=quick_config(), row={"company": "bench.co"}
-            )
-        producer = MagicMock()
-        producer.flush.return_value = 0
-        self._run_provisioner(producer)
-        topics = {call.args[0] for call in producer.produce.call_args_list}
-        self.assertIn("list.fill.test", topics)  # the bench fill's task, isolated
-        self.assertIn("list.fill.manual", topics)  # setUp's normal fill still on manual
-
     def test_a_failed_publish_backs_off_and_leaves_the_tasks_ready(self) -> None:
         producer = MagicMock()
         producer.flush.return_value = 1  # the ack never arrived

@@ -27,7 +27,7 @@ import { configMissing, EMPTY_TOOLS, sheetsTruncatedNote } from "../../../_compo
 import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, goToSection, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
 import { BuilderFooter } from "./footer";
 import { TestBench } from "./test-bench";
-import { useTestFill } from "./use-test-fill";
+import { useBenchRun } from "./use-bench-run";
 
 type ModelTriple = { provider: Provider; source: string; model: string };
 
@@ -40,7 +40,7 @@ type ModelTriple = { provider: Provider; source: string; model: string };
  * blank). Drafts initialize state DURING first render, which is safe
  * only because the wrapper renders this client-only (ssr: false):
  * there is no server HTML to disagree with. The run lifecycle lives
- * in ./use-test-fill, readiness in ./readiness, the template grammar
+ * in ./use-bench-run, readiness in ./readiness, the template grammar
  * in ./template: this component holds form state and composition. */
 export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const router = useRouter();
@@ -51,7 +51,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   // and the discard is SAID, not silent (that is its own data loss).
   const draft = storedDraft && storedDraft.savedAt === agent?.updated_at ? storedDraft : null;
   const draftDiscarded = storedDraft !== null && draft === null;
-  const { testBusy, testStale, runTest } = useTestFill();
+  const { testBusy, testStale, runTest } = useBenchRun();
 
   const [label, setLabel] = useState(draft?.label ?? agent?.label ?? "");
   const [prompt, setPrompt] = useState(draft?.prompt ?? agent?.config.prompt ?? "");

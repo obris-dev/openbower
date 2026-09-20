@@ -73,12 +73,12 @@ class CellRunResult(BaseModel):
     evidence the model saw, each tool call's diagnosis, and the causes
     behind any blank.
 
-    ONE shape for both landings. A NORMAL row's answers land in sheet
-    columns; a TEST row lands on its own task; both store this record,
-    so a reader that had to ask which landing produced it would be
-    reading two contracts through one field. The bench reads it
-    VERBATIM off the run-detail wire (FillRunDetail carries it whole),
-    so there is no second projection to drift.
+    ONE shape for both landings. A sheet row's answers land in its
+    columns; a bench run lands on itself; both store this record, so a
+    reader that had to ask which landing produced it would be reading
+    two contracts through one field. The bench reads it VERBATIM off
+    the run wire (NodeRunWire carries it whole), so there is no second
+    projection to drift.
 
     What LANDED is the sheet row plus its cell states; the difference
     between the two is the audit story (an answer write-if-blank
@@ -174,36 +174,9 @@ class FillRunWire(BaseModel):
         "None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.",
     )
     # The config snapshot frozen at admission stays STORED, not wired:
-    # nothing renders it on a poll; GET /v1/fills/{id} (FillRunDetail)
-    # is where it lands when a surface needs it.
+    # nothing renders it on a poll.
     created_at: str
     updated_at: str
-
-
-# A fill's OPERATING MODE: "normal" writes a sheet; "test" is the
-# bench's one-row diagnostic run, landing its result on its task
-# instead of a sheet (the throwaway rides the real execution path on
-# purpose).
-FillKindWire = Literal["normal", "test"]
-
-
-class FillRunDetail(FillRunWire):
-    """One run, read by id (GET /v1/fills/{id}): the poll envelope's
-    fields plus what a single-run read can afford. `result` is the
-    completed TEST run's stored CellRunResult (its one task's record);
-    the `result` field below owns the full predicate. A test run
-    carries no sheet, so `list_id` and `agent_id` are blank ("") for
-    kind=test, and `confirmed_row_count`/`column_keys` describe the
-    hand-fed row rather than a consent echo."""
-
-    kind: FillKindWire = "normal"
-    result: CellRunResult | None = Field(
-        default=None,
-        description="A test run's stored result (its one task's record), served whenever that task"
-        " FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not"
-        " strand a paid result); None while the task is unfinished, and always for kind=normal (a"
-        " normal fill's results live on the sheet).",
-    )
 
 
 class ColumnFillSummary(BaseModel):

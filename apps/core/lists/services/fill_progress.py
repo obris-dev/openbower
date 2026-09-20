@@ -28,17 +28,13 @@ from ..constants import LIVE_FILL_STATUSES, NON_TERMINAL_NODE_RUN_STATES, FillSt
 from ..models import Fill, NodeRun
 
 
-def iter_live_fills(kinds: tuple[str, ...] = ()) -> Iterator[Fill]:
-    """Every live fill, oldest first, LAZILY (single-pass); `kinds`
-    narrows to the named operating modes (empty = all). The manual
+def iter_live_fills() -> Iterator[Fill]:
+    """Every live fill, oldest first, LAZILY (single-pass). The manual
     provisioner iterates these and publishes each fill's READY tasks, so
     per-fill depth is the fairness point (a wide fill cannot flood the
     bus). Streamed via .iterator() so a growing number of live fills
     never materializes as one list."""
-    qs = Fill.objects.filter(status__in=LIVE_FILL_STATUSES)
-    if kinds:
-        qs = qs.filter(kind__in=kinds)
-    yield from qs.order_by("id").iterator()
+    yield from Fill.objects.filter(status__in=LIVE_FILL_STATUSES).order_by("id").iterator()
 
 
 def cancel(fill_run_id: str) -> bool:
@@ -57,10 +53,8 @@ def fail(fill_run_id: str, *, code: str, message: str) -> bool:
 
 
 def live_fill_count(account_id: str) -> int:
-    """The account's fills that are still live, EVERY kind: a test run
-    is a fill, so it counts against the same metered cap by
-    construction (the one rule that used to need a cross-app import to
-    enforce)."""
+    """The account's fills that are still live (a bench run is not a
+    fill and never counts)."""
     return Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).count()
 
 

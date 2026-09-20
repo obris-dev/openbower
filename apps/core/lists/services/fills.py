@@ -11,13 +11,12 @@ from datetime import datetime
 from django.db import models
 
 from agents.constants import ToolStatus
-from openbower_schema.fills import CellRunResult, ColumnFillSummary, FillCounters, FillError
+from openbower_schema.fills import ColumnFillSummary, FillCounters, FillError
 from openbower_schema.lists import AiColumn, CellStateWire
 
 from ..constants import (
     LIVE_FILL_STATUSES,
     NON_TERMINAL_NODE_RUN_STATES,
-    FillKind,
     FillStatus,
     NodeRunStatus,
     StoredCellState,
@@ -130,22 +129,6 @@ class FillService:
             return Fill.objects.get(id=fill_run_id, account_id=self.account_id)
         except Fill.DoesNotExist as e:
             raise FillNotFound(fill_run_id) from e
-
-    def test_result(self, fill: Fill) -> CellRunResult | None:
-        """A test run's stored result: its one task's record, read
-        back through the contract model it was written through. Gated
-        on the TASK (DONE with a stored record), never on the fill's
-        status: the landing commits the task first and flips the fill
-        after, so a cancel racing that gap leaves a CANCELLED fill
-        holding a fully paid result, and a status gate would strand
-        it. None while the task is unfinished, and always for
-        kind=normal (a normal fill's results live on the sheet)."""
-        if fill.kind != FillKind.TEST:
-            return None
-        task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
-        if task is None or task.status != NodeRunStatus.DONE or not task.result:
-            return None
-        return CellRunResult.model_validate(task.result)
 
     def page_for_list(self, list_id: str, *, after_id: str, limit: int) -> list[Fill]:
         """Keyset by -id, LIVE runs only: a terminal run's story (its

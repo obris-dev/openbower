@@ -59,13 +59,13 @@ export const apiRoutes = {
     // GET: keyset deliveries by -id (?after=&limit=).
     deliveries: (id: string) => `/${API_VERSION}/webhooks/${id}/deliveries`,
   },
-  fills: {
-    // POST a drafted config + one hand-fed row; 202 + a test-kind run to poll.
-    test: `/${API_VERSION}/fills/test`,
-    // GET: one run by id (a complete test run's result rides it).
-    detail: (id: string) => `/${API_VERSION}/fills/${id}`,
-    // POST: stop a run wherever it is scoped; terminal runs no-op.
-    cancel: (id: string) => `/${API_VERSION}/fills/${id}/cancel`,
+  runs: {
+    // POST a drafted config + one hand-fed row; 202 + a bench run to poll.
+    bench: `/${API_VERSION}/runs/bench`,
+    // GET: one bench run by id (its result rides it once it finished).
+    detail: (id: string) => `/${API_VERSION}/runs/${id}`,
+    // POST: abandon an unclaimed bench run; a running or terminal run no-ops.
+    cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
   lists: {
     // GET: keyset index (?after=). POST: create.

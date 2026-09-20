@@ -392,7 +392,7 @@
       "type": "object"
     },
     "CellRunResult": {
-      "description": "What ONE row's run produced, stored verbatim on the task that\nran it: the cells it would write ({} = nothing, honestly), the\nevidence the model saw, each tool call's diagnosis, and the causes\nbehind any blank.\n\nONE shape for both landings. A NORMAL row's answers land in sheet\ncolumns; a TEST row lands on its own task; both store this record,\nso a reader that had to ask which landing produced it would be\nreading two contracts through one field. The bench reads it\nVERBATIM off the run-detail wire (FillRunDetail carries it whole),\nso there is no second projection to drift.\n\nWhat LANDED is the sheet row plus its cell states; the difference\nbetween the two is the audit story (an answer write-if-blank\nrefused, a value the confidence floor dropped, a shape the column\nwould not take), which is why this is stored whole rather than\nreduced to what survived.",
+      "description": "What ONE row's run produced, stored verbatim on the task that\nran it: the cells it would write ({} = nothing, honestly), the\nevidence the model saw, each tool call's diagnosis, and the causes\nbehind any blank.\n\nONE shape for both landings. A sheet row's answers land in its\ncolumns; a bench run lands on itself; both store this record, so a\nreader that had to ask which landing produced it would be reading\ntwo contracts through one field. The bench reads it VERBATIM off\nthe run wire (NodeRunWire carries it whole), so there is no second\nprojection to drift.\n\nWhat LANDED is the sheet row plus its cell states; the difference\nbetween the two is the audit story (an answer write-if-blank\nrefused, a value the confidence floor dropped, a shape the column\nwould not take), which is why this is stored whole rather than\nreduced to what survived.",
       "properties": {
         "assessments": {
           "additionalProperties": {
@@ -713,136 +713,6 @@
         "message"
       ],
       "title": "FillError",
-      "type": "object"
-    },
-    "FillRunDetail": {
-      "description": "One run, read by id (GET /v1/fills/{id}): the poll envelope's\nfields plus what a single-run read can afford. `result` is the\ncompleted TEST run's stored CellRunResult (its one task's record);\nthe `result` field below owns the full predicate. A test run\ncarries no sheet, so `list_id` and `agent_id` are blank (\"\") for\nkind=test, and `confirmed_row_count`/`column_keys` describe the\nhand-fed row rather than a consent echo.",
-      "properties": {
-        "agent_id": {
-          "title": "Agent Id",
-          "type": "string"
-        },
-        "column_keys": {
-          "description": "The columns this run owns, frozen at consent.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Column Keys",
-          "type": "array"
-        },
-        "confirmed_row_count": {
-          "description": "The progress denominator: the row count the user consented to when the run opened, settled to the rows the walk actually targeted once `targeted_at` is set (only ever downward: a row the user did not consent to is never targeted). The consent echo is a REQUEST field of the same name; the run covers rows up to it and never past it.",
-          "title": "Confirmed Row Count",
-          "type": "integer"
-        },
-        "counters": {
-          "$ref": "#/$defs/FillCounters"
-        },
-        "created_at": {
-          "title": "Created At",
-          "type": "string"
-        },
-        "error": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FillError"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "This run's error, both legs (tier 1: the message renders verbatim); None unless the run FAILED, the same predicate ColumnFillSummary.last_error states."
-        },
-        "heartbeat_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The latest state change across this run's tasks (derived); the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
-          "title": "Heartbeat At"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "kind": {
-          "default": "normal",
-          "enum": [
-            "normal",
-            "test"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
-        "list_id": {
-          "title": "List Id",
-          "type": "string"
-        },
-        "result": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CellRunResult"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "A test run's stored result (its one task's record), served whenever that task FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not strand a paid result); None while the task is unfinished, and always for kind=normal (a normal fill's results live on the sheet)."
-        },
-        "started_by": {
-          "description": "User id, ATTRIBUTION only; authorization is account membership.",
-          "title": "Started By",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "pending",
-            "running",
-            "complete",
-            "failed",
-            "cancelled"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "targeted_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "When the run's target set became whole: the walk that queues its runs has offered every row in the consent range. Null while it is still queuing (seconds after the click); a run cannot complete before it is set.",
-          "title": "Targeted At"
-        },
-        "updated_at": {
-          "title": "Updated At",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "list_id",
-        "agent_id",
-        "status",
-        "column_keys",
-        "counters",
-        "confirmed_row_count",
-        "started_by",
-        "created_at",
-        "updated_at"
-      ],
-      "title": "FillRunDetail",
       "type": "object"
     },
     "FillRunPage": {
@@ -1479,6 +1349,58 @@
         "items"
       ],
       "title": "LookalikeListResponse",
+      "type": "object"
+    },
+    "NodeRunWire": {
+      "description": "One run, read by id (GET /v1/runs/{id}), and the echo of the\nbench's POST and cancel.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "heartbeat_at": {
+          "description": "The run's latest state change; the client judges staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
+          "title": "Heartbeat At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellRunResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The run's stored result, served once it FINISHED with one (a cancel racing the last landing must not strand a paid diagnosis); None while the run is open, and for a run that ended without running (abandoned, or its config could not run)."
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "queued",
+            "processing",
+            "deferred",
+            "done",
+            "abandoned",
+            "row_missing",
+            "list_missing"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "heartbeat_at",
+        "created_at"
+      ],
+      "title": "NodeRunWire",
       "type": "object"
     },
     "PlainColumn": {
@@ -2170,6 +2092,12 @@
     "MAX_WEBHOOK_DESTINATIONS": 32,
     "MAX_WEBHOOK_HEADERS": 8,
     "NODE_RUN_ATTEMPTS": 4,
+    "OPEN_NODE_RUN_STATES": [
+      "ready",
+      "queued",
+      "processing",
+      "deferred"
+    ],
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "RESERVED_WEBHOOK_HEADER_NAMES": [
       "accept-encoding",

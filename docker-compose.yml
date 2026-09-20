@@ -253,11 +253,10 @@ services:
       retries: 3
       start_period: 40s
 
-  # The manual fill CONSUMER (the shared node-run processor on the
-  # manual lane): claims each published task off the bus, runs its
-  # FROZEN config, and lands it on the sheet (NORMAL) or its task (TEST),
+  # The manual fill CONSUMER (the shared node-run consumer on the manual
+  # lane): claims each published task off the bus, hands it to its
+  # node's processor (the fill's FROZEN config, landed on the sheet),
   # committing the offset after the settle so a mid-run death redelivers.
-  # ONE consumer serves both kinds; it routes on the task's own fill.
   # Needs the topics (kafka-setup) and the task migration (core-setup).
   # No restart policy (crash-is-a-signal); routine failures are handled
   # in the handler (a config-tier refusal fails the fill, a transient one
@@ -305,38 +304,6 @@ services:
       retries: 3
       start_period: 40s
     stop_grace_period: 2100s
-
-  # The bench-TEST lane, isolated from the manual firehose: a one-row
-  # diagnostic a user is watching gets its own topic + consumer, so it
-  # never queues behind a wide manual fill (the old worker-test, on the
-  # shared spine). SHORT grace on purpose: a bench row is quick and the
-  # user is waiting, so a stop kills it fast rather than draining minutes.
-  test-consumer:
-    image: *core_image
-    command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic test
-    env_file: *core_env_file
-    environment: *core_env
-    extra_hosts: *host_gateway
-    depends_on:
-      core-setup:
-        condition: service_completed_successfully
-      kafka-setup:
-        condition: service_completed_successfully
-    volumes: *core_volumes
-    # Liveness: same wide window as the manual consumer, and for the same
-    # reason, a bench row runs as long as any row and BLOCKS the loop
-    # while it does. The short stop_grace below is a SHUTDOWN choice (kill
-    # the in-flight bench row fast, the user is waiting), NOT a smaller
-    # liveness bound, so the window stays above the worst-case run.
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "test $(( $(date +%s) - $(stat -c %Y /tmp/consume_node_runs.heartbeat 2>/dev/null || echo 0) )) -lt 2100"
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-    stop_grace_period: 32s
 
   # One-shot: reconcile the broker to the ingest topic catalog (declared
   # partitions/retention/size), so topics are explicit rather than

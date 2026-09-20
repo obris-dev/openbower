@@ -34,8 +34,7 @@ hot-reload without a rebuild.
 | core-setup | migrations and the cache table, once per start; core, the workers, and the cron wait for it to finish | `make logs` |
 | core    | the Django api on :8002 | `make logs-core` |
 | worker  | `manage.py fill_worker --kinds normal`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
-| worker-test | the same binary serving only test-kind fills (the bench's one-row diagnostics), so bench latency never queues behind a wide fill | `make logs-worker` |
-| cron    | supercronic over `apps/core/crontab`: scheduled maintenance, today the hourly purge of test fills older than a day | `make logs-cron` |
+| cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of bench runs older than a day, the stale-run reclaim, the webhook flush and delivery prune) | `make logs-cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `make logs-web` |
 
 `make stop` halts the stack in place and `make up` resumes it;

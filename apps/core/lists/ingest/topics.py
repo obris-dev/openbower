@@ -46,17 +46,15 @@ LIST_ROWS_INGESTED = TopicSpec(name="list.rows.ingested", consumer_group="ingest
 # Node-run work on TWO topics, one per lane, so the automatic firehose
 # and the UI-driven fills cannot starve each other (separate consumer
 # lag, separate scaling). A provisioner publishes a task id; the shared
-# consumer claims and runs it, routing on the task's own fill_run_id.
+# consumer claims and runs it, handing it to its node's processor.
 # Keyed by row id at produce time.
+# The automatic lane carries the pushed rows' runs AND the bench's runs
+# (a one-row diagnostic that owns its input): the bench never queues
+# behind a manual fill because it never shares that lane.
 AUTOFILL_RUNS = TopicSpec(name="list.fill.autofill", consumer_group="node-run-worker-autofill")
-# The manual (fill-backed) lane: the provisioner publishes a live NORMAL
-# fill's READY tasks here; its consumer claims, runs, and lands them.
+# The manual (fill-backed) lane: the provisioner publishes a live fill's
+# READY tasks here; its consumer claims, runs, and lands them.
 FILL_RUNS = TopicSpec(name="list.fill.manual", consumer_group="node-run-worker-manual")
-# The TEST (bench) lane, ISOLATED from the manual firehose on purpose: a
-# one-row diagnostic a user is watching must not queue behind a wide
-# manual fill, so it rides its own topic + consumer (the old worker-test
-# lane, on the shared spine). The provisioner routes a fill here by kind.
-TEST_RUNS = TopicSpec(name="list.fill.test", consumer_group="node-run-worker-test")
 
 # What provision_topics walks. A new topic appends an entry.
-TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED, AUTOFILL_RUNS, FILL_RUNS, TEST_RUNS)
+TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED, AUTOFILL_RUNS, FILL_RUNS)

@@ -27,12 +27,14 @@ class NodeRun(AccountScopedModel):
     Every task carries its `node_id` and the node's `kind` from birth.
     A column_agent run is an agent run, fill-backed or automatic (a
     fill-backed task's node is the column_agent node for its Fill's
-    agent on the sheet; a TEST task's is the account's bench node). A
-    task with NO fill run (`fill_run_id` NULL) is the automatic path:
-    autofill rides the same queue and the same worker, minus the
-    consent a Fill records, resolving its list and user from its row; a
-    webhook run is DEFERRED at birth and claimed by the flush at its
-    window, never by the worker.
+    agent on the sheet). A task with NO fill run (`fill_run_id` NULL)
+    is the automatic path: autofill rides the same queue and the same
+    worker, minus the consent a Fill records, resolving its list and
+    user from its row; a webhook run is DEFERRED at birth and claimed
+    by the flush at its window, never by the worker. A BENCH run (the
+    agent builder's one-row diagnostic) is an automatic run of the
+    account's bench node that OWNS ITS INPUT (`input`): no row, no
+    sheet, its result lands on itself.
 
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on ListCellState. No word appears in
@@ -51,17 +53,25 @@ class NodeRun(AccountScopedModel):
     # no Fill to read its list or user off, so it resolves them from its
     # row. A fill-backed task sets this to its Fill's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    # NULL on a TEST task: a bench row is inline (`fill.row_data[position]`)
-    # and no ListRow exists for it. NULLs are distinct under the
-    # (fill_run_id, row_id) key, so N inline rows never collide, where a
-    # blank string would cap a test fill at one task.
+    # NULL on a bench run: its row rides `input` and no ListRow exists
+    # for it. NULLs are distinct under the open-run key, so an
+    # account's bench runs never collide with each other.
     row_id = models.CharField(_("row id"), max_length=26, null=True, blank=True)
     # The list this task's row lives in, DENORMALIZED from the fill
     # (fill-backed) or the target sheet (autofill), so per-list
     # distribution and account scoping never need a join back to find it.
-    # BLANK for a bench TEST fill, which points at no sheet by
-    # construction, exactly as its Fill.list_id is.
+    # BLANK for a bench run, which points at no sheet by construction.
     list_id = models.CharField(_("list id"), max_length=26, blank=True, default="")
+    # What the run was GIVEN, for a run that owns its input (the bench):
+    # {"row": the hand-fed values, "config": the drafted AgentConfig},
+    # bounded at the endpoint by the contract's bench caps. Empty for
+    # every run whose row and config live elsewhere (a sheet row, an
+    # agent). `result` beside it is what the run PRODUCED.
+    input = models.JSONField(_("input"), default=dict)
+    # Who started a run that owns its input (the bench's supersede rule
+    # tells your own live run from a teammate's); "" for every run a
+    # sheet or a fill produced, whose starter is the fill's.
+    started_by = models.CharField(_("started by"), max_length=26, blank=True, default="")
     # The node this task is a run of, set on every lane at birth. A
     # column_agent node runs its agent's whole column set in ONE run (an
     # agent produces all its outputs together), so one task per
@@ -73,11 +83,10 @@ class NodeRun(AccountScopedModel):
     # default: a CharField stores "" when a writer forgets it, and the
     # check constraint below turns that into a failed insert.
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
-    # WHERE this task's row lives, by kind. NORMAL: the row's sheet
-    # position, 1-based and snapshot-coherent (positions are
-    # append-only), so claims ordered by it march TOP TO BOTTOM down
-    # the sheet the user is watching. TEST: the 0-based index into the
-    # fill's own row_data list, which the worker reads it back by.
+    # WHERE this task's row lives: its sheet position, 1-based and
+    # snapshot-coherent (positions are append-only), so claims ordered
+    # by it march TOP TO BOTTOM down the sheet the user is watching. 0
+    # for a bench run, which has no sheet.
     position = models.IntegerField(_("position"), default=0)
     status = models.CharField(_("status"), max_length=NODE_RUN_STATUS_MAX_LENGTH, default=NodeRunStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its

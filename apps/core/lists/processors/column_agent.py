@@ -27,19 +27,21 @@ write-if-blank protects the sent ones. Born READY, no fill.
 Memory is bounded by one page: the settled and owed sets are asked per
 page against the ids in hand and dropped when the page is done.
 
-THE EXECUTION. A claimed run travels one of two lanes, told apart by
-its `fill_run_id`:
+THE EXECUTION. A claimed run travels one of three lanes, told apart by
+what it carries:
 
-- Fill-backed (set): the Fill's FROZEN config and column set (mid-fill
-  agent edits never apply), the claim-time model gate (a config-tier
-  refusal fails the WHOLE fill, since it fails every row identically),
-  the row off the sheet (NORMAL) or off the fill's own row data (TEST,
-  landing on the run instead of a sheet), and completion nudged after
+- Bench (`input` set): the drafted config and the hand-fed row ride the
+  run itself; it lands its result ON ITSELF (no sheet write, no cell
+  truth, no advance), and a config-tier failure settles it unrun.
+- Fill-backed (`fill_run_id` set): the Fill's FROZEN config and column
+  set (mid-fill agent edits never apply), the claim-time model gate (a
+  config-tier refusal fails the WHOLE fill, since it fails every row
+  identically), the row off the sheet, and completion nudged after
   every settle.
-- Automatic (null): the row, its list, the node's column set, and the
-  agent's config resolved LIVE; a gone row or list settles ROW_MISSING
-  or LIST_MISSING, a gone or retired agent settles the run unrun, a
-  config-tier failure settles the ONE run.
+- Automatic (neither): the row, its list, the node's column set, and
+  the agent's config resolved LIVE; a gone row or list settles
+  ROW_MISSING or LIST_MISSING, a gone or retired agent settles the run
+  unrun, a config-tier failure settles the ONE run.
 
 The tail is shared: the exhausted give-up, the runtime call, the
 retriable park, the terminal landing (`land_row`, the one writer of a
@@ -66,7 +68,6 @@ from ..constants import (
     FILL_SCAN_CHUNK,
     RETRY_CAUSES,
     FillFailureCode,
-    FillKind,
     FillStatus,
     NodeRunStatus,
 )
@@ -126,11 +127,12 @@ def _park_if_retriable(flow: NodeRunFlow, task: NodeRun, run, result: CellRunRes
 
 class _Lane(NamedTuple):
     """A claimed run's resolved inputs: the config to run, the identity
-    its writes land under, the row it runs on, and the Fill it belongs
-    to (None on the automatic lane)."""
+    its writes land under (None for a run that owns its input and so
+    lands on itself), the row it runs on, and the Fill it belongs to
+    (None off the fill lane)."""
 
     config: AgentConfig
-    ctx: LandingContext
+    ctx: LandingContext | None
     row_data: dict
     fill: Fill | None
 
@@ -223,7 +225,14 @@ class AIColumnProcessor(NodeProcessor):
     # The execution.
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
-        lane = self._fill_lane(task, flow=flow) if task.fill_run_id else self._live_lane(task, flow=flow)
+        if task.input:
+            lane: _Lane | RunOutcome = _Lane(
+                config=AgentConfig(**task.input["config"]), ctx=None, row_data=task.input["row"], fill=None
+            )
+        elif task.fill_run_id:
+            lane = self._fill_lane(task, flow=flow)
+        else:
+            lane = self._live_lane(task, flow=flow)
         if isinstance(lane, RunOutcome):
             return lane
         close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
@@ -271,23 +280,17 @@ class AIColumnProcessor(NodeProcessor):
             fill_progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             _settle_unrun(flow, task)
             return RunOutcome.DONE
-        if fill.kind == FillKind.TEST:
-            # A test run rides the fill's own row_data (position-indexed),
-            # never a sheet.
-            row_data = fill.row_data[task.position]
-        else:
-            row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
-            if row is None:
-                if not List.objects.filter(id=fill.list_id).exists():
-                    # The whole list went away mid-walk: a user deletion
-                    # is CANCELLED, never a failure story.
-                    fill_progress.cancel(str(fill.id))
-                flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
-                fill_progress.try_finish(str(fill.id))
-                return RunOutcome.ROW_MISSING
-            row_data = row.data
+        row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
+        if row is None:
+            if not List.objects.filter(id=fill.list_id).exists():
+                # The whole list went away mid-walk: a user deletion is
+                # CANCELLED, never a failure story.
+                fill_progress.cancel(str(fill.id))
+            flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
+            fill_progress.try_finish(str(fill.id))
+            return RunOutcome.ROW_MISSING
         ctx = LandingContext.from_fill(fill, node_id=task.node_id)
-        return _Lane(config=config, ctx=ctx, row_data=row_data, fill=fill)
+        return _Lane(config=config, ctx=ctx, row_data=row.data, fill=fill)
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
         row = ListRow.objects.filter(id=task.row_id).first()
@@ -331,9 +334,9 @@ class AIColumnProcessor(NodeProcessor):
         return _Lane(config=config, ctx=ctx, row_data=row.data, fill=None)
 
     def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> None:
-        if lane.fill is not None and lane.fill.kind == FillKind.TEST:
-            # A test run lands ON ITS RUN: no sheet write, no cell truth
-            # (there may be no sheet at all).
+        if lane.ctx is None:
+            # A run that owns its input lands ON ITSELF: no sheet write,
+            # no cell truth, no advance (there is no sheet at all).
             flow.settle(task.id, payload.model_dump(), status=NodeRunStatus.DONE)
             return
         land_row(lane.ctx, task.row_id, payload, close=close)

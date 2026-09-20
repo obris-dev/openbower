@@ -93,30 +93,6 @@ class FreeSearchBudget(FillRefused):
         )
 
 
-class TestFillActive(FillRefused):
-    """A TEAMMATE'S test run is observably live (a fresh heartbeat, or
-    too young to have missed one). Your own live test never refuses:
-    it is superseded (cancelled) by the new start."""
-
-    code = FillErrorCode.TEST_ACTIVE
-
-    def __init__(self) -> None:
-        super().__init__("A teammate's test is running; wait a moment for it to finish.")
-
-
-class TestRowInvalid(FillRefused):
-    """A hand-fed test row past the wire's bench bounds: REFUSED,
-    never truncated, because a truncated test would diagnose a
-    different row than the user typed. The bounds ship in x-constants,
-    so a client can make this refusal unreachable; the copy names the
-    bound that fired."""
-
-    code = FillErrorCode.TEST_ROW_INVALID
-
-    def __init__(self, why: str) -> None:
-        super().__init__(why)
-
-
 class ColumnTypeChanged(FillRefused):
     """An output this agent already fills now declares a DIFFERENT
     type from the column holding its answers.

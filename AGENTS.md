@@ -52,7 +52,8 @@ auth + data services live in a separate private repo.
   child that settles itself terminally when its parent is gone (an
   autofill run finds its row missing and ends as a ledger row, claimed
   by a picker that never goes through the parent), and an account-level
-  singleton with no parent to be orphaned from (the bench node). Both
+  singleton with no parent to be orphaned from (the bench node, and its
+  bench runs, which own their input and are pruned by age). Both
   are named at the owner's delete, so a reader sees the choice rather
   than a gap.
 - An extensible roster is a REGISTRY, never an enum: each member is

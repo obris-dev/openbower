@@ -11,13 +11,13 @@ from rest_framework import serializers
 from agents.serializers import AgentConfigRequest
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
-from openbower_schema.fills import FillRunDetail as WireFillRunDetail
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookCellState, WebhookColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
+from openbower_schema.runs import NodeRunWire as WireNodeRun
 
 from .constants import (
     COLUMN_KEY_GRAMMAR,
@@ -33,7 +33,7 @@ from .constants import (
     ColumnType,
     FillStatus,
 )
-from .models import Fill, Folder, List, ListRow
+from .models import Fill, Folder, List, ListRow, NodeRun
 
 
 class ColumnDef(serializers.Serializer):
@@ -129,10 +129,10 @@ class AiColumnRequest(serializers.Serializer):
         return attrs
 
 
-class TestFillRequest(serializers.Serializer):
-    """POST /v1/fills/test: a drafted config plus ONE inline row, the
+class BenchRunRequest(serializers.Serializer):
+    """POST /v1/runs/bench: a drafted config plus ONE inline row, the
     bench's hand-fed values. SHAPE only: the bench bounds are refused
-    by the admission (never truncated), so the refusal rides the
+    by the service (never truncated), so the refusal rides the
     {error, detail} envelope instead of DRF's field shape, which the
     client cannot read."""
 
@@ -280,11 +280,17 @@ def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
     ).model_dump()
 
 
-def fill_run_detail_wire(fill: Fill, result: CellRunResult | None) -> dict[str, Any]:
-    """The single-run read (GET /v1/fills/{id}): the poll envelope's
-    fields plus kind and, for a COMPLETE test run, its stored result.
-    Reads the poll builder so the two projections cannot drift."""
-    return WireFillRunDetail(**fill_run_wire(fill), kind=fill.kind, result=result).model_dump()
+def node_run_wire(run: NodeRun, result: CellRunResult | None) -> dict[str, Any]:
+    """One run by id (GET /v1/runs/{id}, and the bench's POST and cancel
+    echoes): its status, its stored result once it finished with one,
+    and its latest state change for the client's staleness read."""
+    return WireNodeRun(
+        id=str(run.id),
+        status=run.status,
+        result=result,
+        heartbeat_at=(run.last_state_change_at or run.created_at).isoformat(),
+        created_at=run.created_at.isoformat(),
+    ).model_dump()
 
 
 def row_wire(

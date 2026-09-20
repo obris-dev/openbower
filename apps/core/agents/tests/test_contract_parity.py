@@ -161,9 +161,9 @@ class DuplicatedKnowledgePins(SimpleTestCase):
                 with self.subTest(vendor=spec.name):
                     self.assertIn(spec.display, walkthrough)
 
-    def test_the_cron_sweeps_test_fills(self):
-        # The test-fill TTL is a compose cron, never an admission
-        # preflight (a bench click must not pay a sweep, and an idle
+    def test_the_cron_prunes_bench_runs(self):
+        # The bench-run TTL is a compose cron, never a start-time
+        # preflight (a bench click must not pay a prune, and an idle
         # deploy still purges). Two files carry it: the compose cron
         # service runs supercronic over the crontab, and the crontab's
         # line is the schedule. FAILS if either half is dropped.
@@ -174,7 +174,7 @@ class DuplicatedKnowledgePins(SimpleTestCase):
         self.assertIn("cron:", compose)
         self.assertIn("supercronic /app/apps/core/crontab", compose)
         crontab = (root / "apps" / "core" / "crontab").read_text()
-        self.assertIn("manage.py sweep_test_fills", crontab)
+        self.assertIn("manage.py prune_bench_runs", crontab)
         # The reclaim scan is the crontab's other line, and nothing else
         # exercises it by name: a missed edit stops it silently (supercronic
         # only logs a failing job), so the schedule is pinned here too.
@@ -212,26 +212,22 @@ class DuplicatedKnowledgePins(SimpleTestCase):
             if window and current:
                 services.setdefault(current, {})["window"] = window.group(1)
         graced = {name: conf for name, conf in services.items() if "grace" in conf}
-        # Three consumers carry a grace: the manual and autofill consumers
-        # drain bounded real rows (grace ABOVE the worst case), the isolated
-        # bench-TEST consumer kills its quick diagnostic fast (grace BELOW
-        # it, the user is waiting). Each is pinned to its own --topic.
-        self.assertEqual(set(graced), {"fill-consumer", "autofill-consumer", "test-consumer"})
+        # Two consumers carry a grace: the manual and autofill consumers
+        # drain bounded real rows (grace ABOVE the worst case); the bench
+        # rides the autofill lane. Each is pinned to its own --topic.
+        self.assertEqual(set(graced), {"fill-consumer", "autofill-consumer"})
         self.assertGreater(int(graced["fill-consumer"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["fill-consumer"]["flags"], "--topic manual")
         self.assertGreater(int(graced["autofill-consumer"]["grace"]), cell_run_worst_case_seconds())
         self.assertEqual(graced["autofill-consumer"]["flags"], "--topic autofill")
-        self.assertLess(int(graced["test-consumer"]["grace"]), cell_run_worst_case_seconds())
-        self.assertEqual(graced["test-consumer"]["flags"], "--topic test")
         # Every fill-family CONSUMER (each runs consume_node_runs, so each
         # touches consume_node_runs.heartbeat) blocks its loop on a single
         # claimed run, so its liveness window must clear the SAME worst case
-        # its grace does, or a normal slow row reads as WEDGED. The test
-        # consumer's short grace is a shutdown choice, NOT a smaller window,
-        # so it is pinned above the bound too. FAILS if a window is tightened
-        # below the worst case, or a fourth consumer appears unpinned.
+        # its grace does, or a normal slow row reads as WEDGED. FAILS if a
+        # window is tightened below the worst case, or a third consumer
+        # appears unpinned.
         windowed = {name: conf for name, conf in services.items() if "window" in conf}
-        self.assertEqual(set(windowed), {"fill-consumer", "test-consumer", "autofill-consumer"})
+        self.assertEqual(set(windowed), {"fill-consumer", "autofill-consumer"})
         for name, conf in windowed.items():
             self.assertGreater(int(conf["window"]), cell_run_worst_case_seconds(), name)
 
