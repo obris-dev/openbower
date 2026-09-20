@@ -35,34 +35,36 @@ SLICES: list[tuple[str, int]] = []
 STOPPED: list[str] = []
 
 
-class Counting(JobKind):
+class CountingProgress(BaseModel):
+    done: int = 0
+    waited: bool = False
+
+
+class Counting(JobKind[CountingProgress]):
     """Walks `pages` slices, recording each; raises on the slice named
     by `boom`; answers `Wait` on the slice named by `wait_at` (once,
     for `wait_seconds`); raises JobFailed on the slice named by
     `verdict_at`; records a stop from outside."""
 
     KIND: ClassVar[str] = "test_counting"
+    Progress = CountingProgress
     pages: int
     boom: int = -1
     wait_at: int = -1
     wait_seconds: int = 0
     verdict_at: int = -1
 
-    class Progress(BaseModel):
-        done: int = 0
-        waited: bool = False
-
-    def run(self, job: Job, progress: Progress) -> Progress | Wait | None:
+    def run(self, job: Job, progress: CountingProgress) -> CountingProgress | Wait[CountingProgress] | None:
         if progress.done == self.boom:
             raise RuntimeError("slice exploded")
         if progress.done == self.verdict_at:
             raise JobFailed("test_verdict", "the kind decided")
         if progress.done == self.wait_at and not progress.waited:
-            return Wait(self.wait_seconds, self.Progress(done=progress.done, waited=True))
+            return Wait(self.wait_seconds, CountingProgress(done=progress.done, waited=True))
         if progress.done >= self.pages:
             return None
         SLICES.append((str(job.id), progress.done))
-        return self.Progress(done=progress.done + 1, waited=progress.waited)
+        return CountingProgress(done=progress.done + 1, waited=progress.waited)
 
     def on_stop(self, job: Job) -> None:
         STOPPED.append(str(job.id))

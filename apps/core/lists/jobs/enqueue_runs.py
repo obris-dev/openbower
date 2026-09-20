@@ -31,16 +31,18 @@ from ..services.lists import ListNotFound, ListService
 from ..services.workflows import NodeNotFound, WorkflowService
 
 
-class EnqueueRuns(JobKind):
+class BackfillProgress(BaseModel):
+    # The last sheet position walked; the next slice pages after it.
+    after_position: int = 0
+
+
+class EnqueueRuns(JobKind[BackfillProgress]):
     KIND: ClassVar[str] = "enqueue_runs"
+    Progress = BackfillProgress
     list_id: str
     node_id: str
 
-    class Progress(BaseModel):
-        # The last sheet position walked; the next slice pages after it.
-        after_position: int = 0
-
-    def run(self, job: Job, progress: Progress) -> Progress | None:
+    def run(self, job: Job, progress: BackfillProgress) -> BackfillProgress | None:
         """One page of rows after the cursor, offered to the node's
         processor as the sheet stands NOW. Done when the sheet is walked
         or the sheet or the node is gone."""
@@ -58,7 +60,7 @@ class EnqueueRuns(JobKind):
             return None
         processor = processor_for(account_id=job.account_id, node=node, scope=WalkScope())
         processor.enqueue_runs(target_list, page, now=timezone.now())
-        return self.Progress(after_position=page[-1].position)
+        return BackfillProgress(after_position=page[-1].position)
 
 
 register(EnqueueRuns)

@@ -3,8 +3,10 @@
 A kind is one class: a JobKind subclass whose class-level KIND names
 it, whose fields are the job's PAYLOAD (what was asked, typed at
 construction, so a payload can never be stored under another kind's
-name), whose `Progress` is the typed shape of its resume cursor, and
-whose `run` does ONE bounded slice of the work. The runner owns the
+name), whose `Progress` is the typed shape of its resume cursor (the
+same class the kind names as its type parameter, `JobKind[Progress]`,
+so `run` is typed by the kind's OWN cursor at both edges), and whose
+`run` does ONE bounded slice of the work. The runner owns the
 job's lifecycle (claiming it once across overlapping ticks, counting
 unexpected exits, parking it with its cursor, settling it, reclaiming
 it, failing it at the cap); the kind owns nothing about that. It knows
@@ -46,12 +48,12 @@ if TYPE_CHECKING:
     from ..models import Job
 
 
-class Wait(NamedTuple):
+class Wait[P: BaseModel](NamedTuple):
     """A slice's answer when the job is waiting on something outside
     itself: park with this cursor and wake after `seconds`."""
 
     seconds: int
-    progress: BaseModel
+    progress: P
 
 
 class JobFailed(Exception):
@@ -64,15 +66,20 @@ class JobFailed(Exception):
         self.message = message
 
 
-class JobKind(BaseModel):
+class JobKind[P: BaseModel](BaseModel):
     KIND: ClassVar[str]
-    # The cursor's shape; every field defaulted, since the first slice
-    # starts from an empty stored cursor.
+    # The cursor's shape, the class named as P; every field defaulted,
+    # since the first slice starts from an empty stored cursor. Held as
+    # a class attribute too because the runner parses the stored cursor
+    # through it at the claim, and a type parameter is not reachable at
+    # runtime.
     Progress: ClassVar[type[BaseModel]]
 
-    def run(self, job: Job, progress: BaseModel) -> BaseModel | Wait | None:
-        """One slice from `progress`; the next cursor, a wait, or None
-        when done. Every kind declares one."""
+    def run(self, job: Job, progress: P) -> P | Wait[P] | None:
+        """One slice from `progress`: the next cursor (more to do now),
+        a wait (the cursor plus how long to park, when nothing more can
+        happen until something outside the job changes), or None when
+        done. Every kind declares one."""
         raise NotImplementedError
 
     def on_stop(self, job: Job) -> None:

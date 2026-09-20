@@ -77,9 +77,10 @@ auth + data services live in a separate private repo.
   never a lock.
 - BACKGROUND work a request must not do (a sheet-sized walk, a file
   build) is a Job: a row in the `jobs` app's one table, a kind = a
-  typed payload class with a `Progress` cursor and a `run(job,
-  progress)` that does ONE bounded slice and hands back where it
-  stopped, registered from the owning app's `jobs` package. The
+  typed payload class (`JobKind[Progress]`, typed by its own cursor)
+  with a `run(job, progress)` that does ONE bounded slice and hands
+  back where it stopped, registered from the owning app's `jobs`
+  package. The
   `jobs` compose service works them within seconds (a loop like the
   provisioners); every transition is a compare-and-set on the job's
   status, `attempts` counts unexpected exits only, and every slice is
