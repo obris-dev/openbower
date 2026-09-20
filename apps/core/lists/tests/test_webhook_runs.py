@@ -48,6 +48,7 @@ OTHER_AGENT = "01AGT" + "B" * 21
 ACCOUNT = TEST_IDENTITY["account_id"]
 USER = TEST_IDENTITY["id"]
 NOW = datetime(2026, 9, 19, 12, 17, 43, tzinfo=UTC)
+EARLIER = datetime(2026, 9, 19, 11, 0, tzinfo=UTC)
 INTERVAL = 3600
 
 
@@ -293,17 +294,20 @@ class _BackfilledSheet(_SheetHarness):
         for row in (self.row, self.second_row):
             self._settle(row, {"country": StoredCellState.FILLED})
 
-    def _settle(self, row, states: dict[str, str]) -> None:
-        cell_truth.write(
-            account_id=ACCOUNT,
-            list_id=str(self.sheet.id),
-            row_id=str(row.id),
-            fill_run_id=None,
-            config_fingerprint="",
-            states=states,
-            tools={},
-            source=CellSource.FILL,
-        )
+    def _settle(self, row, states: dict[str, str], *, at: datetime = EARLIER) -> None:
+        # The history predates NOW, the clock the runs are born on: a
+        # run always follows the completion it covers.
+        with patch("django.utils.timezone.now", return_value=at):
+            cell_truth.write(
+                account_id=ACCOUNT,
+                list_id=str(self.sheet.id),
+                row_id=str(row.id),
+                fill_run_id=None,
+                config_fingerprint="",
+                states=states,
+                tools={},
+                source=CellSource.FILL,
+            )
 
     def _runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK).order_by("position")
@@ -363,6 +367,24 @@ class BackfillTests(_BackfilledSheet):
         self.assertEqual(cursor, kind.Progress(after_position=1))
         self.assertEqual(self._runs().count(), 2)
 
+    def test_a_page_re_walked_after_its_runs_were_sent_offers_nothing(self):
+        # The open-run key guards only open runs. A slice re-walked after
+        # the flush sent its rows (a reclaimed job, a second backfill)
+        # must not send the same completion again. FAILS if the
+        # processor stops comparing the completion to the newest run.
+        self._add_webhook_column(["country", "answer"])
+        self.assertEqual(self._runs().count(), 2)
+        self._runs().update(status=NodeRunStatus.DONE)
+        (job,) = list(Job.objects.all())
+        kind = WebhookBackfill.model_validate(job.payload)
+        kind.run(job, kind.Progress(after_position=0))
+        self.assertEqual(self._runs().count(), 2)
+        # A LATER completion of the same row is new work: one new run.
+        self._settle(self.row, {"country": StoredCellState.FILLED}, at=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
+        kind.run(job, kind.Progress(after_position=0))
+        fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
+        self.assertEqual([r.row_id for r in fresh], [str(self.row.id)])
+
     def test_a_walk_stops_when_the_column_is_gone(self):
         columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
         self.sheet = columns.add(
@@ -409,11 +431,39 @@ class BackfillTests(_BackfilledSheet):
         )
         self.assertEqual(Job.objects.filter(status=JobStatus.READY).count(), 1)
         self._run_jobs()
-        # All three rows are complete for `answer` alone: the two sent
-        # rows open a new run each, the third its first.
+        # All three rows are complete for `answer` alone, but rows 1 and
+        # 2 were already SENT for a completion no newer than this one:
+        # narrowing the set re-sends nothing the receiver has. Row 3,
+        # never sent, gets its first run.
         fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
-        self.assertEqual([r.row_id for r in fresh], [str(self.row.id), str(self.second_row.id), str(self.third_row.id)])
-        self.assertEqual(self._runs().count(), 5)
+        self.assertEqual([r.row_id for r in fresh], [str(self.third_row.id)])
+        self.assertEqual(self._runs().count(), 3)
+
+    def test_a_widened_wait_set_re_sends_a_row_once_the_added_column_fills(self):
+        # Widening adds a column whose later fill moves the completion
+        # past the sent run: that IS new work for the receiver.
+        self._add_webhook_column(["answer"])
+        self._runs().update(status=NodeRunStatus.DONE)
+        columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
+        columns.update(
+            str(self.sheet.id),
+            "crm_sync",
+            destination_id=str(self.destination.id),
+            wait_keys=["answer", "country"],
+            payload_keys=["company"],
+            interval_seconds=INTERVAL,
+            enabled=True,
+        )
+        self._run_jobs()
+        # Rows 1 and 2 completed `country` at EARLIER too, before their
+        # runs: nothing new. Row 3 is incomplete under the wider set.
+        self.assertEqual(self._runs().filter(status=NodeRunStatus.DEFERRED).count(), 0)
+        self._settle(self.row, {"country": StoredCellState.FILLED}, at=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
+        self._run_jobs()  # a second walk would be the advance in practice
+        self.assertEqual(self._runs().filter(status=NodeRunStatus.DEFERRED).count(), 0)
+        self._land(self.second, {"country": "US"}, now=datetime(2026, 9, 19, 15, 31, tzinfo=UTC))
+        fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
+        self.assertEqual([r.row_id for r in fresh], [str(self.row.id)])
 
 
 class CellWordTests(_BackfilledSheet):
@@ -454,8 +504,7 @@ class CellWordTests(_BackfilledSheet):
             result=WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id="d").model_dump(),
         )
         self.assertEqual(self._words()[str(self.row.id)], {"crm_sync": "sent"})
-        self._settle(self.row, {"country": StoredCellState.FILLED})
-        self._land(self.second, {"country": "CA"})
+        self._land(self.second, {"country": "CA"}, now=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
         self.assertEqual(self._words()[str(self.row.id)], {"crm_sync": "waiting"})
 
     def test_a_run_retired_for_a_missing_row_says_nothing(self):

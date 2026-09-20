@@ -51,14 +51,25 @@ class WebhookProcessor(NodeProcessor):
     def materialize(
         self, target_list: List, rows: Sequence[ListRow], records: Mapping[str, CellRecords], *, now: datetime
     ) -> list[NodeRun]:
+        """A row is owed a run when it is complete AND that completion is
+        newer than the newest run this node already holds for it. The
+        open-run key alone guards only OPEN runs; without the second
+        test a walker re-offering a page after the flush sent it (a
+        reclaimed slice, a second backfill) would send the same
+        completion twice. A LATER completion still opens a new run."""
         wait_keys = self.needs(target_list)
         if not wait_keys:
             return []
         webhook = config_as(self.node, Webhook)
         window = next_window(now, webhook.interval_seconds)
+        covered = self._newest_run_at([str(row.id) for row in rows])
         runs: list[NodeRun] = []
         for row in rows:
-            if completion_of(records.get(str(row.id), {}), wait_keys) is None:
+            completed_at = completion_of(records.get(str(row.id), {}), wait_keys)
+            if completed_at is None:
+                continue
+            queued_at = covered.get(str(row.id))
+            if queued_at is not None and queued_at >= completed_at:
                 continue
             runs.append(
                 NodeRun(
@@ -76,6 +87,19 @@ class WebhookProcessor(NodeProcessor):
                 )
             )
         return runs
+
+    def _newest_run_at(self, row_ids: Sequence[str]) -> dict[str, datetime]:
+        """row id -> when this node's newest run for it was queued, for
+        the rows that have one (served by `node_run_webhook_cell_idx`)."""
+        newest = (
+            NodeRun.objects.filter(
+                account_id=self.account_id, kind=WEBHOOK, node_id=str(self.node.id), row_id__in=list(row_ids)
+            )
+            .order_by("row_id", "-id")
+            .distinct("row_id")
+            .values_list("row_id", "queued_at")
+        )
+        return {row_id: queued_at for row_id, queued_at in newest if queued_at is not None}
 
     def _node_by_path(self, wait) -> dict[str, str]:
         agent_nodes = WorkflowService(account_id=self.account_id).nodes_ending(wait.inbound_path_ids)

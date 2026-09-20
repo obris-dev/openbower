@@ -143,9 +143,11 @@ class WebhookColumnService:
     ) -> WebhookColumnConfigWire:
         """Both node configs rewritten in one transaction; the path keeps
         its shape. A changed wait SET is a new definition of complete,
-        so a backfill is queued for the rows complete under it; an
-        unchanged one queues nothing (a Save that touched only the
-        cadence must not re-send the sheet)."""
+        so a backfill is queued: rows complete under it whose completion
+        is newer than anything already sent gain a run (narrowing
+        re-sends nothing the receiver has; widening re-sends a row once
+        the added column fills). An unchanged set queues nothing (a Save
+        that touched only the cadence must not re-send the sheet)."""
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             webhook_node = self._webhook_node(target_list, key)
