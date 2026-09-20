@@ -97,7 +97,7 @@ class JobRunner:
                 Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(progress=cursor)
                 if time.monotonic() >= deadline:
                     # Out of tick, not out of luck: no attempt is spent.
-                    report.parked += self._park(job, not_before=timezone.now())
+                    report.parked += self._park(job, scheduled_at=timezone.now())
                     return
         except DatabaseError:
             # The connection is the tick's; nothing here recovers it.
@@ -113,13 +113,13 @@ class JobRunner:
                 report.failed += self._fail(job, cause, attempts=attempts)
                 return
             backoff = timezone.now() + datetime.timedelta(seconds=JOB_RETRY_BACKOFF_SECONDS)
-            report.parked += self._park(job, not_before=backoff, error=cause, attempts=attempts)
+            report.parked += self._park(job, scheduled_at=backoff, error=cause, attempts=attempts)
 
     # Transitions: each one UPDATE whose predicate is the status.
 
     @staticmethod
     def _due(now: datetime.datetime) -> list[str]:
-        due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
+        due = models.Q(scheduled_at__isnull=True) | models.Q(scheduled_at__lte=now)
         ready = Job.objects.filter(due, status=JobStatus.READY).order_by("id")
         return [str(job_id) for job_id in ready.values_list("id", flat=True)]
 
@@ -142,11 +142,11 @@ class JobRunner:
         )
 
     @staticmethod
-    def _park(job: Job, *, not_before: datetime.datetime, error: str = "", attempts: int | None = None) -> int:
+    def _park(job: Job, *, scheduled_at: datetime.datetime, error: str = "", attempts: int | None = None) -> int:
         fields: dict = {
             "status": JobStatus.READY,
             "progress": job.progress,
-            "not_before": not_before,
+            "scheduled_at": scheduled_at,
             "error": error,
             "last_state_change_at": timezone.now(),
         }
@@ -181,7 +181,7 @@ class JobRunner:
             status=JobStatus.READY,
             attempts=models.F("attempts") + 1,
             processing_at=None,
-            not_before=None,
+            scheduled_at=None,
             last_state_change_at=now,
         )
         return failed + reclaimed

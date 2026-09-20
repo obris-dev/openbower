@@ -38,9 +38,10 @@ class Job(AccountScopedModel):
     # park for running out of budget leave it alone, so a long job
     # never walks toward the cap by being long.
     attempts = models.IntegerField(_("attempts"), default=0)
-    # When a parked job becomes claimable again: the backoff after a
-    # slice raised, or now for a job that yielded on the tick's budget.
-    not_before = models.DateTimeField(_("not before"), null=True, blank=True)
+    # When the job is next due: null means now; a slice that raised
+    # schedules it after a backoff, a job that yielded on the tick's
+    # budget for now, a reclaimed job for now.
+    scheduled_at = models.DateTimeField(_("scheduled at"), null=True, blank=True)
     error = models.CharField(_("error"), max_length=JOB_ERROR_MAX_LENGTH, blank=True, default="")
     queued_at = models.DateTimeField(_("queued at"), null=True, blank=True)
     processing_at = models.DateTimeField(_("processing at"), null=True, blank=True)
@@ -54,12 +55,12 @@ class Job(AccountScopedModel):
             models.CheckConstraint(condition=~models.Q(kind=""), name="job_kind_named"),
         ]
         indexes = [
-            # The tick's pick: READY jobs in id (age) order, `not_before`
+            # The tick's pick: READY jobs in id (age) order, `scheduled_at`
             # on the leaf so a parked job is rejected without a heap
             # fetch. Partial, so settled history never widens it.
             models.Index(
                 fields=["status", "id"],
-                include=["not_before"],
+                include=["scheduled_at"],
                 name="job_ready_idx",
                 condition=models.Q(status=JobStatus.READY),
             ),

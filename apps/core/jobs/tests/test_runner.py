@@ -76,7 +76,7 @@ class RunnerTests(TestCase):
         first = self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
         self.assertEqual((first.parked, job.status, job.progress), (1, JobStatus.READY, {"done": 1}))
-        self.assertLessEqual(job.not_before, timezone.now())
+        self.assertLessEqual(job.scheduled_at, timezone.now())
 
         second = self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
@@ -125,7 +125,7 @@ class RunnerTests(TestCase):
         job.refresh_from_db()
         self.assertEqual((report.parked, job.status, job.attempts), (1, JobStatus.READY, 1))
         self.assertEqual(job.error, "RuntimeError: slice exploded")
-        self.assertGreaterEqual(job.not_before, before + timedelta(seconds=JOB_RETRY_BACKOFF_SECONDS))
+        self.assertGreaterEqual(job.scheduled_at, before + timedelta(seconds=JOB_RETRY_BACKOFF_SECONDS))
         # Not due yet: the next tick leaves it alone.
         self.assertEqual(self.runner.tick().claimed, 0)
 

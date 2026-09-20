@@ -26,7 +26,7 @@ JOB_RETRY_BACKOFF_SECONDS = 64
 
 
 class JobStatus(StrEnum):
-    """A job's lifecycle. READY is claimable (due once `not_before`
+    """A job's lifecycle. READY is claimable (due once `scheduled_at`
     passes); PROCESSING is held by a tick; DONE and FAILED are terminal,
     the second carrying its cause in `error`."""
 
