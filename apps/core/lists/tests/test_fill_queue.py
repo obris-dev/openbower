@@ -78,7 +78,7 @@ class _SheetThatTakesEverything:
 def _ctx(fill: Job, task: NodeRun) -> LandingContext:
     return LandingContext(
         account_id=ACCOUNT,
-        list_id=fill.subject_id,
+        list_id=fill.target_id,
         column_keys=("answer",),
         fill_run_id=str(fill.id),
         node_id=task.node_id,

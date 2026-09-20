@@ -218,7 +218,7 @@ class FillAdmissionService(AdmissionBase):
                 # CONTINUE means finish what THAT fill consented to,
                 # never the column's whole remainder (the extend
                 # gestures widen; resume does not).
-                source = fill_progress.fill_jobs().filter(id=resume_fill_id, subject_id=str(target_list.id)).first()
+                source = fill_progress.fill_jobs().filter(id=resume_fill_id, target_id=str(target_list.id)).first()
                 if source is None:
                     raise ResumeRunNotFound()
             # A RESUME judges owed-ness across the resumed fill's WHOLE
@@ -280,7 +280,7 @@ class FillAdmissionService(AdmissionBase):
         columns write that was rolled back: the consent as its payload,
         the walk as its first slices. NOTHING is written to the sheet:
         a targeted cell shimmers because a queued run says so."""
-        return enqueue(self.account_id, fill, user_id=self.user_id, subject_id=str(target_list.id))
+        return enqueue(self.account_id, fill, user_id=self.user_id, target_id=str(target_list.id))
 
     @staticmethod
     def _probe_scope(fill: FillJob) -> WalkScope:

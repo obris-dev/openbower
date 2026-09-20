@@ -261,7 +261,7 @@ class ColumnService:
             # left writing into a column that no longer exists; the
             # sibling refills.
             for fill_run_id, payload in (
-                fill_progress.open_fills().filter(subject_id=str(target_list.id)).values_list("id", "payload")
+                fill_progress.open_fills().filter(target_id=str(target_list.id)).values_list("id", "payload")
             ):
                 if key in (payload.get("column_keys") or ()):
                     fill_progress.cancel(str(fill_run_id))

@@ -624,7 +624,7 @@ class FillCancelView(_ScopedView):
             raise NotFound("no fill with that id") from e
         # The route nests under a list; a fill of another sheet must not
         # be addressable through this one's URL.
-        if fill.subject_id != str(target_list.id):
+        if fill.target_id != str(target_list.id):
             raise NotFound("no fill with that id")
         return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
 

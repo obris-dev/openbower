@@ -188,7 +188,7 @@ def check_columns_free(target_list: List, *, column_keys: list[str], opening: st
     taken: set[str] = set()
     for payload in (
         fill_progress.open_fills()
-        .filter(subject_id=str(target_list.id))
+        .filter(target_id=str(target_list.id))
         .exclude(id=opening)
         .values_list("payload", flat=True)
     ):

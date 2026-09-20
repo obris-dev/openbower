@@ -329,7 +329,7 @@ def _fill_run_wire(fill: Job, progress: FillProgress) -> dict[str, Any]:
     error = FillError(code=fill.error_code, message=fill.error) if status == "failed" and fill.error_code else None
     return WireFillRun(
         id=str(fill.id),
-        list_id=fill.subject_id,
+        list_id=fill.target_id,
         agent_id=consent.agent_id,
         status=status,
         column_keys=consent.column_keys,

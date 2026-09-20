@@ -108,7 +108,7 @@ def open_fill_job(
             **scope,
         ),
         user_id=user_id,
-        subject_id=list_id,
+        target_id=list_id,
     )
     if targeted:
         cursor = FillJob.Progress(

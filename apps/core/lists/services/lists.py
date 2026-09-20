@@ -351,7 +351,7 @@ class ListService:
             # service must not rely on that.
             if not List.objects.select_for_update().filter(id=target.id, account_id=self.account_id):
                 return
-            fills = fill_progress.fill_jobs().filter(subject_id=str(target.id))
+            fills = fill_progress.fill_jobs().filter(target_id=str(target.id))
             # ROWS FIRST, then the queue, because that is the order the
             # consumer's terminal write takes them: write_cells locks the
             # ListRow, then the task settle writes the NodeRun, both in
@@ -393,7 +393,7 @@ class ListService:
             # untouched.
             WorkflowService(account_id=self.account_id).delete_for_list(str(target.id))
             cell_truth.purge_list(str(target.id))
-            # The fill JOBS go with the list (one delete by subject; a
+            # The fill JOBS go with the list (one delete by target; a
             # tick holding one of them finds no list on its next slice
             # and ends, its settle missing on the deleted row).
             fills.delete()

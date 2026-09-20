@@ -144,7 +144,7 @@ class FillService:
         status, its error) lands on the column summary the moment it
         leaves this list, so the poll carries in-flight work alone. A
         failed run is still first-class there, never a 4xx."""
-        qs = fill_progress.open_fills().filter(account_id=self.account_id, subject_id=list_id).order_by("-id")
+        qs = fill_progress.open_fills().filter(account_id=self.account_id, target_id=list_id).order_by("-id")
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
@@ -199,7 +199,7 @@ class FillService:
         live = {
             str(fill_run_id): [key for key in (payload.get("column_keys") or ()) if key in ai_keys]
             for fill_run_id, payload in fill_progress.open_fills()
-            .filter(account_id=self.account_id, subject_id=str(target_list.id))
+            .filter(account_id=self.account_id, target_id=str(target_list.id))
             .values_list("id", "payload")
         }
         if not live:
@@ -265,7 +265,7 @@ class FillService:
                 message,
             )
             for fill_run_id, status, code, message in fill_progress.fill_jobs()
-            .filter(account_id=self.account_id, subject_id=str(target_list.id), id__in=current_ids)
+            .filter(account_id=self.account_id, target_id=str(target_list.id), id__in=current_ids)
             .values_list("id", "status", "error_code", "error")
         }
         summaries: list[ColumnFillSummary] = []

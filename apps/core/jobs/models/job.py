@@ -33,16 +33,17 @@ class Job(UserScopedModel):
     `payload` and `progress` are the kind's own typed models, dumped on
     write and parsed back by the kind; the runner treats both as
     opaque. `user_id` (the base's attribution field) is who asked ("" for
-    a job the system queued); `subject_id` is what the job is about (a
-    fill's list), so a surface can page a subject's jobs without
-    reading payloads. No worker stamp: a stale job the reclaim returned
+    a job the system queued); `target_id` is what the job works on, in the
+    kind's own terms (a fill's list; blank for a job with no one
+    target), so a surface can page a target's jobs without reading
+    payloads. No worker stamp: a stale job the reclaim returned
     to READY can be settled late by its first tick, which lands on top
     of the second tick's settle; every kind's slice is idempotent, so
     the cost is one re-walked slice, and the column stays out until a
     kind with a non-idempotent slice earns it."""
 
     kind = models.CharField(_("kind"), max_length=JOB_KIND_MAX_LENGTH)
-    subject_id = models.CharField(_("subject id"), max_length=26, blank=True, default="")
+    target_id = models.CharField(_("target id"), max_length=26, blank=True, default="")
     payload = models.JSONField(_("payload"), default=dict)
     progress = models.JSONField(_("progress"), default=dict)
     status = models.CharField(_("status"), max_length=JOB_STATUS_MAX_LENGTH, default=JobStatus.READY)
@@ -89,9 +90,9 @@ class Job(UserScopedModel):
                 name="job_reclaim_idx",
                 condition=models.Q(status=JobStatus.PROCESSING),
             ),
-            # A subject's jobs of one kind by status: the sheet's fills
+            # A target's jobs of one kind by status: the sheet's fills
             # page and every "which fills are open on this list" read.
-            models.Index(fields=["kind", "subject_id", "status", "-id"], name="job_subject_idx"),
+            models.Index(fields=["kind", "target_id", "status", "-id"], name="job_target_idx"),
             # An account's jobs of one kind by status: the fill cap.
             models.Index(fields=["account_id", "kind", "status"], name="job_account_kind_idx"),
         ]
