@@ -66,7 +66,7 @@ class RunnerTests(TestCase):
         self.assertEqual((report.claimed, report.done, report.parked, report.failed), (1, 1, 0, 0))
         self.assertEqual(SLICES, [(str(job.id), 0), (str(job.id), 1), (str(job.id), 2)])
         job.refresh_from_db()
-        self.assertEqual((job.status, job.attempts, job.progress, job.error), (JobStatus.DONE, 1, {"done": 3}, ""))
+        self.assertEqual((job.status, job.attempts, job.progress, job.error), (JobStatus.DONE, 0, {"done": 3}, ""))
         self.assertIsNotNone(job.settled_at)
 
     def test_the_budget_parks_a_job_with_its_cursor_and_the_next_tick_resumes_it(self):
@@ -80,11 +80,35 @@ class RunnerTests(TestCase):
 
         second = self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
-        self.assertEqual((second.parked, job.progress, job.attempts), (1, {"done": 2}, 2))
+        # Running out of tick is not an attempt.
+        self.assertEqual((second.parked, job.progress, job.attempts), (1, {"done": 2}, 0))
         self.runner.tick()
         job.refresh_from_db()
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"done": 3}))
+        self.assertEqual((job.status, job.progress, job.attempts), (JobStatus.DONE, {"done": 3}, 0))
         self.assertEqual([done for _, done in SLICES], [0, 1, 2])
+
+    def test_a_job_needing_more_ticks_than_the_cap_allows_attempts_still_finishes(self):
+        # FAILS if a budget park counts as an attempt: the sixth claim
+        # would fail the job as exhausted with nothing wrong.
+        job = enqueue(ACCOUNT, Counting(pages=JOB_ATTEMPTS + 3))
+        for _ in range(JOB_ATTEMPTS + 3):
+            self.runner.tick(budget_seconds=0)
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.attempts, job.progress), (JobStatus.READY, 0, {"done": JOB_ATTEMPTS + 3}))
+        self.runner.tick()
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error), (JobStatus.DONE, ""))
+
+    def test_a_budget_park_leaves_the_queue_to_the_next_tick(self):
+        # One tick budget shared by every job: the long job at the front
+        # parks on it and the tick ends; the job behind waits a minute.
+        first = enqueue(ACCOUNT, Counting(pages=2))
+        second = enqueue(ACCOUNT, Counting(pages=1))
+        report = self.runner.tick(budget_seconds=0)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((report.claimed, first.status, second.status), (1, JobStatus.READY, JobStatus.READY))
+        self.assertEqual([done for _, done in SLICES], [0])
 
     def test_the_cursor_is_durable_after_every_slice_not_only_at_the_park(self):
         job = enqueue(ACCOUNT, Counting(pages=2, boom=1))
@@ -105,12 +129,24 @@ class RunnerTests(TestCase):
         # Not due yet: the next tick leaves it alone.
         self.assertEqual(self.runner.tick().claimed, 0)
 
-    def test_past_the_attempt_cap_a_job_fails_with_its_cause(self):
-        job = enqueue(ACCOUNT, Counting(pages=2))
-        Job.objects.filter(id=job.id).update(attempts=JOB_ATTEMPTS)
+    def test_the_raise_that_reaches_the_cap_fails_the_job_with_its_cause(self):
+        job = enqueue(ACCOUNT, Counting(pages=2, boom=0))
+        Job.objects.filter(id=job.id).update(attempts=JOB_ATTEMPTS - 1)
+        with self.assertLogs("jobs.services.runner", level="ERROR"):
+            report = self.runner.tick()
+        job.refresh_from_db()
+        self.assertEqual((report.failed, job.status, job.attempts), (1, JobStatus.FAILED, JOB_ATTEMPTS))
+        self.assertEqual(job.error, "RuntimeError: slice exploded")
+        self.assertIsNotNone(job.settled_at)
+
+    def test_a_job_at_the_cap_that_runs_clean_still_finishes(self):
+        # The cap is on failures, not on claims: a job whose earlier
+        # exits were unexpected but whose next slice works, works.
+        job = enqueue(ACCOUNT, Counting(pages=1))
+        Job.objects.filter(id=job.id).update(attempts=JOB_ATTEMPTS - 1)
         report = self.runner.tick()
         job.refresh_from_db()
-        self.assertEqual((report.failed, job.status, job.error, SLICES), (1, JobStatus.FAILED, EXHAUSTED, []))
+        self.assertEqual((report.done, job.status, job.attempts), (1, JobStatus.DONE, JOB_ATTEMPTS - 1))
 
     def test_two_ticks_never_hold_one_job(self):
         job = enqueue(ACCOUNT, Counting(pages=1))
@@ -128,6 +164,21 @@ class RunnerTests(TestCase):
         job.refresh_from_db()
         self.assertEqual((report.reclaimed, report.done, job.status, job.attempts), (1, 1, JobStatus.DONE, 2))
         self.assertEqual([done for _, done in SLICES], [2])
+
+    def test_a_dead_tick_at_the_cap_fails_the_job(self):
+        # The dead tick is the one unexpected exit no except block sees:
+        # the reclaim counts it, and at the cap it stops the job.
+        job = enqueue(ACCOUNT, Counting(pages=3))
+        stale = timezone.now() - timedelta(seconds=JOB_STALE_SECONDS + 60)
+        Job.objects.filter(id=job.id).update(
+            status=JobStatus.PROCESSING, attempts=JOB_ATTEMPTS - 1, last_state_change_at=stale
+        )
+        report = self.runner.tick()
+        job.refresh_from_db()
+        self.assertEqual(
+            (report.reclaimed, job.status, job.attempts, job.error), (1, JobStatus.FAILED, JOB_ATTEMPTS, EXHAUSTED)
+        )
+        self.assertEqual(SLICES, [])
 
     def test_a_live_processing_job_is_not_reclaimed(self):
         job = enqueue(ACCOUNT, Counting(pages=1))

@@ -7,9 +7,11 @@ Every transition is a compare-and-set UPDATE on the status, so two
 ticks overlapping (a slow slice past the minute) split the due jobs
 between them instead of both running one. A tick that dies leaves its
 jobs PROCESSING; the next tick's reclaim returns them to READY past the
-stale window, and they resume from their cursor. A slice that raises
-parks the job with a backoff and its cause; the attempt the claim
-stamped counts, and past the cap the job is FAILED with that cause.
+stale window, and they resume from their cursor. `attempts` counts
+UNEXPECTED exits and nothing else: a slice that raises (parked with a
+backoff and its cause) and a dead tick (seen by the reclaim). Running
+out of budget is neither. At the cap the job is FAILED with the last
+cause.
 
 Safe to miss (a job waits) and safe to double (the CAS). Not
 account-scoped: a trusted process, like the node-run flows."""
@@ -37,7 +39,7 @@ from ..models import Job
 
 logger = logging.getLogger(__name__)
 
-EXHAUSTED = f"Gave up after {JOB_ATTEMPTS} attempts."
+EXHAUSTED = f"Gave up after {JOB_ATTEMPTS} attempts; the last one did not finish."
 
 
 @dataclass
@@ -81,9 +83,6 @@ class JobRunner:
         return report
 
     def _work(self, job: Job, *, deadline: float, report: TickReport) -> None:
-        if job.attempts > JOB_ATTEMPTS:
-            report.failed += self._fail(job, EXHAUSTED)
-            return
         try:
             kind = registry.parse_payload(job.kind, job.payload)
             while True:
@@ -97,6 +96,7 @@ class JobRunner:
                 # from where its dead tick actually got to.
                 Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(progress=cursor)
                 if time.monotonic() >= deadline:
+                    # Out of tick, not out of luck: no attempt is spent.
                     report.parked += self._park(job, not_before=timezone.now())
                     return
         except DatabaseError:
@@ -104,12 +104,16 @@ class JobRunner:
             raise
         except Exception as e:
             # One job's crash (a payload that no longer parses, a bug in
-            # its kind) must not stop the jobs behind it: park it with
-            # its cause and let the attempt cap decide.
-            logger.exception("jobs: %s slice raised; parking it", job)
+            # its kind) must not stop the jobs behind it: count the
+            # attempt, and park it with its cause or fail it at the cap.
+            logger.exception("jobs: %s slice raised", job)
             cause = f"{type(e).__name__}: {e}"[:JOB_ERROR_MAX_LENGTH]
+            attempts = job.attempts + 1
+            if attempts >= JOB_ATTEMPTS:
+                report.failed += self._fail(job, cause, attempts=attempts)
+                return
             backoff = timezone.now() + datetime.timedelta(seconds=JOB_RETRY_BACKOFF_SECONDS)
-            report.parked += self._park(job, not_before=backoff, error=cause)
+            report.parked += self._park(job, not_before=backoff, error=cause, attempts=attempts)
 
     # Transitions: each one UPDATE whose predicate is the status.
 
@@ -125,7 +129,6 @@ class JobRunner:
             status=JobStatus.PROCESSING,
             processing_at=now,
             last_state_change_at=now,
-            attempts=models.F("attempts") + 1,
         )
         if claimed != 1:
             return None
@@ -139,29 +142,46 @@ class JobRunner:
         )
 
     @staticmethod
-    def _park(job: Job, *, not_before: datetime.datetime, error: str = "") -> int:
-        return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.READY,
-            progress=job.progress,
-            not_before=not_before,
-            error=error,
-            last_state_change_at=timezone.now(),
-        )
+    def _park(job: Job, *, not_before: datetime.datetime, error: str = "", attempts: int | None = None) -> int:
+        fields: dict = {
+            "status": JobStatus.READY,
+            "progress": job.progress,
+            "not_before": not_before,
+            "error": error,
+            "last_state_change_at": timezone.now(),
+        }
+        if attempts is not None:
+            fields["attempts"] = attempts
+        return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(**fields)
 
     @staticmethod
-    def _fail(job: Job, error: str) -> int:
+    def _fail(job: Job, error: str, *, attempts: int) -> int:
         now = timezone.now()
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.FAILED, error=error, settled_at=now, last_state_change_at=now
+            status=JobStatus.FAILED, error=error, attempts=attempts, settled_at=now, last_state_change_at=now
         )
 
     @staticmethod
     def _reclaim(now: datetime.datetime) -> int:
-        """PROCESSING past the stale window means a dead tick: back to
-        READY, due now, cursor as it was. The attempt is already
-        counted, so a job that keeps killing its tick still walks to
-        the cap."""
+        """PROCESSING past the stale window means a dead tick, the one
+        unexpected exit no except block sees: it counts an attempt here.
+        Under the cap the job returns to READY, due now, cursor as it
+        was; at the cap it is FAILED, so a job that keeps killing its
+        tick stops."""
         stale_before = now - datetime.timedelta(seconds=JOB_STALE_SECONDS)
-        return Job.objects.filter(status=JobStatus.PROCESSING, last_state_change_at__lt=stale_before).update(
-            status=JobStatus.READY, processing_at=None, not_before=None, last_state_change_at=now
+        stale = Job.objects.filter(status=JobStatus.PROCESSING, last_state_change_at__lt=stale_before)
+        failed = stale.filter(attempts__gte=JOB_ATTEMPTS - 1).update(
+            status=JobStatus.FAILED,
+            attempts=models.F("attempts") + 1,
+            error=EXHAUSTED,
+            settled_at=now,
+            last_state_change_at=now,
         )
+        reclaimed = stale.update(
+            status=JobStatus.READY,
+            attempts=models.F("attempts") + 1,
+            processing_at=None,
+            not_before=None,
+            last_state_change_at=now,
+        )
+        return failed + reclaimed

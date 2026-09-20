@@ -33,8 +33,10 @@ class Job(AccountScopedModel):
     payload = models.JSONField(_("payload"), default=dict)
     progress = models.JSONField(_("progress"), default=dict)
     status = models.CharField(_("status"), max_length=JOB_STATUS_MAX_LENGTH, default=JobStatus.READY)
-    # Incremented AT CLAIM, so a slice that kills its tick still counts
-    # toward the cap.
+    # UNEXPECTED exits only: a slice that raised, or a tick that died
+    # holding the job (counted by the reclaim). A claim, a settle, and a
+    # park for running out of budget leave it alone, so a long job
+    # never walks toward the cap by being long.
     attempts = models.IntegerField(_("attempts"), default=0)
     # When a parked job becomes claimable again: the backoff after a
     # slice raised, or now for a job that yielded on the tick's budget.

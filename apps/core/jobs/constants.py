@@ -9,8 +9,9 @@ JOB_STATUS_MAX_LENGTH = 16
 # One sentence of cause, bounded so a traceback can never become a row.
 JOB_ERROR_MAX_LENGTH = 512
 
-# How many claims a job gets before it is failed: the first run plus
-# three retries, the same patience a node run has.
+# How many UNEXPECTED exits (a raising slice, a dead tick) a job gets
+# before it is failed with the last cause: the same patience a node run
+# has. Running out of a tick's budget is not an attempt.
 JOB_ATTEMPTS = 4
 # How long one tick works before parking what it holds (binary): under
 # the cron's minute so ticks never pile up, and well under the stale
