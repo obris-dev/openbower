@@ -19,8 +19,9 @@ class Fill(UserScopedModel):
     """One durable fill of one AI column: the frozen record of what the
     user consented to spend, and how far it has got.
 
-    The WORK is NodeRun rows, materialized at admission, so this row
-    carries no cursor and no lease. `user_id` (the base's attribution
+    The WORK is NodeRun rows, queued by the walk admission starts (a
+    fill's consent range, one page at a time), so this row carries no
+    cursor and no lease; `targeted_at` says when the walk finished. `user_id` (the base's attribution
     field) is the wire's started_by; authorization is account
     membership, never the starter."""
 
@@ -55,10 +56,17 @@ class Fill(UserScopedModel):
     config_fingerprint = models.CharField(
         _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
     )
-    # The row count the user consented to; admission 409s when the
-    # count changed (shrinkage included). The progress denominator on
-    # every surface that shows one.
+    # The progress denominator on every surface that shows one: the
+    # row count the user consented to at birth, settled to the runs
+    # actually queued once the walk that queues them is whole (only
+    # ever downward: the walk never targets a row the user did not
+    # consent to).
     confirmed_row_count = models.IntegerField(_("confirmed row count"))
+    # When the fill's target set became WHOLE: the walk that queues its
+    # runs offered every row in its range. Null while the walk is still
+    # queuing. The completion rule waits on it, because "no open run"
+    # is also true between two slices of the walk.
+    targeted_at = models.DateTimeField(_("targeted at"), null=True, blank=True)
     # No progress counters or heartbeat column: the wire's counters and
     # heartbeat DERIVE from the task rows and cell states at read time
     # (services.fills.derive_counters / derive_heartbeat), so there is

@@ -68,6 +68,8 @@ class TestFillAdmission(AdmissionBase):
                 config_snapshot=config.model_dump(),
                 config_fingerprint=config_fingerprint(config),
                 confirmed_row_count=1,
+                # The bench's one run is created right here: whole at birth.
+                targeted_at=timezone.now(),
                 # Stored as a LIST (position-indexed by tasks): one row
                 # from this endpoint today, shaped for inline example
                 # lists tomorrow.

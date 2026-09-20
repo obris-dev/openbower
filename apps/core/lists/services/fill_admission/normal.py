@@ -411,7 +411,7 @@ class FillAdmissionService(AdmissionBase):
         # expensive part of admission and it has no business happening
         # between two writes to the same array.
 
-        Fill.objects.filter(id=fill.id).update(confirmed_row_count=consented)
+        Fill.objects.filter(id=fill.id).update(confirmed_row_count=consented, targeted_at=timezone.now())
         fill.refresh_from_db()
         return fill
 

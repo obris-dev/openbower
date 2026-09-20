@@ -213,7 +213,7 @@ class _Cursor(BaseModel):
 
 class RegistryTests(SimpleTestCase):
     def test_the_lists_backfill_kind_is_on_the_roster_at_boot(self):
-        self.assertIn("webhook_backfill", [cls.KIND for cls in all_kinds()])
+        self.assertIn("enqueue_runs", [cls.KIND for cls in all_kinds()])
 
     def test_a_kind_without_run_is_refused(self):
         class NoRun(JobKind):

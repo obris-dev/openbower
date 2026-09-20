@@ -308,10 +308,13 @@ class ListService:
                 )
         return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched))
 
-    def rows_page(self, target: List, *, after_position: int, limit: int) -> list[ListRow]:
-        return list(
-            ListRow.objects.filter(list_id=str(target.id), position__gt=after_position).order_by("position")[:limit]
-        )
+    def rows_page(self, target: List, *, after_position: int, limit: int, until_position: int = 0) -> list[ListRow]:
+        """Rows after a position in sheet order, at most `limit`; with
+        `until_position`, none above it (a fill's consent range)."""
+        rows = ListRow.objects.filter(list_id=str(target.id), position__gt=after_position)
+        if until_position:
+            rows = rows.filter(position__lte=until_position)
+        return list(rows.order_by("position")[:limit])
 
     def column_values(self, target: List, *, key: str, limit: int) -> list[str]:
         """One column's non-empty values in position order (the use-time

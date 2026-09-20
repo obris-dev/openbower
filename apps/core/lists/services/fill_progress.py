@@ -64,22 +64,49 @@ def live_fill_count(account_id: str) -> int:
     return Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).count()
 
 
+def is_live(fill_run_id: str) -> bool:
+    return Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists()
+
+
+def settle_targets(fill_run_id: str) -> bool:
+    """The walk that queues a fill's runs has offered every row in its
+    range: the target set is WHOLE. The denominator settles to the runs
+    actually queued (a count off the ledger, never an accumulator, so a
+    re-walked slice cannot inflate it), `targeted_at` is stamped, and
+    the completion rule runs once, because a fill whose rows all settled
+    before the walk ended, or that targeted nothing, has no later settle
+    to complete it. Returns whether the fill completed here."""
+    now = timezone.now()
+    targeted = NodeRun.objects.filter(fill_run_id=fill_run_id).count()
+    Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).update(
+        confirmed_row_count=targeted, targeted_at=now, updated_at=now
+    )
+    return try_finish(fill_run_id)
+
+
 def try_finish(fill_run_id: str) -> bool:
     """THE completion rule, run by the consumer after each settle
-    (opportunistic empty-check): a fill flips COMPLETE when no
-    NON-TERMINAL task remains (READY, QUEUED, or PROCESSING).
+    (opportunistic empty-check): a fill flips COMPLETE when its target
+    set is WHOLE (`targeted_at` set: the walk that queues its runs has
+    finished) and no NON-TERMINAL task remains.
 
-    Monotonic by construction, because nothing creates tasks after
-    admission: the set only ever shrinks, so the check cannot go stale
-    between reading and flipping. A PROCESSING task (a consumer owns it)
-    or a READY one (published or not) is still owed, so a crashed
-    claimant never fakes completion.
+    Monotonic once the target set is whole, because nothing creates
+    tasks for a fill after its walk: the set only ever shrinks, so the
+    check cannot go stale between reading and flipping. Before that, a
+    fill with no open task is not finished, it is between two slices of
+    its walk. A PROCESSING task (a consumer owns it) or a READY one
+    (published or not) is still owed, so a crashed claimant never fakes
+    completion.
 
     Module level rather than a consumer method because it reads no
     worker identity: a fill is finished or it is not, whoever is
     asking."""
     with transaction.atomic():
-        fill = Fill.objects.select_for_update().filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).first()
+        fill = (
+            Fill.objects.select_for_update()
+            .filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES, targeted_at__isnull=False)
+            .first()
+        )
         if fill is None:
             return False
         if NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES).exists():
@@ -107,7 +134,7 @@ def stop_fill(fill_run_id: str, status: FillStatus, *, code: str = "", message: 
     with transaction.atomic():
         if not Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists():
             return False
-        _abandon_queued(fill_run_id)
+        abandon_queued(fill_run_id)
         flipped = Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).update(
             status=status,
             error_code=code,
@@ -117,7 +144,7 @@ def stop_fill(fill_run_id: str, status: FillStatus, *, code: str = "", message: 
     return flipped == 1
 
 
-def _abandon_queued(fill_run_id: str) -> None:
+def abandon_queued(fill_run_id: str) -> None:
     """Consent granted and not spent, recorded rather than deleted: it
     is the only honest answer to what a stopped fill still owed, and a
     later resume reads it instead of reconstructing it.
@@ -128,7 +155,9 @@ def _abandon_queued(fill_run_id: str) -> None:
     fill's), so in-flight spend is sunk cost, cancel granularity is
     between tasks. Leaving PROCESSING untouched also keeps the
     queue-before-fill lock order the caller depends on. The transient
-    count is DERIVED now, so nothing is released here."""
+    count is DERIVED now, so nothing is released here. Public because a
+    walk slice that lands runs after the cancel's sweep sweeps them
+    itself."""
     NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)).update(
         status=NodeRunStatus.ABANDONED, updated_at=timezone.now()
     )

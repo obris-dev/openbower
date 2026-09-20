@@ -43,6 +43,7 @@ def make_run(*, status: str = FillStatus.PENDING, rows: int = 3) -> Fill:
         column_keys=["answer"],
         config_snapshot={},
         confirmed_row_count=rows,
+        targeted_at=timezone.now(),
     )
     # The queue is materialized at admission, born READY, so a fill under
     # test has its whole consented set of tasks from the start.
@@ -165,6 +166,26 @@ class CompletionTests(TestCase):
         self.assertTrue(fill_progress.try_finish(str(fill.id)))
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)
+
+    def test_a_fill_whose_walk_is_still_queuing_never_completes_between_slices(self) -> None:
+        # No open run is also what a fill looks like between two slices
+        # of the walk that queues its runs. FAILS without the gate: the
+        # settle between the slices would complete the fill, free its cap
+        # slot, and strand the runs the next slice lands.
+        fill = make_run(rows=1)
+        Fill.objects.filter(id=fill.id).update(targeted_at=None)
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        land(fill, task)
+        self.assertFalse(fill_progress.try_finish(str(fill.id)))
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, FillStatus.PENDING)
+        # The walk ends: the denominator settles to the runs queued and
+        # the completion rule runs once.
+        Fill.objects.filter(id=fill.id).update(confirmed_row_count=50)
+        self.assertTrue(fill_progress.settle_targets(str(fill.id)))
+        fill.refresh_from_db()
+        self.assertEqual((fill.status, fill.confirmed_row_count), (FillStatus.COMPLETE, 1))
+        self.assertIsNotNone(fill.targeted_at)
 
     def test_a_drained_live_fill_is_still_offered_for_completion(self) -> None:
         fill = make_run(rows=1)

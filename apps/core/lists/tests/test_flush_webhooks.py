@@ -121,7 +121,7 @@ class FlushWebhooksTests(TransactionTestCase):
             payload_keys=["company", "country"],
             interval_seconds=INTERVAL,
         )
-        with patch("lists.jobs.webhook_backfill.timezone.now", return_value=now):
+        with patch("lists.jobs.enqueue_runs.timezone.now", return_value=now):
             JobRunner(worker_id="jobs-test:1").tick()
         return next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
 

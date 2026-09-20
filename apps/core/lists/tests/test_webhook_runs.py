@@ -23,7 +23,7 @@ from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, TickReport
 from lists.constants import CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
-from lists.jobs.webhook_backfill import WebhookBackfill
+from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
 from lists.nodes.registry import WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
@@ -112,7 +112,7 @@ class _SheetHarness(TestCase):
 
     @staticmethod
     def _run_jobs(*, now: datetime = NOW) -> TickReport:
-        with patch("lists.jobs.webhook_backfill.timezone.now", return_value=now):
+        with patch("lists.jobs.enqueue_runs.timezone.now", return_value=now):
             return JobRunner(worker_id="test:1").tick()
 
     def _land(self, node: Node, cells: dict[str, str], *, now: datetime = NOW, keys: tuple[str, ...] = ()) -> None:
@@ -349,8 +349,9 @@ class BackfillTests(_BackfilledSheet):
             )
         node_id = next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.kind, job.status, job.account_id), ("webhook_backfill", JobStatus.READY, ACCOUNT))
-        self.assertEqual(job.payload, {"list_id": str(self.sheet.id), "node_id": node_id})
+        self.assertEqual((job.kind, job.status, job.account_id), ("enqueue_runs", JobStatus.READY, ACCOUNT))
+        self.assertEqual(job.payload["list_id"], str(self.sheet.id))
+        self.assertEqual((job.payload["node_id"], job.payload["scope"]["mode"]), (node_id, "backfill"))
         # The request inserted no run and read no cell state: the walk
         # is the job's.
         self.assertEqual(self._runs().count(), 0)
@@ -360,7 +361,7 @@ class BackfillTests(_BackfilledSheet):
     def test_the_job_enqueues_a_run_for_every_row_already_complete(self):
         node_id = self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
         runs = list(self._runs())
         self.assertEqual([r.row_id for r in runs], [str(self.row.id), str(self.second_row.id)])
         for run in runs:
@@ -373,13 +374,13 @@ class BackfillTests(_BackfilledSheet):
         # One row per page: three slices, each idempotent under the
         # open-run key. Rerunning the finished job's last cursor by hand
         # proves a reclaimed slice cannot double the runs.
-        with patch("lists.jobs.webhook_backfill.FILL_SCAN_CHUNK", 1):
+        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
             self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
         self.assertEqual(self._runs().count(), 2)
-        kind = WebhookBackfill.model_validate(job.payload)
-        with patch("lists.jobs.webhook_backfill.FILL_SCAN_CHUNK", 1):
+        kind = EnqueueRuns.model_validate(job.payload)
+        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
             cursor = kind.run(job, kind.Progress(after_position=0))
         self.assertEqual(cursor, kind.Progress(after_position=1))
         self.assertEqual(self._runs().count(), 2)
@@ -393,7 +394,7 @@ class BackfillTests(_BackfilledSheet):
         self.assertEqual(self._runs().count(), 2)
         self._runs().update(status=NodeRunStatus.DONE)
         (job,) = list(Job.objects.all())
-        kind = WebhookBackfill.model_validate(job.payload)
+        kind = EnqueueRuns.model_validate(job.payload)
         kind.run(job, kind.Progress(after_position=0))
         self.assertEqual(self._runs().count(), 2)
         # A LATER completion of the same row is new work: one new run.
