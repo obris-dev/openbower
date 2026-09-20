@@ -27,6 +27,7 @@ from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
 from lists.nodes.registry import WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
+from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
 from lists.services import cell_truth
 from lists.services.columns import ColumnService
@@ -147,10 +148,13 @@ class ProcessorTests(_SheetHarness):
     def test_the_factory_answers_by_node_kind_and_refuses_a_kind_without_one(self):
         node_id = self._add_webhook_column(["country"])
         self.assertIsInstance(self._processor(node_id), WebhookProcessor)
-        # No processor for the agent kind yet: the fill lanes have not
-        # moved onto this shape, so the factory says so loudly.
+        self.assertIsInstance(processor_for(account_id=ACCOUNT, node=self.first), AIColumnProcessor)
+        # A kind with no processor (the barrier makes no runs of its
+        # own): the factory says so loudly rather than walking nothing.
+        node = self.workflows.get_node(node_id)
+        barrier = Node.objects.get(path_id=node.path_id, rank=0)
         with self.assertRaises(UnknownProcessor):
-            processor_for(account_id=ACCOUNT, node=self.first)
+            processor_for(account_id=ACCOUNT, node=barrier)
 
     def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):
         node_id = self._add_webhook_column(["country", "answer"])

@@ -34,10 +34,13 @@ from ..services import autofill
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
+from ..services.workflows import WorkflowService
 from .test_fill_worker import quick_config
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
+AGENT_A = "01AGT" + "A" * 21
+AGENT_B = "01AGT" + "B" * 21
 
 
 class AutofillHarness(TransactionTestCase):
@@ -151,17 +154,20 @@ class EnqueueTests(AutofillHarness):
         # the all() semantics a single-column fixture cannot (there
         # all([x]) == any([x]) == x). A "0" counts as filled (it strips
         # truthy), never blank.
-        node_id = "01ND" + "A" * 22
         sheet = self.lists.create(
             owner_id=USER,
             label="Multi",
-            columns=[
-                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_id},
-                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
-            ],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
+        # A real node: the processor that judges the rows is the NODE's.
+        node_id = str(WorkflowService(account_id=ACCOUNT).get_or_create_column_agent_node(sheet, agent_id=AGENT_A).id)
+        sheet.columns = [
+            *sheet.columns,
+            {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_id},
+            {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
+        ]
+        sheet.save(update_fields=["columns", "updated_at"])
         full, partial = self.lists.add_rows(
             sheet,
             [
@@ -179,17 +185,21 @@ class EnqueueTests(AutofillHarness):
         # Two distinct nodes on one sheet: the one shape where a row owes
         # more than one task, and the only one the task-id message key
         # touches. Both land under the (row, node) key.
-        node_a, node_b = "01ND" + "A" * 22, "01ND" + "B" * 22
         sheet = self.lists.create(
             owner_id=USER,
             label="Two nodes",
-            columns=[
-                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_a},
-                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_b},
-            ],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
+        workflows = WorkflowService(account_id=ACCOUNT)
+        node_a = str(workflows.get_or_create_column_agent_node(sheet, agent_id=AGENT_A).id)
+        node_b = str(workflows.get_or_create_column_agent_node(sheet, agent_id=AGENT_B).id)
+        sheet.columns = [
+            *sheet.columns,
+            {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_a},
+            {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_b},
+        ]
+        sheet.save(update_fields=["columns", "updated_at"])
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
         self.assertEqual(self._push(sheet, [{"company": "both.co"}]), "applied")
         [row_id] = self._new_row_ids(sheet, before)
