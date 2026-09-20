@@ -85,16 +85,20 @@ class JobRunner:
     def _work(self, job: Job, *, deadline: float, report: TickReport) -> None:
         try:
             kind = registry.parse_payload(job.kind, job.payload)
+            # Typed at both edges: the stored cursor parses through the
+            # kind's Progress here, and what run() returns is dumped
+            # below, so the row never holds a shape the kind cannot read.
+            progress = kind.Progress.model_validate(job.progress)
             while True:
-                cursor = kind.run(job)
-                if cursor is None:
+                progress = kind.run(job, progress)
+                if progress is None:
                     report.done += self._settle(job)
                     return
-                job.progress = cursor
+                job.progress = progress.model_dump()
                 # The cursor is durable after EVERY slice, so a crash
                 # loses one slice at most and a reclaimed job resumes
                 # from where its dead tick actually got to.
-                Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(progress=cursor)
+                Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(progress=job.progress)
                 if time.monotonic() >= deadline:
                     # Out of tick, not out of luck: no attempt is spent.
                     report.parked += self._park(job, scheduled_at=timezone.now())

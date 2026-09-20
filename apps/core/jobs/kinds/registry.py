@@ -7,6 +7,8 @@ re-registering the same class is idempotent. No order is load-bearing."""
 
 from __future__ import annotations
 
+from pydantic import BaseModel
+
 from ..constants import JOB_KIND_MAX_LENGTH
 from .base import JobKind
 
@@ -31,6 +33,9 @@ def _validate(cls: type[JobKind]) -> None:
     kind = getattr(cls, "KIND", None)
     if not isinstance(kind, str) or not kind.isidentifier() or len(kind) > JOB_KIND_MAX_LENGTH:
         raise ValueError(f"job kind KIND {kind!r} must be a valid identifier of at most {JOB_KIND_MAX_LENGTH} chars")
+    progress = getattr(cls, "Progress", None)
+    if not (isinstance(progress, type) and issubclass(progress, BaseModel)):
+        raise ValueError(f"job kind {kind!r} must declare a Progress model for its cursor")
     if cls.run is JobKind.run:
         raise ValueError(f"job kind {kind!r} must declare run()")
 

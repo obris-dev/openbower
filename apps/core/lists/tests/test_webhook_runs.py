@@ -304,9 +304,10 @@ class BackfillTests(_BackfilledSheet):
         (job,) = list(Job.objects.all())
         self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
         self.assertEqual(self._runs().count(), 2)
-        job.progress = {"after_position": 0}
+        kind = WebhookBackfill.model_validate(job.payload)
         with patch("lists.jobs.webhook_backfill.FILL_SCAN_CHUNK", 1):
-            self.assertEqual(WebhookBackfill.model_validate(job.payload).run(job), {"after_position": 1})
+            cursor = kind.run(job, kind.Progress(after_position=0))
+        self.assertEqual(cursor, kind.Progress(after_position=1))
         self.assertEqual(self._runs().count(), 2)
 
     def test_a_walk_stops_when_the_column_is_gone(self):

@@ -17,6 +17,7 @@ from typing import ClassVar
 
 from django.db import transaction
 from django.utils import timezone
+from pydantic import BaseModel
 
 from jobs.kinds.base import JobKind
 from jobs.kinds.registry import register
@@ -32,22 +33,23 @@ from ..services.lists import ListNotFound, ListService
 from ..services.webhook_runs import runs_for_complete_row, wait_keys_of
 from ..services.workflows import NodeNotFound, WorkflowService, config_as
 
-AFTER_POSITION = "after_position"
-
 
 class WebhookBackfill(JobKind):
     KIND: ClassVar[str] = "webhook_backfill"
     list_id: str
     node_id: str
 
-    def run(self, job: Job) -> dict | None:
+    class Progress(BaseModel):
+        # The last sheet position walked; the next slice pages after it.
+        after_position: int = 0
+
+    def run(self, job: Job, progress: Progress) -> Progress | None:
         """One page of rows after the cursor, under the list lock: the
         rows complete for the wait set as it stands NOW (a wait set
         edited mid-walk applies to the rest of the walk) gain a run at
         the next window. Done when the page is empty, or when the
         column, its sheet, or its wait set is gone (nothing left to
         backfill; the open-run key has already deduped what landed)."""
-        after_position = int(job.progress.get(AFTER_POSITION, 0))
         with transaction.atomic():
             try:
                 target_list = locked_list(job.account_id, self.list_id)
@@ -66,7 +68,7 @@ class WebhookBackfill(JobKind):
             if not wait_keys:
                 return None
             lists = ListService(account_id=job.account_id)
-            page = lists.rows_page(target_list, after_position=after_position, limit=FILL_SCAN_CHUNK)
+            page = lists.rows_page(target_list, after_position=progress.after_position, limit=FILL_SCAN_CHUNK)
             if not page:
                 return None
             list_id = str(target_list.id)
@@ -89,7 +91,7 @@ class WebhookBackfill(JobKind):
                 )
             if runs:
                 NodeRun.objects.bulk_create(runs, ignore_conflicts=True, batch_size=FILL_WRITE_BATCH)
-        return {AFTER_POSITION: page[-1].position}
+        return self.Progress(after_position=page[-1].position)
 
 
 register(WebhookBackfill)

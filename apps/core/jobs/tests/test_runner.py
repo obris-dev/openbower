@@ -16,6 +16,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
+from pydantic import BaseModel, ValidationError
 
 from ..constants import JOB_ATTEMPTS, JOB_RETRY_BACKOFF_SECONDS, JOB_STALE_SECONDS, JobStatus
 from ..kinds import registry
@@ -37,14 +38,16 @@ class Counting(JobKind):
     pages: int
     boom: int = -1
 
-    def run(self, job: Job) -> dict | None:
-        done = int(job.progress.get("done", 0))
-        if done == self.boom:
+    class Progress(BaseModel):
+        done: int = 0
+
+    def run(self, job: Job, progress: Progress) -> Progress | None:
+        if progress.done == self.boom:
             raise RuntimeError("slice exploded")
-        if done >= self.pages:
+        if progress.done >= self.pages:
             return None
-        SLICES.append((str(job.id), done))
-        return {"done": done + 1}
+        SLICES.append((str(job.id), progress.done))
+        return self.Progress(done=progress.done + 1)
 
 
 register(Counting)
@@ -204,6 +207,10 @@ class RunnerTests(TestCase):
         self.assertIn("done=1", logs.output[0])
 
 
+class _Cursor(BaseModel):
+    pass
+
+
 class RegistryTests(SimpleTestCase):
     def test_the_lists_backfill_kind_is_on_the_roster_at_boot(self):
         self.assertIn("webhook_backfill", [cls.KIND for cls in all_kinds()])
@@ -211,16 +218,33 @@ class RegistryTests(SimpleTestCase):
     def test_a_kind_without_run_is_refused(self):
         class NoRun(JobKind):
             KIND: ClassVar[str] = "test_no_run"
+            Progress = _Cursor
 
         with self.assertRaises(ValueError):
             register(NoRun)
         self.assertNotIn("test_no_run", [cls.KIND for cls in all_kinds()])
 
+    def test_a_kind_without_a_progress_model_is_refused(self):
+        class NoCursor(JobKind):
+            KIND: ClassVar[str] = "test_no_cursor"
+
+            def run(self, job: Job, progress: BaseModel) -> BaseModel | None:
+                return None
+
+        with self.assertRaises(ValueError):
+            register(NoCursor)
+        self.assertNotIn("test_no_cursor", [cls.KIND for cls in all_kinds()])
+
+    def test_a_malformed_stored_cursor_refuses_at_the_parse(self):
+        with self.assertRaises(ValidationError):
+            Counting.Progress.model_validate({"done": "three"})
+
     def test_a_kind_collision_is_refused_and_re_registration_is_a_no_op(self):
         class Impostor(JobKind):
             KIND: ClassVar[str] = Counting.KIND
+            Progress = _Cursor
 
-            def run(self, job: Job) -> dict | None:
+            def run(self, job: Job, progress: BaseModel) -> BaseModel | None:
                 return None
 
         with self.assertRaises(ValueError):
@@ -231,8 +255,9 @@ class RegistryTests(SimpleTestCase):
     def test_a_kind_name_past_the_bound_is_refused(self):
         class Long(JobKind):
             KIND: ClassVar[str] = "k" * 33
+            Progress = _Cursor
 
-            def run(self, job: Job) -> dict | None:
+            def run(self, job: Job, progress: BaseModel) -> BaseModel | None:
                 return None
 
         with self.assertRaises(ValueError), patch.dict(registry._REGISTRY, {}, clear=False):
