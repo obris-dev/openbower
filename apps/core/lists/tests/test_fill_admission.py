@@ -13,6 +13,8 @@ from django.test.utils import CaptureQueriesContext, override_settings
 
 from agents.models import Agent
 from agents.providers import ModelUnavailable
+from jobs.models import Job
+from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import AiColumn
 
@@ -34,7 +36,6 @@ from ..services.fill_admission import (
     ModelUnrunnable,
     NoEligibleRows,
     ProviderRetiredRefusal,
-    RowCountChanged,
     SameColumnFillActive,
 )
 from ..services.fills import FillService
@@ -56,6 +57,13 @@ def quick_config(**overrides) -> AgentConfig:
     }
     fields.update(overrides)
     return AgentConfig(**fields)
+
+
+def tick_jobs() -> None:
+    """Work the walk admission queued: a fill's runs exist once the
+    jobs runner has ticked, exactly as they do in production a few
+    seconds after the click."""
+    JobRunner(worker_id="test:1").tick()
 
 
 class AdmissionTestCase(TestCase):
@@ -81,7 +89,10 @@ class AdmissionTestCase(TestCase):
             "confirmed_row_count": 2,
         }
         kwargs.update(overrides)
-        return self.admission.admit(**kwargs)
+        fill = self.admission.admit(**kwargs)
+        tick_jobs()
+        fill.refresh_from_db()
+        return fill
 
 
 class QuickPathTests(AdmissionTestCase):
@@ -211,14 +222,17 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(Fill.objects.count(), 0)
         self.assertEqual(NodeRun.objects.count(), 0)
 
-    def test_row_count_echo_refuses_on_growth(self) -> None:
-        with self.assertRaises(RowCountChanged) as caught:
-            self.admit(confirmed_row_count=1)
-        self.assertEqual(caught.exception.actual, 2)
+    def test_the_consent_range_is_the_echoed_count_never_the_grown_sheet(self) -> None:
+        # The user reviewed 1 row; a second landed before the click. The
+        # fill covers exactly what was reviewed, and the newcomer shows
+        # unfilled for the next refill: no refusal, no surprise spend.
+        fill = self.admit(confirmed_row_count=1)
+        self.assertEqual((fill.confirmed_row_count, targeted_positions(str(fill.id))), (1, [1]))
 
     def test_a_shrunken_sheet_admits_and_fills_less(self) -> None:
         # Reviewed 99, the sheet has 2: fewer rows than consented is
-        # cheaper, never a betrayal, so the echo is growth-only.
+        # cheaper, never a betrayal; the denominator settles to what
+        # the walk found.
         fill = self.admit(confirmed_row_count=99)
         self.assertEqual(fill.confirmed_row_count, 2)
 
@@ -345,12 +359,10 @@ class ScopedFillTests(AdmissionTestCase):
         self.assertNotIn(3, targeted_positions(str(fill.id)))
         self.assertNotIn(5, targeted_positions(str(fill.id)))
 
-    def test_scoped_admit_skips_the_growth_echo_unscoped_keeps_it(self) -> None:
+    def test_a_scoped_admit_ranges_over_the_sheet_and_stops_at_n(self) -> None:
         # A scoped fill asked for the first N usable rows; the sheet
-        # total was never the number it consented to, so drift in it is
-        # irrelevant. Unscoped, the echo still refuses.
-        with self.assertRaises(RowCountChanged):
-            self.admit(confirmed_row_count=1)
+        # total was never the number it consented to, so the range is
+        # the sheet as it stands and N is the ceiling.
         fill = self.admit(rows=1, confirmed_row_count=1)
         self.assertEqual(fill.confirmed_row_count, 1)
 
@@ -430,20 +442,19 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         self.assertIsNotNone(index, "expected statement not found in the captured queries")
         return index
 
-    def test_the_lock_is_taken_AFTER_the_queue_is_inserted(self) -> None:
+    def test_the_request_inserts_no_runs_and_locks_the_list_around_one_write(self) -> None:
+        # The walk is the job's: the request queues it and writes the
+        # column under the lock, nothing else. A 50,000 row consent
+        # costs the request one probe page.
         with CaptureQueriesContext(connection) as captured:
-            self.admit()
+            self.admission.admit(list_id=str(self.sheet.id), config=quick_config(), confirmed_row_count=2)
         sql = self.sql(captured)
-        locked_at = self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
-        queued_at = self.index_of(sql, lambda s: s.startswith('INSERT INTO "LISTS_NODERUN"'))
-        self.assertLess(
-            queued_at,
-            locked_at,
-            "the queue insert must run BEFORE the List lock is taken, or a large fill blocks "
-            "every other sheet-level write for the length of its insert",
-        )
+        self.assertEqual([s for s in sql if s.startswith('INSERT INTO "LISTS_NODERUN"')], [])
+        self.assertEqual(len([s for s in sql if s.startswith('INSERT INTO "JOBS_JOB"')]), 1)
+        self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
+        self.assertEqual(len([s for s in sql if s.startswith('UPDATE "LISTS_LIST"')]), 1)
 
-    def test_deterministic_refusals_never_build_the_queue(self) -> None:
+    def test_deterministic_refusals_never_queue_the_walk(self) -> None:
         # An account at its cap and a sheet at its column cap are both
         # knowable before any work: hearing the "no" after inserting up
         # to 50,000 NodeRun rows would waste the build EVERY time, not
@@ -452,10 +463,12 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+        queued_before = Job.objects.count()
         with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
             self.admit()
-        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_NODERUN"')]
-        self.assertEqual(inserts, [], "the cap was knowable before the queue was built")
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "JOBS_JOB"')]
+        self.assertEqual(inserts, [], "the cap was knowable before the walk was queued")
+        self.assertEqual(Job.objects.count(), queued_before)
 
     def test_at_both_caps_the_fill_cap_wins(self) -> None:
         # fills_full is a 409 whose fix is waiting; columns_full is a
@@ -478,7 +491,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         with self.assertRaises(AccountFillsFull):
             self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
 
-    def test_a_full_sheet_refuses_before_building_the_queue(self) -> None:
+    def test_a_full_sheet_refuses_before_queuing_the_walk(self) -> None:
         wide = self.lists.create(
             owner_id=USER,
             label="Wide",
@@ -490,8 +503,8 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"c0": "x"}])
         with CaptureQueriesContext(connection) as captured, self.assertRaises(ColumnsFull):
             self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
-        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "LISTS_NODERUN"')]
-        self.assertEqual(inserts, [], "the column cap was knowable before the queue was built")
+        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "JOBS_JOB"')]
+        self.assertEqual(inserts, [], "the column cap was knowable before the walk was queued")
 
     def test_the_columns_array_is_written_ONCE(self) -> None:
         # It used to be written twice: the append, then a separate

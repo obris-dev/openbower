@@ -30,6 +30,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.providers import ModelUnavailable
 from agents.tools.registry import UnknownTool
+from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
 from ..constants import (
@@ -149,6 +150,8 @@ class ManualFillTestCase(TransactionTestCase):
                 config=quick_config(),
                 confirmed_row_count=2,
             )
+        JobRunner(worker_id="test:1").tick()
+        self.fill.refresh_from_db()
 
     def run_fill(self, model, *, fill: Fill | None = None, passes: int = 1) -> None:
         """Drive a fill's tasks through the shared consumer directly (no
@@ -269,6 +272,7 @@ class ManualFillTestCase(TransactionTestCase):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
             )
+        JobRunner(worker_id="test:1").tick()
         self.run_fill(throttling_model(), fill=fill, passes=NODE_RUN_ATTEMPTS + 1)
         fill.refresh_from_db()
         self.assertEqual(fill.status, FillStatus.COMPLETE)

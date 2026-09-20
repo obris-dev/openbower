@@ -145,14 +145,14 @@ export const SETTLED_CELL_STATES = WIRE_CONSTANTS.SETTLED_CELL_STATES;
 export type SettledCellState = (typeof SETTLED_CELL_STATES)[number];
 
 // The fill refusals a client CLASSIFIES by code, mirroring the
-// server's FillErrorCode (lists/constants.py): the two the client
-// RE-READS on (the row-count echo, so the next attempt echoes the new
-// truth, and the stale column order, so the next move is judged
+// server's FillErrorCode (lists/constants.py): the one the client
+// RE-READS on (the stale column order, so the next move is judged
 // against the set the sheet actually has) and the three whose
 // offending surface is the OUTPUTS (they name what the fill would
 // write, so the drawer marks that pane). Every other refusal renders
-// through its verbatim detail alone and needs no name here.
-export const ROW_COUNT_CHANGED_CODE = "row_count_changed";
+// through its verbatim detail alone and needs no name here. A fill
+// never refuses on a grown sheet: its range is the count the user
+// consented to, and rows past it wait for the next refill.
 export const COLUMN_ORDER_STALE_CODE = "column_order_stale";
 export const COLUMN_COLLISION_CODE = "column_collision";
 export const RESERVED_KEY_CODE = "reserved_key";

@@ -16,6 +16,7 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import FillRunWire
 
@@ -45,6 +46,13 @@ CONFIG = {
 }
 
 
+def tick_jobs() -> None:
+    """Work the walk admission queued: a fill's runs exist once the
+    jobs runner has ticked, exactly as they do in production a few
+    seconds after the click."""
+    JobRunner(worker_id="test:1").tick()
+
+
 class RefillTestCase(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
@@ -70,6 +78,7 @@ class RefillTestCase(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 201, resp.content)
+        tick_jobs()
         return resp.json()
 
     def cancel(self, fill_run_id: str) -> None:
@@ -80,9 +89,10 @@ class RefillTestCase(TestCase):
 
     def refill(self, list_id: str = "", key: str = "answer", rows: int = 0):
         url = reverse("lists_column_refill", kwargs={"id": list_id or str(self.sheet.id), "key": key})
-        if rows:
-            return self.client.post(url, {"rows": rows}, content_type="application/json")
-        return self.client.post(url)
+        body = {"rows": rows} if rows else {}
+        resp = self.client.post(url, body, content_type="application/json")
+        tick_jobs()
+        return resp
 
 
 class RefillTargetTests(RefillTestCase):
@@ -105,8 +115,10 @@ class RefillTargetTests(RefillTestCase):
         self.assertEqual(wire.column_keys, ["answer"])
         # Consent facts: the TARGET count, not the sheet total; the
         # cutoff is the current row count.
-        self.assertEqual(wire.confirmed_row_count, 2)
+        self.assertEqual(wire.confirmed_row_count, 4)  # the consented range: the sheet as reviewed
         self.assertEqual(wire.counters.attempted, 0)
+        # Settled to what the walk found once it ran.
+        self.assertEqual(Fill.objects.get(id=wire.id).confirmed_row_count, 2)
         self.assertEqual(targeted_pairs(wire.id), [(str(rows[1].id), 2), (str(rows[3].id), 4)])
 
     def test_appended_rows_are_covered(self) -> None:
@@ -120,7 +132,7 @@ class RefillTargetTests(RefillTestCase):
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
         wire = FillRunWire(**resp.json())
-        self.assertEqual(wire.confirmed_row_count, 3)
+        self.assertEqual(Fill.objects.get(id=wire.id).confirmed_row_count, 3)
         self.assertEqual(len(targeted(wire.id)), 3)
 
     def test_empty_target_refuses_with_the_envelope(self) -> None:
@@ -255,6 +267,7 @@ class PartialAnswerTests(RefillTestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 201, resp.content)
+        tick_jobs()
         fill = resp.json()
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         # Alpha answered, Beta declined, exactly as a real run reports.
@@ -292,11 +305,14 @@ class MultiColumnResumeTests(RefillTestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 201, resp.content)
+        tick_jobs()
         return resp.json()
 
     def _resume(self, fill_run_id: str, key: str):
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": key})
-        return self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
+        resp = self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
+        tick_jobs()
+        return resp
 
     def test_continue_owes_an_abandoned_row_whose_first_column_is_answered(self) -> None:
         # The case the tray's first-column Continue used to drop: a row
@@ -347,11 +363,13 @@ class ResumeTests(RefillTestCase):
         self.assertEqual(resumed.status_code, 201, resumed.content)
         body = resumed.json()
         # The stopped 1-row fill left exactly its one pending row.
-        self.assertEqual(body["confirmed_row_count"], 1)
+        self.assertEqual(Fill.objects.get(id=body["id"]).confirmed_row_count, 1)
 
     def refill_with_resume(self, fill_run_id: str):
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
-        return self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
+        resp = self.client.post(url, {"resume_fill": fill_run_id}, content_type="application/json")
+        tick_jobs()
+        return resp
 
     def test_continue_refuses_after_a_prompt_edit(self) -> None:
         # The config a fill consented under is part of the consent:
@@ -419,6 +437,10 @@ class ScopedRefillTests(RefillTestCase):
             resp.json(),
             {"error": "no_eligible_rows", "detail": "No rows have values for this prompt's variables."},
         )
+        tick_jobs()
+        return resp
+        tick_jobs()
+        return resp
 
 
 class RefillNotFoundTests(RefillTestCase):
@@ -470,11 +492,13 @@ class ResumeScopeTests(RefillTestCase):
     sheet is what scopes the read."""
 
     def _refill_resuming(self, fill_run_id: str):
-        return self.client.post(
+        resp = self.client.post(
             reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}),
             {"resume_fill": fill_run_id},
             content_type="application/json",
         )
+        tick_jobs()
+        return resp
 
     def test_a_resume_run_from_another_account_is_refused(self):
         theirs = ListService(account_id="01ACCTOTHERBBBBBBBBBBBBBBB")
@@ -496,6 +520,7 @@ class ResumeScopeTests(RefillTestCase):
         foreign = FillAdmissionService(account_id="01ACCTOTHERBBBBBBBBBBBBBBB", user_id=TEST_IDENTITY["id"]).admit(
             list_id=str(sheet.id), config=config, confirmed_row_count=2
         )
+        tick_jobs()
         # Their rows are unsettled, so the only thing standing between
         # this caller and that account's work is the scoping check.
         self.assertEqual(len(targeted(str(foreign.id))), 2)
@@ -519,19 +544,18 @@ class ResumeScopeTests(RefillTestCase):
 
 
 class RefillConsentTests(RefillTestCase):
-    def test_a_grown_target_refuses_before_spending(self):
-        # Refill starts METERED work on a set the server derives at
-        # click time. The echo is a spend CEILING: more owed rows than
-        # the user reviewed refuses; fewer just fills less.
+    def test_a_refill_covers_the_echoed_count_never_a_grown_remainder(self):
+        # Refill starts METERED work. The count the user reviewed is the
+        # range: a row that arrived after it shows unfilled for the next
+        # refill rather than being spent on unreviewed.
         fill = self.admit()
         self.cancel(fill["id"])
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
         resp = self.client.post(url, {"confirmed_row_count": 1}, content_type="application/json")
-        self.assertEqual(resp.status_code, 409, resp.content)
-        self.assertEqual(resp.json()["error"], "row_count_changed")
-        # Nothing was opened: the refusal rolls back inside the walk's
-        # own transaction.
-        self.assertEqual(Fill.objects.filter(list_id=str(self.sheet.id)).count(), 1)
+        tick_jobs()
+        self.assertEqual(resp.status_code, 201, resp.content)
+        wire = FillRunWire(**resp.json())
+        self.assertEqual(targeted_positions(wire.id), [1])
 
     def test_a_shrunken_target_admits_and_fills_less(self):
         # Reviewed 99, the column owes 2: cheaper than consented, so
@@ -574,19 +598,6 @@ class RefillConsentTests(RefillTestCase):
         resp = self.client.post(url, {"rows": 50, "confirmed_row_count": 50}, content_type="application/json")
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(resp.json()["confirmed_row_count"], 2)
-
-    def test_the_refusal_counts_the_COLUMN_not_the_sheet(self):
-        # admit's copy says "the sheet now has N rows"; refill counts
-        # what the column still owes, so reusing it told a big sheet it
-        # had shrunk to the owed count.
-        fill = self.admit()
-        self.cancel(fill["id"])
-        url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
-        resp = self.client.post(url, {"confirmed_row_count": 1}, content_type="application/json")
-        self.assertEqual(resp.status_code, 409, resp.content)
-        detail = resp.json()["detail"]
-        self.assertIn("2 rows left to fill", detail)
-        self.assertNotIn("sheet", detail)
 
     def test_no_echo_still_admits(self):
         # Optional: resume spends a consent already bought, and every

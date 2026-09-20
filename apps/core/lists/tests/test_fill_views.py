@@ -19,6 +19,7 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
 from openbower_schema.lists import AiColumn, ListRowsPage
@@ -70,6 +71,13 @@ def wire_config() -> AgentConfig:
     )
 
 
+def tick_jobs() -> None:
+    """Work the walk admission queued: a fill's runs exist once the
+    jobs runner has ticked, exactly as they do in production a few
+    seconds after the click."""
+    JobRunner(worker_id="test:1").tick()
+
+
 class FillViewsTestCase(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
@@ -89,11 +97,13 @@ class FillViewsTestCase(TestCase):
         body: dict = {"config": CONFIG, "confirmed_row_count": 2}
         body.update(overrides)
         body = {key: value for key, value in body.items() if value is not None}
-        return self.client.post(
+        resp = self.client.post(
             reverse("lists_columns_ai", kwargs={"id": list_id or str(self.sheet.id)}),
             body,
             content_type="application/json",
         )
+        tick_jobs()
+        return resp
 
 
 class AiColumnPostTests(FillViewsTestCase):
@@ -136,13 +146,6 @@ class AiColumnPostTests(FillViewsTestCase):
         resp = self.post_ai()
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json(), {"error": "fill_active", "detail": "A fill is already running on this column."})
-
-    def test_row_count_drift_is_409_with_the_envelope(self) -> None:
-        resp = self.post_ai(confirmed_row_count=1)
-        self.assertEqual(resp.status_code, 409)
-        body = resp.json()
-        self.assertEqual(body["error"], "row_count_changed")
-        self.assertIn("it now has 2 rows", body["detail"])
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_is_400_with_the_envelope(self) -> None:
@@ -434,6 +437,7 @@ class CellStatesTests(FillViewsTestCase):
         settle(first["id"], str(rows[1].id), StoredCellState.MODEL_ERROR)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": first["id"]}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
+        tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         page = self._states_page()
         # The settled row keeps its word from the OLD fill; the
@@ -478,6 +482,7 @@ class CellStatesTests(FillViewsTestCase):
         agent = agents.get_for_fill(stale["agent_id"])
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
+        tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         fresh = refill.json()
         page = self._states_page()
@@ -526,6 +531,7 @@ class CellStatesTests(FillViewsTestCase):
         settle(first["id"], str(rows[1].id), None)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": first["id"]}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
+        tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         self.assertEqual(words(self._states_page().items[0].states), {"answer": "pending"})
         self.client.post(
@@ -593,10 +599,11 @@ class FillColumnSummaryTests(FillViewsTestCase):
         settle(fill_run_id, str(rows[1].id), StoredCellState.MODEL_ERROR)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id}))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
+        tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         # no_evidence is SETTLED under the same config; model_error is
         # infrastructure and re-runs. Exactly one row.
-        self.assertEqual(FillRunWire(**refill.json()).confirmed_row_count, 1)
+        self.assertEqual(Fill.objects.get(id=refill.json()["id"]).confirmed_row_count, 1)
 
     def test_the_fills_page_carries_per_column_coverage(self) -> None:
         # The tracker renders server truth: `filled` counts the cells
@@ -647,6 +654,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
 
         self.assertEqual(counts(), (0, 2))
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
+        tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         settle(refill.json()["id"], str(rows[0].id), None)
         # One moved buckets; the total is unchanged.

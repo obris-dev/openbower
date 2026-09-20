@@ -372,9 +372,7 @@ function DrawerContent({
     if (!res.ok) {
       // Tier 1: the server's detail renders VERBATIM. A code whose
       // offending surface is knowable (the outputs) marks it; the
-      // rest keep the footer slot (row_count_changed included: the
-      // parent refreshes its count on that code, so the next attempt
-      // echoes the new truth). Without a detail the client stays
+      // rest keep the footer slot. Without a detail the client stays
       // general: it cannot see why the start failed.
       if (res.error && OUTPUTS_REFUSAL_CODES.has(res.error) && res.detail) {
         setOutputsRefusal(res.detail);

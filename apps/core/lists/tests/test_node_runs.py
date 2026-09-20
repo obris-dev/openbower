@@ -22,6 +22,7 @@ from django.db import IntegrityError
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
+from jobs.services import JobRunner
 from openbower_schema.lists import AiColumn
 
 from ..constants import NodeRunStatus
@@ -69,6 +70,7 @@ class AutofillHarness(TransactionTestCase):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )
+        JobRunner(worker_id="test:1").tick()
         sheet.refresh_from_db()
         node_id = next(column.node_id for column in sheet.columns if isinstance(column, AiColumn))
         return sheet, node_id, fill

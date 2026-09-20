@@ -113,8 +113,8 @@ class AiColumnRequest(serializers.Serializer):
     retyped), the other tab sends `agent_id`; exactly one of the two.
     No column label rides the request: the OUTPUTS are the columns
     (each output's key and label name what its cells land under).
-    `confirmed_row_count` echoes the count the user consented to
-    (admission 409s on drift)."""
+    `confirmed_row_count` echoes the count the user consented to: the
+    fill's range, so rows appended after the click are never walked."""
 
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
@@ -321,6 +321,7 @@ def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:
         column_keys=fill.column_keys or [],
         counters=counters,
         confirmed_row_count=fill.confirmed_row_count,
+        targeted_at=fill.targeted_at.isoformat() if fill.targeted_at else None,
         # The base model's attribution field is the wire's started_by;
         # authorization stays account membership.
         started_by=fill.user_id,

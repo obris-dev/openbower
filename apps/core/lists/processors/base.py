@@ -59,6 +59,10 @@ class WalkScope(BaseModel):
     # The stopped fill a REMAINING walk resumes: rows it still owed are
     # the only ones offered. "" = the column's whole remainder.
     owed_by: str = ""
+    # The columns a REMAINING walk judges owed-ness across: the one
+    # column the user clicked for a widening gesture, the resumed
+    # fill's whole set for a Continue. Empty = the fill's own columns.
+    column_keys: list[str] = []
     # A fill's CONSENT RANGE: rows at or below this position (0 = no
     # bound). Positions are dense and append-only, so a row appended
     # after the click sits above it and is never walked.

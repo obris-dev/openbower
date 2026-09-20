@@ -11,13 +11,17 @@ import { isLiveStatus } from "./live-status.ts";
  * a RUNNING run with no heartbeat yet has been claimed but its first
  * rows have not reported (the heartbeat stamps only on row completion,
  * so "hasn't started" would be false there); a gone-quiet heartbeat
- * names the silence in minutes. */
+ * names the silence in minutes. A run whose target set is not whole
+ * yet (`targeted_at` null) is still being queued and warns of nothing. */
 export function staleWarning(
-  run: Pick<FillRunWire, "status" | "heartbeat_at" | "created_at">,
+  run: Pick<FillRunWire, "status" | "heartbeat_at" | "created_at" | "targeted_at">,
   nowMs: number,
   supportFollowup?: string,
 ): string | null {
   if (!isLiveStatus(run.status)) return null;
+  // A run whose rows are still being queued has not been offered to a
+  // worker yet: "hasn't started" would blame the workers for the walk.
+  if (run.targeted_at === null) return null;
   const reportedAt = Date.parse(run.heartbeat_at ?? run.created_at);
   if (nowMs === 0 || Number.isNaN(reportedAt)) return null;
   const silentSeconds = (nowMs - reportedAt) / 1_000;

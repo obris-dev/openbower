@@ -112,8 +112,10 @@ def targeted(fill_run_id: str) -> set[str]:
     """The row ids a fill targets, read from its QUEUE.
 
     The queue IS the consent record: one task per row the user agreed
-    to, written at admission and never re-derived, so counting tasks is
-    exactly what these assertions always meant."""
+    to, written by the walk admission queues and never re-derived, so
+    counting tasks is exactly what these assertions always meant (a
+    test ticks the jobs runner after admitting, as production does
+    seconds after the click)."""
     return {str(row_id) for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)}
 
 

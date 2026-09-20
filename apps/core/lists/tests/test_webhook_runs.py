@@ -285,6 +285,7 @@ class AdvanceTests(_SheetHarness):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1
             )
+        self._run_jobs()
         WebhookColumnService(account_id=ACCOUNT, user_id=USER).add(
             str(sheet.id),
             label="CRM sync",

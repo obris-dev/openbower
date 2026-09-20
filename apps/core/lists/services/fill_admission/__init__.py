@@ -6,7 +6,8 @@ leaving the sheet carrying a column nothing will ever fill.
 
 One room per concern, the kind boundary a file boundary:
 `errors` the shared vocabulary, `base` strictly what both kinds
-execute, `columns` and `targets` the normal kind's machinery,
+execute, `columns` the normal kind's column machinery and `targets` its
+metering cap (which rows a fill targets is the agent processor's),
 `normal` (admit/refill) and `test` the two
 services, each kind admitting through its own admit().
 Account-scoped like every lists service."""
@@ -30,9 +31,7 @@ from .errors import (
     ReservedColumnKey,
     ResumeConfigChanged,
     ResumeRunNotFound,
-    RowCountChanged,
     SameColumnFillActive,
-    TargetCountChanged,
     TestFillActive,
     TestRowInvalid,
 )
@@ -59,9 +58,7 @@ __all__ = [
     "ReservedColumnKey",
     "ResumeConfigChanged",
     "ResumeRunNotFound",
-    "RowCountChanged",
     "SameColumnFillActive",
-    "TargetCountChanged",
     "TestFillActive",
     "TestFillAdmission",
     "TestRowInvalid",

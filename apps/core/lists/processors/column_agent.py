@@ -76,6 +76,11 @@ class AIColumnProcessor(NodeProcessor):
     def variables(self) -> set[str]:
         return prompt_variables(AgentConfig(**self.fill.config_snapshot).prompt)
 
+    @cached_property
+    def judged_keys(self) -> list[str]:
+        """The columns a REMAINING walk judges owed-ness across."""
+        return list(self.scope.column_keys) or list(self.fill.column_keys)
+
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime) -> int:
         if not rows:
             return 0
@@ -144,7 +149,7 @@ class AIColumnProcessor(NodeProcessor):
             if facts.owed is not None and row_id not in facts.owed:
                 return _Verdict.DONE
             done = facts.settled.get(row_id, frozenset())
-            if all(key in done or str(row.data.get(key, "") or "").strip() for key in self.fill.column_keys):
+            if all(key in done or str(row.data.get(key, "") or "").strip() for key in self.judged_keys):
                 return _Verdict.DONE
         if mode in (WalkMode.FRESH, WalkMode.REMAINING):
             return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
@@ -172,10 +177,7 @@ class AIColumnProcessor(NodeProcessor):
         settled: dict[str, set[str]] = {}
         cell_states = CellStateService(account_id=self.account_id)
         for row_id, column_key in cell_states.iter_settled(
-            str(self.fill.list_id),
-            row_ids=ids,
-            column_keys=self.fill.column_keys,
-            fingerprint=self.fill.config_fingerprint,
+            str(self.fill.list_id), row_ids=ids, column_keys=self.judged_keys, fingerprint=self.fill.config_fingerprint
         ):
             settled.setdefault(str(row_id), set()).add(column_key)
         return _PageFacts(owed=owed, settled=settled)

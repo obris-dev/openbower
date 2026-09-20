@@ -2,10 +2,10 @@
 
 A fill RUN is a durable background walk of a sheet: one agent run
 per row, cells written where blank, every blank carrying its cause. The
-queue is materialized at admission, one task per consented row, and a
-cell reads PENDING because a queued task on a live fill says so, so
-the wire speaks fill run envelopes, per-cell states, and nothing
-about workers. Copy a user reads says "fill", the feature's own
+queue is materialized by the walk admission queues (one task per row in
+the consent range, landing within seconds of the click), and a cell
+reads PENDING because a queued task on a live fill says so, so the wire
+speaks fill run envelopes, per-cell states, and nothing about workers. Copy a user reads says "fill", the feature's own
 word; "run" names the record in type names and the page's `runs`
 key (FillRunWire, FillRunPage.runs), so prose can tell one run of a
 fill from the feature itself.
@@ -35,9 +35,8 @@ SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
     "type_mismatch",
 )
 
-# Per-row retry patience: the initial run plus 3 retries (binary). The
-# consent footer's "worst case 4x these counts" clause is this number,
-# so it is a wire fact, not a server internal.
+# Per-row retry patience: the initial run plus 3 retries (binary). A
+# wire fact so a client can state the worst-case spend beside a count.
 NODE_RUN_ATTEMPTS = 4
 # The row-lease staleness window: a claimed row's lease is renewed in
 # bulk by the worker's supervising loop, which passes far more often
@@ -50,8 +49,8 @@ NODE_RUN_ATTEMPTS = 4
 ROW_LEASE_STALE_SECONDS = 256
 # Admission budget for the FREE search door (derived): MAX_TOOL_CALLS
 # searches per row times the largest sheet the free door should carry
-# end to end (128 rows, binary). Fills needing more are refused at
-# admission, naming the paid door.
+# end to end (128 rows, binary). A consent past it is refused at
+# admission, on the count the user agreed to, naming the paid door.
 FREE_SEARCH_FILL_BUDGET = MAX_TOOL_CALLS * 128
 
 
@@ -151,10 +150,16 @@ class FillRunWire(BaseModel):
     column_keys: list[str] = Field(description="The columns this run owns, frozen at consent.")
     counters: FillCounters
     confirmed_row_count: int = Field(
-        description="Rows this run TARGETED, fixed when it opened: the progress denominator. "
-        "The consent echo is a REQUEST field of the same name that admission compares against "
-        "the sheet, 409ing on drift; what ships here is what the walk actually consented to, "
-        "which a scoped fill makes smaller than the sheet."
+        description="The progress denominator: the row count the user consented to when the run "
+        "opened, settled to the rows the walk actually targeted once `targeted_at` is set (only "
+        "ever downward: a row the user did not consent to is never targeted). The consent echo is "
+        "a REQUEST field of the same name; the run covers rows up to it and never past it."
+    )
+    targeted_at: str | None = Field(
+        default=None,
+        description="When the run's target set became whole: the walk that queues its runs has "
+        "offered every row in the consent range. Null while it is still queuing (seconds after "
+        "the click); a run cannot complete before it is set.",
     )
     started_by: str = Field(description="User id, ATTRIBUTION only; authorization is account membership.")
     heartbeat_at: str | None = Field(

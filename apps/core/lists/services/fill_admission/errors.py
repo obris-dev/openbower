@@ -49,40 +49,6 @@ class AccountFillsFull(FillRefused):
         super().__init__(f"This account already has {MAX_ACTIVE_FILLS} fills running; wait for one to finish.")
 
 
-class RowCountChanged(FillRefused):
-    """The consent echo failed: the sheet GREW after the user read the
-    numbers, so an unscoped fill would spend past the count the button
-    named. Growth only: the number is a spend CEILING, and a ceiling
-    is violated only upward; a shrunken sheet fills fewer rows than
-    consented, which betrays no one."""
-
-    code = FillErrorCode.ROW_COUNT_CHANGED
-
-    def __init__(self, actual: int) -> None:
-        self.actual = actual
-        super().__init__(
-            f"The sheet has grown since you reviewed; it now has {actual} rows. Check the numbers and start again."
-        )
-
-
-class TargetCountChanged(FillRefused):
-    """Refill's consent echo. Its own refusal, not the admit lane's,
-    because the number is not the SHEET's size: refill counts what the
-    column still owes, and reusing admit's copy told a 5,000 row sheet
-    with two owed rows that it now has two rows.
-
-    Same machine code, deliberately: the client's recovery for both is
-    to re-read the count it showed and let the user start again."""
-
-    code = FillErrorCode.ROW_COUNT_CHANGED
-
-    def __init__(self, actual: int) -> None:
-        self.actual = actual
-        super().__init__(
-            f"This column has {actual} rows left to fill, more than the number you reviewed. Check it and start again."
-        )
-
-
 class EmptyFill(FillRefused):
     """No fill that does nothing: a fill needs rows."""
 

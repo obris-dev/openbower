@@ -92,7 +92,6 @@ _FILL_CONFLICT_CODES = frozenset(
     {
         FillErrorCode.FILL_ACTIVE,
         FillErrorCode.FILLS_FULL,
-        FillErrorCode.ROW_COUNT_CHANGED,
         FillErrorCode.CONFIG_CHANGED,
     }
 )

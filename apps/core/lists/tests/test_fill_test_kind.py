@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
+from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ROW_LEASE_STALE_SECONDS, FillRunDetail
 
@@ -430,6 +431,7 @@ class TestKindWorkerTests(TransactionTestCase):
         )
         lists.add_rows(sheet, [{"company": "acme.com"}])
         real = self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+        JobRunner(worker_id="test:1").tick()
         test = self.tests.admit(config=quick_config(), row={"company": "acme.com"})
         self._run_fill(real, answering_model(lambda prompt: "x"))
         self._run_fill(test, answering_model(lambda prompt: "x"))

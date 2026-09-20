@@ -140,7 +140,6 @@ class FillErrorCode(StrEnum):
     COLUMN_REFUSED = "column_refused"
     FILL_ACTIVE = "fill_active"
     FILLS_FULL = "fills_full"
-    ROW_COUNT_CHANGED = "row_count_changed"
     CONFIG_CHANGED = "config_changed"
     RESUME_NOT_FOUND = "resume_not_found"
     EMPTY_FILL = "empty_fill"

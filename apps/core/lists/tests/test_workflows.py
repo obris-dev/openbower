@@ -30,7 +30,7 @@ from ..services.workflows import (
     config_as,
 )
 from .fill_helpers import settle_all
-from .test_fill_admission import ACCOUNT, USER, AdmissionTestCase, quick_config
+from .test_fill_admission import ACCOUNT, USER, AdmissionTestCase, quick_config, tick_jobs
 
 
 class NodeGetOrCreateTests(AdmissionTestCase):
@@ -121,6 +121,7 @@ class AdmissionNodeTests(AdmissionTestCase):
         self.fills.cancel(str(fill.id))
         self.lists.add_rows(self.sheet, [{"company": "third.io"}])
         again = self.admission.refill(list_id=str(self.sheet.id), column_key="answer")
+        tick_jobs()
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (1, 1))
         self.assertEqual(
             {t.node_id for t in NodeRun.objects.filter(fill_run_id=str(again.id))}, {str(Node.objects.get().id)}
