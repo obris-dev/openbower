@@ -9,6 +9,7 @@ Run: DJANGO_ENV=test uv run python manage.py test jobs
 
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 from typing import ClassVar
 from unittest.mock import patch
@@ -18,12 +19,13 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from pydantic import BaseModel, ValidationError
 
-from ..constants import JOB_ATTEMPTS, JOB_RETRY_BACKOFF_SECONDS, JOB_STALE_SECONDS, JobStatus
+from ..constants import JOB_ATTEMPTS, JOB_LOOP_IDLE_SECONDS, JOB_RETRY_BACKOFF_SECONDS, JOB_STALE_SECONDS, JobStatus
 from ..kinds import registry
 from ..kinds.base import JobKind
 from ..kinds.registry import all_kinds, register
 from ..models import Job
 from ..services import JobRunner, enqueue
+from ..services.loop import run_loop
 from ..services.runner import EXHAUSTED
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
@@ -200,11 +202,51 @@ class RunnerTests(TestCase):
         self.assertIn("KeyError", job.error)
         self.assertEqual(later.status, JobStatus.DONE)
 
-    def test_the_command_runs_a_tick_and_logs_the_report(self):
+    def test_the_command_runs_one_tick_and_logs_the_report(self):
         enqueue(ACCOUNT, Counting(pages=1))
-        with self.assertLogs("jobs.management.commands.run_jobs", level="INFO") as logs:
-            call_command("run_jobs")
+        with self.assertLogs("jobs.services.loop", level="INFO") as logs:
+            call_command("run_jobs", "--once")
         self.assertIn("done=1", logs.output[0])
+
+
+class LoopTests(TestCase):
+    """The process loop: ticks until stopped, idles only when a tick
+    found nothing, and a stop set mid-tick ends it after that tick."""
+
+    def setUp(self) -> None:
+        SLICES.clear()
+
+    def test_a_stop_already_set_ends_the_loop_before_any_tick(self):
+        enqueue(ACCOUNT, Counting(pages=1))
+        stop = threading.Event()
+        stop.set()
+        run_loop(JobRunner(worker_id="loop:1"), stop=stop)
+        self.assertEqual(SLICES, [])
+
+    def test_the_loop_works_a_backlog_without_idling_and_idles_once_empty(self):
+        # Two jobs: the first tick works both (no idle between), the
+        # next tick finds nothing and idles; the idle wait is what the
+        # stop interrupts.
+        enqueue(ACCOUNT, Counting(pages=1))
+        enqueue(ACCOUNT, Counting(pages=1))
+        stop = threading.Event()
+        waits: list[float] = []
+
+        def wait(seconds: float) -> bool:
+            waits.append(seconds)
+            stop.set()
+            return True
+
+        stop.wait = wait  # type: ignore[method-assign]
+        run_loop(JobRunner(worker_id="loop:1"), stop=stop)
+        self.assertEqual(len(SLICES), 2)
+        self.assertEqual(waits, [JOB_LOOP_IDLE_SECONDS])
+
+    def test_the_heartbeat_is_touched_each_pass(self):
+        stop = threading.Event()
+        with patch("jobs.services.loop._touch_heartbeat") as touch:
+            run_loop(JobRunner(worker_id="loop:1"), stop=stop, once=True)
+        touch.assert_called_once()
 
 
 class _Cursor(BaseModel):

@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries flush-webhooks run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web sweep prune-webhook-deliveries flush-webhooks run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -104,8 +104,8 @@ restart: ## Restart all services in place (compose-file edits need make up, whic
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
 
-restart-worker: ## Restart the fill + autofill provisioners and consumers (what a change to their shared code needs; no reloader)
-	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer autofill-provisioner autofill-consumer
+restart-worker: ## Restart the fill + autofill provisioners and consumers and the jobs service (what a change to their shared code needs; no reloader)
+	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer autofill-provisioner autofill-consumer jobs
 
 restart-cron: ## Restart the cron (a crontab schedule edit needs it; supercronic parses at startup)
 	$(COMPOSE) restart cron
@@ -144,6 +144,9 @@ logs-core: ## Tail the api's logs
 logs-worker: ## Tail the fill provisioner + manual/test consumer logs
 	$(COMPOSE) logs -f fill-provisioner fill-consumer test-consumer
 
+logs-jobs: ## Tail the jobs service's logs (the walks that queue a fill's or a backfill's runs)
+	$(COMPOSE) logs -f jobs
+
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
 	$(COMPOSE) logs -f ingest-worker
 
@@ -162,8 +165,8 @@ prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron co
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
 flush-webhooks: ## Run the webhook flush once, in the cron container (sends every digest that is due)
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_webhooks
-run-jobs: ## Run the background-job tick once, in the cron container
-	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py run_jobs
+run-jobs: ## Run one jobs tick by hand, in the jobs container (the service loops on its own)
+	$(COMPOSE) exec jobs uv run --frozen --package openbower-core python apps/core/manage.py run_jobs --once
 
 # A debugging aid outside the stack: a plain container on the stack's
 # network, so it never rides `make up` or a deployment.

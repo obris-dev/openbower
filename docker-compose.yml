@@ -223,6 +223,36 @@ services:
       retries: 3
       start_period: 40s
 
+  # The background JOBS service: the one walker that queues a fill's or
+  # a webhook backfill's runs, and any job kind after it. A loop like
+  # the provisioners (tick, idle 4 s when nothing was due, tick), so a
+  # job queued by a request is worked within seconds of the click; the
+  # cron would have left the sheet un-shimmering for up to a minute.
+  # Needs only the database (jobs publish nothing to the bus). No
+  # restart policy (crash-is-a-signal); one job's crash is parked with
+  # its cause inside the tick, never the process's problem.
+  jobs:
+    image: *core_image
+    command: uv run --frozen --package openbower-core python apps/core/manage.py run_jobs
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the loop touches /tmp/run_jobs.heartbeat each pass, so
+    # a marker older than 30s means it WEDGED (not merely idle, which
+    # still loops).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/run_jobs.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
   # The manual fill CONSUMER (the shared node-run processor on the
   # manual lane): claims each published task off the bus, runs its
   # FROZEN config, and lands it on the sheet (NORMAL) or its task (TEST),

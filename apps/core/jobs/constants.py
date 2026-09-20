@@ -17,6 +17,10 @@ JOB_ATTEMPTS = 4
 # the cron's minute so ticks never pile up, and well under the stale
 # window so a live tick is never reclaimed.
 JOB_TICK_BUDGET_SECONDS = 32
+# How long the jobs service idles after a tick that found nothing due:
+# the provisioners' cadence, so a job queued by a request is worked
+# within seconds of the click.
+JOB_LOOP_IDLE_SECONDS = 4
 # A job PROCESSING longer than this was abandoned by a dead tick
 # (binary, ~17 min); the next tick returns it to READY.
 JOB_STALE_SECONDS = 1024
