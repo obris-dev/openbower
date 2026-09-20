@@ -85,12 +85,18 @@ auth + data services live in a separate private repo.
   idempotent because a reclaimed job re-walks its last one. A job is
   never a NodeRun (a run is one node applied to one row) and a
   request never walks a sheet: admission decides and queues.
-- Which rows a node owes a run to is the node kind's PROCESSOR
-  (lists/processors: `NodeProcessor.enqueue_runs(target_list, rows,
-  now)`, handed out by `processor_for` on the node's kind with a typed
-  `WalkScope`); a walker pages rows and hands them over, knowing no
-  kind and no column. The node config classes in lists/nodes stay what
-  a node IS at rest.
+- Which rows a node owes a run to, and how one of its runs EXECUTES,
+  is the node kind's PROCESSOR (lists/processors, handed out by
+  `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
+  target_list, rows, now)` under a typed `WalkScope` for the walkers,
+  which page rows and hand them over knowing no kind and no column;
+  `process_run(task, flow)` for a kind whose runs are claimed one at a
+  time off the topic, or `process_batch(flow, now)` for a kind that
+  claims and settles a node's due runs together, for the dispatchers
+  (the node-run consumer, the webhook flush), which claim or iterate
+  and hand over knowing no kind. A kind overrides exactly one of the
+  two; the other keeps its raising default. The node config classes in
+  lists/nodes stay what a node IS at rest.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

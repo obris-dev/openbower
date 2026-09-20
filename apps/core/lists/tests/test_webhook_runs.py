@@ -34,6 +34,7 @@ from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fill_processing.landing import LandingContext, land_row
 from lists.services.lists import ListService
+from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
 from lists.services.webhook_runs import WebhookRunResult
 from lists.services.workflows import NodeNotFound, WorkflowService
@@ -155,6 +156,18 @@ class ProcessorTests(_SheetHarness):
         barrier = Node.objects.get(path_id=node.path_id, rank=0)
         with self.assertRaises(UnknownProcessor):
             processor_for(account_id=ACCOUNT, node=barrier)
+
+    def test_each_kind_executes_in_exactly_one_shape(self):
+        # The webhook kind sends per NODE (one digest for many runs), the
+        # agent kind runs per RUN; a dispatcher holding the wrong shape
+        # must fail loudly, never silently do nothing. FAILS if a kind
+        # gains a silent default for the shape it does not execute in.
+        node_id = self._add_webhook_column(["country"])
+        flow = NodeRunFlow(worker_id="test:shape")
+        with self.assertRaises(NotImplementedError):
+            self._processor(node_id).process_run(NodeRun(), flow=flow)
+        with self.assertRaises(NotImplementedError):
+            processor_for(account_id=ACCOUNT, node=self.first).process_batch(flow=flow, now=datetime.now(UTC))
 
     def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):
         node_id = self._add_webhook_column(["country", "answer"])

@@ -1,15 +1,15 @@
 """The shared node-run CONSUMER: the loop that claims tasks off the bus
-and hands each to its lane's processor. The consume loop lives here
-(mirroring the ingest consumer); the management command owns only signals;
-the processing itself lives in services.fill_processing. ONE consumer
-serves both lanes, told which topic to read.
+and hands each to its node's processor. The consume loop lives here
+(mirroring the ingest consumer); the management command owns only
+signals; how a run executes lives on the processor of its node's kind
+(lists/processors). ONE consumer serves both lanes, told which topic to
+read.
 
 `handle_node_run` is the separable unit, testable without a broker: it
 claims the task through the state machine (READY | QUEUED -> PROCESSING,
 accepting READY so a message that outran the provisioner's mark still
-runs), routes it to AutofillRun or FillBackedRun on its own
-`fill_run_id`, and translates a row/list deletion mid-run into a terminal
-ROW_MISSING.
+runs), hands it to its node's processor, and translates a row/list
+deletion mid-run into a terminal ROW_MISSING.
 
 The offset is committed AFTER the settle, so a consumer that dies mid-run
 redelivers the message and the claim CAS keeps the redelivery from
@@ -27,8 +27,9 @@ from django.db import DatabaseError, connection
 
 from ..constants import FILL_RETRY_BACKOFF_SECONDS, NodeRunStatus
 from ..ingest.topics import AUTOFILL_RUNS
+from ..models import Node
+from ..processors import RunOutcome, processor_for
 from ..services import fill_progress
-from ..services.fill_processing import AutofillRun, FillBackedRun
 from ..services.lists import ListNotFound, RowNotFound
 from ..services.node_runs import NodeRunFlow
 
@@ -49,23 +50,29 @@ def _touch_heartbeat() -> None:
         logger.warning("consume_node_runs heartbeat write failed: %s", e)
 
 
-def handle_node_run(task_id: str, worker_id: str) -> str:
-    """Claim one task and hand it to its lane's processor. Returns
-    "dropped" (the claim CAS lost: a duplicate delivery, or the reclaim
-    scan / another consumer got there first), "done" (settled terminally,
-    with or without a value), "parked" (a retriable blank, back to READY
-    with a backoff), or "row_missing" / "list_missing" (the row or its list
-    vanished). A database error PROPAGATES, so the offset is not committed
-    and the message redelivers; any other crash inside the run parks the
-    task (a retry with backoff) or, past the attempt cap, settles it DONE
-    unrun, so one bad task never takes the consumer down."""
+def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
+    """Claim one task and hand it to its node's processor. Returns None
+    when the claim CAS lost (a duplicate delivery, or the reclaim scan /
+    another consumer got there first), else what the processor did with
+    it. A database error PROPAGATES, so the offset is not committed and
+    the message redelivers; any other crash inside the run parks the
+    task (a retry with backoff) or, past the attempt cap, settles it
+    DONE unrun, so one bad task never takes the consumer down."""
     flow = NodeRunFlow(worker_id=worker_id)
     task = flow.claim(task_id)
     if task is None:
-        return "dropped"
-    processor = (FillBackedRun if task.fill_run_id else AutofillRun)(task=task, worker_id=worker_id)
+        return None
+    node = Node.objects.filter(id=task.node_id, account_id=task.account_id).first()
+    if node is None:
+        # Nodes die only with their list, so a run still pointing at one
+        # is corruption; settle rather than crash-loop the consumer, but
+        # say so (unlike the allowed agent orphaning, which the processor
+        # settles silently).
+        logger.warning("node run %s: node %s is gone; settling it unrun", task.id, task.node_id)
+        flow.settle(task.id, status=NodeRunStatus.DONE, result={})
+        return RunOutcome.DONE
     try:
-        return processor.process()
+        return processor_for(account_id=task.account_id, node=node).process_run(task, flow=flow)
     except (ListNotFound, RowNotFound):
         # The row or list vanished between resolve and land (a user
         # deletion mid-run): terminal, nothing to diagnose. A fill-backed
@@ -74,7 +81,7 @@ def handle_node_run(task_id: str, worker_id: str) -> str:
         flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
         if task.fill_run_id:
             fill_progress.try_finish(task.fill_run_id)
-        return "row_missing"
+        return RunOutcome.ROW_MISSING
     except DatabaseError:
         # Transient: the loop's own branch recovers the connection and
         # leaves the offset uncommitted, so the message redelivers.
@@ -92,9 +99,9 @@ def handle_node_run(task_id: str, worker_id: str) -> str:
             flow.settle(task.id, {}, status=NodeRunStatus.DONE)
             if task.fill_run_id:
                 fill_progress.try_finish(task.fill_run_id)
-            return "done"
+            return RunOutcome.DONE
         flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result={})
-        return "parked"
+        return RunOutcome.PARKED
 
 
 class NodeRunConsumer:

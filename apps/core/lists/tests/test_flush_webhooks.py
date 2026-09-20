@@ -23,8 +23,8 @@ from jobs.services import JobRunner
 from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
-from lists.operations.flush_webhooks import COLUMN_REMOVED, DESTINATION_REMOVED, FlushWebhooksOperation
-from lists.processors.webhook import next_window
+from lists.operations.flush_webhooks import FlushWebhooksOperation
+from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, next_window
 from lists.services import cell_truth, webhook_runs
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
@@ -202,7 +202,7 @@ class FlushWebhooksTests(TransactionTestCase):
             self._complete(row)
         self._add_column()
         fake = _FakeSender()
-        with patch("lists.operations.flush_webhooks.WEBHOOK_FLUSH_BATCH", 2):
+        with patch("lists.processors.webhook.WEBHOOK_FLUSH_BATCH", 2):
             first = self._tick(fake)
             second = self._tick(fake)
         self.assertEqual((first.sent, second.sent), (2, 1))

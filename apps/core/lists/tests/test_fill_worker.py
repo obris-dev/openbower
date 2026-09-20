@@ -109,10 +109,10 @@ def flaky_then_answering_model(value: str) -> FunctionModel:
 
 def _patches(model):
     """The one mock boundary: the model seam. The claim-time gate in the
-    fill processor and the runtime's own resolve both read model_for, so
-    both are patched to the scripted model."""
+    agent kind's processor and the runtime's own resolve both read
+    model_for, so both are patched to the scripted model."""
     stack = ExitStack()
-    stack.enter_context(patch("lists.services.fill_processing.processor.model_for", return_value=model))
+    stack.enter_context(patch("lists.processors.column_agent.model_for", return_value=model))
     stack.enter_context(patch("agents.runtime.answer.answerer.model_for", return_value=model))
     return stack
 
@@ -282,13 +282,29 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(task.attempts, NODE_RUN_ATTEMPTS + 1)
         self.assertEqual(ListCellState.objects.get().state, StoredCellState.TRANSIENT)
 
+    def test_an_exhausted_task_whose_row_is_gone_settles_row_missing_not_a_phantom_cell(self) -> None:
+        # The row is resolved BEFORE the give-up: a task at the attempt
+        # cap whose row was deleted meanwhile retires ROW_MISSING, and no
+        # cell state is written for a row that no longer exists (the
+        # give-up blank has no cells, so nothing else would have refused
+        # the write).
+        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
+        NodeRun.objects.filter(fill_run_id=str(self.fill.id), row_id=str(gone.id)).update(attempts=NODE_RUN_ATTEMPTS)
+        ListRow.objects.filter(id=gone.id).delete()
+        self.run_fill(answering_model(lambda prompt: "found"))
+        task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(gone.id))
+        self.assertEqual(task.status, NodeRunStatus.ROW_MISSING)
+        self.assertFalse(ListCellState.objects.filter(row_id=str(gone.id)).exists())
+        self.fill.refresh_from_db()
+        self.assertEqual(self.fill.status, FillStatus.COMPLETE)
+
     def test_an_unrunnable_config_fails_the_fill_and_settles_the_task(self) -> None:
         # The claim-time model gate is the surviving config-tier FAILED
         # writer: a run that cannot resolve its model fails the WHOLE
         # fill (it fails every row identically) and settles the task
         # without spending.
         with (
-            patch("lists.services.fill_processing.processor.model_for", side_effect=ModelUnavailable("source closed")),
+            patch("lists.processors.column_agent.model_for", side_effect=ModelUnavailable("source closed")),
             patch("agents.runtime.answer.answerer.model_for"),
         ):
             first_task = (
@@ -310,9 +326,9 @@ class ManualFillTestCase(TransactionTestCase):
         # fill fails loudly and the task settles, instead of the row
         # crash-looping to its attempt cap on every reclaim.
         with (
-            patch("lists.services.fill_processing.processor.model_for"),  # model resolves; the tool is the problem
+            patch("lists.processors.column_agent.model_for"),  # model resolves; the tool is the problem
             patch(
-                "lists.services.fill_processing.processor.run_cell",
+                "lists.processors.column_agent.run_cell",
                 side_effect=UnknownTool("web_search retired"),
             ),
         ):

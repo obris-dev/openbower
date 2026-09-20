@@ -26,7 +26,7 @@ from openbower_schema.lists import AiColumn
 from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus, StoredCellState
 from ..models import List, ListCellState, ListRow, Node, NodeRun
 from ..operations.consume_node_runs import NodeRunConsumer, handle_node_run
-from ..services.fill_processing import ProcessNodeRun
+from ..processors.column_agent import give_up_blank
 from ..services.workflows import agent_id_of
 from .test_fill_worker import _patches, answering_model, throttling_model
 from .test_node_runs import AutofillHarness
@@ -77,7 +77,7 @@ class ProcessNodeRunTests(AutofillHarness):
         self.assertEqual(self._handle(task, answering_model(lambda prompt: "found it")), "done")
 
         second = self._handle(task, answering_model(lambda prompt: "should never run"))
-        self.assertEqual(second, "dropped")
+        self.assertIsNone(second)
 
     def test_a_vanished_row_settles_row_missing(self) -> None:
         _, task, row_id = self._one_ready_task("gone.co")
@@ -126,8 +126,10 @@ class ProcessNodeRunTests(AutofillHarness):
 
         # Same discriminator as above: a run that got past the node hop
         # would reach this model and land a result. A gone node is
-        # corruption, so unlike a gone agent it must leave a trace.
-        with self.assertLogs("lists.services.fill_processing.processor", level="WARNING") as logs:
+        # corruption, so unlike a gone agent it must leave a trace; the
+        # consumer settles it (there is no node to build a processor
+        # from), so the trace is the consumer's.
+        with self.assertLogs("lists.operations.consume_node_runs", level="WARNING") as logs:
             self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
         self.assertIn(f"node {task.node_id} is gone", logs.output[0])
 
@@ -141,7 +143,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # settle is the allowed shape, not corruption: no warning.
         Agent.objects.filter(id=agent_id_of(Node.objects.get(id=task.node_id))).delete()
 
-        with self.assertNoLogs("lists.services.fill_processing.processor", level="WARNING"):
+        with self.assertNoLogs("lists.processors.column_agent", level="WARNING"):
             self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
 
         task.refresh_from_db()
@@ -151,7 +153,7 @@ class ProcessNodeRunTests(AutofillHarness):
     def test_a_crash_inside_the_run_parks_the_task_and_never_escapes(self) -> None:
         _, task, row_id = self._one_ready_task("crash.co")
         with (
-            patch("lists.operations.consume_node_runs.AutofillRun.process", side_effect=RuntimeError("boom")),
+            patch("lists.processors.column_agent.AIColumnProcessor.process_run", side_effect=RuntimeError("boom")),
             self.assertLogs("lists.operations.consume_node_runs", level="ERROR") as logs,
         ):
             self.assertEqual(handle_node_run(str(task.id), WORKER), "parked")
@@ -166,7 +168,7 @@ class ProcessNodeRunTests(AutofillHarness):
         _, task, _ = self._one_ready_task("crash.co")
         NodeRun.objects.filter(id=task.id).update(attempts=NODE_RUN_ATTEMPTS)
         with (
-            patch("lists.operations.consume_node_runs.AutofillRun.process", side_effect=RuntimeError("boom")),
+            patch("lists.processors.column_agent.AIColumnProcessor.process_run", side_effect=RuntimeError("boom")),
             self.assertLogs("lists.operations.consume_node_runs", level="ERROR"),
         ):
             self.assertEqual(handle_node_run(str(task.id), WORKER), "done")
@@ -214,16 +216,15 @@ class ProcessNodeRunTests(AutofillHarness):
     def test_the_give_up_blank_carries_the_blamed_tool(self) -> None:
         # Regression: the autofill give-up dropped blamed_tool while the
         # fill-backed give-up kept it (two copies of the same blank, one
-        # drifted). Both lanes now build it through the shared
-        # _give_up_blank, so an exhausted cell settles NAMING the tool it
-        # blamed, not just the cause. FAILS if a lane's blank drops it again.
+        # drifted). Both lanes now build it through the one give_up_blank,
+        # so an exhausted cell settles NAMING the tool it blamed, not just
+        # the cause. FAILS if the blank drops it again.
         prior = CellRunResult(
             declined_cause=StoredCellState.TRANSIENT,
             blamed_tool="web_search",
             tools={"web_search": "rate_limited"},
         )
-        task = NodeRun(result=prior.model_dump())
-        blank = ProcessNodeRun(task=task, worker_id=WORKER)._give_up_blank()
+        blank = give_up_blank(NodeRun(result=prior.model_dump()))
         self.assertEqual(blank.blamed_tool, "web_search")
         self.assertEqual(blank.declined_cause, StoredCellState.TRANSIENT)
         self.assertEqual(blank.tools, {"web_search": "rate_limited"})

@@ -1,5 +1,8 @@
-"""The agent kind's processor: the three rules for which rows a
-column_agent node owes a run, one per walk mode, in ONE place.
+"""The agent kind's processor: which rows a column_agent node owes a
+run (three rules, one per walk mode) and how one of its runs executes,
+in ONE place.
+
+THE JUDGEMENT.
 
 FRESH (a new fill): a row the prompt can act on, meaning at least one
 variable it references renders non-blank (a prompt with no variables
@@ -22,26 +25,114 @@ run would only buy a skip); if ANY is blank the node runs and
 write-if-blank protects the sent ones. Born READY, no fill.
 
 Memory is bounded by one page: the settled and owed sets are asked per
-page against the ids in hand and dropped when the page is done."""
+page against the ids in hand and dropped when the page is done.
+
+THE EXECUTION. A claimed run travels one of two lanes, told apart by
+its `fill_run_id`:
+
+- Fill-backed (set): the Fill's FROZEN config and column set (mid-fill
+  agent edits never apply), the claim-time model gate (a config-tier
+  refusal fails the WHOLE fill, since it fails every row identically),
+  the row off the sheet (NORMAL) or off the fill's own row data (TEST,
+  landing on the run instead of a sheet), and completion nudged after
+  every settle.
+- Automatic (null): the row, its list, the node's column set, and the
+  agent's config resolved LIVE; a gone row or list settles ROW_MISSING
+  or LIST_MISSING, a gone or retired agent settles the run unrun, a
+  config-tier failure settles the ONE run.
+
+The tail is shared: the exhausted give-up, the runtime call, the
+retriable park, the terminal landing (`land_row`, the one writer of a
+resolved row, closing the run inside its own transaction)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
-from functools import cached_property
+from functools import cached_property, partial
 from typing import ClassVar, NamedTuple
 
+from agents.providers import ModelUnavailable, model_for
 from agents.runtime.prompts import prompt_variables
+from agents.services import AgentNotFound, AgentService
+from agents.tools import registry as tool_registry
 from openbower_schema.agents import AgentConfig
+from openbower_schema.fills import CellRunResult
 
-from ..constants import FILL_SCAN_CHUNK, NodeRunStatus
+from ..constants import (
+    FILL_RETRY_BACKOFF_SECONDS,
+    FILL_SCAN_CHUNK,
+    RETRY_CAUSES,
+    FillFailureCode,
+    FillKind,
+    FillStatus,
+    NodeRunStatus,
+)
 from ..models import Fill, List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
+from ..services import fill_progress
 from ..services.cell_states import CellStateService
-from ..services.workflows import columns_for_node
-from .base import NodeProcessor, WalkMode
+from ..services.fill_processing.cell_run import run_cell
+from ..services.fill_processing.landing import LandingContext, land_row
+from ..services.fingerprint import config_fingerprint
+from ..services.node_runs import NodeRunFlow
+from ..services.workflows import agent_id_of, columns_for_node
+from .base import NodeProcessor, RunOutcome, WalkMode
 from .factory import register
+
+logger = logging.getLogger(__name__)
+
+
+def to_result(run) -> CellRunResult:
+    """The run's produced shape, through the contract model, so both
+    lanes store the one wire shape."""
+    return CellRunResult(
+        cells=dict(run.cells),
+        evidence=list(run.evidence),
+        tool_calls=[o.wire() for o in run.tool_calls],
+        assessments=dict(run.assessments),
+        declined_cause=run.declined_cause,
+        blamed_tool=run.blamed_tool,
+        tools=dict(run.tools),
+    )
+
+
+def give_up_blank(task: NodeRun) -> CellRunResult:
+    """The exhausted run's blank: it carries the last park's cause AND
+    the tool it blamed, so the cell settles with a why instead of
+    shimmering forever."""
+    prior = CellRunResult(**task.result) if isinstance(task.result, dict) and task.result else CellRunResult()
+    return CellRunResult(declined_cause=prior.declined_cause, tools=prior.tools, blamed_tool=prior.blamed_tool)
+
+
+def _settle_unrun(flow: NodeRunFlow, task: NodeRun) -> None:
+    """Settle DONE with no result: the run was skipped (nothing to fill,
+    a gone fill or agent, a config-tier refusal), so the cell stays
+    never-attempted rather than diagnosed."""
+    flow.settle(task.id, status=NodeRunStatus.DONE, result={})
+
+
+def _park_if_retriable(flow: NodeRunFlow, task: NodeRun, run, result: CellRunResult) -> bool:
+    """A fully blank row with a retriable cause (a 429, a timeout):
+    park with a real backoff, diagnosing nothing. Returns whether it
+    parked, so the caller stops."""
+    if not run.cells and run.declined_cause in RETRY_CAUSES:
+        flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result=result.model_dump())
+        return True
+    return False
+
+
+class _Lane(NamedTuple):
+    """A claimed run's resolved inputs: the config to run, the identity
+    its writes land under, the row it runs on, and the Fill it belongs
+    to (None on the automatic lane)."""
+
+    config: AgentConfig
+    ctx: LandingContext
+    row_data: dict
+    fill: Fill | None
 
 
 def row_is_eligible(data: dict, variables: set[str]) -> bool:
@@ -128,6 +219,130 @@ class AIColumnProcessor(NodeProcessor):
                 if verdict is _Verdict.DROPPED:
                     dropped_any = True
             after = page[-1].position
+
+    # The execution.
+
+    def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
+        lane = self._fill_lane(task, flow=flow) if task.fill_run_id else self._live_lane(task, flow=flow)
+        if isinstance(lane, RunOutcome):
+            return lane
+        close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
+        if flow.exhausted(task):
+            self._land(task, lane, give_up_blank(task), close=close, flow=flow)
+            self._finish(lane)
+            return RunOutcome.DONE
+        try:
+            run = run_cell(lane.config, lane.row_data)
+        except (ModelUnavailable, tool_registry.UnknownTool) as e:
+            # Config-tier: the agent cannot run at all (no model, a
+            # retired tool, which surfaces only here since model_for
+            # does not resolve tools). It fails every row identically,
+            # so retrying buys nothing: the fill fails loudly, the
+            # automatic run settles and moves on.
+            if lane.fill is not None:
+                fill_progress.fail(str(lane.fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            else:
+                logger.warning("autofill: node %s unrunnable (%s); settling task %s", task.node_id, e, task.id)
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        result = to_result(run)
+        if _park_if_retriable(flow, task, run, result):
+            return RunOutcome.PARKED
+        self._land(task, lane, result, close=close, flow=flow)
+        self._finish(lane)
+        return RunOutcome.DONE
+
+    def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+        fill = Fill.objects.filter(id=task.fill_run_id).first()
+        if fill is None:
+            # The owning fill is gone (its list was deleted, which purges
+            # both in one transaction); nothing to run or land.
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        # RUNNING on first claim: a live fill with a row in flight is
+        # running. CAS from PENDING so it is a cheap no-op once flipped.
+        Fill.objects.filter(id=fill.id, status=FillStatus.PENDING).update(status=FillStatus.RUNNING)
+        config = AgentConfig(**fill.config_snapshot)
+        # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
+        # hours later re-resolves against the current world).
+        try:
+            model_for(config.provider, config.source, config.model)
+        except ModelUnavailable as e:
+            fill_progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        if fill.kind == FillKind.TEST:
+            # A test run rides the fill's own row_data (position-indexed),
+            # never a sheet.
+            row_data = fill.row_data[task.position]
+        else:
+            row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
+            if row is None:
+                if not List.objects.filter(id=fill.list_id).exists():
+                    # The whole list went away mid-walk: a user deletion
+                    # is CANCELLED, never a failure story.
+                    fill_progress.cancel(str(fill.id))
+                flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
+                fill_progress.try_finish(str(fill.id))
+                return RunOutcome.ROW_MISSING
+            row_data = row.data
+        ctx = LandingContext.from_fill(fill, node_id=task.node_id)
+        return _Lane(config=config, ctx=ctx, row_data=row_data, fill=fill)
+
+    def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+        row = ListRow.objects.filter(id=task.row_id).first()
+        if row is None:
+            flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
+            return RunOutcome.ROW_MISSING
+        target_list = List.objects.filter(id=row.list_id, account_id=task.account_id).first()
+        if target_list is None:
+            flow.settle(task.id, status=NodeRunStatus.LIST_MISSING, result={})
+            return RunOutcome.LIST_MISSING
+        # The node's column set, resolved live: empty means the node no
+        # longer fills any column here (its columns were removed), so
+        # there is nothing to run; settle so the run does not linger.
+        column_keys = columns_for_node(target_list, task.node_id)
+        if not column_keys:
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        try:
+            agent = AgentService(account_id=task.account_id).get_for_fill(agent_id_of(self.node))
+        except AgentNotFound:
+            # An agent delete leaves its columns orphaned on purpose:
+            # the allowed shape, so no warning.
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        if agent.provider_retired:
+            # A retired provider cannot run its stored config; settle
+            # rather than burn attempts on a run that will never
+            # succeed. The cell stays never-attempted, targetable later.
+            logger.warning("autofill: node %s provider retired; settling task %s unrun", task.node_id, task.id)
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        config = agent.config()
+        ctx = LandingContext(
+            account_id=task.account_id,
+            list_id=str(target_list.id),
+            column_keys=column_keys,
+            fill_run_id=None,
+            config_fingerprint=config_fingerprint(config),
+            node_id=task.node_id,
+        )
+        return _Lane(config=config, ctx=ctx, row_data=row.data, fill=None)
+
+    def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> None:
+        if lane.fill is not None and lane.fill.kind == FillKind.TEST:
+            # A test run lands ON ITS RUN: no sheet write, no cell truth
+            # (there may be no sheet at all).
+            flow.settle(task.id, payload.model_dump(), status=NodeRunStatus.DONE)
+            return
+        land_row(lane.ctx, task.row_id, payload, close=close)
+
+    def _finish(self, lane: _Lane) -> None:
+        """Completion nudge after a settle; the automatic lane has no
+        fill to finish."""
+        if lane.fill is not None:
+            fill_progress.try_finish(str(lane.fill.id))
 
     # The judgement.
 
