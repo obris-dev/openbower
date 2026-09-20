@@ -14,13 +14,15 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
+from jobs.services import enqueue
 from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
-from ..constants import FILL_SCAN_CHUNK, FILL_WRITE_BATCH, WebhookCellWord, WebhookColumnErrorCode
-from ..models import List, ListRow, Node, NodeRun
+from ..constants import WebhookCellWord, WebhookColumnErrorCode
+from ..jobs.webhook_backfill import WebhookBackfill
+from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from .cell_states import CellStateService
@@ -28,7 +30,7 @@ from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 from .webhook_paths import inbound_paths_for
-from .webhook_runs import cell_words_for, runs_for_complete_row, wait_keys_of
+from .webhook_runs import cell_words_for, wait_keys_of
 from .workflows import NodeNotFound, WorkflowService, config_as
 
 
@@ -119,7 +121,7 @@ class WebhookColumnService:
             column = WebhookColumn(key=key, label=label, type=DEFAULT_COLUMN_TYPE, node_id=str(nodes[1].id))
             target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
-            self._backfill(target_list, wait=wait, webhook_nodes=[nodes[1]])
+            self._enqueue_backfill(target_list, nodes[1])
         return target_list
 
     def config(self, target_list_id: str, key: str) -> WebhookColumnConfigWire:
@@ -140,9 +142,9 @@ class WebhookColumnService:
     ) -> WebhookColumnConfigWire:
         """Both node configs rewritten in one transaction; the path keeps
         its shape. A changed wait SET is a new definition of complete,
-        so the rows complete under it are backfilled; an unchanged one
-        backfills nothing (a Save that touched only the cadence must not
-        re-send the sheet)."""
+        so a backfill is queued for the rows complete under it; an
+        unchanged one queues nothing (a Save that touched only the
+        cadence must not re-send the sheet)."""
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             webhook_node = self._webhook_node(target_list, key)
@@ -159,44 +161,16 @@ class WebhookColumnService:
             )
             _wait_node, webhook_node = self.workflows.replace_path_nodes(webhook_node.path_id, [wait, webhook])
             if set(before.inbound_path_ids) != set(wait.inbound_path_ids):
-                self._backfill(target_list, wait=wait, webhook_nodes=[webhook_node])
+                self._enqueue_backfill(target_list, webhook_node)
         return self._wire(target_list, webhook_node)
 
-    def _backfill(self, target_list: List, *, wait: WaitUntil, webhook_nodes: list[Node]) -> int:
-        """Every row already complete for the wait set gains a run now,
-        at the next window, so a column added over a filled sheet sends
-        what is already done instead of only what completes later. Pages
-        the sheet inside the caller's transaction, bounded by
-        MAX_LIST_ROWS; the open-run key makes a re-run of this over a
-        pending row a no-op. Returns the runs offered."""
-        wait_keys = wait_keys_of(account_id=self.account_id, target_list=target_list, wait=wait)
-        if not wait_keys:
-            return 0
-        list_id = str(target_list.id)
-        now = timezone.now()
-        offered = 0
-        after_position = 0
-        while page := self.lists.rows_page(target_list, after_position=after_position, limit=FILL_SCAN_CHUNK):
-            after_position = page[-1].position
-            row_ids = [str(row.id) for row in page]
-            records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
-            for row_id, column_key, state, updated_at in self.cell_states.iter_records(
-                list_id, row_ids=row_ids, column_keys=wait_keys
-            ):
-                records[row_id][column_key] = (state, updated_at)
-            runs: list[NodeRun] = []
-            for row in page:
-                if completion_of(records[str(row.id)], wait_keys) is None:
-                    continue
-                runs.extend(
-                    runs_for_complete_row(
-                        account_id=self.account_id, list_id=list_id, row=row, webhook_nodes=webhook_nodes, now=now
-                    )
-                )
-            if runs:
-                NodeRun.objects.bulk_create(runs, ignore_conflicts=True, batch_size=FILL_WRITE_BATCH)
-                offered += len(runs)
-        return offered
+    def _enqueue_backfill(self, target_list: List, webhook_node: Node) -> None:
+        """Every row already complete for the wait set is owed a run, so
+        a column added over a filled sheet sends what is already done
+        instead of only what completes later. The walk is a JOB (one
+        page per slice, the list lock per page), queued in this
+        transaction so it can never see a column that was rolled back."""
+        enqueue(self.account_id, WebhookBackfill(list_id=str(target_list.id), node_id=str(webhook_node.id)))
 
     # The cells.
 

@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries flush-webhooks receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries flush-webhooks run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -162,6 +162,8 @@ prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron co
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
 flush-webhooks: ## Run the webhook flush once, in the cron container (sends every digest that is due)
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_webhooks
+run-jobs: ## Run the background-job tick once, in the cron container
+	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py run_jobs
 
 # A debugging aid outside the stack: a plain container on the stack's
 # network, so it never rides `make up` or a deployment.

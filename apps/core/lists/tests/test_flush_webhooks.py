@@ -19,6 +19,7 @@ from django.db import connection
 from django.test import TransactionTestCase
 
 from common.testing import TEST_IDENTITY
+from jobs.services import JobRunner
 from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
@@ -108,17 +109,19 @@ class FlushWebhooksTests(TransactionTestCase):
             )
 
     def _add_column(self, *, now: datetime = COMPLETED, wait_keys=("country", "answer")) -> str:
-        """The column, added AFTER the rows completed so the backfill is
-        what seeds the runs, at the window of `now`."""
-        with patch("lists.services.webhook_columns.timezone.now", return_value=now):
-            self.sheet = WebhookColumnService(account_id=ACCOUNT, user_id=USER).add(
-                str(self.sheet.id),
-                label="CRM sync",
-                destination_id=str(self.destination.id),
-                wait_keys=list(wait_keys),
-                payload_keys=["company", "country"],
-                interval_seconds=INTERVAL,
-            )
+        """The column, added AFTER the rows completed so the backfill job
+        is what seeds the runs, worked at `now` so they land at its
+        window."""
+        self.sheet = WebhookColumnService(account_id=ACCOUNT, user_id=USER).add(
+            str(self.sheet.id),
+            label="CRM sync",
+            destination_id=str(self.destination.id),
+            wait_keys=list(wait_keys),
+            payload_keys=["company", "country"],
+            interval_seconds=INTERVAL,
+        )
+        with patch("lists.jobs.webhook_backfill.timezone.now", return_value=now):
+            JobRunner(worker_id="jobs-test:1").tick()
         return next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
 
     def _tick(self, fake: _FakeSender, *, now: datetime = BOUNDARY, worker: str = WORKER):

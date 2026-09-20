@@ -19,7 +19,11 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
+from jobs.constants import JobStatus
+from jobs.models import Job
+from jobs.services import JobRunner, TickReport
 from lists.constants import CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
+from lists.jobs.webhook_backfill import WebhookBackfill
 from lists.models import Node, NodeRun
 from lists.nodes.registry import WEBHOOK
 from lists.services import cell_truth
@@ -88,7 +92,9 @@ class _SheetHarness(TestCase):
         destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
 
-    def _add_webhook_column(self, wait_keys: list[str]) -> str:
+    def _add_webhook_column(self, wait_keys: list[str], *, now: datetime = NOW) -> str:
+        """The column, then the backfill job it queued, worked to done
+        (the runner ticks at `now` so the runs' window is deterministic)."""
         columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
         self.sheet = columns.add(
             str(self.sheet.id),
@@ -98,7 +104,13 @@ class _SheetHarness(TestCase):
             payload_keys=["company"],
             interval_seconds=INTERVAL,
         )
+        self._run_jobs(now=now)
         return next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
+
+    @staticmethod
+    def _run_jobs(*, now: datetime = NOW) -> TickReport:
+        with patch("lists.jobs.webhook_backfill.timezone.now", return_value=now):
+            return JobRunner(worker_id="test:1").tick()
 
     def _land(self, node: Node, cells: dict[str, str], *, now: datetime = NOW, keys: tuple[str, ...] = ()) -> None:
         keys = keys or tuple(
@@ -245,13 +257,36 @@ class _BackfilledSheet(_SheetHarness):
 
 
 class BackfillTests(_BackfilledSheet):
-    """Adding a webhook column over a sheet with history: rows already
-    complete for the wait set gain a run at once; a config edit that
-    changes the wait SET does the same; one that does not, does not."""
+    """Adding a webhook column over a sheet with history queues ONE
+    backfill job, whose slices give every row already complete for the
+    wait set a run; a config edit that changes the wait SET queues
+    another; one that does not, does not."""
 
-    def test_add_enqueues_a_run_for_every_row_already_complete(self):
-        with patch("lists.services.webhook_columns.timezone.now", return_value=NOW):
-            node_id = self._add_webhook_column(["country", "answer"])
+    def test_add_queues_one_backfill_job_and_the_request_walks_no_rows(self):
+        columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
+        with CaptureQueriesContext(connection) as queries:
+            self.sheet = columns.add(
+                str(self.sheet.id),
+                label="CRM sync",
+                destination_id=str(self.destination.id),
+                wait_keys=["country", "answer"],
+                payload_keys=["company"],
+                interval_seconds=INTERVAL,
+            )
+        node_id = next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
+        (job,) = list(Job.objects.all())
+        self.assertEqual((job.kind, job.status, job.account_id), ("webhook_backfill", JobStatus.READY, ACCOUNT))
+        self.assertEqual(job.payload, {"list_id": str(self.sheet.id), "node_id": node_id})
+        # The request inserted no run and read no cell state: the walk
+        # is the job's.
+        self.assertEqual(self._runs().count(), 0)
+        touched = [q["sql"] for q in queries.captured_queries if "lists_listcellstate" in q["sql"]]
+        self.assertEqual(touched, [])
+
+    def test_the_job_enqueues_a_run_for_every_row_already_complete(self):
+        node_id = self._add_webhook_column(["country", "answer"])
+        (job,) = list(Job.objects.all())
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
         runs = list(self._runs())
         self.assertEqual([r.row_id for r in runs], [str(self.row.id), str(self.second_row.id)])
         for run in runs:
@@ -260,7 +295,35 @@ class BackfillTests(_BackfilledSheet):
             )
         self.assertEqual([r.position for r in runs], [1, 2])
 
-    def test_a_save_that_keeps_the_wait_set_enqueues_nothing_new(self):
+    def test_the_walk_pages_across_slices_and_a_doubled_slice_adds_nothing(self):
+        # One row per page: three slices, each idempotent under the
+        # open-run key. Rerunning the finished job's last cursor by hand
+        # proves a reclaimed slice cannot double the runs.
+        with patch("lists.jobs.webhook_backfill.FILL_SCAN_CHUNK", 1):
+            self._add_webhook_column(["country", "answer"])
+        (job,) = list(Job.objects.all())
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
+        self.assertEqual(self._runs().count(), 2)
+        job.progress = {"after_position": 0}
+        with patch("lists.jobs.webhook_backfill.FILL_SCAN_CHUNK", 1):
+            self.assertEqual(WebhookBackfill.model_validate(job.payload).run(job), {"after_position": 1})
+        self.assertEqual(self._runs().count(), 2)
+
+    def test_a_walk_stops_when_the_column_is_gone(self):
+        columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
+        self.sheet = columns.add(
+            str(self.sheet.id),
+            label="CRM sync",
+            destination_id=str(self.destination.id),
+            wait_keys=["country", "answer"],
+            payload_keys=["company"],
+            interval_seconds=INTERVAL,
+        )
+        ColumnService(account_id=ACCOUNT, user_id=USER).delete(str(self.sheet.id), key="crm_sync")
+        report = self._run_jobs()
+        self.assertEqual((report.done, self._runs().count()), (1, 0))
+
+    def test_a_save_that_keeps_the_wait_set_queues_nothing_new(self):
         self._add_webhook_column(["country", "answer"])
         self._runs().update(status=NodeRunStatus.DONE)
         columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
@@ -273,6 +336,8 @@ class BackfillTests(_BackfilledSheet):
             interval_seconds=300,
             enabled=False,
         )
+        self.assertEqual(Job.objects.count(), 1)
+        self._run_jobs()
         self.assertEqual(self._runs().count(), 2)
 
     def test_a_narrowed_wait_set_backfills_the_rows_complete_under_it(self):
@@ -288,6 +353,8 @@ class BackfillTests(_BackfilledSheet):
             interval_seconds=INTERVAL,
             enabled=True,
         )
+        self.assertEqual(Job.objects.filter(status=JobStatus.READY).count(), 1)
+        self._run_jobs()
         # All three rows are complete for `answer` alone: the two sent
         # rows open a new run each, the third its first.
         fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
