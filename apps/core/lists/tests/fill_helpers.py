@@ -95,8 +95,7 @@ def open_fill_job(
     """A fill job built at the model level, its walk already done when
     `targeted` (the runs are the test's to create), so a lifecycle test
     starts from a fill that is polling its runs."""
-    job = JobService().enqueue(
-        account_id,
+    job = JobService(account_id=account_id).enqueue(
         FillJob(
             list_id=list_id,
             node_id=node_id,

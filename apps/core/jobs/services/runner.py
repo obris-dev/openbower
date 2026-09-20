@@ -16,7 +16,7 @@ cap the job is FAILED with the last cause; a slice raising `JobFailed`
 fails it at once with the kind's own code and copy.
 
 The runner is the only writer of a job's status FROM INSIDE (claim,
-park, settle, fail, reclaim); a stop from outside (JobService.stop: a
+park, settle, fail, reclaim); a stop from outside (JobService.Global.stop: a
 user's cancel, a worker failing a fill) flips an open job terminal
 under its own predicate, and every transition here is predicated on
 PROCESSING, so a job stopped while a tick holds it is never resurrected

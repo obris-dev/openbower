@@ -175,10 +175,8 @@ class WebhookColumnService:
         page per slice, the node's processor judging each row), queued
         in this transaction so it can never see a column that was
         rolled back."""
-        JobService().enqueue(
-            self.account_id,
-            EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)),
-            user_id=self.user_id,
+        JobService(account_id=self.account_id).enqueue(
+            EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)), user_id=self.user_id
         )
 
     # The cells.

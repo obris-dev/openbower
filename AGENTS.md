@@ -80,7 +80,7 @@ auth + data services live in a separate private repo.
   typed payload class (`JobKind[Progress]`, typed by its own cursor)
   with a `run(job, progress)` that does ONE bounded slice and hands
   back where it stopped, registered from the owning app's `jobs`
-  package; `JobService().enqueue(..., user_id=)` for a job a user asked for,
+  package; `JobService(account_id=).enqueue(kind, user_id=)` for a job a user asked for,
   `enqueue_system(...)` for one nobody did (its user is NULL, never a
   sentinel). The
   `jobs` compose service works them within seconds (a loop like the
@@ -90,7 +90,7 @@ auth + data services live in a separate private repo.
   waiting on something outside the job answers `Wait` (parked until
   it asked to be woken, no attempt spent); a stop from outside (a
   user's cancel, a worker failing the job) goes through
-  `JobService.stop`, which runs the kind's `on_stop` then flips the
+  `JobService.Global.stop`, which runs the kind's `on_stop` then flips the
   status, and the runner's own transitions are predicated on
   PROCESSING so a stopped job is never resurrected. A job is never a
   NodeRun (a run is one node applied to one row) and a request never

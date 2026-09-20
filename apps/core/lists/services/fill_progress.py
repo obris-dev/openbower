@@ -74,14 +74,14 @@ def cancel(fill_run_id: str) -> bool:
     and carries an error the UI dresses as a failure story). The
     queued runs are abandoned first (the kind's `on_stop`), then the
     job flips; a fill already terminal stays put."""
-    return JobService().cancel(fill_run_id)
+    return JobService.Global.cancel(fill_run_id)
 
 
 def fail(fill_run_id: str, *, code: str, message: str) -> bool:
     """The breaker path (config-tier: a dead or throttling provider
     fails the whole fill loudly). From open states only; a cancel that
     already landed stays cancelled."""
-    return JobService().fail(fill_run_id, code=code, message=message)
+    return JobService.Global.fail(fill_run_id, code=code, message=message)
 
 
 def abandon_queued(fill_run_id: str) -> None:

@@ -37,8 +37,8 @@ its queued runs). The default tidies nothing.
 
 To add a kind: a module in your app's `jobs` package, a JobKind
 subclass with a nested `Progress`, `register(...)` at the bottom.
-Enqueue with `JobService().enqueue(account_id, YourKind(...), user_id=...)`,
-or `enqueue_system(...)` when no user asked.
+Enqueue with `JobService(account_id=...).enqueue(YourKind(...), user_id=...)`, or
+`enqueue_system(YourKind(...))` when no user asked.
 """
 
 from __future__ import annotations

@@ -80,7 +80,7 @@ class RunnerTests(TestCase):
         self.runner = JobRunner(worker_id="tick:1")
 
     def test_a_wait_parks_the_job_until_it_asked_to_be_woken_and_spends_no_attempt(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=2, wait_at=1, wait_seconds=600))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=2, wait_at=1, wait_seconds=600))
         self.assertIsNone(job.user_id)  # a system job: NULL, never a blank
         before = timezone.now()
         report = self.runner.tick()
@@ -97,7 +97,7 @@ class RunnerTests(TestCase):
         self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"done": 2, "waited": True}))
 
     def test_a_kinds_own_verdict_fails_the_job_with_its_code_and_no_attempt(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3, verdict_at=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3, verdict_at=1))
         report = self.runner.tick()
         job.refresh_from_db()
         self.assertEqual((report.failed, job.status, job.attempts), (1, JobStatus.FAILED, 0))
@@ -108,28 +108,28 @@ class RunnerTests(TestCase):
         # A raising slice writes its cause; a later park for budget must
         # not blank it (a kind waiting on something outside the job
         # reads it back on its next slice).
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         Job.objects.filter(id=job.id).update(error="an earlier cause")
         self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
         self.assertEqual((job.status, job.error), (JobStatus.READY, "an earlier cause"))
 
     def test_a_stop_from_outside_tidies_through_the_kind_then_flips(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
-        self.assertTrue(JobService().cancel(str(job.id)))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
+        self.assertTrue(JobService.Global.cancel(str(job.id)))
         job.refresh_from_db()
         self.assertEqual((job.status, STOPPED), (JobStatus.CANCELLED, [str(job.id)]))
         self.assertIsNotNone(job.settled_at)
         # Terminal already: a second stop is a no-op, and no tick claims it.
-        self.assertFalse(JobService().fail(str(job.id), code="x", message="y"))
+        self.assertFalse(JobService.Global.fail(str(job.id), code="x", message="y"))
         self.assertEqual(self.runner.tick().claimed, 0)
         job.refresh_from_db()
         self.assertEqual((job.status, job.error_code), (JobStatus.CANCELLED, ""))
 
     def test_a_fail_from_outside_carries_both_legs(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         self.assertTrue(
-            JobService().fail(str(job.id), code="model_unrunnable", message="The model could not be reached.")
+            JobService.Global.fail(str(job.id), code="model_unrunnable", message="The model could not be reached.")
         )
         job.refresh_from_db()
         self.assertEqual(
@@ -141,15 +141,15 @@ class RunnerTests(TestCase):
         # The runner's park and settle are predicated on PROCESSING: a
         # job stopped while held stays stopped, and the tick's own
         # write misses.
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         Job.objects.filter(id=job.id).update(status=JobStatus.PROCESSING)
-        self.assertTrue(JobService().stop(str(job.id), status=JobStatus.CANCELLED))
+        self.assertTrue(JobService.Global.stop(str(job.id), status=JobStatus.CANCELLED))
         job.refresh_from_db()
         self.assertEqual(job.status, JobStatus.CANCELLED)
         self.assertEqual(JobRunner._settle(job), 0)
 
     def test_a_job_runs_its_slices_to_done_within_one_tick(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         self.assertEqual((job.status, job.kind), (JobStatus.READY, "test_counting"))
         self.assertEqual(job.payload["pages"], 3)
 
@@ -162,7 +162,7 @@ class RunnerTests(TestCase):
         self.assertIsNotNone(job.settled_at)
 
     def test_the_budget_parks_a_job_with_its_cursor_and_the_next_tick_resumes_it(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         # A zero budget: one slice, then park. FAILS if the cursor is
         # not durable between ticks (the second tick would restart).
         first = self.runner.tick(budget_seconds=0)
@@ -182,7 +182,7 @@ class RunnerTests(TestCase):
     def test_a_job_needing_more_ticks_than_the_cap_allows_attempts_still_finishes(self):
         # FAILS if a budget park counts as an attempt: the sixth claim
         # would fail the job as exhausted with nothing wrong.
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=JOB_ATTEMPTS + 3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=JOB_ATTEMPTS + 3))
         for _ in range(JOB_ATTEMPTS + 3):
             self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
@@ -194,8 +194,8 @@ class RunnerTests(TestCase):
     def test_a_budget_park_leaves_the_queue_to_the_next_tick(self):
         # One tick budget shared by every job: the long job at the front
         # parks on it and the tick ends; the job behind waits a minute.
-        first = JobService().enqueue_system(ACCOUNT, Counting(pages=2))
-        second = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        first = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=2))
+        second = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         report = self.runner.tick(budget_seconds=0)
         first.refresh_from_db()
         second.refresh_from_db()
@@ -203,14 +203,14 @@ class RunnerTests(TestCase):
         self.assertEqual([done for _, done in SLICES], [0])
 
     def test_the_cursor_is_durable_after_every_slice_not_only_at_the_park(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=2, boom=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=2, boom=1))
         self.runner.tick()
         job.refresh_from_db()
         # Slice 0 landed its cursor before slice 1 raised.
         self.assertEqual(job.progress["done"], 1)
 
     def test_a_raising_slice_parks_with_its_cause_and_a_backoff(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=2, boom=0))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=2, boom=0))
         before = timezone.now()
         with self.assertLogs("jobs.services.runner", level="ERROR"):
             report = self.runner.tick()
@@ -222,7 +222,7 @@ class RunnerTests(TestCase):
         self.assertEqual(self.runner.tick().claimed, 0)
 
     def test_the_raise_that_reaches_the_cap_fails_the_job_with_its_cause(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=2, boom=0))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=2, boom=0))
         Job.objects.filter(id=job.id).update(attempts=JOB_ATTEMPTS - 1)
         with self.assertLogs("jobs.services.runner", level="ERROR"):
             report = self.runner.tick()
@@ -234,20 +234,20 @@ class RunnerTests(TestCase):
     def test_a_job_at_the_cap_that_runs_clean_still_finishes(self):
         # The cap is on failures, not on claims: a job whose earlier
         # exits were unexpected but whose next slice works, works.
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         Job.objects.filter(id=job.id).update(attempts=JOB_ATTEMPTS - 1)
         report = self.runner.tick()
         job.refresh_from_db()
         self.assertEqual((report.done, job.status, job.attempts), (1, JobStatus.DONE, JOB_ATTEMPTS - 1))
 
     def test_two_ticks_never_hold_one_job(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         Job.objects.filter(id=job.id).update(status=JobStatus.PROCESSING)  # a live tick holds it
         report = JobRunner(worker_id="tick:2").tick()
         self.assertEqual((report.claimed, SLICES), (0, []))
 
     def test_a_dead_ticks_job_is_reclaimed_and_resumes_from_its_cursor(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         stale = timezone.now() - timedelta(seconds=JOB_STALE_SECONDS + 60)
         Job.objects.filter(id=job.id).update(
             status=JobStatus.PROCESSING, progress={"done": 2}, attempts=1, last_state_change_at=stale
@@ -260,7 +260,7 @@ class RunnerTests(TestCase):
     def test_a_dead_tick_at_the_cap_fails_the_job(self):
         # The dead tick is the one unexpected exit no except block sees:
         # the reclaim counts it, and at the cap it stops the job.
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=3))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=3))
         stale = timezone.now() - timedelta(seconds=JOB_STALE_SECONDS + 60)
         Job.objects.filter(id=job.id).update(
             status=JobStatus.PROCESSING, attempts=JOB_ATTEMPTS - 1, last_state_change_at=stale
@@ -273,14 +273,14 @@ class RunnerTests(TestCase):
         self.assertEqual(SLICES, [])
 
     def test_a_live_processing_job_is_not_reclaimed(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         Job.objects.filter(id=job.id).update(status=JobStatus.PROCESSING, last_state_change_at=timezone.now())
         self.assertEqual(self.runner.tick().reclaimed, 0)
 
     def test_an_unknown_kind_parks_with_its_cause_rather_than_crashing_the_tick(self):
-        job = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        job = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         Job.objects.filter(id=job.id).update(kind="test_retired")
-        later = JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        later = JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         with self.assertLogs("jobs.services.runner", level="ERROR"):
             report = self.runner.tick()
         job.refresh_from_db()
@@ -290,7 +290,7 @@ class RunnerTests(TestCase):
         self.assertEqual(later.status, JobStatus.DONE)
 
     def test_the_command_runs_one_tick_and_logs_the_report(self):
-        JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         with self.assertLogs("jobs.services.loop", level="INFO") as logs:
             call_command("run_jobs", "--once")
         self.assertIn("done=1", logs.output[0])
@@ -304,7 +304,7 @@ class LoopTests(TestCase):
         SLICES.clear()
 
     def test_a_stop_already_set_ends_the_loop_before_any_tick(self):
-        JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         stop = threading.Event()
         stop.set()
         run_loop(JobRunner(worker_id="loop:1"), stop=stop)
@@ -314,8 +314,8 @@ class LoopTests(TestCase):
         # Two jobs: the first tick works both (no idle between), the
         # next tick finds nothing and idles; the idle wait is what the
         # stop interrupts.
-        JobService().enqueue_system(ACCOUNT, Counting(pages=1))
-        JobService().enqueue_system(ACCOUNT, Counting(pages=1))
+        JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
+        JobService(account_id=ACCOUNT).enqueue_system(Counting(pages=1))
         stop = threading.Event()
         waits: list[float] = []
 
