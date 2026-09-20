@@ -74,6 +74,23 @@ auth + data services live in a separate private repo.
   NodeRunFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
   never a lock.
+- BACKGROUND work a request must not do (a sheet-sized walk, a file
+  build) is a Job: a row in the `jobs` app's one table, a kind = a
+  typed payload class with a `Progress` cursor and a `run(job,
+  progress)` that does ONE bounded slice and hands back where it
+  stopped, registered from the owning app's `jobs` package. The
+  `jobs` compose service works them within seconds (a loop like the
+  provisioners); every transition is a compare-and-set on the job's
+  status, `attempts` counts unexpected exits only, and every slice is
+  idempotent because a reclaimed job re-walks its last one. A job is
+  never a NodeRun (a run is one node applied to one row) and a
+  request never walks a sheet: admission decides and queues.
+- Which rows a node owes a run to is the node kind's PROCESSOR
+  (lists/processors: `NodeProcessor.enqueue_runs(target_list, rows,
+  now)`, handed out by `processor_for` on the node's kind with a typed
+  `WalkScope`); a walker pages rows and hands them over, knowing no
+  kind and no column. The node config classes in lists/nodes stay what
+  a node IS at rest.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the
