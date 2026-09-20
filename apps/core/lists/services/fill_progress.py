@@ -23,15 +23,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from django.db.models import QuerySet
-from django.utils import timezone
 
 from jobs.constants import OPEN_JOB_STATES, JobStatus
 from jobs.models import Job
 from jobs.services import JobService
 from openbower_schema.fills import FillStatusWire
 
-from ..constants import NodeRunStatus
-from ..models import NodeRun
+from .node_runs import NodeRunFlow
 
 # The fill kind's name, restated here rather than imported from the
 # kind module: the kind imports this module for its lifecycle, and the
@@ -84,28 +82,10 @@ def fail(fill_run_id: str, *, code: str, message: str) -> bool:
     return JobService.Global.fail(fill_run_id, code=code, message=message)
 
 
-def abandon_queued(fill_run_id: str) -> None:
-    """Consent granted and not spent, recorded rather than deleted: it
-    is the only honest answer to what a stopped fill still owed, and a
-    later resume reads it instead of reconstructing it.
-
-    Sweeps the READY and QUEUED tasks to ABANDONED, deliberately NOT
-    PROCESSING: a task a consumer already owns runs to its own terminal
-    CAS and LANDS its cell (the settle keys on the task's status, not the
-    fill's), so in-flight spend is sunk cost, cancel granularity is
-    between tasks. Leaving PROCESSING untouched also keeps the
-    queue-before-job lock order the stop depends on. Public because a
-    walk slice that lands runs after the cancel's sweep sweeps them
-    itself."""
-    NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)).update(
-        status=NodeRunStatus.ABANDONED, updated_at=timezone.now()
-    )
-
-
 def started(fill_run_id: str) -> bool:
     """Whether any of the fill's runs has been claimed: the line between
     the wire's `pending` and `running`."""
-    return NodeRun.objects.filter(fill_run_id=fill_run_id, attempts__gt=0).exists()
+    return NodeRunFlow.any_claimed_for_fill(fill_run_id)
 
 
 def status_of(job: Job, *, started: bool) -> FillStatusWire:

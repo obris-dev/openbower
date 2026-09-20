@@ -27,7 +27,7 @@ from collections.abc import Iterator, Sequence
 from django.db import models
 from django.utils import timezone
 
-from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus
+from ..constants import NODE_RUN_ATTEMPTS, NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus
 from ..models import NodeRun
 from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 
@@ -80,6 +80,39 @@ class NodeRunFlow:
             .order_by("position", "id")[:limit]
             .iterator()
         )
+
+    @staticmethod
+    def has_open_for_fill(fill_run_id: str) -> bool:
+        """Whether the fill still owes a run: any task in a non-terminal
+        state (the fill job's poll asks this each time it wakes)."""
+        return NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES).exists()
+
+    @staticmethod
+    def count_for_fill(fill_run_id: str) -> int:
+        """Every run the fill's walk queued, whatever became of it: the
+        denominator the fill settles to once its target set is whole."""
+        return NodeRun.objects.filter(fill_run_id=fill_run_id).count()
+
+    @staticmethod
+    def any_claimed_for_fill(fill_run_id: str) -> bool:
+        """Whether any of the fill's runs has been claimed at least once
+        (attempts count at claim): the wire's pending | running line."""
+        return NodeRun.objects.filter(fill_run_id=fill_run_id, attempts__gt=0).exists()
+
+    @staticmethod
+    def abandon_queued_for_fill(fill_run_id: str) -> int:
+        """READY | QUEUED -> ABANDONED for a stopped fill: consent
+        granted and not spent, recorded rather than deleted, the only
+        honest answer to what the fill still owed (a later resume reads
+        it). Deliberately NOT PROCESSING: a task a consumer already owns
+        runs to its own terminal CAS and LANDS its cell (the settle keys
+        on the task's status, not the fill's), so in-flight spend is
+        sunk cost and cancel granularity is between tasks; leaving it
+        alone also keeps the queue-before-job lock order the stop
+        depends on. Returns how many were abandoned."""
+        return NodeRun.objects.filter(
+            fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)
+        ).update(status=NodeRunStatus.ABANDONED, updated_at=timezone.now())
 
     @staticmethod
     def mark_queued(task: NodeRun) -> bool:

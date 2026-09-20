@@ -42,11 +42,11 @@ from jobs.kinds.base import JobKind, JobWaiting
 from jobs.kinds.registry import register
 from jobs.models import Job
 
-from ..constants import FILL_POLL_SECONDS, FILL_SCAN_CHUNK, NON_TERMINAL_NODE_RUN_STATES
-from ..models import NodeRun
+from ..constants import FILL_POLL_SECONDS, FILL_SCAN_CHUNK
 from ..processors import WalkMode, WalkScope, processor_for
 from ..services import fill_progress
 from ..services.lists import ListNotFound, ListService
+from ..services.node_runs import NodeRunFlow
 from ..services.workflows import NodeNotFound, WorkflowService
 
 
@@ -99,7 +99,7 @@ class FillJob(JobKind[FillProgress]):
             return None
         if progress.targeted_at is None:
             return self._walk(job, progress)
-        if NodeRun.objects.filter(fill_run_id=str(job.id), status__in=NON_TERMINAL_NODE_RUN_STATES).exists():
+        if NodeRunFlow.has_open_for_fill(str(job.id)):
             raise JobWaiting(FILL_POLL_SECONDS)
         return None
 
@@ -138,7 +138,7 @@ class FillJob(JobKind[FillProgress]):
         if not fill_progress.is_open(str(job.id)):
             # Stopped while this slice was inserting: the stop's sweep
             # ran before these runs existed, so sweep them now.
-            fill_progress.abandon_queued(str(job.id))
+            NodeRunFlow.abandon_queued_for_fill(str(job.id))
             return None
         if self.limit and offered >= self.limit:
             return self._targeted(job, FillProgress(after_position=page[-1].position, offered=offered))
@@ -153,13 +153,13 @@ class FillJob(JobKind[FillProgress]):
             after_position=progress.after_position,
             offered=progress.offered,
             targeted_at=timezone.now(),
-            targeted=NodeRun.objects.filter(fill_run_id=str(job.id)).count(),
+            targeted=NodeRunFlow.count_for_fill(str(job.id)),
         )
 
     def on_stop(self, job: Job) -> None:
         """A stop from outside sweeps the queue FIRST (NodeRun before
         Job, the terminal write path's own order), then the flip."""
-        fill_progress.abandon_queued(str(job.id))
+        NodeRunFlow.abandon_queued_for_fill(str(job.id))
 
 
 register(FillJob)
