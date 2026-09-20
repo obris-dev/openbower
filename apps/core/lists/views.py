@@ -88,13 +88,7 @@ logger = logging.getLogger(__name__)
 # must change, by narrowing the ask or by configuring the deployment).
 # Both ride the sibling envelope ({error: <code>, detail}): the client
 # classifies by CODE and renders the detail verbatim (tier 1).
-_FILL_CONFLICT_CODES = frozenset(
-    {
-        FillErrorCode.FILL_ACTIVE,
-        FillErrorCode.FILLS_FULL,
-        FillErrorCode.CONFIG_CHANGED,
-    }
-)
+_FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
 
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
@@ -570,10 +564,8 @@ class ColumnPromptView(_ScopedView):
     """GET and PATCH /v1/lists/{id}/columns/{key}/prompt: the column's
     CURRENT fill config (what a refill would run), and the
     prompt-only edit against it. Surfaces peeking at "what fills this
-    column" read HERE, never a fill's frozen snapshot (the snapshot is
-    what a PAST fill ran; this is what the NEXT one will). Running fills
-    keep their snapshot, so an edit reaches the NEXT fill, and a refill
-    re-targets rows the old prompt settled without an answer."""
+    column" read HERE. A fill reads its agent live, so an edit reaches
+    a running fill's next row, and a refill re-targets every blank."""
 
     def get(self, request: Request, id: str, key: str) -> Response:
         try:
@@ -632,7 +624,7 @@ class FillCancelView(_ScopedView):
             raise NotFound("no fill with that id") from e
         # The route nests under a list; a fill of another sheet must not
         # be addressable through this one's URL.
-        if fill.list_id != str(target_list.id):
+        if fill.subject_id != str(target_list.id):
             raise NotFound("no fill with that id")
         return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
 

@@ -1,18 +1,20 @@
-"""The NORMAL kind's admission service. admit() is the column add:
-caps and refusals, column resolution (match-or-refuse), the config
-snapshot, the ephemeral-agent create, the fill row, and the walk that
-queues its runs. refill() is the one RECOVERY primitive,
-admission-shaped: a NEW fill over the column's unanswered rows.
+"""The admission service. admit() is the column add: caps and
+refusals, column resolution (match-or-refuse), the ephemeral-agent
+create, the fill job, and the columns write. refill() is the one
+RECOVERY primitive, admission-shaped: a NEW fill over the column's
+unanswered rows.
 
 Admission DECIDES and QUEUES; it does not walk the sheet. Everything
 here goes through ONE-transaction methods, and the columns write lands
-in the same transaction as the fill row and the job that will queue its
-runs: anything less can append a column whose fill never lands, leaving
-the sheet carrying a column nothing will ever fill. The walk itself
-(one page per slice, the agent processor judging each row) is the
-`enqueue_runs` job, worked within seconds by the jobs container, so a
-50,000 row consent costs the request nothing but a probe for its first
-row. Account-scoped like every lists service."""
+in the same transaction as the fill job: anything less can append a
+column whose fill never lands, leaving the sheet carrying a column
+nothing will ever fill. The walk itself (one page per slice, the agent
+processor judging each row) is the fill job's first slices, worked
+within seconds by the jobs container, so a 50,000 row consent costs
+the request nothing but a probe for its first row. A fill runs the
+agent's CURRENT config, so an edit reaches its next row; admission
+still resolves and probes the config once, so a broken config refuses
+at the click. Account-scoped like every lists service."""
 
 from __future__ import annotations
 
@@ -20,14 +22,15 @@ from django.db import transaction
 
 from agents.models import Agent
 from agents.services import AgentNotFound, AgentService
+from jobs.models import Job
 from jobs.services import enqueue
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
-from ...jobs.enqueue_runs import EnqueueRuns
-from ...models import Fill, List, ListRow, Node
+from ...jobs.fill import FillJob
+from ...models import List, ListRow
 from ...processors import WalkMode, WalkScope, processor_for
-from ..fingerprint import config_fingerprint
+from .. import fill_progress
 from ..lists import ListNotFound
 from ..workflows import WorkflowService, agent_id_of, columns_for_node
 from .base import AdmissionBase
@@ -40,7 +43,6 @@ from .errors import (
     NoEligibleRows,
     ProviderRetiredRefusal,
     RefillEmpty,
-    ResumeConfigChanged,
     ResumeRunNotFound,
 )
 from .targets import free_provider_row_cap
@@ -60,11 +62,11 @@ class FillAdmissionService(AdmissionBase):
         agent_id: str = "",
         confirmed_row_count: int,
         rows: int = 0,
-    ) -> Fill:
+    ) -> Job:
         """The one transaction. Exactly one of `config` (the quick tab:
         an ephemeral agent is created) or `agent_id` (a roster agent)
         is given; the serializer enforces the exclusivity, this method
-        trusts it.
+        trusts it. Returns the fill job.
 
         A fill is a CONSENT, so its walk has a fixed range: the rows at
         or below `confirmed_row_count`, the count the user was shown.
@@ -114,17 +116,23 @@ class FillAdmissionService(AdmissionBase):
             until_position = row_count if rows else min(confirmed_row_count or row_count, row_count)
             consented = min(rows, until_position) if rows else until_position
             self._check_budget(resolved_config, consented=consented)
-            fill = self._open_fill(
-                target_list, node=node, resolved_config=resolved_config, column_keys=column_keys, consented=consented
+            fill = FillJob(
+                list_id=str(target_list.id),
+                node_id=str(node.id),
+                agent_id=str(agent.id),
+                column_keys=column_keys,
+                mode=WalkMode.FRESH,
+                until_position=until_position,
+                limit=rows,
+                consented=consented,
             )
-            scope = WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id), until_position=until_position, limit=rows)
             if (
-                not processor_for(account_id=self.account_id, node=node, scope=scope)
+                not processor_for(account_id=self.account_id, node=node, scope=self._probe_scope(fill))
                 .probe(target_list, until_position=until_position)
                 .found
             ):
                 raise NoEligibleRows()
-            self._queue_walk(target_list, node=node, scope=scope)
+            job = self._open_fill(target_list, fill)
 
             # The lock, last, over the one write that needs it. The
             # guards run AGAIN here because the reads above were
@@ -135,10 +143,10 @@ class FillAdmissionService(AdmissionBase):
                 locked,
                 config=resolved_config,
                 node_id=str(node.id),
-                fill_run_id=str(fill.id),
+                fill_run_id=str(job.id),
                 account_id=self.account_id,
             )
-        return fill
+        return job
 
     def refill(
         self,
@@ -148,16 +156,16 @@ class FillAdmissionService(AdmissionBase):
         rows: int = 0,
         resume_fill_id: str = "",
         confirmed_row_count: int = 0,
-    ) -> Fill:
+    ) -> Job:
         """The ONE recovery primitive, admission-shaped: a NEW fill over
-        the column's eligible rows without an answer (terminal outcomes
-        are immutable, so recovery is never a reopened row). The range is
+        the column's rows without an answer (terminal outcomes are
+        immutable, so recovery is never a reopened row). The range is
         the count the user was shown when one was (`confirmed_row_count`),
         else the sheet as it stands; `rows` caps the target at the first
-        N (the next tranche of a scoped fill). The snapshot is FRESH on
-        purpose: agent edits since the stopped fill apply, and blanks
-        settled under a DIFFERENT config re-enter the target set (the
-        changed prompt is a changed ask).
+        N (the next tranche of a scoped fill). A refill targets every
+        row still blank in the walked columns, settled or not: the click
+        is the consent to re-spend on a settled blank, and an edited
+        prompt applies without detection (a fill reads its agent live).
 
         Like admit, the shape is judged against UNLOCKED reads and the
         List lock comes last, over the claim alone; the locked pass
@@ -185,8 +193,7 @@ class FillAdmissionService(AdmissionBase):
             require_fill_column(target_list, column_key)
             row_count = self._require_rows(list_id)
             # The stopped fill's shape, re-derived from the CURRENT
-            # config (each output's own key is its column key). The
-            # config is FRESH on purpose so agent edits apply, which
+            # config (each output's own key is its column key), which
             # means the output set can differ from the one that built
             # these columns: a new output has to become a real column
             # here or its answers land nowhere a surface can read.
@@ -206,18 +213,14 @@ class FillAdmissionService(AdmissionBase):
                 # front of the user, carrying a fill.
                 raise ColumnNoLongerFilled(key=column_key)
 
-            fingerprint = config_fingerprint(resolved_config)
-            source: Fill | None = None
+            source: Job | None = None
             if resume_fill_id:
                 # CONTINUE means finish what THAT fill consented to,
                 # never the column's whole remainder (the extend
-                # gestures widen; resume does not), and under the
-                # config it consented to (a changed prompt refuses).
-                source = Fill.objects.filter(id=resume_fill_id, list_id=str(target_list.id)).first()
+                # gestures widen; resume does not).
+                source = fill_progress.fill_jobs().filter(id=resume_fill_id, subject_id=str(target_list.id)).first()
                 if source is None:
                     raise ResumeRunNotFound()
-                if source.config_fingerprint != fingerprint:
-                    raise ResumeConfigChanged()
             # A RESUME judges owed-ness across the resumed fill's WHOLE
             # column set, a widening gesture across the one column the
             # user clicked. The fill owns every output its agent
@@ -226,22 +229,23 @@ class FillAdmissionService(AdmissionBase):
             # already answered and leave its siblings' retryable blanks
             # unreachable from that surface. A fill always owns at least
             # one column, so a resume's set is never empty.
-            walked = list(source.column_keys) if source is not None else [column_key]
+            walked = list(FillJob.model_validate(source.payload).column_keys) if source is not None else [column_key]
             until_position = row_count if rows else min(confirmed_row_count or row_count, row_count)
             consented = min(rows, until_position) if rows else until_position
             self._check_budget(resolved_config, consented=consented)
-            fill = self._open_fill(
-                target_list, node=node, resolved_config=resolved_config, column_keys=column_keys, consented=consented
-            )
-            scope = WalkScope(
+            fill = FillJob(
+                list_id=str(target_list.id),
+                node_id=str(node.id),
+                agent_id=str(agent.id),
+                column_keys=column_keys,
                 mode=WalkMode.REMAINING,
-                fill_run_id=str(fill.id),
                 owed_by=resume_fill_id,
-                column_keys=walked,
+                judged_keys=walked,
                 until_position=until_position,
                 limit=rows,
+                consented=consented,
             )
-            probe = processor_for(account_id=self.account_id, node=node, scope=scope).probe(
+            probe = processor_for(account_id=self.account_id, node=node, scope=self._probe_scope(fill)).probe(
                 target_list, until_position=until_position
             )
             if not probe.found:
@@ -253,58 +257,42 @@ class FillAdmissionService(AdmissionBase):
                 if probe.dropped_any:
                     raise NoEligibleRows()
                 raise RefillEmpty()
-            self._queue_walk(target_list, node=node, scope=scope)
+            job = self._open_fill(target_list, fill)
 
             # The lock, last, over the claim. The guards that read the
             # array run AGAIN here, against the locked copy, because
             # everything above judged an unlocked read; a refusal rolls
-            # the fill and its job back with it.
+            # the fill job back with it.
             locked = self._list_or_raise(list_id, lock=True)
             require_fill_column(locked, column_key)
             claim_columns(
                 locked,
                 config=resolved_config,
                 node_id=str(node.id),
-                fill_run_id=str(fill.id),
+                fill_run_id=str(job.id),
                 account_id=self.account_id,
                 owned=frozenset(columns_for_node(locked, str(node.id))),
             )
-        return fill
+        return job
 
-    def _open_fill(
-        self,
-        target_list: List,
-        *,
-        node: Node,
-        resolved_config: AgentConfig,
-        column_keys: list[str],
-        consented: int,
-    ) -> Fill:
-        """The fill row, carrying its frozen config and the consented
-        count as its denominator; `targeted_at` stays null until the
-        walk has queued every run in the range. The node is the one
-        binding both callers hold (admit minted it, refill looked it
-        up): the fill's agent is read off it. `resolved_config` still
-        rides separately, because it is the PROBED config the fill
-        freezes (the roster agent's current one, or the quick tab's
-        draft), never the node's. NOTHING is written to the sheet: a
-        targeted cell shimmers because a queued run says so."""
-        return Fill.objects.create(
-            account_id=self.account_id,
-            user_id=self.user_id,
-            list_id=str(target_list.id),
-            agent_id=agent_id_of(node),
-            column_keys=column_keys,
-            config_snapshot=resolved_config.model_dump(),
-            config_fingerprint=config_fingerprint(resolved_config),
-            confirmed_row_count=consented,
-            targeted_at=None,
+    def _open_fill(self, target_list: List, fill: FillJob) -> Job:
+        """The fill job, in this transaction, so it can never see a
+        columns write that was rolled back: the consent as its payload,
+        the walk as its first slices. NOTHING is written to the sheet:
+        a targeted cell shimmers because a queued run says so."""
+        return enqueue(self.account_id, fill, user_id=self.user_id, subject_id=str(target_list.id))
+
+    @staticmethod
+    def _probe_scope(fill: FillJob) -> WalkScope:
+        """The walk's scope as the probe sees it, before the job exists
+        (the probe queues nothing, so it needs no fill id)."""
+        return WalkScope(
+            mode=fill.mode,
+            owed_by=fill.owed_by,
+            column_keys=fill.judged_keys,
+            until_position=fill.until_position,
+            limit=fill.limit,
         )
-
-    def _queue_walk(self, target_list: List, *, node: Node, scope: WalkScope) -> None:
-        """The job that queues the fill's runs, in this transaction, so
-        it can never see a fill that was rolled back."""
-        enqueue(self.account_id, EnqueueRuns(list_id=str(target_list.id), node_id=str(node.id), scope=scope))
 
     @staticmethod
     def _check_budget(config: AgentConfig, *, consented: int) -> None:

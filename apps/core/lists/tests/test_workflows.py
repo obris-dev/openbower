@@ -29,7 +29,7 @@ from ..services.workflows import (
     columns_for_node,
     config_as,
 )
-from .fill_helpers import settle_all
+from .fill_helpers import consent_of, settle_all
 from .test_fill_admission import ACCOUNT, USER, AdmissionTestCase, quick_config, tick_jobs
 
 
@@ -113,7 +113,7 @@ class AdmissionNodeTests(AdmissionTestCase):
         self.assertEqual(columns_for_node(self.sheet, str(node.id)), ("email", "status"))
         self.assertEqual(columns_for_node(self.sheet, "01ND" + "0" * 22), ())
         self.assertEqual({t.node_id for t in NodeRun.objects.filter(fill_run_id=str(fill.id))}, {str(node.id)})
-        self.assertEqual(agent_id_of(node), fill.agent_id)
+        self.assertEqual(agent_id_of(node), consent_of(str(fill.id)).agent_id)
 
     def test_a_refill_reuses_the_column_s_node(self) -> None:
         fill = self.admit()

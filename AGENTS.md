@@ -83,9 +83,19 @@ auth + data services live in a separate private repo.
   `jobs` compose service works them within seconds (a loop like the
   provisioners); every transition is a compare-and-set on the job's
   status, `attempts` counts unexpected exits only, and every slice is
-  idempotent because a reclaimed job re-walks its last one. A job is
-  never a NodeRun (a run is one node applied to one row) and a
-  request never walks a sheet: admission decides and queues.
+  idempotent because a reclaimed job re-walks its last one. A kind
+  waiting on something outside the job answers `Wait` (parked until
+  it asked to be woken, no attempt spent); a stop from outside (a
+  user's cancel, a worker failing the job) goes through
+  `jobs.services.stop`, which runs the kind's `on_stop` then flips the
+  status, and the runner's own transitions are predicated on
+  PROCESSING so a stopped job is never resurrected. A job is never a
+  NodeRun (a run is one node applied to one row) and a request never
+  walks a sheet: admission decides and queues. A FILL is a job of kind
+  `fill` (lists/jobs/fill.py): the consent is its payload, the walk
+  its first slices, the wait for its runs the rest; `fill_run_id` on a
+  run or a cell is the job's id, and a fill reads its agent's config
+  LIVE (no snapshot, no fingerprint; a refill targets every blank).
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (lists/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(

@@ -114,18 +114,10 @@ FILL_PUBLISH_BATCH = 1000
 # supersede (the bench must always answer).
 MAX_ACTIVE_FILLS = 4
 
-FILL_STATUS_MAX_LENGTH = 16
 NODE_RUN_STATUS_MAX_LENGTH = 16
 CELL_STATE_MAX_LENGTH = 32
-# The failed fill's two-tier error: code is the machine leg, message is
-# server-authored copy rendered verbatim (bounded like every authored
-# value).
-FILL_ERROR_CODE_MAX_LENGTH = 64
-FILL_ERROR_MESSAGE_MAX_LENGTH = 256
 # The claimant's identity stamp (hostname:pid); diagnostic, bounded.
 LEASED_BY_MAX_LENGTH = 128
-# A config's sha256 hex digest (services/fingerprint.py).
-CONFIG_FINGERPRINT_MAX_LENGTH = 64
 
 
 # Stable error codes for the column and fill lanes' admission
@@ -139,7 +131,6 @@ class FillErrorCode(StrEnum):
     COLUMN_REFUSED = "column_refused"
     FILL_ACTIVE = "fill_active"
     FILLS_FULL = "fills_full"
-    CONFIG_CHANGED = "config_changed"
     RESUME_NOT_FOUND = "resume_not_found"
     EMPTY_FILL = "empty_fill"
     NO_ELIGIBLE_ROWS = "no_eligible_rows"
@@ -244,7 +235,7 @@ WEBHOOK_FLUSH_BATCH = 256
 
 # Stable codes for a fill that DIED, distinct from the admission
 # refusals above: those answer a request that never started, these
-# ride Fill.error_code and reach the client as the failed
+# ride the fill job's error_code and reach the client as the failed
 # fill's two-tier error. MODEL_UNRUNNABLE is deliberately the SAME
 # member the admission lane refuses under: an address that cannot run
 # is one fact, whether it is caught at the provider or at claim time.
@@ -286,8 +277,8 @@ class NodeRunStatus(StrEnum):
     LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
     path: the whole list was gone when the task came up (deleted after
     the row was pushed), so the task settles terminally with nothing to
-    diagnose. A fill-backed task never sees it (its Fill was swept with
-    the list); it is the autofill worker's way to retire an orphaned
+    diagnose. A fill-backed task never sees it (its fill job was swept
+    with the list); it is the autofill worker's way to retire an orphaned
     task instead of a delete-cascade off the list."""
 
     # The non-terminal lifecycle, in order: READY (admitted, eligible,
@@ -327,21 +318,10 @@ NON_TERMINAL_NODE_RUN_STATES = (
 BENCH_RUN_MAX_AGE_SECONDS = 86_400
 
 
-class FillStatus(StrEnum):
-    """A fill's lifecycle. Terminal states are terminal: recovery
-    is a NEW fill (refill), never a reopened row."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-# The statuses a fill can still be claimed into or cancelled from:
-# ONE definition, because "is this fill live" is asked by the queue,
-# the admission gate, the cancel path, and the derived-pending read.
-LIVE_FILL_STATUSES = (FillStatus.PENDING, FillStatus.RUNNING)
+# How long a targeted fill job parks between looks at its runs
+# (binary): the jobs loop's own cadence, so a fill reads complete
+# within seconds of its last run settling.
+FILL_POLL_SECONDS = 4
 
 
 CELL_SOURCE_MAX_LENGTH = 8

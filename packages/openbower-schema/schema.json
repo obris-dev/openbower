@@ -549,7 +549,7 @@
       "type": "object"
     },
     "ColumnPromptWire": {
-      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). Live fills keep their frozen\nsnapshot; an edit reaches the NEXT fill's admission, so surfaces\npeeking at \"what fills this column\" read HERE, never a fill's\nsnapshot.",
+      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). A fill reads its agent live, so\nan edit reaches a running fill's next row; surfaces peeking at\n\"what fills this column\" read HERE.",
       "properties": {
         "model": {
           "title": "Model",

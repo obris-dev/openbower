@@ -103,7 +103,6 @@ class FlushWebhooksTests(TransactionTestCase):
                 list_id=str(self.sheet.id),
                 row_id=str(row.id),
                 fill_run_id=None,
-                config_fingerprint="",
                 states={"answer": StoredCellState.FILLED, "country": country},
                 tools={},
                 source=CellSource.FILL,

@@ -13,6 +13,7 @@ from django.test.utils import CaptureQueriesContext, override_settings
 
 from agents.models import Agent
 from agents.providers import ModelUnavailable
+from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
@@ -22,9 +23,9 @@ from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
-    FillStatus,
 )
-from ..models import Fill, Node, NodeRun
+from ..models import Node, NodeRun
+from ..services import fill_progress
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -40,7 +41,7 @@ from ..services.fill_admission import (
 )
 from ..services.fills import FillService
 from ..services.lists import ListService
-from .fill_helpers import targeted, targeted_positions
+from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_positions
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -98,7 +99,7 @@ class AdmissionTestCase(TestCase):
 class QuickPathTests(AdmissionTestCase):
     def test_admit_creates_ephemeral_column_run_and_queue(self) -> None:
         fill = self.admit()
-        agent = Agent.objects.get(id=fill.agent_id)
+        agent = Agent.objects.get(id=consent_of(str(fill.id)).agent_id)
         self.assertTrue(agent.ephemeral)
         # The ephemeral row's label is the FIRST output's.
         self.assertEqual(agent.label, "Answer")
@@ -113,11 +114,13 @@ class QuickPathTests(AdmissionTestCase):
         self.assertEqual(
             (added[0].kind, added[0].node_id, added[0].current_fill_id), ("ai", str(node.id), str(fill.id))
         )
-        self.assertEqual(fill.status, FillStatus.PENDING)
-        self.assertEqual(fill.column_keys, ["answer"])
-        self.assertEqual(fill.config_snapshot["model"], "test-model")
+        self.assertEqual(fill_status(str(fill.id)), "pending")
+        self.assertEqual(consent_of(str(fill.id)).column_keys, ["answer"])
+        # A fill reads its agent live: the config lives on the agent,
+        # not frozen on the fill.
+        self.assertEqual(agent.config().model, "test-model")
         self.assertEqual(len(targeted(str(fill.id))), 2)
-        # Fill-backed tasks denormalize their list off the Fill, and
+        # Fill-backed tasks denormalize their list off the fill job, and
         # every one is a run of the column's node from birth.
         tasks = NodeRun.objects.filter(fill_run_id=str(fill.id))
         self.assertEqual({t.list_id for t in tasks}, {str(self.sheet.id)})
@@ -143,7 +146,7 @@ class QuickPathTests(AdmissionTestCase):
             ]
         )
         fill = self.admit(config=config)
-        self.assertEqual(fill.column_keys, ["email", "status"])
+        self.assertEqual(consent_of(str(fill.id)).column_keys, ["email", "status"])
         self.sheet.refresh_from_db()
         keys = {c.key for c in self.sheet.columns}
         self.assertIn("email", keys)
@@ -188,7 +191,7 @@ class QuickPathTests(AdmissionTestCase):
         with self.assertRaises(ColumnCollision):
             self.admit()
         # Nothing committed: no fill, no ephemeral, no columns change.
-        self.assertEqual(Fill.objects.count(), 0)
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.assertEqual(Agent.objects.count(), 0)
 
     def test_duplicate_output_keys_refuse(self) -> None:
@@ -209,7 +212,7 @@ class QuickPathTests(AdmissionTestCase):
         self.assertIn("Backup email", str(caught.exception))
         self.assertIn("rename one", str(caught.exception))
         # Nothing committed: no fill, no ephemeral, no columns change.
-        self.assertEqual(Fill.objects.count(), 0)
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.sheet.refresh_from_db()
         self.assertEqual([c.key for c in self.sheet.columns], ["company"])
 
@@ -219,7 +222,7 @@ class QuickPathTests(AdmissionTestCase):
         # with nothing visible to cancel.
         self.admit()
         self.lists.delete(self.sheet)
-        self.assertEqual(Fill.objects.count(), 0)
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.assertEqual(NodeRun.objects.count(), 0)
 
     def test_the_consent_range_is_the_echoed_count_never_the_grown_sheet(self) -> None:
@@ -227,14 +230,14 @@ class QuickPathTests(AdmissionTestCase):
         # fill covers exactly what was reviewed, and the newcomer shows
         # unfilled for the next refill: no refusal, no surprise spend.
         fill = self.admit(confirmed_row_count=1)
-        self.assertEqual((fill.confirmed_row_count, targeted_positions(str(fill.id))), (1, [1]))
+        self.assertEqual((confirmed_row_count(str(fill.id)), targeted_positions(str(fill.id))), (1, [1]))
 
     def test_a_shrunken_sheet_admits_and_fills_less(self) -> None:
         # Reviewed 99, the sheet has 2: fewer rows than consented is
         # cheaper, never a betrayal; the denominator settles to what
         # the walk found.
         fill = self.admit(confirmed_row_count=99)
-        self.assertEqual(fill.confirmed_row_count, 2)
+        self.assertEqual(confirmed_row_count(str(fill.id)), 2)
 
     def test_empty_sheet_refuses(self) -> None:
         empty = self.lists.create(owner_id=USER, label="Empty", columns=[], origin="manual")
@@ -270,9 +273,9 @@ class GuardTests(AdmissionTestCase):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
             fills.append(self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1))
-        Fill.objects.filter(id=fills[0].id).update(status=FillStatus.COMPLETE)
+        Job.objects.filter(id=fills[0].id).update(status=JobStatus.DONE)
         fill = self.admit()
-        self.assertEqual(fill.status, FillStatus.PENDING)
+        self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_refuses_wide_tool_fills(self) -> None:
@@ -301,7 +304,7 @@ class GuardTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
-        self.assertEqual(fill.status, FillStatus.PENDING)
+        self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}})
     def test_a_contacts_only_fill_is_never_free_budgeted(self) -> None:
@@ -314,7 +317,7 @@ class GuardTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(find_contacts=True))
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
-        self.assertEqual(fill.status, FillStatus.PENDING)
+        self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(
         TOOL_WIRING={"web_search": "duckduckgo"},
@@ -346,7 +349,7 @@ class ScopedFillTests(AdmissionTestCase):
         # row at 3 (it would render an empty ask) and takes position 4:
         # first N means first N usable.
         fill = self.admit(rows=3, confirmed_row_count=5)
-        self.assertEqual(fill.confirmed_row_count, 3)
+        self.assertEqual(confirmed_row_count(str(fill.id)), 3)
         # The cutoff is the LAST TARGETED position, not the sheet size.
         self.assertEqual(targeted_positions(str(fill.id)), [1, 2, 4])
 
@@ -364,7 +367,7 @@ class ScopedFillTests(AdmissionTestCase):
         # total was never the number it consented to, so the range is
         # the sheet as it stands and N is the ceiling.
         fill = self.admit(rows=1, confirmed_row_count=1)
-        self.assertEqual(fill.confirmed_row_count, 1)
+        self.assertEqual(confirmed_row_count(str(fill.id)), 1)
 
     def test_no_eligible_rows_refuses(self) -> None:
         bare = self.lists.create(
@@ -378,7 +381,7 @@ class ScopedFillTests(AdmissionTestCase):
             self.admission.admit(list_id=str(bare.id), config=quick_config(), confirmed_row_count=2)
         self.assertEqual(str(caught.exception), "No rows have values for this prompt's variables.")
         # Nothing committed: no fill, no ephemeral, no columns change.
-        self.assertEqual(Fill.objects.count(), 0)
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.assertEqual(Agent.objects.count(), 0)
         bare.refresh_from_db()
         self.assertEqual([c.key for c in bare.columns], ["company"])
@@ -387,7 +390,7 @@ class ScopedFillTests(AdmissionTestCase):
         # No {{tokens}} means the prompt asks the same question
         # everywhere; the variable-blank row is a target like any other.
         fill = self.admit(config=quick_config(prompt="Name three colors."), confirmed_row_count=5)
-        self.assertEqual(fill.confirmed_row_count, 5)
+        self.assertEqual(confirmed_row_count(str(fill.id)), 5)
         self.assertEqual(len(targeted(str(fill.id))), 5)
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
@@ -401,15 +404,15 @@ class ScopedFillTests(AdmissionTestCase):
         with self.assertRaises(FreeSearchBudget):
             self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over)
         fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over, rows=4)
-        self.assertEqual(fill.status, FillStatus.PENDING)
-        self.assertEqual(fill.confirmed_row_count, 4)
+        self.assertEqual(fill_status(str(fill.id)), "pending")
+        self.assertEqual(confirmed_row_count(str(fill.id)), 4)
 
 
 class RosterPathTests(AdmissionTestCase):
     def test_roster_agent_is_used_not_duplicated(self) -> None:
         agent = self.admission.agents.create(owner_id=USER, label="Finder", config=quick_config())
         fill = self.admit(config=None, agent_id=str(agent.id))
-        self.assertEqual(fill.agent_id, str(agent.id))
+        self.assertEqual(consent_of(str(fill.id)).agent_id, str(agent.id))
         self.assertEqual(Agent.objects.count(), 1)
 
     def test_retired_provider_refuses(self) -> None:

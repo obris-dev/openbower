@@ -25,7 +25,7 @@ from ..jobs.enqueue_runs import EnqueueRuns
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
-from ..processors import WalkMode, WalkScope
+from ..processors import WalkScope
 from ..processors.webhook import WebhookProcessor
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
@@ -175,10 +175,7 @@ class WebhookColumnService:
         page per slice, the node's processor judging each row), queued
         in this transaction so it can never see a column that was
         rolled back."""
-        walk = EnqueueRuns(
-            list_id=str(target_list.id), node_id=str(webhook_node.id), scope=WalkScope(mode=WalkMode.BACKFILL)
-        )
-        enqueue(self.account_id, walk)
+        enqueue(self.account_id, EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)))
 
     # The cells.
 

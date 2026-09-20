@@ -1,29 +1,26 @@
 """User-facing fill control and reads, thin and account-scoped
 (cross-tenant access reads as not-found, like every lists service).
-Authorization is ACCOUNT MEMBERSHIP: a fill on a shared list is a
-shared fill, so any teammate may cancel; `user_id` on the row is
+A fill is a job of kind `fill`; this service reads and stops those
+jobs. Authorization is ACCOUNT MEMBERSHIP: a fill on a shared list is
+a shared fill, so any teammate may cancel; `user_id` on the row is
 attribution only."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import NamedTuple
 
 from django.db import models
 
 from agents.constants import ToolStatus
+from jobs.models import Job
 from openbower_schema.fills import ColumnFillSummary, FillCounters, FillError
 from openbower_schema.lists import AiColumn, CellStateWire
 
-from ..constants import (
-    LIVE_FILL_STATUSES,
-    NON_TERMINAL_NODE_RUN_STATES,
-    FillStatus,
-    NodeRunStatus,
-    StoredCellState,
-)
-from ..models import Fill, List, ListCellState, ListRow, NodeRun
+from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
+from ..models import List, ListCellState, ListRow, NodeRun
+from . import fill_progress
 from .cell_states import CellStateService
-from .fill_progress import stop_fill
 
 # The wire's one non-terminal state. A STRING here and not a StoredCellState
 # member on purpose: the server never stores it, it derives it from the
@@ -31,7 +28,17 @@ from .fill_progress import stop_fill
 PENDING = "pending"
 
 
-def derive_counters(fill: Fill) -> FillCounters:
+class FillProgress(NamedTuple):
+    """What a fill's runs say about it at read time: the counters, the
+    liveness stamp, and whether any run has been claimed (the wire's
+    pending | running line)."""
+
+    counters: FillCounters
+    heartbeat: datetime | None
+    started: bool
+
+
+def derive_counters(fill_run_id: str) -> FillCounters:
     """The wire's progress, DERIVED at read time from the task rows and
     cell states rather than a stored counter: attempted is the run's
     settled (DONE) tasks; filled is the rows this run wrote a FILLED
@@ -41,7 +48,6 @@ def derive_counters(fill: Fill) -> FillCounters:
 
     Two indexed reads, no sheet scan: DONE task count on the reclaim
     index, FILLED cell count on the cell-state index."""
-    fill_run_id = str(fill.id)
     attempted = NodeRun.objects.filter(fill_run_id=fill_run_id, status=NodeRunStatus.DONE).count()
     filled = (
         ListCellState.objects.filter(fill_run_id=fill_run_id, state=StoredCellState.FILLED)
@@ -55,25 +61,26 @@ def derive_counters(fill: Fill) -> FillCounters:
     return FillCounters(attempted=attempted, filled=filled, blank=attempted - filled, transient=transient)
 
 
-def derive_heartbeat(fill: Fill) -> datetime | None:
+def derive_heartbeat(fill_run_id: str) -> datetime | None:
     """The run's liveness stamp, DERIVED as the latest state change
     across its tasks (the reclaim scan's own cursor): a run whose tasks keep
     moving reads fresh, one that has gone silent reads stale. None when
     the run has no task carrying one yet."""
-    return NodeRun.objects.filter(fill_run_id=str(fill.id)).aggregate(latest=models.Max("last_state_change_at"))[
+    return NodeRun.objects.filter(fill_run_id=fill_run_id).aggregate(latest=models.Max("last_state_change_at"))[
         "latest"
     ]
 
 
-def page_progress(fill_run_ids: list[str]) -> dict[str, tuple[FillCounters, datetime | None]]:
-    """The counters + heartbeat for a PAGE of runs in a fixed number of
-    grouped reads, so the fills poll does not pay derive_counters +
-    derive_heartbeat PER run (a 3+4N walk on a four-second poll). Four
-    aggregates GROUPED by fill_run_id: DONE tasks, distinct FILLED rows,
-    parked non-terminal tasks, and the latest state change. An id with no
-    matching rows reads all-zero / None. The ids are already
-    account-scoped by the caller (page_for_list), and fill_run_id is
-    unique, so no extra tenant filter is needed here."""
+def page_progress(fill_run_ids: list[str]) -> dict[str, FillProgress]:
+    """The counters, heartbeat and started flag for a PAGE of runs in a
+    fixed number of grouped reads, so the fills poll does not pay
+    derive_counters + derive_heartbeat PER run (a 3+4N walk on a
+    four-second poll). Four aggregates GROUPED by fill_run_id: DONE
+    tasks, distinct FILLED rows, parked non-terminal tasks, and the
+    latest state change with the highest attempt count. An id with no
+    matching rows reads all-zero / None / not started. The ids are
+    already account-scoped by the caller (page_for_list), and
+    fill_run_id is unique, so no extra tenant filter is needed here."""
     if not fill_run_ids:
         return {}
     done = {
@@ -96,21 +103,23 @@ def page_progress(fill_run_ids: list[str]) -> dict[str, tuple[FillCounters, date
         .values("fill_run_id")
         .annotate(n=models.Count("id"))
     }
-    heartbeats = {
-        r["fill_run_id"]: r["latest"]
+    moved = {
+        r["fill_run_id"]: (r["latest"], r["attempts"])
         for r in NodeRun.objects.filter(fill_run_id__in=fill_run_ids)
         .values("fill_run_id")
-        .annotate(latest=models.Max("last_state_change_at"))
+        .annotate(latest=models.Max("last_state_change_at"), attempts=models.Max("attempts"))
     }
-    out: dict[str, tuple[FillCounters, datetime | None]] = {}
+    out: dict[str, FillProgress] = {}
     for fid in fill_run_ids:
         attempted = done.get(fid, 0)
         filled_rows = filled.get(fid, 0)
-        out[fid] = (
-            FillCounters(
+        latest, attempts = moved.get(fid, (None, 0))
+        out[fid] = FillProgress(
+            counters=FillCounters(
                 attempted=attempted, filled=filled_rows, blank=attempted - filled_rows, transient=parked.get(fid, 0)
             ),
-            heartbeats.get(fid),
+            heartbeat=latest,
+            started=bool(attempts),
         )
     return out
 
@@ -124,45 +133,33 @@ class FillService:
         self.account_id = account_id
         self.cell_states = CellStateService(account_id=account_id)
 
-    def get(self, fill_run_id: str) -> Fill:
-        try:
-            return Fill.objects.get(id=fill_run_id, account_id=self.account_id)
-        except Fill.DoesNotExist as e:
-            raise FillNotFound(fill_run_id) from e
+    def get(self, fill_run_id: str) -> Job:
+        fill = fill_progress.fill_jobs().filter(id=fill_run_id, account_id=self.account_id).first()
+        if fill is None:
+            raise FillNotFound(fill_run_id)
+        return fill
 
-    def page_for_list(self, list_id: str, *, after_id: str, limit: int) -> list[Fill]:
-        """Keyset by -id, LIVE runs only: a terminal run's story (its
+    def page_for_list(self, list_id: str, *, after_id: str, limit: int) -> list[Job]:
+        """Keyset by -id, OPEN runs only: a terminal run's story (its
         status, its error) lands on the column summary the moment it
         leaves this list, so the poll carries in-flight work alone. A
         failed run is still first-class there, never a 4xx."""
-        # The snapshot is deferred, not shipped OR loaded: the wire
-        # dropped it and nothing on the poll path reads it, so the
-        # page must not pay the JSONB either (a test captures the
-        # endpoint's SQL and refuses any query touching the column).
-        qs = (
-            Fill.objects.filter(
-                account_id=self.account_id,
-                list_id=list_id,
-                status__in=LIVE_FILL_STATUSES,
-            )
-            .defer("config_snapshot")
-            .order_by("-id")
-        )
+        qs = fill_progress.open_fills().filter(account_id=self.account_id, subject_id=list_id).order_by("-id")
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
 
-    def cancel(self, fill_run_id: str) -> Fill:
-        """CAS from live states; the worker's per-row liveness check
-        sees the flip between rows (in-flight spend is sunk cost). A
-        fill already terminal cancels to a no-op, not an error: the
-        user's intent (this fill must not spend further) already
-        holds."""
+    def cancel(self, fill_run_id: str) -> Job:
+        """The stop from outside: the queued runs are abandoned, the
+        job flips; the worker's per-row liveness check sees the flip
+        between rows (in-flight spend is sunk cost). A fill already
+        terminal cancels to a no-op, not an error: the user's intent
+        (this fill must not spend further) already holds."""
         # Account-scoped FIRST (a foreign id reads as not found), then
         # the SHARED transition, so the user's cancel and the worker's
         # cannot order their writes differently.
         self.get(fill_run_id)
-        stop_fill(fill_run_id, FillStatus.CANCELLED)
+        fill_progress.cancel(fill_run_id)
         return self.get(fill_run_id)
 
     def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, CellStateWire]]:
@@ -177,15 +174,15 @@ class FillService:
         filled cell is the absence of an entry. Never-attempted is
         the absence of a record.
 
-        PENDING is DERIVED: a cell is pending when a queued task on a
-        live fill covers its column. The fill's target set was frozen
+        PENDING is DERIVED: a cell is pending when a queued task on an
+        open fill covers its column. The fill's column set was frozen
         at consent and the queue still holds it, so this is exact
         without anything having been written to the sheet at admission
         and without anything needing to be swept when a fill stops.
 
         Pending is applied SECOND on purpose: a cell an earlier fill
-        diagnosed and a live fill has re-queued is being worked on now,
-        and that is what the user should see.
+        diagnosed and an open fill has re-queued is being worked on
+        now, and that is what the user should see.
         """
         ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
         if not ai_keys or not rows:
@@ -200,12 +197,10 @@ class FillService:
                 continue
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         live = {
-            str(fill_run_id): [key for key in (keys or ()) if key in ai_keys]
-            for fill_run_id, keys in Fill.objects.filter(
-                account_id=self.account_id,
-                list_id=str(target_list.id),
-                status__in=LIVE_FILL_STATUSES,
-            ).values_list("id", "column_keys")
+            str(fill_run_id): [key for key in (payload.get("column_keys") or ()) if key in ai_keys]
+            for fill_run_id, payload in fill_progress.open_fills()
+            .filter(account_id=self.account_id, subject_id=str(target_list.id))
+            .values_list("id", "payload")
         }
         if not live:
             return states
@@ -224,15 +219,16 @@ class FillService:
         """Per-column coverage AND the terminal story, for the fills
         poll: how many cells the column has FILLED, how many it has
         RESOLVED, which fill speaks for it, that fill's status, and
-        its error when it failed (the page ships live runs only, so
+        its error when it failed (the page ships open runs only, so
         the summary is where a terminal story lands).
 
-        TWO bounded reads, no sheet scan anywhere. The totals come off
+        THREE bounded reads, no sheet scan anywhere. The totals come off
         one grouped read of the cell states (both numbers on the same
         index, bounded by the cells a fill has actually touched rather
         than by the size of the sheet, which is the whole reason
         FILLED is stored instead of counted out of the row JSON); the
-        story off one projected read of the runs the columns name.
+        story off one projected read of the jobs the columns name, and
+        one grouped read of their runs for the pending | running line.
 
         `current_fill_id` is READ off the column, where admission wrote
         it, never reconstructed by walking the sheet's fills; a column
@@ -254,18 +250,23 @@ class FillService:
             attempted[key] = attempted.get(key, 0) + count
             if state == StoredCellState.FILLED:
                 filled[key] = filled.get(key, 0) + count
-        # The newest run's status and error, off the runs the columns
-        # name: one query keyed by those ids, bounded by the sheet's
-        # fill columns, and PROJECTED to the three facts it feeds (the
-        # snapshot must not ride the poll through a side channel either).
         current_by_key = {column.key: column.current_fill_id for column in fill_columns}
+        current_ids = [fill_run_id for fill_run_id in current_by_key.values() if fill_run_id]
+        started = {
+            r["fill_run_id"]: bool(r["attempts"])
+            for r in NodeRun.objects.filter(fill_run_id__in=current_ids)
+            .values("fill_run_id")
+            .annotate(attempts=models.Max("attempts"))
+        }
         runs_by_id = {
-            str(fill_run_id): (status, code, message)
-            for fill_run_id, status, code, message in Fill.objects.filter(
-                account_id=self.account_id,
-                list_id=str(target_list.id),
-                id__in=[fill_run_id for fill_run_id in current_by_key.values() if fill_run_id],
-            ).values_list("id", "status", "error_code", "error_message")
+            str(fill_run_id): (
+                fill_progress.word_of(status, started=started.get(str(fill_run_id), False)),
+                code,
+                message,
+            )
+            for fill_run_id, status, code, message in fill_progress.fill_jobs()
+            .filter(account_id=self.account_id, subject_id=str(target_list.id), id__in=current_ids)
+            .values_list("id", "status", "error_code", "error")
         }
         summaries: list[ColumnFillSummary] = []
         for column in fill_columns:
@@ -277,7 +278,7 @@ class FillService:
             # other path. Reading only the run the column currently
             # names is what lets a newer clean run clear an old
             # failure without anything being swept.
-            error = FillError(code=code, message=message) if status == FillStatus.FAILED and code else None
+            error = FillError(code=code, message=message) if status == "failed" and code else None
             summaries.append(
                 ColumnFillSummary(
                     column_key=column.key,

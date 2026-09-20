@@ -113,7 +113,7 @@ class WebhookProcessor(NodeProcessor):
             flow.settle_many(missing, {}, status=NodeRunStatus.ROW_MISSING)
         records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
         cell_states = CellStateService(account_id=self.account_id)
-        for row_id, column_key, state, updated_at, _fingerprint in cell_states.iter_records(
+        for row_id, column_key, state, updated_at in cell_states.iter_records(
             list_id, row_ids=list(rows), column_keys=wait_keys
         ):
             records[row_id][column_key] = (state, updated_at)
@@ -219,7 +219,7 @@ class WebhookProcessor(NodeProcessor):
         row_ids = [str(row.id) for row in rows]
         records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
         cell_states = CellStateService(account_id=self.account_id)
-        for row_id, column_key, state, updated_at, _fingerprint in cell_states.iter_records(
+        for row_id, column_key, state, updated_at in cell_states.iter_records(
             list_id, row_ids=row_ids, column_keys=wait_keys
         ):
             records[row_id][column_key] = (state, updated_at)

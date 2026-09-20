@@ -8,10 +8,14 @@ JOB_KIND_MAX_LENGTH = 32
 JOB_STATUS_MAX_LENGTH = 16
 # One sentence of cause, bounded so a traceback can never become a row.
 JOB_ERROR_MAX_LENGTH = 512
+# The machine leg of a failed job's two-tier error (a kind's own code
+# vocabulary), bounded like every stored code.
+JOB_ERROR_CODE_MAX_LENGTH = 64
 
 # How many UNEXPECTED exits (a raising slice, a dead tick) a job gets
 # before it is failed with the last cause: the same patience a node run
-# has. Running out of a tick's budget is not an attempt.
+# has. Running out of a tick's budget is not an attempt, and neither is
+# a kind waiting on something else.
 JOB_ATTEMPTS = 4
 # How long one tick works before parking what it holds (binary): under
 # the cron's minute so ticks never pile up, and well under the stale
@@ -31,13 +35,18 @@ JOB_RETRY_BACKOFF_SECONDS = 64
 
 class JobStatus(StrEnum):
     """A job's lifecycle. READY is claimable (due once `scheduled_at`
-    passes); PROCESSING is held by a tick; DONE and FAILED are terminal,
-    the second carrying its cause in `error`."""
+    passes, which is how a kind waiting on something else parks);
+    PROCESSING is held by a tick; DONE, FAILED and CANCELLED are
+    terminal, the second carrying its cause in `error_code` and
+    `error`, the third the record of a stop from outside."""
 
     READY = "ready"
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
-NON_TERMINAL_JOB_STATES = (JobStatus.READY, JobStatus.PROCESSING)
+# The states a job still owes work in: what a stop from outside can
+# flip, what a kind-scoped "is it live" read counts.
+OPEN_JOB_STATES = (JobStatus.READY, JobStatus.PROCESSING)

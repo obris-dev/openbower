@@ -1,9 +1,9 @@
 """The fill lifecycle on the shared state machine: terminal writes
-through the landing, completion (no non-terminal task remains),
-cancel/fail (the ONE terminal transition), the stale reclaim, and the
-account-scoped run controls. The lease-based queue is gone; task
-transitions are NodeRunFlow's, and the counters DERIVE at read time.
-Real DB, no mocks (all pure ORM)."""
+through the landing, completion (the fill job's poll finds no open
+run), cancel/fail (the ONE terminal transition, a stop from outside),
+the stale reclaim, and the account-scoped run controls. A fill is a
+job; task transitions are NodeRunFlow's, and the counters DERIVE at
+read time. Real DB, no mocks (all pure ORM)."""
 
 from __future__ import annotations
 
@@ -14,46 +14,49 @@ from django.db import models
 from django.test import TestCase
 from django.utils import timezone
 
+from jobs.constants import JobStatus
+from jobs.models import Job
 from openbower_schema.fills import CellRunResult
 
-from ..constants import (
-    FillStatus,
-    NodeRunStatus,
-    StoredCellState,
-)
-from ..models import Fill, ListCellState, NodeRun
+from ..constants import NodeRunStatus, StoredCellState
+from ..models import ListCellState, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.fills import FillNotFound, FillService, derive_counters
 from ..services.lists import CellWriteResult
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
+from .fill_helpers import fill_status, open_fill_job, tick_fill
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
+LIST = "01LISTAAAAAAAAAAAAAAAAAAAA"
+NODE = "01NODEAAAAAAAAAAAAAAAAAAAA"
+AGENT = "01AGENTAAAAAAAAAAAAAAAAAAA"
 
 
-def make_run(*, status: str = FillStatus.PENDING, rows: int = 3) -> Fill:
-    fill = Fill.objects.create(
+def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
+    """A targeted fill job (its walk done) with its whole consented set
+    of tasks, born READY, so a lifecycle test starts from a fill that is
+    polling its runs."""
+    fill = open_fill_job(
         account_id=ACCOUNT,
         user_id=USER,
-        list_id="01LISTAAAAAAAAAAAAAAAAAAAA",
-        agent_id="01AGENTAAAAAAAAAAAAAAAAAAA",
-        status=status,
+        list_id=list_id,
+        node_id=NODE,
+        agent_id=AGENT,
         column_keys=["answer"],
-        config_snapshot={},
-        confirmed_row_count=rows,
-        targeted_at=timezone.now(),
+        consented=rows,
     )
-    # The queue is materialized at admission, born READY, so a fill under
-    # test has its whole consented set of tasks from the start.
     now = timezone.now()
     for n in range(rows):
         NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
+            node_id=NODE,
             kind=COLUMN_AGENT,
             row_id=f"01ROW{n:021d}",
+            list_id=list_id,
             position=n + 1,
             status=NodeRunStatus.READY,
             last_state_change_at=now,
@@ -72,7 +75,17 @@ class _SheetThatTakesEverything:
         return CellWriteResult(tuple(cells), (), ())
 
 
-def land(fill: Fill, task: NodeRun, *, worker: str = "test:1", state=None) -> bool:
+def _ctx(fill: Job, task: NodeRun) -> LandingContext:
+    return LandingContext(
+        account_id=ACCOUNT,
+        list_id=fill.subject_id,
+        column_keys=("answer",),
+        fill_run_id=str(fill.id),
+        node_id=task.node_id,
+    )
+
+
+def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> bool:
     """Claim the task and land a run on its row the way the shared
     consumer does (NodeRunFlow claim -> land_row -> settle). A FILLED
     state means a value was written."""
@@ -85,7 +98,7 @@ def land(fill: Fill, task: NodeRun, *, worker: str = "test:1", state=None) -> bo
         run = CellRunResult(declined_cause=state)
     return (
         land_row(
-            LandingContext.from_fill(fill, node_id=task.node_id),
+            _ctx(fill, task),
             claimed.row_id,
             run,
             close=partial(flow.settle, claimed.id, status=NodeRunStatus.DONE),
@@ -105,7 +118,7 @@ class TerminalWriteTests(TestCase):
         cell = ListCellState.objects.get()
         self.assertEqual(
             (cell.list_id, cell.row_id, cell.column_key, cell.state, cell.fill_run_id),
-            (fill.list_id, task.row_id, "answer", StoredCellState.NO_EVIDENCE, str(fill.id)),
+            (LIST, task.row_id, "answer", StoredCellState.NO_EVIDENCE, str(fill.id)),
         )
 
     def test_a_reclaimed_tasks_original_claimant_misses_and_lands_nothing(self) -> None:
@@ -124,7 +137,7 @@ class TerminalWriteTests(TestCase):
         # The original claimant's terminal write now misses.
         self.assertFalse(
             land_row(
-                LandingContext.from_fill(fill, node_id=task.node_id),
+                _ctx(fill, task),
                 claimed.row_id,
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
                 close=partial(original.settle, claimed.id, status=NodeRunStatus.DONE),
@@ -148,54 +161,40 @@ class TerminalWriteTests(TestCase):
 
 
 class CompletionTests(TestCase):
-    def _drain(self, fill: Fill) -> None:
+    """The fill job's poll IS the completion rule: once its target set
+    is whole, each tick asks whether any run is still open and parks
+    (no attempt spent) while one is; the tick that finds none settles
+    the job DONE, and the fill reads complete."""
+
+    def _drain(self, fill: Job) -> None:
         for task in list(NodeRun.objects.filter(fill_run_id=str(fill.id), status=NodeRunStatus.READY)):
             land(fill, task)
 
-    def test_try_finish_refuses_while_work_remains(self) -> None:
+    def test_the_poll_leaves_a_fill_with_work_remaining_open(self) -> None:
         fill = make_run(rows=2)
         task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
         land(fill, task)
-        self.assertFalse(fill_progress.try_finish(str(fill.id)))
+        tick_fill(str(fill.id))
         fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.PENDING)
+        self.assertEqual((fill.status, fill.attempts), (JobStatus.READY, 0))
+        self.assertIsNotNone(fill.scheduled_at)  # parked until its next look
+        self.assertEqual(fill_status(str(fill.id)), "running")
 
-    def test_try_finish_completes_a_drained_fill(self) -> None:
+    def test_the_poll_completes_a_drained_fill(self) -> None:
         fill = make_run(rows=2)
         self._drain(fill)
-        self.assertTrue(fill_progress.try_finish(str(fill.id)))
+        tick_fill(str(fill.id))
         fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.COMPLETE)
+        self.assertEqual((fill.status, fill.error), (JobStatus.DONE, ""))
+        self.assertEqual(fill_status(str(fill.id)), "complete")
 
-    def test_a_fill_whose_walk_is_still_queuing_never_completes_between_slices(self) -> None:
-        # No open run is also what a fill looks like between two slices
-        # of the walk that queues its runs. FAILS without the gate: the
-        # settle between the slices would complete the fill, free its cap
-        # slot, and strand the runs the next slice lands.
-        fill = make_run(rows=1)
-        Fill.objects.filter(id=fill.id).update(targeted_at=None)
-        task = NodeRun.objects.get(fill_run_id=str(fill.id))
-        land(fill, task)
-        self.assertFalse(fill_progress.try_finish(str(fill.id)))
-        fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.PENDING)
-        # The walk ends: the denominator settles to the runs queued and
-        # the completion rule runs once.
-        Fill.objects.filter(id=fill.id).update(confirmed_row_count=50)
-        self.assertTrue(fill_progress.settle_targets(str(fill.id)))
-        fill.refresh_from_db()
-        self.assertEqual((fill.status, fill.confirmed_row_count), (FillStatus.COMPLETE, 1))
-        self.assertIsNotNone(fill.targeted_at)
-
-    def test_a_drained_live_fill_is_still_offered_for_completion(self) -> None:
+    def test_a_drained_open_fill_is_still_offered_to_the_provisioner(self) -> None:
         fill = make_run(rows=1)
         task = NodeRun.objects.get(fill_run_id=str(fill.id))
         land(fill, task)
-        self.assertEqual([j.id for j in fill_progress.iter_live_fills()], [fill.id])
-        self.assertTrue(fill_progress.try_finish(str(fill.id)))
-        fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.COMPLETE)
-        self.assertEqual(list(fill_progress.iter_live_fills()), [])
+        self.assertEqual([j.id for j in fill_progress.iter_open_fills()], [fill.id])
+        tick_fill(str(fill.id))
+        self.assertEqual(list(fill_progress.iter_open_fills()), [])
 
     def test_a_processing_task_blocks_completion(self) -> None:
         # A task a consumer owns (PROCESSING) is still owed, so a crashed
@@ -203,7 +202,9 @@ class CompletionTests(TestCase):
         fill = make_run(rows=1)
         task = NodeRun.objects.get(fill_run_id=str(fill.id))
         NodeRunFlow(worker_id="test:1").claim(str(task.id))
-        self.assertFalse(fill_progress.try_finish(str(fill.id)))
+        tick_fill(str(fill.id))
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, JobStatus.READY)
 
     def test_a_parked_task_blocks_completion(self) -> None:
         fill = make_run(rows=1)
@@ -211,15 +212,22 @@ class CompletionTests(TestCase):
         flow = NodeRunFlow(worker_id="test:1")
         flow.claim(str(task.id))
         flow.park(str(task.id), backoff_seconds=60, result={})
-        self.assertFalse(fill_progress.try_finish(str(fill.id)))
+        tick_fill(str(fill.id))
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, JobStatus.READY)
 
-    def test_fail_fill_is_cas_from_live_states(self) -> None:
+    def test_fail_fill_is_cas_from_open_states(self) -> None:
         fill = make_run(rows=1)
         self.assertTrue(fill_progress.fail(str(fill.id), code="model_unrunnable", message="why"))
         fill.refresh_from_db()
-        self.assertEqual(fill.status, FillStatus.FAILED)
-        self.assertEqual(fill.error_code, "model_unrunnable")
+        self.assertEqual((fill.status, fill.error_code, fill.error), (JobStatus.FAILED, "model_unrunnable", "why"))
+        self.assertEqual(fill_status(str(fill.id)), "failed")
         self.assertFalse(fill_progress.fail(str(fill.id), code="x", message="y"))
+        # The tick that comes round finds nothing to hold: a stopped
+        # job is never claimed again.
+        tick_fill(str(fill.id))
+        fill.refresh_from_db()
+        self.assertEqual((fill.status, fill.error_code), (JobStatus.FAILED, "model_unrunnable"))
 
     def test_stopping_a_fill_abandons_its_queue_and_touches_no_cell(self) -> None:
         # The record of consent granted and NOT spent. Nothing on the
@@ -236,12 +244,26 @@ class CompletionTests(TestCase):
         self.assertEqual(by_status, {NodeRunStatus.DONE: 1, NodeRunStatus.ABANDONED: 2})
         self.assertEqual(ListCellState.objects.count(), 1)
 
+    def test_a_stop_while_a_tick_holds_the_job_stands(self) -> None:
+        # The runner's settle is predicated on PROCESSING: a cancel that
+        # lands while a tick holds the job flips it, and the tick's
+        # own settle misses instead of resurrecting it.
+        fill = make_run(rows=1)
+        self._drain(fill)
+        Job.objects.filter(id=fill.id).update(status=JobStatus.PROCESSING)
+        self.assertTrue(fill_progress.cancel(str(fill.id)))
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, JobStatus.CANCELLED)
+        tick_fill(str(fill.id))
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, JobStatus.CANCELLED)
+
     def test_counters_derive_from_tasks_and_cells(self) -> None:
         fill = make_run(rows=2)
         tasks = list(NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position"))
         land(fill, tasks[0])  # FILLED
         land(fill, tasks[1], state=StoredCellState.NO_EVIDENCE)  # blank
-        counters = derive_counters(fill)
+        counters = derive_counters(str(fill.id))
         self.assertEqual(
             (counters.attempted, counters.filled, counters.blank, counters.transient),
             (2, 1, 1, 0),
@@ -249,18 +271,19 @@ class CompletionTests(TestCase):
 
 
 class RunControlTests(TestCase):
-    def test_cancel_flips_live_run_and_noops_terminal(self) -> None:
+    def test_cancel_flips_an_open_run_and_noops_terminal(self) -> None:
         fill = make_run(rows=1)
         service = FillService(account_id=ACCOUNT)
         cancelled = service.cancel(str(fill.id))
-        self.assertEqual(cancelled.status, FillStatus.CANCELLED)
-        self.assertEqual(service.cancel(str(fill.id)).status, FillStatus.CANCELLED)
+        self.assertEqual(cancelled.status, JobStatus.CANCELLED)
+        self.assertEqual(fill_status(str(fill.id)), "cancelled")
+        self.assertEqual(service.cancel(str(fill.id)).status, JobStatus.CANCELLED)
 
-    def test_a_cancelled_run_leaves_no_live_fill(self) -> None:
+    def test_a_cancelled_run_leaves_no_open_fill(self) -> None:
         fill = make_run(rows=1)
-        self.assertEqual([f.id for f in fill_progress.iter_live_fills()], [fill.id])
+        self.assertEqual([f.id for f in fill_progress.iter_open_fills()], [fill.id])
         FillService(account_id=ACCOUNT).cancel(str(fill.id))
-        self.assertEqual(list(fill_progress.iter_live_fills()), [])
+        self.assertEqual(list(fill_progress.iter_open_fills()), [])
 
     def test_foreign_account_reads_as_not_found(self) -> None:
         fill = make_run(rows=1)
@@ -270,14 +293,14 @@ class RunControlTests(TestCase):
         with self.assertRaises(FillNotFound):
             foreign.cancel(str(fill.id))
 
-    def test_page_for_list_keysets_live_runs_only(self) -> None:
+    def test_page_for_list_keysets_open_runs_only(self) -> None:
         fills = [make_run(rows=1) for _ in range(3)]
         cancelled = fills[0]
         FillService(account_id=ACCOUNT).cancel(str(cancelled.id))
         live_newest_first = sorted((str(fill.id) for fill in fills[1:]), reverse=True)
         service = FillService(account_id=ACCOUNT)
-        page = service.page_for_list("01LISTAAAAAAAAAAAAAAAAAAAA", after_id="", limit=1)
+        page = service.page_for_list(LIST, after_id="", limit=1)
         self.assertEqual([str(fill.id) for fill in page], live_newest_first[:1])
-        rest = service.page_for_list("01LISTAAAAAAAAAAAAAAAAAAAA", after_id=str(page[-1].id), limit=2)
+        rest = service.page_for_list(LIST, after_id=str(page[-1].id), limit=2)
         self.assertEqual([str(fill.id) for fill in rest], live_newest_first[1:])
         self.assertNotIn(str(cancelled.id), [str(fill.id) for fill in (*page, *rest)])

@@ -35,10 +35,10 @@ const PROMPT_TOGGLE_CHARS = 256;
  * (Retry for a failed run, Continue for one the user stopped), the
  * scoped continue for terminal runs, and
  * the prompt peek with its inline EDIT (reading and writing the
- * column-scoped prompt endpoint, the column's CURRENT config, never a
- * run's frozen snapshot; a live run disables the affordance, since
- * the live run holds its snapshot and an edit only reaches the
- * NEXT run). The Popover primitive carries the disclosure floor
+ * column-scoped prompt endpoint, the column's CURRENT config; a live
+ * run disables the affordance, since a fill reads its agent live and
+ * an edit mid-fill would mix two asks in one run's rows). The Popover
+ * primitive carries the disclosure floor
  * (aria-expanded, Escape, outside-click, focus return). A MISSING
  * summary means the poll has not answered for this column yet: the
  * first page pending, or a just-added column whose entry arrives on

@@ -27,7 +27,6 @@ from .errors import (
     ProviderRetiredRefusal,
     RefillEmpty,
     ReservedColumnKey,
-    ResumeConfigChanged,
     ResumeRunNotFound,
     SameColumnFillActive,
 )
@@ -51,7 +50,6 @@ __all__ = [
     "ProviderRetiredRefusal",
     "RefillEmpty",
     "ReservedColumnKey",
-    "ResumeConfigChanged",
     "ResumeRunNotFound",
     "SameColumnFillActive",
 ]

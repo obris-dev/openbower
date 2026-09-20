@@ -29,36 +29,24 @@ from django.db import transaction
 from openbower_schema.fills import CellRunResult
 
 from ...constants import CellSource, StoredCellState
-from ...models import Fill
 from .. import cell_truth, webhook_runs
 from ..lists import ListService
 
 
 class LandingContext(NamedTuple):
-    """Who a run lands for, without a Fill: the identity a row's writes
-    need. A fill-backed caller builds it from its Fill (`from_fill`); the
-    automatic path (autofill) builds it from the task plus the agent's
-    resolved column set, with `fill_run_id` NULL (the cell belongs to no
-    run). `node_id` is the task's node on both lanes: the advance asks
-    which wait nodes name its path."""
+    """Who a run lands for: the identity a row's writes need. A
+    fill-backed caller builds it from its fill job's consent (the
+    column set it owns, the job id the cells belong to); the automatic
+    path (autofill) builds it from the task plus the agent's resolved
+    column set, with `fill_run_id` NULL (the cell belongs to no run).
+    `node_id` is the task's node on both lanes: the advance asks which
+    wait nodes name its path."""
 
     account_id: str
     list_id: str
     column_keys: tuple[str, ...]
     fill_run_id: str | None
-    config_fingerprint: str
     node_id: str
-
-    @classmethod
-    def from_fill(cls, fill: Fill, *, node_id: str) -> LandingContext:
-        return cls(
-            account_id=fill.account_id,
-            list_id=fill.list_id,
-            column_keys=tuple(fill.column_keys),
-            fill_run_id=str(fill.id),
-            config_fingerprint=fill.config_fingerprint,
-            node_id=node_id,
-        )
 
 
 class ClaimLost(Exception):
@@ -141,7 +129,6 @@ def land_row(
                 list_id=ctx.list_id,
                 row_id=row_id,
                 fill_run_id=ctx.fill_run_id,
-                config_fingerprint=ctx.config_fingerprint,
                 states=states,
                 tools=run.tools,
                 source=CellSource.FILL,

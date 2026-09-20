@@ -19,16 +19,17 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from jobs.constants import JobStatus
+from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
 from openbower_schema.lists import AiColumn, ListRowsPage
 
-from ..constants import FREE_SEARCH_FILL_BUDGET, FillStatus, StoredCellState
-from ..models import Fill
+from ..constants import FREE_SEARCH_FILL_BUDGET, StoredCellState
 from ..services import fill_progress
 from ..services.lists import ListService
-from .fill_helpers import settle, targeted
+from .fill_helpers import confirmed_row_count, fill_status, settle, targeted
 
 # Request-shaped config (the serializer derives the output key).
 CONFIG = {
@@ -121,9 +122,6 @@ class AiColumnPostTests(FillViewsTestCase):
         # Counters default zeros before the worker writes any.
         self.assertEqual(wire.counters.attempted, 0)
         self.assertEqual(wire.counters.filled, 0)
-        # The snapshot is STORED, not wired: no poll surface renders
-        # it, so the page must not pay for it.
-        self.assertEqual(Fill.objects.get(id=body["id"]).config_snapshot["model"], "test-model")
         self.assertEqual(len(targeted(body["id"])), 2)
 
     def test_agent_id_path_uses_the_roster_agent(self) -> None:
@@ -282,19 +280,6 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertEqual(by_key["answer"].current_status, "pending")
         self.assertIsNone(by_key["answer"].last_error)
 
-    def test_the_poll_never_touches_the_config_snapshot(self) -> None:
-        # The thesis of the live-only page, proven at the SQL: the
-        # snapshot left the wire, so no query behind the poll may load
-        # the JSONB either, through the page read or the story read.
-        # This test failed against the first cut of both (whole-row
-        # hydration), which is exactly what it exists to refuse.
-        self.post_ai()
-        url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
-        with CaptureQueriesContext(connection) as ctx:
-            self.assertEqual(self.client.get(url).status_code, 200)
-        offenders = [query["sql"] for query in ctx.captured_queries if "config_snapshot" in query["sql"]]
-        self.assertEqual(offenders, [])
-
     def test_a_stopped_run_carries_its_status_and_no_error(self) -> None:
         # The leg the Continue verb reads, and the pin on "None unless
         # that run FAILED": cancel must never ship an error, however
@@ -313,7 +298,7 @@ class ColumnSummaryTests(FillViewsTestCase):
         # one; this is the drift the gate exists to survive) still
         # ships no error. This half FAILS under an error_code-only
         # gate, which the happy path above cannot.
-        Fill.objects.filter(id=fill_run_id).update(error_code=STRAY_ERROR_CODE, error_message=STRAY_ERROR_MESSAGE)
+        Job.objects.filter(id=fill_run_id).update(error_code=STRAY_ERROR_CODE, error=STRAY_ERROR_MESSAGE)
         _, by_key = self._summaries()
         self.assertIsNone(by_key["answer"].last_error)
 
@@ -339,7 +324,7 @@ class FillCancelTests(FillViewsTestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(FillRunWire(**resp.json()).status, "cancelled")
-        self.assertEqual(Fill.objects.get(id=fill_run_id).status, FillStatus.CANCELLED)
+        self.assertEqual(Job.objects.get(id=fill_run_id).status, JobStatus.CANCELLED)
 
     def test_a_terminal_envelope_ships_its_error_by_status_not_by_code(self) -> None:
         # The envelope's gate is the summary's gate (status FAILED and
@@ -349,7 +334,7 @@ class FillCancelTests(FillViewsTestCase):
         fill_run_id = self.post_ai().json()["id"]
         url = reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id})
         self.assertEqual(self.client.post(url).status_code, 200)
-        Fill.objects.filter(id=fill_run_id).update(error_code=STRAY_ERROR_CODE, error_message=STRAY_ERROR_MESSAGE)
+        Job.objects.filter(id=fill_run_id).update(error_code=STRAY_ERROR_CODE, error=STRAY_ERROR_MESSAGE)
         # Cancel on a terminal fill no-ops and returns the envelope.
         echo = self.client.post(url)
         self.assertEqual(echo.status_code, 200, echo.content)
@@ -366,7 +351,7 @@ class FillCancelTests(FillViewsTestCase):
         other = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Other sheet", columns=[], origin="manual")
         url = reverse("lists_fill_cancel", kwargs={"id": str(other.id), "fill_run_id": fill_run_id})
         self.assertEqual(self.client.post(url).status_code, 404)
-        self.assertEqual(Fill.objects.get(id=fill_run_id).status, FillStatus.PENDING)
+        self.assertEqual(fill_status(fill_run_id), "pending")
 
 
 class CellStatesTests(FillViewsTestCase):
@@ -426,11 +411,11 @@ class CellStatesTests(FillViewsTestCase):
         page = self._states_page()
         self.assertEqual([dict(item.states) for item in page.items], [{}, {}])
 
-    def test_tombstones_survive_a_second_run(self) -> None:
-        # A refill omits the rows it settled ON PURPOSE, so the
-        # sidecar must read each row's latest outcome ACROSS the
-        # column's fills: the no-answer word must not vanish the moment
-        # a second run exists.
+    def test_a_second_run_re_targets_a_tombstone(self) -> None:
+        # A refill targets every blank, settled or not, so a second
+        # run covers the old no-answer word with its own pending: the
+        # sidecar reads each row's latest outcome ACROSS the column's
+        # fills, and the newest fill's queue wins.
         first = self.post_ai().json()
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(first["id"], str(rows[0].id), StoredCellState.NO_ANSWER)
@@ -440,9 +425,8 @@ class CellStatesTests(FillViewsTestCase):
         tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
         page = self._states_page()
-        # The settled row keeps its word from the OLD fill; the
-        # retryable row shows the NEW fill's pending.
-        self.assertEqual(words(page.items[0].states), {"answer": "no_answer"})
+        # Both rows show the NEW fill's pending, the settled one included.
+        self.assertEqual(words(page.items[0].states), {"answer": "pending"})
         self.assertEqual(words(page.items[1].states), {"answer": "pending"})
         # And a newer FILL outranks an older error: the second run
         # fills the retried row, so its old cause must not cover the
@@ -601,9 +585,8 @@ class FillColumnSummaryTests(FillViewsTestCase):
         refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
         tick_jobs()
         self.assertEqual(refill.status_code, 201, refill.content)
-        # no_evidence is SETTLED under the same config; model_error is
-        # infrastructure and re-runs. Exactly one row.
-        self.assertEqual(Fill.objects.get(id=refill.json()["id"]).confirmed_row_count, 1)
+        # Every blank re-runs, settled or not: both rows.
+        self.assertEqual(confirmed_row_count(refill.json()["id"]), 2)
 
     def test_the_fills_page_carries_per_column_coverage(self) -> None:
         # The tracker renders server truth: `filled` counts the cells

@@ -21,10 +21,10 @@ from pydantic import BaseModel, ValidationError
 
 from ..constants import JOB_ATTEMPTS, JOB_LOOP_IDLE_SECONDS, JOB_RETRY_BACKOFF_SECONDS, JOB_STALE_SECONDS, JobStatus
 from ..kinds import registry
-from ..kinds.base import JobKind
+from ..kinds.base import JobFailed, JobKind, Wait
 from ..kinds.registry import all_kinds, register
 from ..models import Job
-from ..services import JobRunner, enqueue
+from ..services import JobRunner, cancel, enqueue, fail, stop
 from ..services.loop import run_loop
 from ..services.runner import EXHAUSTED
 
@@ -32,24 +32,40 @@ ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 SLICES: list[tuple[str, int]] = []
 
 
+STOPPED: list[str] = []
+
+
 class Counting(JobKind):
     """Walks `pages` slices, recording each; raises on the slice named
-    by `boom`."""
+    by `boom`; answers `Wait` on the slice named by `wait_at` (once,
+    for `wait_seconds`); raises JobFailed on the slice named by
+    `verdict_at`; records a stop from outside."""
 
     KIND: ClassVar[str] = "test_counting"
     pages: int
     boom: int = -1
+    wait_at: int = -1
+    wait_seconds: int = 0
+    verdict_at: int = -1
 
     class Progress(BaseModel):
         done: int = 0
+        waited: bool = False
 
-    def run(self, job: Job, progress: Progress) -> Progress | None:
+    def run(self, job: Job, progress: Progress) -> Progress | Wait | None:
         if progress.done == self.boom:
             raise RuntimeError("slice exploded")
+        if progress.done == self.verdict_at:
+            raise JobFailed("test_verdict", "the kind decided")
+        if progress.done == self.wait_at and not progress.waited:
+            return Wait(self.wait_seconds, self.Progress(done=progress.done, waited=True))
         if progress.done >= self.pages:
             return None
         SLICES.append((str(job.id), progress.done))
-        return self.Progress(done=progress.done + 1)
+        return self.Progress(done=progress.done + 1, waited=progress.waited)
+
+    def on_stop(self, job: Job) -> None:
+        STOPPED.append(str(job.id))
 
 
 register(Counting)
@@ -58,20 +74,86 @@ register(Counting)
 class RunnerTests(TestCase):
     def setUp(self) -> None:
         SLICES.clear()
+        STOPPED.clear()
         self.runner = JobRunner(worker_id="tick:1")
+
+    def test_a_wait_parks_the_job_until_it_asked_to_be_woken_and_spends_no_attempt(self):
+        job = enqueue(ACCOUNT, Counting(pages=2, wait_at=1, wait_seconds=600))
+        before = timezone.now()
+        report = self.runner.tick()
+        job.refresh_from_db()
+        # Slice 0 ran, slice 1 answered Wait: parked READY with its
+        # cursor, due after the wait, no attempt, no cause written.
+        self.assertEqual((report.parked, job.status, job.attempts, job.error), (1, JobStatus.READY, 0, ""))
+        self.assertEqual(job.progress, {"done": 1, "waited": True})
+        self.assertGreaterEqual(job.scheduled_at, before + timedelta(seconds=600))
+        self.assertEqual(self.runner.tick().claimed, 0)  # not due yet
+        Job.objects.filter(id=job.id).update(scheduled_at=None)
+        self.runner.tick()
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"done": 2, "waited": True}))
+
+    def test_a_kinds_own_verdict_fails_the_job_with_its_code_and_no_attempt(self):
+        job = enqueue(ACCOUNT, Counting(pages=3, verdict_at=1))
+        report = self.runner.tick()
+        job.refresh_from_db()
+        self.assertEqual((report.failed, job.status, job.attempts), (1, JobStatus.FAILED, 0))
+        self.assertEqual((job.error_code, job.error), ("test_verdict", "the kind decided"))
+        self.assertIsNotNone(job.settled_at)
+
+    def test_a_budget_park_leaves_the_stored_cause_alone(self):
+        # A raising slice writes its cause; a later park for budget must
+        # not blank it (a kind waiting on something outside the job
+        # reads it back on its next slice).
+        job = enqueue(ACCOUNT, Counting(pages=3))
+        Job.objects.filter(id=job.id).update(error="an earlier cause")
+        self.runner.tick(budget_seconds=0)
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error), (JobStatus.READY, "an earlier cause"))
+
+    def test_a_stop_from_outside_tidies_through_the_kind_then_flips(self):
+        job = enqueue(ACCOUNT, Counting(pages=3))
+        self.assertTrue(cancel(str(job.id)))
+        job.refresh_from_db()
+        self.assertEqual((job.status, STOPPED), (JobStatus.CANCELLED, [str(job.id)]))
+        self.assertIsNotNone(job.settled_at)
+        # Terminal already: a second stop is a no-op, and no tick claims it.
+        self.assertFalse(fail(str(job.id), code="x", message="y"))
+        self.assertEqual(self.runner.tick().claimed, 0)
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error_code), (JobStatus.CANCELLED, ""))
+
+    def test_a_fail_from_outside_carries_both_legs(self):
+        job = enqueue(ACCOUNT, Counting(pages=3))
+        self.assertTrue(fail(str(job.id), code="model_unrunnable", message="The model could not be reached."))
+        job.refresh_from_db()
+        self.assertEqual(
+            (job.status, job.error_code, job.error),
+            (JobStatus.FAILED, "model_unrunnable", "The model could not be reached."),
+        )
+
+    def test_a_stop_while_a_tick_holds_the_job_is_never_resurrected(self):
+        # The runner's park and settle are predicated on PROCESSING: a
+        # job stopped while held stays stopped, and the tick's own
+        # write misses.
+        job = enqueue(ACCOUNT, Counting(pages=1))
+        Job.objects.filter(id=job.id).update(status=JobStatus.PROCESSING)
+        self.assertTrue(stop(str(job.id), status=JobStatus.CANCELLED))
+        job.refresh_from_db()
+        self.assertEqual(job.status, JobStatus.CANCELLED)
+        self.assertEqual(JobRunner._settle(job), 0)
 
     def test_a_job_runs_its_slices_to_done_within_one_tick(self):
         job = enqueue(ACCOUNT, Counting(pages=3))
-        self.assertEqual(
-            (job.status, job.kind, job.payload), (JobStatus.READY, "test_counting", {"pages": 3, "boom": -1})
-        )
+        self.assertEqual((job.status, job.kind), (JobStatus.READY, "test_counting"))
+        self.assertEqual(job.payload["pages"], 3)
 
         report = self.runner.tick()
 
         self.assertEqual((report.claimed, report.done, report.parked, report.failed), (1, 1, 0, 0))
         self.assertEqual(SLICES, [(str(job.id), 0), (str(job.id), 1), (str(job.id), 2)])
         job.refresh_from_db()
-        self.assertEqual((job.status, job.attempts, job.progress, job.error), (JobStatus.DONE, 0, {"done": 3}, ""))
+        self.assertEqual((job.status, job.attempts, job.progress["done"], job.error), (JobStatus.DONE, 0, 3, ""))
         self.assertIsNotNone(job.settled_at)
 
     def test_the_budget_parks_a_job_with_its_cursor_and_the_next_tick_resumes_it(self):
@@ -80,16 +162,16 @@ class RunnerTests(TestCase):
         # not durable between ticks (the second tick would restart).
         first = self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
-        self.assertEqual((first.parked, job.status, job.progress), (1, JobStatus.READY, {"done": 1}))
+        self.assertEqual((first.parked, job.status, job.progress["done"]), (1, JobStatus.READY, 1))
         self.assertLessEqual(job.scheduled_at, timezone.now())
 
         second = self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
         # Running out of tick is not an attempt.
-        self.assertEqual((second.parked, job.progress, job.attempts), (1, {"done": 2}, 0))
+        self.assertEqual((second.parked, job.progress["done"], job.attempts), (1, 2, 0))
         self.runner.tick()
         job.refresh_from_db()
-        self.assertEqual((job.status, job.progress, job.attempts), (JobStatus.DONE, {"done": 3}, 0))
+        self.assertEqual((job.status, job.progress["done"], job.attempts), (JobStatus.DONE, 3, 0))
         self.assertEqual([done for _, done in SLICES], [0, 1, 2])
 
     def test_a_job_needing_more_ticks_than_the_cap_allows_attempts_still_finishes(self):
@@ -99,7 +181,7 @@ class RunnerTests(TestCase):
         for _ in range(JOB_ATTEMPTS + 3):
             self.runner.tick(budget_seconds=0)
         job.refresh_from_db()
-        self.assertEqual((job.status, job.attempts, job.progress), (JobStatus.READY, 0, {"done": JOB_ATTEMPTS + 3}))
+        self.assertEqual((job.status, job.attempts, job.progress["done"]), (JobStatus.READY, 0, JOB_ATTEMPTS + 3))
         self.runner.tick()
         job.refresh_from_db()
         self.assertEqual((job.status, job.error), (JobStatus.DONE, ""))
@@ -120,7 +202,7 @@ class RunnerTests(TestCase):
         self.runner.tick()
         job.refresh_from_db()
         # Slice 0 landed its cursor before slice 1 raised.
-        self.assertEqual(job.progress, {"done": 1})
+        self.assertEqual(job.progress["done"], 1)
 
     def test_a_raising_slice_parks_with_its_cause_and_a_backoff(self):
         job = enqueue(ACCOUNT, Counting(pages=2, boom=0))
@@ -254,8 +336,10 @@ class _Cursor(BaseModel):
 
 
 class RegistryTests(SimpleTestCase):
-    def test_the_lists_backfill_kind_is_on_the_roster_at_boot(self):
-        self.assertIn("enqueue_runs", [cls.KIND for cls in all_kinds()])
+    def test_the_lists_kinds_are_on_the_roster_at_boot(self):
+        kinds = [cls.KIND for cls in all_kinds()]
+        self.assertIn("enqueue_runs", kinds)
+        self.assertIn("fill", kinds)
 
     def test_a_kind_without_run_is_refused(self):
         class NoRun(JobKind):

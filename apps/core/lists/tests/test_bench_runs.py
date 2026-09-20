@@ -33,7 +33,7 @@ from ..nodes.registry import COLUMN_AGENT
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.prune_bench_runs import PruneBenchRunsOperation
 from ..services.bench_runs import BenchActive, BenchRunNotFound, BenchRunService, BenchUnrunnable
-from ..services.fill_progress import live_fill_count
+from ..services.fill_progress import open_fill_count
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
@@ -159,9 +159,9 @@ class BenchRunServiceTests(TestCase):
         self.assertEqual(running.status, NodeRunStatus.READY)
 
     def test_a_bench_run_never_counts_into_the_fill_cap(self):
-        before = live_fill_count(ACCOUNT)
+        before = open_fill_count(ACCOUNT)
         self._start()
-        self.assertEqual(live_fill_count(ACCOUNT), before)
+        self.assertEqual(open_fill_count(ACCOUNT), before)
 
     def test_cancel_abandons_an_unclaimed_run_and_leaves_a_finished_one(self):
         run = self._start()

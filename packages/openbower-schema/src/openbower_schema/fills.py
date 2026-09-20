@@ -22,10 +22,11 @@ from .lists import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
 
-# The SETTLED partition of WireCellState: diagnoses the same config would
-# just reproduce, so they hold (and never re-spend) until the config
-# changes; every other cause re-runs on the next fill. A wire fact
-# (x-constants) so the client derives the partition instead of
+# The SETTLED partition of WireCellState: the model's own verdicts (a
+# quiet word on the sheet rather than a warning), as opposed to
+# infrastructure's causes. Every blank re-runs on the next fill; the
+# partition is how the sheet SPEAKS, not what a refill targets. A wire
+# fact (x-constants) so the client derives the partition instead of
 # hand-retyping it beside its copy.
 SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
     "no_evidence",
@@ -173,8 +174,6 @@ class FillRunWire(BaseModel):
         description="This run's error, both legs (tier 1: the message renders verbatim); "
         "None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.",
     )
-    # The config snapshot frozen at admission stays STORED, not wired:
-    # nothing renders it on a poll.
     created_at: str
     updated_at: str
 
@@ -234,10 +233,9 @@ class FillRunPage(BaseModel):
 class ColumnPromptWire(BaseModel):
     """The column's CURRENT fill config as the server holds it (GET),
     and the echo after a column-scoped edit (PATCH
-    /lists/{id}/columns/{key}/prompt). Live fills keep their frozen
-    snapshot; an edit reaches the NEXT fill's admission, so surfaces
-    peeking at "what fills this column" read HERE, never a fill's
-    snapshot."""
+    /lists/{id}/columns/{key}/prompt). A fill reads its agent live, so
+    an edit reaches a running fill's next row; surfaces peeking at
+    "what fills this column" read HERE."""
 
     prompt: str
     model: str

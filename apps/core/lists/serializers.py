@@ -1,14 +1,15 @@
-"""Request validation + wire builders for /v1/lists and /v1/fills.
+"""Request validation + wire builders for /v1/lists and /v1/runs.
 Wire dicts mirror
 the schema package's models one-to-one (the web types against those)."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rest_framework import serializers
 
 from agents.serializers import AgentConfigRequest
+from jobs.models import Job
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult, FillError
 from openbower_schema.fills import FillRunWire as WireFillRun
@@ -31,9 +32,11 @@ from .constants import (
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
     ColumnType,
-    FillStatus,
 )
-from .models import Fill, Folder, List, ListRow, NodeRun
+from .models import Folder, List, ListRow, NodeRun
+
+if TYPE_CHECKING:
+    from .services.fills import FillProgress
 
 
 class ColumnDef(serializers.Serializer):
@@ -306,55 +309,63 @@ def row_wire(
     ).model_dump()
 
 
-def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:
-    # Two-tier error: both legs travel together or not at all (a code
-    # with no copy would leave the client nothing to render verbatim),
-    # gated on the DOCUMENTED predicate exactly as the column summary
-    # gates last_error: one fact, one rule, on every wire. Counters and
-    # the heartbeat DERIVE from the task rows and cell states at read
-    # time (passed in, so a page of runs pays ONE grouped read, not per
-    # run); nothing writes them onto the fill anymore.
-    error = (
-        FillError(code=fill.error_code, message=fill.error_message)
-        if fill.status == FillStatus.FAILED and fill.error_code
-        else None
-    )
+def _fill_run_wire(fill: Job, progress: FillProgress) -> dict[str, Any]:
+    # The fill is a JOB of kind fill: its consent is the payload, its
+    # walk's cursor the progress, its lifecycle the job's. The wire's
+    # five words derive from the job's status plus whether a run has
+    # been claimed. Two-tier error: both legs travel together or not at
+    # all (a code with no copy would leave the client nothing to render
+    # verbatim), gated on the DOCUMENTED predicate exactly as the column
+    # summary gates last_error: one fact, one rule, on every wire.
+    # Counters and the heartbeat DERIVE from the task rows and cell
+    # states at read time (passed in, so a page of runs pays ONE grouped
+    # read, not per run); nothing writes them onto the job.
+    from .jobs.fill import FillJob
+    from .services import fill_progress
+
+    consent = FillJob.model_validate(fill.payload)
+    cursor = FillJob.Progress.model_validate(fill.progress)
+    status = fill_progress.status_of(fill, started=progress.started)
+    error = FillError(code=fill.error_code, message=fill.error) if status == "failed" and fill.error_code else None
     return WireFillRun(
         id=str(fill.id),
-        list_id=fill.list_id,
-        agent_id=fill.agent_id,
-        status=fill.status,
-        column_keys=fill.column_keys or [],
-        counters=counters,
-        confirmed_row_count=fill.confirmed_row_count,
-        targeted_at=fill.targeted_at.isoformat() if fill.targeted_at else None,
+        list_id=fill.subject_id,
+        agent_id=consent.agent_id,
+        status=status,
+        column_keys=consent.column_keys,
+        counters=progress.counters,
+        confirmed_row_count=cursor.targeted if cursor.targeted_at else consent.consented,
+        targeted_at=cursor.targeted_at.isoformat() if cursor.targeted_at else None,
         # The base model's attribution field is the wire's started_by;
         # authorization stays account membership.
         started_by=fill.user_id,
-        heartbeat_at=heartbeat.isoformat() if heartbeat else None,
+        heartbeat_at=progress.heartbeat.isoformat() if progress.heartbeat else None,
         error=error,
         created_at=fill.created_at.isoformat(),
         updated_at=fill.updated_at.isoformat(),
     ).model_dump()
 
 
-def fill_run_wire(fill: Fill) -> dict[str, Any]:
+def fill_run_wire(fill: Job) -> dict[str, Any]:
     """ONE run's wire, for the echo paths (admit/cancel/refill) that
     return a single fill. The fills PAGE uses fill_runs_wire, which reads
     all runs' progress in a fixed number of queries."""
-    from .services.fills import derive_counters, derive_heartbeat
+    from .services.fill_progress import started
+    from .services.fills import FillProgress, derive_counters, derive_heartbeat
 
-    return _fill_run_wire(fill, derive_counters(fill), derive_heartbeat(fill))
+    fill_run_id = str(fill.id)
+    progress = FillProgress(derive_counters(fill_run_id), derive_heartbeat(fill_run_id), started(fill_run_id))
+    return _fill_run_wire(fill, progress)
 
 
-def fill_runs_wire(fills: list[Fill]) -> list[dict[str, Any]]:
+def fill_runs_wire(fills: list[Job]) -> list[dict[str, Any]]:
     """A PAGE of runs' wires, paying a FIXED number of grouped reads for
     all of them (not derive_counters + derive_heartbeat per run, which is
     a 3+4N walk on the four-second poll)."""
     from .services.fills import page_progress
 
     progress = page_progress([str(fill.id) for fill in fills])
-    return [_fill_run_wire(fill, *progress[str(fill.id)]) for fill in fills]
+    return [_fill_run_wire(fill, progress[str(fill.id)]) for fill in fills]
 
 
 class WebhookColumnTestRequest(serializers.Serializer):

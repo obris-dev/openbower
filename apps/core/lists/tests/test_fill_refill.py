@@ -20,12 +20,14 @@ from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import FillRunWire
 
-from ..constants import FillStatus, StoredCellState
-from ..models import Fill, ListCellState, NodeRun
+from ..constants import StoredCellState
+from ..models import ListCellState, NodeRun
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
 from .fill_helpers import (
     FILLED_VALUE,
+    confirmed_row_count,
+    consent_of,
     fill_agent_id,
     row_value,
     settle,
@@ -118,7 +120,7 @@ class RefillTargetTests(RefillTestCase):
         self.assertEqual(wire.confirmed_row_count, 4)  # the consented range: the sheet as reviewed
         self.assertEqual(wire.counters.attempted, 0)
         # Settled to what the walk found once it ran.
-        self.assertEqual(Fill.objects.get(id=wire.id).confirmed_row_count, 2)
+        self.assertEqual(confirmed_row_count(wire.id), 2)
         self.assertEqual(targeted_pairs(wire.id), [(str(rows[1].id), 2), (str(rows[3].id), 4)])
 
     def test_appended_rows_are_covered(self) -> None:
@@ -132,7 +134,7 @@ class RefillTargetTests(RefillTestCase):
         resp = self.refill()
         self.assertEqual(resp.status_code, 201, resp.content)
         wire = FillRunWire(**resp.json())
-        self.assertEqual(Fill.objects.get(id=wire.id).confirmed_row_count, 3)
+        self.assertEqual(confirmed_row_count(wire.id), 3)
         self.assertEqual(len(targeted(wire.id)), 3)
 
     def test_empty_target_refuses_with_the_envelope(self) -> None:
@@ -156,9 +158,9 @@ class RefillTargetTests(RefillTestCase):
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json(), {"error": "fill_active", "detail": "A fill is already running on this column."})
 
-    def test_fresh_snapshot_picks_up_an_agent_edit(self) -> None:
-        # Mid-fill edits never apply (the snapshot freezes at
-        # admission); a refill is exactly when they SHOULD.
+    def test_a_refill_runs_the_agent_as_edited(self) -> None:
+        # A fill reads its agent live, so an edit applies to the next
+        # fill (and to a running fill's next row).
         fill = self.admit()
         self.cancel(fill["id"])
         Agent.objects.filter(id=fill["agent_id"]).update(prompt="Reworded ask for {{company}}")
@@ -167,16 +169,15 @@ class RefillTargetTests(RefillTestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         wire = FillRunWire(**resp.json())
         self.assertEqual(wire.agent_id, fill["agent_id"])
-        # The snapshot is stored, not wired: the refill's freshness is
-        # asserted where the worker will read it.
-        self.assertEqual(Fill.objects.get(id=wire.id).config_snapshot["prompt"], "Reworded ask for {{company}}")
+        self.assertEqual(Agent.objects.get(id=wire.agent_id).prompt, "Reworded ask for {{company}}")
 
 
 class SettledBlankTests(RefillTestCase):
-    def test_settled_blanks_stay_settled_and_infrastructure_reruns(self) -> None:
-        # An honest no-evidence blank re-buys the same nothing under
-        # the same config: settled. Infrastructure-tier outcomes
-        # (model_error) re-run.
+    def test_every_blank_re_runs_settled_or_not(self) -> None:
+        # A settled blank is history, not a gate: the refill click is
+        # the consent to re-spend on it, beside the infrastructure
+        # blank that always re-ran. FAILS if a settled state is skipped
+        # again.
         fill = self.admit()
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(fill["id"], str(rows[0].id), StoredCellState.NO_EVIDENCE)
@@ -185,13 +186,10 @@ class SettledBlankTests(RefillTestCase):
         refill = self.refill()
         self.assertEqual(refill.status_code, 201, refill.content)
         owed = targeted(refill.json()["id"])
-        self.assertNotIn(str(rows[0].id), owed)
+        self.assertIn(str(rows[0].id), owed)
         self.assertIn(str(rows[1].id), owed)
 
-    def test_a_no_answer_tombstone_is_not_retargeted(self) -> None:
-        # Budget exhaustion (the model spent its budget without
-        # answering) is SETTLED: the same config re-buys the same
-        # refusal, so refill skips it while model_error still re-runs.
+    def test_a_no_answer_blank_is_retargeted_too(self) -> None:
         fill = self.admit()
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(fill["id"], str(rows[0].id), StoredCellState.NO_ANSWER)
@@ -199,9 +197,7 @@ class SettledBlankTests(RefillTestCase):
         self.cancel(fill["id"])
         refill = self.refill()
         self.assertEqual(refill.status_code, 201, refill.content)
-        owed = targeted(refill.json()["id"])
-        self.assertNotIn(str(rows[0].id), owed)
-        self.assertIn(str(rows[1].id), owed)
+        self.assertEqual(targeted(refill.json()["id"]), {str(rows[0].id), str(rows[1].id)})
 
     def _edit_prompt(self, agent_id: str, prompt: str) -> None:
         agents = AgentService(account_id=TEST_IDENTITY["account_id"])
@@ -209,9 +205,8 @@ class SettledBlankTests(RefillTestCase):
         agents.update(agent, config=agent.config().model_copy(update={"prompt": prompt}))
 
     def test_an_edited_prompt_reopens_blanks_settled_under_the_old_one(self) -> None:
-        # Settled means settled UNDER THAT CONFIG: a no_answer verdict
-        # was the model's refusal of the OLD ask, so a changed prompt
-        # re-targets the row on the next refill.
+        # A blank re-targets on the next refill whatever the prompt
+        # did meanwhile; with an edit the new ask is what runs.
         fill = self.admit()
         rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         settle(fill["id"], str(rows[0].id), StoredCellState.NO_ANSWER)
@@ -235,23 +230,6 @@ class SettledBlankTests(RefillTestCase):
         owed = targeted(refill.json()["id"])
         self.assertNotIn(str(rows[0].id), owed)
         self.assertIn(str(rows[1].id), owed)
-
-    def test_the_newest_runs_verdict_outranks_older_ones(self) -> None:
-        # Settled in a NEWER fill stays settled even when an older fill
-        # errored the same row.
-        first = self.admit()
-        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
-        settle(first["id"], str(rows[0].id), StoredCellState.MODEL_ERROR)
-        self.cancel(first["id"])
-        second = self.refill()
-        self.assertEqual(second.status_code, 201, second.content)
-        second_id = second.json()["id"]
-        settle(second_id, str(rows[0].id), StoredCellState.NO_EVIDENCE)
-        self.cancel(second_id)
-        third = self.refill()
-        self.assertEqual(third.status_code, 201, third.content)
-        owed = targeted(third.json()["id"])
-        self.assertNotIn(str(rows[0].id), owed)
 
 
 class PartialAnswerTests(RefillTestCase):
@@ -363,7 +341,7 @@ class ResumeTests(RefillTestCase):
         self.assertEqual(resumed.status_code, 201, resumed.content)
         body = resumed.json()
         # The stopped 1-row fill left exactly its one pending row.
-        self.assertEqual(Fill.objects.get(id=body["id"]).confirmed_row_count, 1)
+        self.assertEqual(confirmed_row_count(body["id"]), 1)
 
     def refill_with_resume(self, fill_run_id: str):
         url = reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"})
@@ -371,19 +349,19 @@ class ResumeTests(RefillTestCase):
         tick_jobs()
         return resp
 
-    def test_continue_refuses_after_a_prompt_edit(self) -> None:
-        # The config a fill consented under is part of the consent:
-        # resuming it with a different prompt would be a different fill
-        # wearing its name, so Continue refuses and points at the
-        # widening gestures (which run the new prompt).
+    def test_continue_after_a_prompt_edit_is_admitted_and_runs_the_new_prompt(self) -> None:
+        # A fill reads its agent live, so there is no consented config
+        # to defend: Continue finishes the stopped fill's own rows with
+        # whatever the agent says now.
         scoped = self.admit(confirmed_row_count=1, rows=1)
         self.cancel(scoped["id"])
         agents = AgentService(account_id=TEST_IDENTITY["account_id"])
         agent = agents.get_for_fill(scoped["agent_id"])
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
         resp = self.refill_with_resume(scoped["id"])
-        self.assertEqual(resp.status_code, 409)
-        self.assertEqual(resp.json()["error"], "config_changed")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(confirmed_row_count(resp.json()["id"]), 1)
+        self.assertEqual(agents.get_for_fill(resp.json()["agent_id"]).prompt, "A sharper ask for {{company}}")
 
 
 class ScopedRefillTests(RefillTestCase):
@@ -480,7 +458,7 @@ class RefillLifecycleTests(RefillTestCase):
         self.cancel(fill["id"])
         first = self.refill()
         self.assertEqual(first.status_code, 201, first.content)
-        self.assertEqual(FillRunWire(**first.json()).status, FillStatus.PENDING)
+        self.assertEqual(FillRunWire(**first.json()).status, "pending")
         second = self.refill()
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"], "fill_active")
@@ -675,9 +653,8 @@ class OutputDriftTests(RefillTestCase):
 
     def _agent_for(self, fill_run_id: str):
         from agents.models import Agent
-        from lists.models import Fill
 
-        return Agent.objects.get(id=Fill.objects.get(id=fill_run_id).agent_id)
+        return Agent.objects.get(id=consent_of(fill_run_id).agent_id)
 
     def test_an_output_added_since_the_last_fill_becomes_a_column(self):
         from agents.services import AgentService

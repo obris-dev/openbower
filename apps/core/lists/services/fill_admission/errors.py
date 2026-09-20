@@ -209,21 +209,6 @@ class ResumeRunNotFound(FillRefused):
         super().__init__("That fill is not on this sheet; start a new fill instead.")
 
 
-class ResumeConfigChanged(FillRefused):
-    """Continue means finish THAT fill's consented work, and the config
-    it consented under is part of the consent: resuming it under a
-    different prompt would be a different fill wearing its name. The
-    widening gestures run the new config."""
-
-    code = FillErrorCode.CONFIG_CHANGED
-
-    def __init__(self) -> None:
-        super().__init__(
-            "The prompt changed since this fill stopped. Use Fill next rows or Fill all remaining "
-            "to run it with the new prompt."
-        )
-
-
 class ModelUnrunnable(FillRefused):
     code = FillErrorCode.MODEL_UNRUNNABLE
 

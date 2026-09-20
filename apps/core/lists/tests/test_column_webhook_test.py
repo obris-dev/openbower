@@ -60,7 +60,6 @@ class ColumnWebhookTestTests(TestCase):
             list_id=str(self.sheet.id),
             row_id=row_id,
             fill_run_id=None,
-            config_fingerprint="",
             states=states,
             tools={},
             source=CellSource.FILL,

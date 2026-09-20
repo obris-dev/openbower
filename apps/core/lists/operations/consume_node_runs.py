@@ -29,7 +29,6 @@ from ..constants import FILL_RETRY_BACKOFF_SECONDS, NodeRunStatus
 from ..ingest.topics import AUTOFILL_RUNS
 from ..models import Node
 from ..processors import RunOutcome, processor_for
-from ..services import fill_progress
 from ..services.lists import ListNotFound, RowNotFound
 from ..services.node_runs import NodeRunFlow
 
@@ -76,11 +75,8 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
     except (ListNotFound, RowNotFound):
         # The row or list vanished between resolve and land (a user
         # deletion mid-run): terminal, nothing to diagnose. A fill-backed
-        # run also nudges completion so the fill does not strand live on a
-        # row that disappeared.
+        # run's fill notices on its next poll of its runs.
         flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
-        if task.fill_run_id:
-            fill_progress.try_finish(task.fill_run_id)
         return RunOutcome.ROW_MISSING
     except DatabaseError:
         # Transient: the loop's own branch recovers the connection and
@@ -97,8 +93,6 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
         logger.exception("node run %s crashed on attempt %d", task.id, task.attempts)
         if flow.exhausted(task):
             flow.settle(task.id, {}, status=NodeRunStatus.DONE)
-            if task.fill_run_id:
-                fill_progress.try_finish(task.fill_run_id)
             return RunOutcome.DONE
         flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result={})
         return RunOutcome.PARKED

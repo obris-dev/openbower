@@ -13,9 +13,9 @@ from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, AiColumn, ListColumn
 
-from ...constants import LIVE_FILL_STATUSES, MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS
-from ...models import Fill, List
-from ..fill_progress import live_fill_count
+from ...constants import MAX_ACTIVE_FILLS, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS
+from ...models import List
+from .. import fill_progress
 from .errors import (
     AccountFillsFull,
     ColumnCollision,
@@ -109,38 +109,21 @@ def preview_columns(
     # for one to finish") and not columns_full (a 400, "change the
     # request"), because waiting actually fixes the first and the
     # second would send them off to delete columns for nothing.
-    if live_fill_count(account_id) >= MAX_ACTIVE_FILLS:
+    if fill_progress.open_fill_count(account_id) >= MAX_ACTIVE_FILLS:
         raise AccountFillsFull()
     check_column_cap(target_list, column_keys=keys)
     return keys
 
 
 def check_account_cap(account_id: str, *, opening: str = "") -> None:
-    """The locked half of the account cap. NORMAL admissions only: the
-    bench must always answer, so the test kind never runs this
-    (supersede bounds that lane at one live test), while live tests
-    still COUNT here because they spend like any fill.
-
-    The cap must serialize ACROSS lists (the List lock only covers
-    same-list admits): lock the account's live fill rows in id order
-    so concurrent admits at the cap boundary queue here, then count in
-    a fresh statement, which sees fills committed while this one
-    waited on the locks. Lock order is List row first (the caller's
-    own lock), then fill rows; the worker's fill-row locks run in
-    their own transactions with no List lock held, so the order cannot
-    invert. A burst of first-ever admits on an idle account has
-    nothing to lock and can still overshoot, bounded by the
-    simultaneous requests. `opening` is the admission's own fill,
-    excluded from the locks and the count (it is already live by the
-    time the cap is judged; counting it would refuse one fill early)."""
-    list(
-        Fill.objects.select_for_update()
-        .filter(account_id=account_id, status__in=LIVE_FILL_STATUSES)
-        .exclude(id=opening)
-        .order_by("id")
-        .only("id")
-    )
-    account_live = Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).exclude(id=opening).count()
+    """The account cap, judged under the List lock at the end of
+    admission: a plain count of the account's open fill jobs (a
+    courtesy cap, not a ledger, so it takes no row locks and a burst
+    of simultaneous admits at the boundary can overshoot by the burst).
+    `opening` is the admission's own fill, excluded from the count (it
+    is already open by the time the cap is judged; counting it would
+    refuse one fill early)."""
+    account_live = fill_progress.open_fills().filter(account_id=account_id).exclude(id=opening).count()
     if account_live >= MAX_ACTIVE_FILLS:
         raise AccountFillsFull()
 
@@ -200,13 +183,16 @@ def check_column_cap(target_list: List, *, column_keys: list[str]) -> None:
 def check_columns_free(target_list: List, *, column_keys: list[str], opening: str = "") -> None:
     """`opening` is the fill this admission just created, if the
     claim runs after it. Admission opens the fill BEFORE taking the
-    List lock, so without this the guard finds our own live fill on
+    List lock, so without this the guard finds our own open fill on
     our own column and refuses the admission to itself."""
-    live = Fill.objects.filter(
-        list_id=str(target_list.id),
-        status__in=LIVE_FILL_STATUSES,
-    ).exclude(id=opening)
-    taken = {key for fill in live for key in fill.column_keys or ()}
+    taken: set[str] = set()
+    for payload in (
+        fill_progress.open_fills()
+        .filter(subject_id=str(target_list.id))
+        .exclude(id=opening)
+        .values_list("payload", flat=True)
+    ):
+        taken.update(payload.get("column_keys") or ())
     if taken & set(column_keys):
         raise SameColumnFillActive()
 

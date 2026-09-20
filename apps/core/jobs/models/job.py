@@ -1,47 +1,65 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from openbower_kernel.models import AccountScopedModel
+from openbower_kernel.models import UserScopedModel
 
-from ..constants import JOB_ERROR_MAX_LENGTH, JOB_KIND_MAX_LENGTH, JOB_STATUS_MAX_LENGTH, JobStatus
+from ..constants import (
+    JOB_ERROR_CODE_MAX_LENGTH,
+    JOB_ERROR_MAX_LENGTH,
+    JOB_KIND_MAX_LENGTH,
+    JOB_STATUS_MAX_LENGTH,
+    JobStatus,
+)
 
 
-class Job(AccountScopedModel):
+class Job(UserScopedModel):
     """One unit of background work, AND the queue itself: what was
     asked (`kind`, `payload`), where it stands (`status`, `progress`),
-    and what happened (`error`, the stamps). A job is bounded work with
-    a RESUME CURSOR: its kind does one slice at a time and hands back
-    where it stopped, so a job survives a tick's budget, a crash, and a
-    retry by starting from `progress`, never from the beginning.
+    and what happened (`error_code`, `error`, the stamps). A job is
+    bounded work with a RESUME CURSOR: its kind does one slice at a
+    time and hands back where it stopped, so a job survives a tick's
+    budget, a crash, and a retry by starting from `progress`, never
+    from the beginning. A kind that waits on something else (a fill
+    waiting for its runs to settle) parks itself for a while and is
+    picked up again when due; the wait spends no attempt.
 
     This is deliberately NOT a NodeRun. A run is one node applied to one
     sheet row, claimed and settled as one unit; a job is an operation
-    whose OUTPUT may be many runs (a webhook backfill) or a file (an
-    export), and its lifecycle belongs to no row. Two ledgers, one
+    whose OUTPUT may be many runs (a fill, a webhook backfill) or a file
+    (an export), and its lifecycle belongs to no row. Two ledgers, one
     claim discipline (a status CAS), so a reader of either never meets
     a member that is not its kind of thing.
 
     `payload` and `progress` are the kind's own typed models, dumped on
     write and parsed back by the kind; the runner treats both as
-    opaque. No worker stamp: a stale job the reclaim returned to READY
-    can be settled late by its first tick, which lands on top of the
-    second tick's settle; every kind's slice is idempotent, so the cost
-    is one re-walked slice, and the column stays out until a kind with
-    a non-idempotent slice earns it."""
+    opaque. `user_id` (the base's attribution field) is who asked ("" for
+    a job the system queued); `subject_id` is what the job is about (a
+    fill's list), so a surface can page a subject's jobs without
+    reading payloads. No worker stamp: a stale job the reclaim returned
+    to READY can be settled late by its first tick, which lands on top
+    of the second tick's settle; every kind's slice is idempotent, so
+    the cost is one re-walked slice, and the column stays out until a
+    kind with a non-idempotent slice earns it."""
 
     kind = models.CharField(_("kind"), max_length=JOB_KIND_MAX_LENGTH)
+    subject_id = models.CharField(_("subject id"), max_length=26, blank=True, default="")
     payload = models.JSONField(_("payload"), default=dict)
     progress = models.JSONField(_("progress"), default=dict)
     status = models.CharField(_("status"), max_length=JOB_STATUS_MAX_LENGTH, default=JobStatus.READY)
     # UNEXPECTED exits only: a slice that raised, or a tick that died
-    # holding the job (counted by the reclaim). A claim, a settle, and a
-    # park for running out of budget leave it alone, so a long job
-    # never walks toward the cap by being long.
+    # holding the job (counted by the reclaim). A claim, a settle, a
+    # park for running out of budget, and a kind's own wait leave it
+    # alone, so a long job never walks toward the cap by being long.
     attempts = models.IntegerField(_("attempts"), default=0)
     # When the job is next due: null means now; a slice that raised
     # schedules it after a backoff, a job that yielded on the tick's
-    # budget for now, a reclaimed job for now.
+    # budget for now, a kind that is waiting for when it asked to be
+    # woken, a reclaimed job for now.
     scheduled_at = models.DateTimeField(_("scheduled at"), null=True, blank=True)
+    # The two-tier error on FAILED: the code is the machine leg (a
+    # kind's own vocabulary; "" for a crash the runner caught), the
+    # message is copy a client renders verbatim.
+    error_code = models.CharField(_("error code"), max_length=JOB_ERROR_CODE_MAX_LENGTH, blank=True, default="")
     error = models.CharField(_("error"), max_length=JOB_ERROR_MAX_LENGTH, blank=True, default="")
     queued_at = models.DateTimeField(_("queued at"), null=True, blank=True)
     processing_at = models.DateTimeField(_("processing at"), null=True, blank=True)
@@ -71,6 +89,11 @@ class Job(AccountScopedModel):
                 name="job_reclaim_idx",
                 condition=models.Q(status=JobStatus.PROCESSING),
             ),
+            # A subject's jobs of one kind by status: the sheet's fills
+            # page and every "which fills are open on this list" read.
+            models.Index(fields=["kind", "subject_id", "status", "-id"], name="job_subject_idx"),
+            # An account's jobs of one kind by status: the fill cap.
+            models.Index(fields=["account_id", "kind", "status"], name="job_account_kind_idx"),
         ]
 
     def __str__(self) -> str:

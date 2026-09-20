@@ -15,14 +15,16 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from jobs.constants import JobStatus
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import AiColumn, ListSummary, PlainColumn
 
-from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
-from ..models import Fill, ListCellState, ListRow, Node
+from ..constants import MAX_LIST_COLUMNS, StoredCellState
+from ..models import ListCellState, ListRow, Node
 from ..services.columns import ColumnKeysNotUnique, ColumnOrderStale, ColumnService
 from ..services.lists import ListService
 from ..services.workflows import WorkflowService
+from .fill_helpers import open_fill_job
 
 
 def _config() -> AgentConfig:
@@ -326,19 +328,20 @@ class ColumnDeleteTests(TestCase):
         self.assertTrue(Agent.objects.filter(id=self.agent.id).exists())
 
     def test_a_live_fill_touching_the_column_is_cancelled(self) -> None:
-        fill = Fill.objects.create(
+        fill = open_fill_job(
             account_id=TEST_IDENTITY["account_id"],
+            user_id=TEST_IDENTITY["id"],
             list_id=str(self.sheet.id),
+            node_id=str(self.node.id),
             agent_id=str(self.agent.id),
             column_keys=["contact_name", "contact_url"],
-            status=FillStatus.RUNNING,
-            confirmed_row_count=2,
+            consented=2,
         )
         self.client.delete(self.url("contact_name"))
         fill.refresh_from_db()
         # The sibling is stopped too rather than left writing into a
         # column that no longer exists.
-        self.assertEqual(fill.status, FillStatus.CANCELLED)
+        self.assertEqual(fill.status, JobStatus.CANCELLED)
 
     def test_an_unknown_key_is_not_found(self) -> None:
         self.assertEqual(self.client.delete(self.url("nope")).status_code, 404)

@@ -1,9 +1,9 @@
-"""The agent kind's processor, one rule per walk mode, and the walker
-over a fill scope: the consent range, the limit, the settle at the end,
-the cancel mid-walk. The fill here is built by hand around a frozen
-config so the judgement is pinned without an admission.
+"""The agent kind's processor (which rows a column_agent node owes a
+run, one rule per walk mode, and the probe), and the fill job's walk
+over it: the consent range, the scoped limit, the settle of the
+denominator, the completion on the same tick, and the cancel mid-walk.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_enqueue_runs
 """
 
 from __future__ import annotations
@@ -13,24 +13,26 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
+from agents.services import AgentService
 from common.testing import TEST_IDENTITY
+from jobs.constants import JobStatus
 from jobs.models import Job
-from jobs.services import JobRunner, enqueue
-from lists.constants import CellSource, FillStatus, NodeRunStatus, StoredCellState
-from lists.jobs.enqueue_runs import EnqueueRuns
-from lists.models import Fill, NodeRun
+from jobs.services import JobRunner
+from lists.constants import CellSource, NodeRunStatus, StoredCellState
+from lists.jobs.fill import FillJob
+from lists.models import NodeRun
 from lists.nodes.registry import COLUMN_AGENT
 from lists.processors import WalkMode, WalkScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.services import cell_truth, fill_progress
-from lists.services.fingerprint import config_fingerprint
 from lists.services.lists import ListService
 from lists.services.workflows import WorkflowService
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
+from .fill_helpers import cursor_of, fill_status, open_fill_job
+
 ACCOUNT = TEST_IDENTITY["account_id"]
 USER = TEST_IDENTITY["id"]
-AGENT = "01AGT" + "A" * 21
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=UTC)
 
 
@@ -46,19 +48,22 @@ def _config(prompt: str = "Find the answer for {{company}}") -> AgentConfig:
 
 
 class _Harness(TestCase):
-    """A sheet with one agent node filling `answer`, five rows of which
-    the fourth has no company (the prompt cannot act on it)."""
+    """A sheet with one agent node filling `answer` (a real agent, read
+    live by the judgement), five rows of which the fourth has no
+    company (the prompt cannot act on it)."""
 
     def setUp(self) -> None:
         self.lists = ListService(account_id=ACCOUNT)
         self.workflows = WorkflowService(account_id=ACCOUNT)
+        self.agents = AgentService(account_id=ACCOUNT)
+        self.agent = self.agents.create_ephemeral(owner_id=USER, label="Answer", config=_config())
         self.sheet = self.lists.create(
             owner_id=USER,
             label="Prospects",
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.node = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=AGENT)
+        self.node = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
         self.sheet.columns = [
             *self.sheet.columns,
             {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(self.node.id)},
@@ -69,18 +74,22 @@ class _Harness(TestCase):
             [{"company": "acme.com"}, {"company": "example.io"}, {"company": "acme.org"}, {}, {"company": "last.co"}],
         )
 
-    def _fill(self, config: AgentConfig | None = None, *, status: str = FillStatus.PENDING) -> Fill:
-        config = config or _config()
-        return Fill.objects.create(
+    def _prompt(self, prompt: str) -> None:
+        """Edit the agent's prompt: the judgement reads it live."""
+        self.agents.update(self.agent, config=_config(prompt))
+
+    def _fill(self, *, status: JobStatus = JobStatus.READY, targeted: bool = True, **scope) -> Job:
+        return open_fill_job(
             account_id=ACCOUNT,
             user_id=USER,
             list_id=str(self.sheet.id),
-            agent_id=AGENT,
-            status=status,
+            node_id=str(self.node.id),
+            agent_id=str(self.agent.id),
             column_keys=["answer"],
-            config_snapshot=config.model_dump(),
-            config_fingerprint=config_fingerprint(config),
-            confirmed_row_count=5,
+            consented=scope.pop("consented", 5),
+            status=status,
+            targeted=targeted,
+            **scope,
         )
 
     def _processor(self, scope: WalkScope) -> AIColumnProcessor:
@@ -88,19 +97,18 @@ class _Harness(TestCase):
         self.assertIsInstance(processor, AIColumnProcessor)
         return processor
 
-    def _runs(self, fill: Fill | None = None):
+    def _runs(self, fill: Job | None = None):
         runs = NodeRun.objects.filter(kind=COLUMN_AGENT, node_id=str(self.node.id))
         if fill is not None:
             runs = runs.filter(fill_run_id=str(fill.id))
         return runs.order_by("position")
 
-    def _settle(self, row, state: str, *, fingerprint: str) -> None:
+    def _settle(self, row, state: str) -> None:
         cell_truth.write(
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
             row_id=str(row.id),
             fill_run_id=None,
-            config_fingerprint=fingerprint,
             states={"answer": state},
             tools={},
             source=CellSource.FILL,
@@ -124,7 +132,8 @@ class FreshRuleTests(_Harness):
         self.assertEqual(self._runs(fill).count(), 4)
 
     def test_a_prompt_with_no_variables_acts_on_every_row(self):
-        fill = self._fill(_config("Say hello"))
+        self._prompt("Say hello")
+        fill = self._fill()
         processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 5)
 
@@ -133,10 +142,11 @@ class FreshRuleTests(_Harness):
         processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.probe(self.sheet), (True, False))
         self.assertEqual(self._runs(fill).count(), 0)
-        blank = self._fill(_config("Find {{missing}}"))
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(blank.id)))
+        self._prompt("Find {{missing}}")
+        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.probe(self.sheet), (False, True))
         # Within a range that holds no row: nothing found, nothing dropped.
+        self._prompt("Find the answer for {{company}}")
         self.assertEqual(
             self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id))).probe(
                 self.sheet, until_position=0
@@ -146,29 +156,29 @@ class FreshRuleTests(_Harness):
 
 
 class RemainingRuleTests(_Harness):
-    def test_settled_under_this_config_and_valued_rows_are_done(self):
-        config = _config()
-        fill = self._fill(config)
-        fp = config_fingerprint(config)
-        # Row 1 filled by any config; row 2 a settled blank under THIS
-        # config; row 3 a settled blank under ANOTHER config (re-runs);
-        # row 5 already holds a value on the sheet.
-        self._settle(self.rows[0], StoredCellState.FILLED, fingerprint="other")
-        self._settle(self.rows[1], StoredCellState.NO_EVIDENCE, fingerprint=fp)
-        self._settle(self.rows[2], StoredCellState.NO_EVIDENCE, fingerprint="other")
+    def test_only_valued_rows_are_done_and_settled_blanks_re_run(self):
+        # Row 1 filled by any run; row 2 a settled blank (re-runs: the
+        # click is the consent to re-spend on it); row 3 an
+        # infrastructure blank (re-runs); row 5 already holds a value
+        # on the sheet. FAILS if a settled blank is skipped again.
+        fill = self._fill()
+        self.lists.write_cells(str(self.sheet.id), str(self.rows[0].id), {"answer": "answered"})
+        self._settle(self.rows[0], StoredCellState.FILLED)
+        self._settle(self.rows[1], StoredCellState.NO_EVIDENCE)
+        self._settle(self.rows[2], StoredCellState.MODEL_ERROR)
         self.lists.write_cells(str(self.sheet.id), str(self.rows[4].id), {"answer": "typed"})
         self.rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
         processor = self._processor(WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(fill.id)))
-        self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 1)
-        self.assertEqual([r.position for r in self._runs(fill)], [3])
-        # Row 4 has no company: dropped, and the probe says so once the
-        # one owed row is done too.
-        self._settle(self.rows[2], StoredCellState.NO_EVIDENCE, fingerprint=fp)
+        self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
+        self.assertEqual([r.position for r in self._runs(fill)], [2, 3])
+        # Row 4 has no company: dropped, and the probe says so once
+        # every owed row holds a value.
+        for row in (self.rows[1], self.rows[2]):
+            self.lists.write_cells(str(self.sheet.id), str(row.id), {"answer": "now answered"})
         self.assertEqual(processor.probe(self.sheet), (False, True))
 
     def test_a_resume_offers_only_the_rows_the_stopped_fill_still_owed(self):
-        config = _config()
-        stopped = self._fill(config, status=FillStatus.CANCELLED)
+        stopped = self._fill(status=JobStatus.CANCELLED)
         for row, status in zip(
             self.rows[:3], (NodeRunStatus.DONE, NodeRunStatus.ABANDONED, NodeRunStatus.ABANDONED), strict=True
         ):
@@ -183,7 +193,7 @@ class RemainingRuleTests(_Harness):
                 status=status,
                 last_state_change_at=NOW,
             )
-        resumed = self._fill(config)
+        resumed = self._fill()
         scope = WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(resumed.id), owed_by=str(stopped.id))
         processor = self._processor(scope)
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
@@ -199,91 +209,103 @@ class PushedRuleTests(_Harness):
         self.assertEqual((run.row_id, run.position, run.fill_run_id, run.status), (str(pushed[0].id), 6, None, "ready"))
 
 
-class WalkerOverAFillTests(_Harness):
-    """EnqueueRuns with a fill scope: the range, the limit, the settle,
-    the cancel."""
+class FillJobWalkTests(_Harness):
+    """The fill job's first slices: the range, the limit, the settle of
+    the denominator, the completion on the same tick, the cancel."""
 
-    def _walk(self, fill: Fill, **scope) -> Job:
-        walk = EnqueueRuns(
-            list_id=str(self.sheet.id),
-            node_id=str(self.node.id),
-            scope=WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id), **scope),
-        )
-        job = enqueue(ACCOUNT, walk)
-        JobRunner(worker_id="test:1").tick()
-        job.refresh_from_db()
-        return job
+    def _walk(self, fill: Job, *, budget: float | None = None) -> Job:
+        if budget is None:
+            JobRunner(worker_id="test:1").tick()
+        else:
+            JobRunner(worker_id="test:1").tick(budget_seconds=budget)
+        fill.refresh_from_db()
+        return fill
 
     def test_the_range_excludes_a_row_appended_after_consent_and_the_fill_settles(self):
-        fill = self._fill()
+        fill = self._fill(targeted=False, until_position=5)
         self.lists.add_rows(self.sheet, [{"company": "late.io"}])  # position 6, outside the consent
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 2):
-            job = self._walk(fill, until_position=5)
-        self.assertEqual((job.status, job.progress), ("done", {"after_position": 5, "offered": 4}))
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill)
         self.assertEqual([r.position for r in self._runs(fill)], [1, 2, 3, 5])
-        fill.refresh_from_db()
-        self.assertEqual((fill.confirmed_row_count, fill.status), (4, FillStatus.PENDING))
-        self.assertIsNotNone(fill.targeted_at)
+        cursor = cursor_of(str(fill.id))
+        self.assertEqual((cursor.after_position, cursor.offered, cursor.targeted), (5, 4, 4))
+        self.assertIsNotNone(cursor.targeted_at)
+        # Its runs are open, so the job waits for them: parked, no
+        # attempt spent, the fill reading pending.
+        self.assertEqual((fill.status, fill.attempts, fill_status(str(fill.id))), (JobStatus.READY, 0, "pending"))
+        self.assertIsNotNone(fill.scheduled_at)
 
     def test_a_scoped_fill_stops_at_its_first_n_qualifying_rows(self):
-        fill = self._fill()
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 2):
-            job = self._walk(fill, until_position=5, limit=3)
-        self.assertEqual(job.status, "done")
+        fill = self._fill(targeted=False, until_position=5, limit=3, consented=3)
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill)
         self.assertEqual([r.position for r in self._runs(fill)], [1, 2, 3])
-        fill.refresh_from_db()
-        self.assertEqual(fill.confirmed_row_count, 3)
+        self.assertEqual(cursor_of(str(fill.id)).targeted, 3)
 
-    def test_a_fill_that_targets_nothing_completes_when_the_walk_ends(self):
-        fill = self._fill(_config("Find {{missing}}"))
-        job = self._walk(fill, until_position=5)
-        fill.refresh_from_db()
-        self.assertEqual((job.status, fill.status, fill.confirmed_row_count), ("done", FillStatus.COMPLETE, 0))
+    def test_a_fill_that_targets_nothing_completes_on_the_tick_that_ends_its_walk(self):
+        self._prompt("Find {{missing}}")
+        fill = self._fill(targeted=False, until_position=5)
+        self._walk(fill)
+        self.assertEqual(
+            (fill.status, fill_status(str(fill.id)), cursor_of(str(fill.id)).targeted), (JobStatus.DONE, "complete", 0)
+        )
+
+    def test_runs_settling_before_the_walk_ends_do_not_complete_it_early(self):
+        # No open run is also what a fill looks like between two slices
+        # of its walk. FAILS if the poll could run before the target set
+        # is whole: the fill would complete, free its cap slot, and
+        # strand the runs the next slice lands.
+        fill = self._fill(targeted=False, until_position=5)
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill, budget=0)  # one page: rows 1 and 2
+        self.assertEqual(self._runs(fill).count(), 2)
+        NodeRun.objects.filter(fill_run_id=str(fill.id)).update(status=NodeRunStatus.DONE)
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill, budget=0)  # the next page, still walking
+        self.assertEqual(fill.status, JobStatus.READY)
+        self.assertIsNone(cursor_of(str(fill.id)).targeted_at)
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill)  # the rest of the range: targeted, runs 3 and 5 open
+        self.assertEqual((fill.status, self._runs(fill).count()), (JobStatus.READY, 4))
+        self.assertIsNotNone(cursor_of(str(fill.id)).targeted_at)
 
     def test_a_cancel_mid_walk_stops_the_walk_and_leaves_nothing_ready(self):
-        fill = self._fill()
-        walk = EnqueueRuns(
-            list_id=str(self.sheet.id),
-            node_id=str(self.node.id),
-            scope=WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id), until_position=5),
-        )
-        job = enqueue(ACCOUNT, walk)
+        fill = self._fill(targeted=False, until_position=5)
         # One page, then the user cancels before the next slice.
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 2):
-            JobRunner(worker_id="test:1").tick(budget_seconds=0)
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill, budget=0)
         self.assertEqual(self._runs(fill).count(), 2)
-        self.assertTrue(fill_progress.stop_fill(str(fill.id), FillStatus.CANCELLED))
+        self.assertTrue(fill_progress.cancel(str(fill.id)))
         self.assertEqual(self._runs(fill).filter(status=NodeRunStatus.ABANDONED).count(), 2)
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 2):
-            JobRunner(worker_id="test:1").tick()
-        job.refresh_from_db()
-        self.assertEqual((job.status, self._runs(fill).count()), ("done", 2))
-        fill.refresh_from_db()
-        self.assertEqual((fill.status, fill.targeted_at), (FillStatus.CANCELLED, None))
+        with patch("lists.jobs.fill.FILL_SCAN_CHUNK", 2):
+            self._walk(fill)
+        self.assertEqual((fill.status, self._runs(fill).count()), (JobStatus.CANCELLED, 2))
+        self.assertIsNone(cursor_of(str(fill.id)).targeted_at)
 
     def test_a_slice_landing_after_the_cancels_sweep_sweeps_its_own_runs(self):
         # The cancel sweeps what exists, then a slice already past its
         # liveness check inserts more: the slice notices and sweeps them.
-        fill = self._fill()
-        walk = EnqueueRuns(
-            list_id=str(self.sheet.id),
-            node_id=str(self.node.id),
-            scope=WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id), until_position=5),
-        )
-        job = enqueue(ACCOUNT, walk)
-        real_is_live = fill_progress.is_live
+        fill = self._fill(targeted=False, until_position=5)
+        real_is_open = fill_progress.is_open
         calls = {"n": 0}
 
         def cancel_between(fill_run_id: str) -> bool:
             calls["n"] += 1
             if calls["n"] == 1:
                 return True  # the pre-insert check passes
-            fill_progress.stop_fill(fill_run_id, FillStatus.CANCELLED)
-            return real_is_live(fill_run_id)
+            fill_progress.cancel(fill_run_id)
+            return real_is_open(fill_run_id)
 
-        with patch("lists.jobs.enqueue_runs.fill_progress.is_live", side_effect=cancel_between):
-            JobRunner(worker_id="test:1").tick()
-        job.refresh_from_db()
-        self.assertEqual(job.status, "done")
+        with patch("lists.jobs.fill.fill_progress.is_open", side_effect=cancel_between):
+            self._walk(fill)
+        self.assertEqual(fill.status, JobStatus.CANCELLED)
         self.assertEqual(self._runs(fill).filter(status=NodeRunStatus.READY).count(), 0)
         self.assertEqual(self._runs(fill).filter(status=NodeRunStatus.ABANDONED).count(), 4)
+
+    def test_the_fill_kind_is_on_the_roster_and_its_payload_round_trips(self):
+        fill = self._fill(targeted=False, until_position=5, limit=2, consented=2)
+        consent = FillJob.model_validate(fill.payload)
+        self.assertEqual(
+            (consent.mode, consent.limit, consent.consented, consent.column_keys), ("fresh", 2, 2, ["answer"])
+        )
+        self.assertEqual(consent.scope(fill).fill_run_id, str(fill.id))

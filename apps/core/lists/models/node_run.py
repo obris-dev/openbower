@@ -26,11 +26,12 @@ class NodeRun(AccountScopedModel):
 
     Every task carries its `node_id` and the node's `kind` from birth.
     A column_agent run is an agent run, fill-backed or automatic (a
-    fill-backed task's node is the column_agent node for its Fill's
-    agent on the sheet). A task with NO fill run (`fill_run_id` NULL)
-    is the automatic path: autofill rides the same queue and the same
-    worker, minus the consent a Fill records, resolving its list and
-    user from its row; a webhook run is DEFERRED at birth and claimed
+    fill-backed task's node is the column_agent node for its fill's
+    agent on the sheet, and `fill_run_id` is the fill JOB's id). A task
+    with NO fill run (`fill_run_id` NULL) is the automatic path:
+    autofill rides the same queue and the same worker, minus the
+    consent a fill job records, resolving its list and user from its
+    row; a webhook run is DEFERRED at birth and claimed
     by the flush at its window, never by the worker. A BENCH run (the
     agent builder's one-row diagnostic) is an automatic run of the
     account's bench node that OWNS ITS INPUT (`input`): no row, no
@@ -50,8 +51,8 @@ class NodeRun(AccountScopedModel):
     to write on purpose."""
 
     # NULL on the automatic path (autofill): a task with no fill run has
-    # no Fill to read its list or user off, so it resolves them from its
-    # row. A fill-backed task sets this to its Fill's id.
+    # no fill job to read its list or user off, so it resolves them from
+    # its row. A fill-backed task sets this to its fill job's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
     # NULL on a bench run: its row rides `input` and no ListRow exists
     # for it. NULLs are distinct under the open-run key, so an

@@ -10,8 +10,17 @@ jobs PROCESSING; the next tick's reclaim returns them to READY past the
 stale window, and they resume from their cursor. `attempts` counts
 UNEXPECTED exits and nothing else: a slice that raises (parked with a
 backoff and its cause) and a dead tick (seen by the reclaim). Running
-out of budget is neither. At the cap the job is FAILED with the last
-cause.
+out of budget is neither, and neither is a kind's own wait (a slice
+answering `Wait` parks the job until it asked to be woken). At the cap
+the job is FAILED with the last cause; a slice raising `JobFailed`
+fails it at once with the kind's own code and copy.
+
+The runner is the only writer of a job's status FROM INSIDE (claim,
+park, settle, fail, reclaim); a stop from outside (services.stop: a
+user's cancel, a worker failing a fill) flips an open job terminal
+under its own predicate, and every transition here is predicated on
+PROCESSING, so a job stopped while a tick holds it is never resurrected
+by that tick's park or settle.
 
 Safe to miss (a job waits) and safe to double (the CAS). Not
 account-scoped: a trusted process, like the node-run flows."""
@@ -35,6 +44,7 @@ from ..constants import (
     JobStatus,
 )
 from ..kinds import registry
+from ..kinds.base import JobFailed, Wait
 from ..models import Job
 
 logger = logging.getLogger(__name__)
@@ -90,11 +100,20 @@ class JobRunner:
             # below, so the row never holds a shape the kind cannot read.
             progress = kind.Progress.model_validate(job.progress)
             while True:
-                progress = kind.run(job, progress)
-                if progress is None:
+                answer = kind.run(job, progress)
+                if answer is None:
                     report.done += self._settle(job)
                     return
-                job.progress = progress.model_dump()
+                if isinstance(answer, Wait):
+                    # Waiting on something outside the job: park with
+                    # the cursor until the kind asked to be woken. Not
+                    # an attempt, and not this tick's problem anymore.
+                    job.progress = answer.progress.model_dump(mode="json")
+                    wake = timezone.now() + datetime.timedelta(seconds=answer.seconds)
+                    report.parked += self._park(job, scheduled_at=wake)
+                    return
+                progress = answer
+                job.progress = progress.model_dump(mode="json")
                 # The cursor is durable after EVERY slice, so a crash
                 # loses one slice at most and a reclaimed job resumes
                 # from where its dead tick actually got to.
@@ -106,6 +125,9 @@ class JobRunner:
         except DatabaseError:
             # The connection is the tick's; nothing here recovers it.
             raise
+        except JobFailed as e:
+            # The kind's own verdict: terminal on its terms, no attempt.
+            report.failed += self._fail(job, e.message, code=e.code, attempts=job.attempts)
         except Exception as e:
             # One job's crash (a payload that no longer parses, a bug in
             # its kind) must not stop the jobs behind it: count the
@@ -142,27 +164,43 @@ class JobRunner:
     def _settle(job: Job) -> int:
         now = timezone.now()
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.DONE, progress=job.progress, error="", settled_at=now, last_state_change_at=now
+            status=JobStatus.DONE,
+            progress=job.progress,
+            error_code="",
+            error="",
+            settled_at=now,
+            last_state_change_at=now,
         )
 
     @staticmethod
-    def _park(job: Job, *, scheduled_at: datetime.datetime, error: str = "", attempts: int | None = None) -> int:
+    def _park(
+        job: Job, *, scheduled_at: datetime.datetime, error: str | None = None, attempts: int | None = None
+    ) -> int:
+        """`error` None leaves the stored cause alone (a budget park or a
+        wait says nothing about failure); a raising slice writes its
+        cause."""
         fields: dict = {
             "status": JobStatus.READY,
             "progress": job.progress,
             "scheduled_at": scheduled_at,
-            "error": error,
             "last_state_change_at": timezone.now(),
         }
+        if error is not None:
+            fields["error"] = error
         if attempts is not None:
             fields["attempts"] = attempts
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(**fields)
 
     @staticmethod
-    def _fail(job: Job, error: str, *, attempts: int) -> int:
+    def _fail(job: Job, error: str, *, attempts: int, code: str = "") -> int:
         now = timezone.now()
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.FAILED, error=error, attempts=attempts, settled_at=now, last_state_change_at=now
+            status=JobStatus.FAILED,
+            error_code=code,
+            error=error,
+            attempts=attempts,
+            settled_at=now,
+            last_state_change_at=now,
         )
 
     @staticmethod

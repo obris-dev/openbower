@@ -126,7 +126,6 @@ class _SheetHarness(TestCase):
             list_id=str(self.sheet.id),
             column_keys=keys,
             fill_run_id=None,
-            config_fingerprint="fp",
             node_id=str(node.id),
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
@@ -213,7 +212,6 @@ class ProcessorTests(_SheetHarness):
                 list_id=str(self.sheet.id),
                 row_id=str(row.id),
                 fill_run_id=None,
-                config_fingerprint="",
                 states=states,
                 tools={},
                 source=CellSource.FILL,
@@ -241,7 +239,7 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None, "fp", str(self.second.id))
+        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None, str(self.second.id))
         land_row(ctx, str(self.row.id), ctx_run, close=lambda result: True)
         self.assertEqual(self._webhook_runs().count(), 0)
 
@@ -338,7 +336,6 @@ class _BackfilledSheet(_SheetHarness):
                 list_id=str(self.sheet.id),
                 row_id=str(row.id),
                 fill_run_id=None,
-                config_fingerprint="",
                 states=states,
                 tools={},
                 source=CellSource.FILL,
@@ -369,7 +366,7 @@ class BackfillTests(_BackfilledSheet):
         (job,) = list(Job.objects.all())
         self.assertEqual((job.kind, job.status, job.account_id), ("enqueue_runs", JobStatus.READY, ACCOUNT))
         self.assertEqual(job.payload["list_id"], str(self.sheet.id))
-        self.assertEqual((job.payload["node_id"], job.payload["scope"]["mode"]), (node_id, "backfill"))
+        self.assertEqual(job.payload["node_id"], node_id)
         # The request inserted no run and read no cell state: the walk
         # is the job's.
         self.assertEqual(self._runs().count(), 0)
@@ -379,7 +376,7 @@ class BackfillTests(_BackfilledSheet):
     def test_the_job_enqueues_a_run_for_every_row_already_complete(self):
         node_id = self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
         runs = list(self._runs())
         self.assertEqual([r.row_id for r in runs], [str(self.row.id), str(self.second_row.id)])
         for run in runs:
@@ -395,7 +392,7 @@ class BackfillTests(_BackfilledSheet):
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
             self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
+        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
         self.assertEqual(self._runs().count(), 2)
         kind = EnqueueRuns.model_validate(job.payload)
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):

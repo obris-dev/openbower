@@ -24,7 +24,7 @@ silently doing nothing.
 
 A processor is constructed for ONE node of its kind, account-scoped,
 with the WALK SCOPE that says what this pass is for (a fresh fill under
-a Fill, the remaining rows of a refill, the rows a push appended, a
+a fill job, the remaining rows of a refill, the rows a push appended, a
 structural backfill); a kind reads the parts of the scope it cares
 about and ignores the rest. Execution ignores the scope: a run carries
 its own identity."""
@@ -71,16 +71,16 @@ class WalkMode(StrEnum):
     """What a pass over rows is FOR. The agent kind judges each mode by
     a different rule; the webhook kind judges every mode the same way."""
 
-    # A fresh fill: every row the prompt can act on, under a Fill.
+    # A fresh fill: every row the prompt can act on, under a fill job.
     FRESH = "fresh"
-    # A refill: the rows not yet settled under this config, and not
-    # already owed by the run being resumed, under a Fill.
+    # A refill: the rows still blank in the walked columns, and not
+    # already owed by the run being resumed, under a fill job.
     REMAINING = "remaining"
     # Rows a push appended: the node runs unless the push filled every
-    # column it owns. No Fill.
+    # column it owns. No fill job.
     PUSHED = "pushed"
     # A structural walk over the whole sheet (a webhook column added or
-    # its wait set changed). No Fill.
+    # its wait set changed). No fill job.
     BACKFILL = "backfill"
 
 
@@ -89,7 +89,7 @@ class WalkScope(BaseModel):
     and handed to the processor at construction."""
 
     mode: WalkMode = WalkMode.BACKFILL
-    # The Fill the runs belong to, for FRESH and REMAINING; "" otherwise.
+    # The fill job the runs belong to, for FRESH and REMAINING; "" otherwise.
     fill_run_id: str = ""
     # The stopped fill a REMAINING walk resumes: rows it still owed are
     # the only ones offered. "" = the column's whole remainder.

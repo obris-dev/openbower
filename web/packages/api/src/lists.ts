@@ -497,9 +497,8 @@ export async function postFillRefill(
 
 /** Edit the prompt of the agent filling a column, FROM the column
  * (ephemeral and roster agents alike; the column is the custody path
- * either way). A live run keeps its frozen snapshot, so the edit
- * reaches the NEXT run: on Continue, rows whose blanks settled under
- * the old prompt run again. Refusals surface through the funnel as
+ * either way). A fill reads its agent live, so the edit reaches a
+ * running fill's next row and every later fill. Refusals surface through the funnel as
  * the server's verbatim detail plus code; the 200 body echoes the
  * stored prompt. */
 export async function updateColumnPrompt(id: string, columnKey: string, prompt: string): Promise<ApiResult<ColumnPromptWire>> {
@@ -507,7 +506,7 @@ export async function updateColumnPrompt(id: string, columnKey: string, prompt: 
 }
 
 /** The column's CURRENT fill config (what a refill would run): the
- * prompt-peek surfaces read this, never a run's frozen snapshot. */
+ * prompt-peek surfaces read this. */
 export async function getColumnPrompt(id: string, columnKey: string): Promise<ApiResult<ColumnPromptWire>> {
   return http.get(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema);
 }

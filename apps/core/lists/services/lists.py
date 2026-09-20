@@ -17,8 +17,8 @@ from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn
 
 from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
-from ..models import Fill, Folder, List, ListRow, NodeRun
-from . import cell_truth, webhook_runs
+from ..models import Folder, List, ListRow, NodeRun
+from . import cell_truth, fill_progress, webhook_runs
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -351,7 +351,7 @@ class ListService:
             # service must not rely on that.
             if not List.objects.select_for_update().filter(id=target.id, account_id=self.account_id):
                 return
-            fills = Fill.objects.filter(list_id=str(target.id))
+            fills = fill_progress.fill_jobs().filter(subject_id=str(target.id))
             # ROWS FIRST, then the queue, because that is the order the
             # consumer's terminal write takes them: write_cells locks the
             # ListRow, then the task settle writes the NodeRun, both in
@@ -377,11 +377,11 @@ class ListService:
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,
             # so a survivor is litter no surface can ever show. The ids
-            # come from the FILL rows, which are list-scoped and current;
+            # come from the FILL jobs, which are list-scoped and current;
             # the caller's `target` may be a snapshot taken before the
             # column it is about to delete even existed.
             AgentService(account_id=self.account_id).delete_ephemeral(
-                [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
+                [str(payload.get("agent_id") or "") for payload in fills.values_list("payload", flat=True)]
             )
             # The fill-backed runs went first (they point at nodes). This
             # list's autofill runs are NOT purged: they carry list_id and a
@@ -393,5 +393,8 @@ class ListService:
             # untouched.
             WorkflowService(account_id=self.account_id).delete_for_list(str(target.id))
             cell_truth.purge_list(str(target.id))
+            # The fill JOBS go with the list (one delete by subject; a
+            # tick holding one of them finds no list on its next slice
+            # and ends, its settle missing on the deleted row).
             fills.delete()
             List.objects.filter(id=target.id, account_id=self.account_id).delete()
