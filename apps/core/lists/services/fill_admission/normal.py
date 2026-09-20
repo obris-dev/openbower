@@ -23,7 +23,7 @@ from django.db import transaction
 from agents.models import Agent
 from agents.services import AgentNotFound, AgentService
 from jobs.models import Job
-from jobs.services import enqueue
+from jobs.services import JobService
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
@@ -280,7 +280,7 @@ class FillAdmissionService(AdmissionBase):
         columns write that was rolled back: the consent as its payload,
         the walk as its first slices. NOTHING is written to the sheet:
         a targeted cell shimmers because a queued run says so."""
-        return enqueue(self.account_id, fill, user_id=self.user_id, target_id=str(target_list.id))
+        return JobService().enqueue(self.account_id, fill, user_id=self.user_id, target_id=str(target_list.id))
 
     @staticmethod
     def _probe_scope(fill: FillJob) -> WalkScope:

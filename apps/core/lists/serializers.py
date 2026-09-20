@@ -336,9 +336,10 @@ def _fill_run_wire(fill: Job, progress: FillProgress) -> dict[str, Any]:
         counters=progress.counters,
         confirmed_row_count=cursor.targeted if cursor.targeted_at else consent.consented,
         targeted_at=cursor.targeted_at.isoformat() if cursor.targeted_at else None,
-        # The base model's attribution field is the wire's started_by;
-        # authorization stays account membership.
-        started_by=fill.user_id,
+        # A fill is always asked for by a user (admission enqueues it
+        # attributed), so the job's user is never NULL here; authorization
+        # stays account membership.
+        started_by=fill.user_id or "",
         heartbeat_at=progress.heartbeat.isoformat() if progress.heartbeat else None,
         error=error,
         created_at=fill.created_at.isoformat(),

@@ -14,8 +14,9 @@ is WHOLE: the denominator settles to the runs actually queued (a count
 off the ledger, never an accumulator) and `targeted_at` is stamped.
 
 The wait: once targeted, each slice asks whether any run is still
-open and, if so, parks the job for FILL_POLL_SECONDS (no attempt
-spent); when none is, the job is done and the fill reads complete.
+open and, if so, raises JobWaiting for FILL_POLL_SECONDS (parked, no
+attempt spent, the cursor untouched); when none is, the job is done
+and the fill reads complete.
 The consumer never writes this job's status: a config-tier failure
 stops the job from outside through the shared stop, and the runner's
 own park and settle miss on a job stopped meanwhile.
@@ -37,7 +38,7 @@ from typing import ClassVar
 from django.utils import timezone
 from pydantic import BaseModel
 
-from jobs.kinds.base import JobKind, Wait
+from jobs.kinds.base import JobKind, JobWaiting
 from jobs.kinds.registry import register
 from jobs.models import Job
 
@@ -91,7 +92,7 @@ class FillJob(JobKind[FillProgress]):
             limit=self.limit,
         )
 
-    def run(self, job: Job, progress: FillProgress) -> FillProgress | Wait[FillProgress] | None:
+    def run(self, job: Job, progress: FillProgress) -> FillProgress | None:
         if not fill_progress.is_open(str(job.id)):
             # Stopped from outside since the claim: this slice is the
             # last, and the runner's settle misses on purpose.
@@ -99,7 +100,7 @@ class FillJob(JobKind[FillProgress]):
         if progress.targeted_at is None:
             return self._walk(job, progress)
         if NodeRun.objects.filter(fill_run_id=str(job.id), status__in=NON_TERMINAL_NODE_RUN_STATES).exists():
-            return Wait(FILL_POLL_SECONDS, progress)
+            raise JobWaiting(FILL_POLL_SECONDS)
         return None
 
     def _walk(self, job: Job, progress: FillProgress) -> FillProgress | None:

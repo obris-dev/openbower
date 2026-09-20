@@ -28,7 +28,7 @@ from django.utils import timezone
 
 from jobs.constants import JobStatus
 from jobs.models import Job
-from jobs.services import JobRunner, enqueue
+from jobs.services import JobRunner, JobService
 from openbower_schema.lists import AiColumn
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
@@ -95,7 +95,7 @@ def open_fill_job(
     """A fill job built at the model level, its walk already done when
     `targeted` (the runs are the test's to create), so a lifecycle test
     starts from a fill that is polling its runs."""
-    job = enqueue(
+    job = JobService().enqueue(
         account_id,
         FillJob(
             list_id=list_id,

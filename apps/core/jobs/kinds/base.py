@@ -13,15 +13,17 @@ it, failing it at the cap); the kind owns nothing about that. It knows
 how to do a slice, how to say where it stopped, and what to tidy when
 it is stopped from outside.
 
-The contract with the runner is `run(job, progress) -> Progress | Wait
-| None`: do a slice of work from `progress` (the kind's own cursor,
-its defaults on the first slice), write outputs IDEMPOTENTLY (a
-reclaimed job re-walks its last slice), and return the cursor to
-continue from, a `Wait` (the cursor plus how long to park before the
-next slice, for a kind waiting on something outside the job: no
-attempt is spent), or None when there is nothing left. A slice may
-raise `JobFailed` to end the job FAILED with a code and copy of its
-own; any other exception is an unexpected exit and counts an attempt.
+The contract with the runner is `run(job, progress) -> Progress |
+None`: do a slice of work from `progress` (the kind's own cursor, its
+defaults on the first slice), write outputs IDEMPOTENTLY (a reclaimed
+job re-walks its last slice), and return the cursor to continue from,
+or None when there is nothing left. The two ways a slice LEAVES the
+tick early are raised, as its last act, after its writes: `JobWaiting`
+(nothing more can happen until something outside the job changes:
+park for a while, no attempt spent, the cursor kept as stored unless
+one is given) and `JobFailed` (the job ends FAILED with a code and copy
+of the kind's own). Any other exception is an unexpected exit and
+counts an attempt.
 The runner parses the stored cursor through `Progress` at the claim
 and dumps what `run` returns after every slice, so a cursor is typed
 at both edges and a malformed one refuses at the parse instead of
@@ -35,12 +37,13 @@ its queued runs). The default tidies nothing.
 
 To add a kind: a module in your app's `jobs` package, a JobKind
 subclass with a nested `Progress`, `register(...)` at the bottom.
-Enqueue with `jobs.services.enqueue(account_id, YourKind(...))`.
+Enqueue with `JobService().enqueue(account_id, YourKind(...), user_id=...)`,
+or `enqueue_system(...)` when no user asked.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel
 
@@ -48,12 +51,16 @@ if TYPE_CHECKING:
     from ..models import Job
 
 
-class Wait[P: BaseModel](NamedTuple):
-    """A slice's answer when the job is waiting on something outside
-    itself: park with this cursor and wake after `seconds`."""
+class JobWaiting(Exception):
+    """Raised by a slice, as its last act, when the job is waiting on
+    something outside itself: park and wake after `seconds`. The
+    cursor is kept as stored unless `progress` gives a new one (a poll
+    that walked nothing has nothing to restate)."""
 
-    seconds: int
-    progress: P
+    def __init__(self, seconds: int, *, progress: BaseModel | None = None) -> None:
+        super().__init__(f"waiting {seconds}s")
+        self.seconds = seconds
+        self.progress = progress
 
 
 class JobFailed(Exception):
@@ -75,11 +82,10 @@ class JobKind[P: BaseModel](BaseModel):
     # runtime.
     Progress: ClassVar[type[BaseModel]]
 
-    def run(self, job: Job, progress: P) -> P | Wait[P] | None:
-        """One slice from `progress`: the next cursor (more to do now),
-        a wait (the cursor plus how long to park, when nothing more can
-        happen until something outside the job changes), or None when
-        done. Every kind declares one."""
+    def run(self, job: Job, progress: P) -> P | None:
+        """One slice from `progress`: the next cursor (more to do now)
+        or None when done; raises JobWaiting or JobFailed to leave the
+        tick early. Every kind declares one."""
         raise NotImplementedError
 
     def on_stop(self, job: Job) -> None:

@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from openbower_kernel.models import UserScopedModel
+from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
     JOB_ERROR_CODE_MAX_LENGTH,
@@ -12,7 +12,7 @@ from ..constants import (
 )
 
 
-class Job(UserScopedModel):
+class Job(AccountScopedModel):
     """One unit of background work, AND the queue itself: what was
     asked (`kind`, `payload`), where it stands (`status`, `progress`),
     and what happened (`error_code`, `error`, the stamps). A job is
@@ -32,8 +32,9 @@ class Job(UserScopedModel):
 
     `payload` and `progress` are the kind's own typed models, dumped on
     write and parsed back by the kind; the runner treats both as
-    opaque. `user_id` (the base's attribution field) is who asked ("" for
-    a job the system queued); `target_id` is what the job works on, in the
+    opaque. `user_id` is who asked, ATTRIBUTION only (never an access
+    filter), NULL when no user did (a job the system queued); `target_id`
+    is what the job works on, in the
     kind's own terms (a fill's list; blank for a job with no one
     target), so a surface can page a target's jobs without reading
     payloads. No worker stamp: a stale job the reclaim returned
@@ -43,6 +44,9 @@ class Job(UserScopedModel):
     kind with a non-idempotent slice earns it."""
 
     kind = models.CharField(_("kind"), max_length=JOB_KIND_MAX_LENGTH)
+    # NULL, never "", when no user asked: a system job has no owner to
+    # spell, and a sentinel string would read as one.
+    user_id = models.CharField(_("user id"), max_length=26, null=True, blank=True)
     target_id = models.CharField(_("target id"), max_length=26, blank=True, default="")
     payload = models.JSONField(_("payload"), default=dict)
     progress = models.JSONField(_("progress"), default=dict)

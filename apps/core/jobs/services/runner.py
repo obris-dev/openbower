@@ -11,12 +11,12 @@ stale window, and they resume from their cursor. `attempts` counts
 UNEXPECTED exits and nothing else: a slice that raises (parked with a
 backoff and its cause) and a dead tick (seen by the reclaim). Running
 out of budget is neither, and neither is a kind's own wait (a slice
-answering `Wait` parks the job until it asked to be woken). At the cap
-the job is FAILED with the last cause; a slice raising `JobFailed`
+raising `JobWaiting` parks the job until it asked to be woken). At the
+cap the job is FAILED with the last cause; a slice raising `JobFailed`
 fails it at once with the kind's own code and copy.
 
 The runner is the only writer of a job's status FROM INSIDE (claim,
-park, settle, fail, reclaim); a stop from outside (services.stop: a
+park, settle, fail, reclaim); a stop from outside (JobService.stop: a
 user's cancel, a worker failing a fill) flips an open job terminal
 under its own predicate, and every transition here is predicated on
 PROCESSING, so a job stopped while a tick holds it is never resurrected
@@ -44,7 +44,7 @@ from ..constants import (
     JobStatus,
 )
 from ..kinds import registry
-from ..kinds.base import JobFailed, Wait
+from ..kinds.base import JobFailed, JobWaiting
 from ..models import Job
 
 logger = logging.getLogger(__name__)
@@ -100,19 +100,10 @@ class JobRunner:
             # below, so the row never holds a shape the kind cannot read.
             progress = kind.Progress.model_validate(job.progress)
             while True:
-                answer = kind.run(job, progress)
-                if answer is None:
+                progress = kind.run(job, progress)
+                if progress is None:
                     report.done += self._settle(job)
                     return
-                if isinstance(answer, Wait):
-                    # Waiting on something outside the job: park with
-                    # the cursor until the kind asked to be woken. Not
-                    # an attempt, and not this tick's problem anymore.
-                    job.progress = answer.progress.model_dump(mode="json")
-                    wake = timezone.now() + datetime.timedelta(seconds=answer.seconds)
-                    report.parked += self._park(job, scheduled_at=wake)
-                    return
-                progress = answer
                 job.progress = progress.model_dump(mode="json")
                 # The cursor is durable after EVERY slice, so a crash
                 # loses one slice at most and a reclaimed job resumes
@@ -125,6 +116,15 @@ class JobRunner:
         except DatabaseError:
             # The connection is the tick's; nothing here recovers it.
             raise
+        except JobWaiting as e:
+            # Waiting on something outside the job: park until the kind
+            # asked to be woken, the cursor as stored unless it gave a
+            # new one. Not an attempt, and not this tick's problem
+            # anymore.
+            if e.progress is not None:
+                job.progress = e.progress.model_dump(mode="json")
+            wake = timezone.now() + datetime.timedelta(seconds=e.seconds)
+            report.parked += self._park(job, scheduled_at=wake)
         except JobFailed as e:
             # The kind's own verdict: terminal on its terms, no attempt.
             report.failed += self._fail(job, e.message, code=e.code, attempts=job.attempts)
