@@ -37,13 +37,14 @@ from webhooks.services import Sent, WebhookDestinationService
 
 from ..constants import NODE_RUN_ATTEMPTS, WEBHOOK_FLUSH_BATCH, NodeRunStatus, WebhookRunOutcome
 from ..models import List, ListRow, Node, NodeRun
-from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
+from ..processors import processor_for
+from ..processors.webhook import next_window
 from ..services.cell_states import CellStateService
 from ..services.digest_payload import build_digest_data, build_digest_item, completion_of
 from ..services.node_runs import NodeRunFlow
-from ..services.webhook_runs import WebhookRunResult, next_window, wait_keys_of
-from ..services.workflows import WorkflowService, config_as
+from ..services.webhook_runs import WebhookRunResult
+from ..services.workflows import config_as
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class FlushWebhooksOperation:
         if target_list is None:
             self.flow.settle_many(claimed_ids, {}, status=NodeRunStatus.LIST_MISSING)
             return
-        wait_keys = self._wait_keys(node, target_list)
+        wait_keys = processor_for(account_id=node.account_id, node=node).needs(target_list)
         if not wait_keys:
             # The wait resolves to no column (its agent's columns left the
             # sheet): nothing to judge completion against, so nothing is
@@ -207,13 +208,3 @@ class FlushWebhooksOperation:
         claimed = self.flow.claim_webhook_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
         result = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, error=error)
         return self.flow.settle_many([str(run.id) for run in claimed], result.model_dump(), status=NodeRunStatus.DONE)
-
-    @staticmethod
-    def _wait_keys(node: Node, target_list: List) -> list[str]:
-        """The columns the node's wait node waits on, re-resolved now."""
-        workflows = WorkflowService(account_id=node.account_id)
-        path_nodes = workflows.nodes_on_path(node.path_id)
-        if not path_nodes or path_nodes[0].kind != WaitUntil.KIND:
-            return []
-        wait = config_as(path_nodes[0], WaitUntil)
-        return wait_keys_of(account_id=node.account_id, target_list=target_list, wait=wait)

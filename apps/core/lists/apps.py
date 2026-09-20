@@ -15,6 +15,9 @@ class ListsConfig(AppConfig):
         from agents.registration import import_submodules
 
         import_submodules("lists.nodes")
+        # The processors are the same roster shape: one module per
+        # kind, registering at its bottom.
+        import_submodules("lists.processors")
         # The services write one kind by name, so a roster without it
         # refuses HERE, at boot, where the roster is known.
         from .nodes.registry import validate_node_kinds

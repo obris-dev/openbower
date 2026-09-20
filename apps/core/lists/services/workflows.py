@@ -207,6 +207,23 @@ class WorkflowService:
     # The two config QUERIES (as against parses), named here so no other
     # module spells a JSON lookup against this table.
 
+    def wait_ahead_of(self, node: Node) -> WaitUntil:
+        """The barrier a node stands behind: its path's rank 0, parsed
+        as a wait node. Raises NodeNotFound when the path is gone or
+        does not start with one (the shape every webhook column's path
+        has; a node with no path has no barrier)."""
+        path_nodes = self.nodes_on_path(node.path_id) if node.path_id else []
+        if not path_nodes or path_nodes[0].kind != WaitUntil.KIND:
+            raise NodeNotFound(node.path_id)
+        return config_as(path_nodes[0], WaitUntil)
+
+    def nodes_ending(self, path_ids: Sequence[str]) -> list[Node]:
+        """The account's nodes on the given paths (the agent nodes the
+        paths a barrier names end in)."""
+        if not path_ids:
+            return []
+        return list(Node.objects.filter(account_id=self.account_id, path_id__in=list(path_ids)))
+
     def wait_nodes_naming(self, path_id: str) -> QuerySet[Node]:
         """The account's wait nodes whose inbound set names a path: what
         makes an AI column's delete refuse."""

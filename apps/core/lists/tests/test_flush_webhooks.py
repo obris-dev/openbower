@@ -24,12 +24,13 @@ from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, Stored
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.operations.flush_webhooks import COLUMN_REMOVED, DESTINATION_REMOVED, FlushWebhooksOperation
+from lists.processors.webhook import next_window
 from lists.services import cell_truth, webhook_runs
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
-from lists.services.webhook_runs import WebhookRunResult, next_window
+from lists.services.webhook_runs import WebhookRunResult
 from lists.services.workflows import WorkflowService
 from openbower_schema.webhooks import WebhookEnvelope
 from webhooks.constants import DeliveryStatus

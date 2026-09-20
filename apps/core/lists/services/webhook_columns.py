@@ -25,13 +25,14 @@ from ..jobs.webhook_backfill import WebhookBackfill
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
+from ..processors import processor_for
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 from .webhook_paths import inbound_paths_for
-from .webhook_runs import cell_words_for, wait_keys_of
-from .workflows import NodeNotFound, WorkflowService, config_as
+from .webhook_runs import cell_words_for
+from .workflows import WorkflowService, config_as
 
 
 class WebhookColumnRefused(Exception):
@@ -151,7 +152,7 @@ class WebhookColumnService:
             self._validate(
                 target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=True
             )
-            before = self._wait_of(webhook_node)
+            before = self.workflows.wait_ahead_of(webhook_node)
             wait = WaitUntil(inbound_path_ids=self._inbound_paths(target_list, wait_keys))
             webhook = Webhook(
                 destination_id=destination_id,
@@ -168,8 +169,9 @@ class WebhookColumnService:
         """Every row already complete for the wait set is owed a run, so
         a column added over a filled sheet sends what is already done
         instead of only what completes later. The walk is a JOB (one
-        page per slice, the list lock per page), queued in this
-        transaction so it can never see a column that was rolled back."""
+        page per slice, the node's processor judging each row), queued
+        in this transaction so it can never see a column that was
+        rolled back."""
         enqueue(self.account_id, WebhookBackfill(list_id=str(target_list.id), node_id=str(webhook_node.id)))
 
     # The cells.
@@ -352,18 +354,10 @@ class WebhookColumnService:
                 raise WebhookColumnUnknown(key)
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)
 
-    def _wait_of(self, webhook_node: Node) -> WaitUntil:
-        """The wait node's config off a webhook node: rank 0 of its path
-        whatever else the path holds."""
-        nodes = self.workflows.nodes_on_path(webhook_node.path_id)
-        if not nodes:
-            raise NodeNotFound(webhook_node.path_id)
-        return config_as(nodes[0], WaitUntil)
-
     def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
-        """The columns a webhook column waits on, in sheet order: its
-        wait node's inbound paths resolved to the columns they fill."""
-        return wait_keys_of(account_id=self.account_id, target_list=target_list, wait=self._wait_of(webhook_node))
+        """The columns a webhook column waits on, in sheet order: the
+        processor's own answer, so the config read and the flush agree."""
+        return processor_for(account_id=self.account_id, node=webhook_node).needs(target_list)
 
     def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
         webhook = config_as(webhook_node, Webhook)
