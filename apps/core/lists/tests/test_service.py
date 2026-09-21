@@ -1,4 +1,4 @@
-"""The lists service contract: account scoping, caps, dense positions,
+"""The lists service contract: account scoping, caps, ranked rows,
 column reads, and child cleanup.
 
 Run: DJANGO_ENV=test uv run python manage.py test lists
@@ -10,9 +10,24 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
+from jobs.constants import JobStatus
+from jobs.models import Job
+from jobs.services import JobRunner, JobService
 from lists.constants import ListOrigin
+from lists.jobs.rerank import Rerank
 from lists.models import List, ListRow
-from lists.services.lists import FolderNotFound, ListNotFound, ListService, ListsFull
+from lists.services.lists import (
+    FolderNotFound,
+    InvalidRowCursor,
+    ListNotFound,
+    ListService,
+    ListsFull,
+    RowCursor,
+    RowNotFound,
+    RowRankTooDeep,
+)
+from lists.tests.fill_helpers import open_fill_job
+from openbower_kernel.fields import new_ulid
 
 _COLUMNS = [
     {"kind": "plain", "key": "domain", "label": "Domain", "type": "url"},
@@ -29,13 +44,13 @@ class ListServiceTests(TestCase):
         service = _service()
         a = service.create(owner_id="01US" + "A" * 22, label="First", columns=_COLUMNS, origin=ListOrigin.CSV)
         b = service.create(owner_id="01US" + "A" * 22, label="Second", columns=[], origin=ListOrigin.MANUAL)
-        # Same-millisecond ULIDs do not order by creation; assert against
-        # the id order the keyset contract actually promises.
-        newest, oldest = sorted((a, b), key=lambda x: str(x.id), reverse=True)
+        # Ids mint monotonic even within a millisecond, so creation
+        # order IS id order, and the page (newest first) shows it.
+        self.assertGreater(str(b.id), str(a.id))
         page = service.page(after_id="", limit=10)
-        self.assertEqual([x.id for x in page], [newest.id, oldest.id])
-        older = service.page(after_id=str(newest.id), limit=10)
-        self.assertEqual([x.id for x in older], [oldest.id])
+        self.assertEqual([x.id for x in page], [b.id, a.id])
+        older = service.page(after_id=str(b.id), limit=10)
+        self.assertEqual([x.id for x in older], [a.id])
         service.rename(a, label="Renamed")
         self.assertEqual(service.get(str(a.id)).label, "Renamed")
         service.add_rows(a, [{"domain": "acme.com", "name": "Acme"}])
@@ -50,17 +65,175 @@ class ListServiceTests(TestCase):
             theirs.get(str(mine.id))
         self.assertEqual(theirs.page(after_id="", limit=10), [])
 
-    def test_rows_are_dense_and_page_by_position(self):
+    def test_rows_are_ranked_in_order_and_page_by_a_row_cursor(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
         service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(5)])
-        service.add_rows(target, [{"domain": "later.com", "name": "later"}])  # appends continue the sequence
-        rows = service.rows_page(target, after_position=0, limit=10)
-        self.assertEqual([r.position for r in rows], [1, 2, 3, 4, 5, 6])
-        page2 = service.rows_page(target, after_position=3, limit=2)
-        self.assertEqual([r.position for r in page2], [4, 5])
+        service.add_rows(target, [{"domain": "later.com", "name": "later"}])  # appends continue the order
+        rows = service.rows_page(target, limit=10)
+        self.assertEqual([r.data["name"] for r in rows], ["0", "1", "2", "3", "4", "later"])
+        self.assertEqual([r.rank for r in rows], sorted(r.rank for r in rows))
+        self.assertLessEqual(max(len(r.rank) for r in rows), 2)
+        cursor = RowCursor(str(rows[2].id), rows[2].rank)
+        page2 = service.rows_page(target, after=RowCursor.parse(cursor.wire()), limit=2)
+        self.assertEqual([r.data["name"] for r in page2], ["3", "4"])
+        # A bad id half, then a bad rank half beside a real id: empty,
+        # off the alphabet, and far past the column bound each refuse.
+        row_id = str(rows[0].id)
+        bad_ranks = ("", "zz", "a10", "a\x00", "a1!", "a" * 100)
+        for bad in ("01ROW" + "0" * 21, "a0.nope", "!.01ROW" + "0" * 21, *(f"{r}.{row_id}" for r in bad_ranks)):
+            with self.subTest(bad=bad), self.assertRaises(InvalidRowCursor):
+                RowCursor.parse(bad)
+        # A cursor carries its rank, so a keyset needs no row to exist:
+        # the walk continues from where a deleted cursor row sat.
+        gone = rows[2]
+        ListRow.objects.filter(id=gone.id).delete()
+        page3 = service.rows_page(target, after=RowCursor(str(gone.id), gone.rank), limit=2)
+        self.assertEqual([r.data["name"] for r in page3], ["3", "4"])
         target.refresh_from_db()
         self.assertEqual(target.row_count, 6)
+
+    def test_the_consent_set_is_bounded_by_id_and_walked_in_sheet_order(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        # Moved to the top: the sheet order changes, and a walk follows
+        # it; the set "existed at the click" is still an id bound.
+        service.move_row(target, str(rows[3].id), after_id=None)
+        self.assertEqual([r.data["name"] for r in service.rows_page(target, limit=10)], ["3", "0", "1", "2"])
+        walked = service.rows_page(target, limit=10, until_id=str(rows[2].id))
+        self.assertEqual([r.data["name"] for r in walked], ["0", "1", "2"])
+        # An id minted after the rows bounds the same set as the newest row's.
+        self.assertEqual(
+            [r.data["name"] for r in service.rows_page(target, limit=10, until_id=new_ulid())], ["3", "0", "1", "2"]
+        )
+
+    def test_a_move_writes_one_row_and_a_deep_gap_queues_a_rerank(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        before = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
+        moved = service.move_row(target, str(rows[0].id), after_id=str(rows[2].id))
+        after = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
+        self.assertEqual([r.data["name"] for r in service.rows_page(target, limit=10)], ["1", "2", "0", "3"])
+        # One row changed rank; every other row kept its key.
+        changed = {row_id for row_id in before if before[row_id] != after[row_id]}
+        self.assertEqual(changed, {str(moved.id)})
+        self.assertEqual(Job.objects.filter(kind="rerank").count(), 0)
+        # Two rows leapfrogging into the same gap (each lands between
+        # row 1 and the other's fresh key) deepen the key by about a
+        # character per move until the rebalance bound: the sheet is
+        # re-spaced by a job, the order kept, the keys short again.
+        with patch("lists.services.lists.RANK_REBALANCE_LENGTH", 3):
+            for n in range(10):
+                mover = rows[0] if n % 2 == 0 else rows[2]
+                service.move_row(target, str(mover.id), after_id=str(rows[1].id))
+        # Queued ONCE while it is open, however many moves cross the bound.
+        (job,) = list(Job.objects.filter(kind="rerank"))
+        self.assertIsNone(job.user_id)  # a system job: nobody asked
+        self.assertEqual((job.payload, job.target_id), ({"list_id": str(target.id)}, str(target.id)))
+        JobRunner(worker_id="test:1").tick()
+        job.refresh_from_db()
+        self.assertEqual(job.status, JobStatus.DONE)
+        rows_now = service.rows_page(target, limit=10)
+        self.assertEqual([r.data["name"] for r in rows_now], ["1", "2", "0", "3"])
+        self.assertLessEqual(max(len(r.rank) for r in rows_now), 2)
+        with self.assertRaises(RowNotFound):
+            service.move_row(target, str(rows[0].id), after_id="01ROW" + "0" * 21)
+        # Scoped like every write: a foreign account reads the list as
+        # missing, and a row or a neighbour from another sheet as missing.
+        other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=ListOrigin.CSV)
+        (stranger,) = service.add_rows(other, [{"domain": "z.com", "name": "z"}])
+        with self.assertRaises(ListNotFound):
+            _service(account="01AC" + "Z" * 22).move_row(target, str(rows[0].id), after_id=None)
+        with self.assertRaises(RowNotFound):
+            service.move_row(target, str(stranger.id), after_id=None)
+        with self.assertRaises(RowNotFound):
+            service.move_row(target, str(rows[0].id), after_id=str(stranger.id))
+
+    def test_a_rerank_re_spaces_a_reordered_sheet_without_a_rank_collision(self):
+        # A row moved to the top shifts every other row's fresh key onto
+        # a key a neighbour still holds; the re-space must not depend on
+        # the order the database visits rows in. Twice, so the keys are
+        # shown to settle around a0 rather than climb.
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        service.move_row(target, str(rows[2].id), after_id=None)
+        jobs = JobService(account_id="01AC" + "A" * 22)
+        for _round in range(2):
+            jobs.enqueue_system(Rerank(list_id=str(target.id)), target_id=str(target.id))
+            with patch("lists.services.lists.FILL_WRITE_BATCH", 2):
+                JobRunner(worker_id="test:1").tick()
+            (job,) = list(Job.objects.filter(kind="rerank", status=JobStatus.DONE))
+            job.delete()
+            page = service.rows_page(target, limit=10)
+            self.assertEqual([r.data["name"] for r in page], ["2", "0", "1"])
+            self.assertLessEqual(max(len(r.rank) for r in page), 2)
+
+    def test_a_rerank_waits_for_the_lists_open_fills(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        service.move_row(target, str(rows[2].id), after_id=None)
+        before = [r.rank for r in service.rows_page(target, limit=10)]
+        # A fill mid-walk, held by another worker so this tick cannot close it.
+        fill = open_fill_job(
+            account_id="01AC" + "A" * 22,
+            user_id="01US" + "A" * 22,
+            list_id=str(target.id),
+            node_id="01ND" + "A" * 22,
+            agent_id="01AG" + "A" * 22,
+            column_keys=["name"],
+            consented=3,
+            status=JobStatus.PROCESSING,
+        )
+        jobs = JobService(account_id="01AC" + "A" * 22)
+        rerank = jobs.enqueue_system(Rerank(list_id=str(target.id)), target_id=str(target.id))
+        with patch("lists.jobs.rerank.RERANK_WAIT_SECONDS", 0):
+            JobRunner(worker_id="test:1").tick()
+            rerank.refresh_from_db()
+            # Parked, not run: the keys are untouched and no attempt spent.
+            self.assertEqual((rerank.status, rerank.attempts), (JobStatus.READY, 0))
+            self.assertEqual([r.rank for r in service.rows_page(target, limit=10)], before)
+            Job.objects.filter(id=fill.id).update(status=JobStatus.CANCELLED)
+            JobRunner(worker_id="test:1").tick()
+        rerank.refresh_from_db()
+        self.assertEqual(rerank.status, JobStatus.DONE)
+        self.assertEqual([r.data["name"] for r in service.rows_page(target, limit=10)], ["2", "0", "1"])
+        self.assertNotEqual([r.rank for r in service.rows_page(target, limit=10)], before)
+
+    def test_a_move_that_changes_nothing_writes_nothing(self):
+        # A row dropped on itself, or right after the row it already
+        # follows, keeps its key: no write, no deepening, no rerank
+        # (the bound is patched to 0 so any write would queue one).
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        before = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
+        with patch("lists.services.lists.RANK_REBALANCE_LENGTH", 0):
+            service.move_row(target, str(rows[1].id), after_id=str(rows[1].id))
+            service.move_row(target, str(rows[1].id), after_id=str(rows[0].id))
+            service.move_row(target, str(rows[0].id), after_id=None)
+        self.assertEqual({str(r.id): r.rank for r in service.rows_page(target, limit=10)}, before)
+        self.assertEqual(Job.objects.filter(kind="rerank").count(), 0)
+
+    def test_a_move_refuses_a_rank_past_the_column_bound(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        # The re-space queued past the rebalance length has not run yet
+        # (nothing ticks it here); the bound is met by a few more moves.
+        with (
+            patch("lists.services.lists.RANK_REBALANCE_LENGTH", 3),
+            patch("lists.services.lists.RANK_MAX_LENGTH", 4),
+            self.assertRaises(RowRankTooDeep),
+        ):
+            for n in range(20):
+                mover = rows[0] if n % 2 == 0 else rows[2]
+                service.move_row(target, str(mover.id), after_id=str(rows[1].id))
+        self.assertLessEqual(max(len(r.rank) for r in service.rows_page(target, limit=10)), 4)
+        self.assertEqual(Job.objects.filter(kind="rerank").count(), 1)
 
     def test_row_cap_is_enforced(self):
         service = _service()
@@ -75,7 +248,7 @@ class ListServiceTests(TestCase):
         target.refresh_from_db()
         self.assertEqual(target.row_count, 5)
 
-    def test_column_values_in_position_order_skipping_blanks(self):
+    def test_column_values_in_sheet_order_skipping_blanks(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
         service.add_rows(
@@ -111,7 +284,7 @@ class CellClampTests(TestCase):
         # longer holds in full, so silence would hide it.
         with self.assertLogs("lists.services.lists", level="WARNING") as logs:
             service.add_rows(target, [{"a": "x" * (CELL_MAX_LENGTH + 8)}])
-        row = service.rows_page(target, after_position=0, limit=1)[0]
+        row = service.rows_page(target, limit=1)[0]
         self.assertEqual(len(row.data["a"]), CELL_MAX_LENGTH)
         self.assertIn(f"clamped from {CELL_MAX_LENGTH + 8} to {CELL_MAX_LENGTH}", logs.output[0])
         with self.assertNoLogs("lists.services.lists"):
@@ -137,7 +310,7 @@ class CellNormalizeTests(TestCase):
             origin=ListOrigin.MANUAL,
         )
         service.add_rows(target, [{"score": "1,234", "when": "2026/3/4"}])
-        row = service.rows_page(target, after_position=0, limit=1)[0]
+        row = service.rows_page(target, limit=1)[0]
         self.assertEqual(row.data["score"], "1234")  # commas stripped
         self.assertEqual(row.data["when"], "2026-03-04")  # date canonicalized
 
@@ -153,7 +326,7 @@ class CellNormalizeTests(TestCase):
             origin=ListOrigin.CSV,
         )
         service.add_rows(target, [{"score": "banana"}])
-        row = service.rows_page(target, after_position=0, limit=1)[0]
+        row = service.rows_page(target, limit=1)[0]
         self.assertEqual(row.data["score"], "banana")  # tolerated, not rejected
 
 

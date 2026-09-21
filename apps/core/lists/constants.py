@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from openbower_kernel.ranks import RANK_MAX_LENGTH as KERNEL_RANK_MAX_LENGTH
 from openbower_schema.fills import (
     FREE_SEARCH_FILL_BUDGET as FREE_SEARCH_FILL_BUDGET,
 )
@@ -35,6 +36,16 @@ MAX_LIST_ROWS = 50_000
 # exported CSV lands back in those tools.
 CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
+# A row's rank (openbower_kernel.ranks, which owns the column bound):
+# appends keep it at four characters for the largest sheet, and moves
+# into the same gap add about a character per six. A sheet whose
+# longest rank reaches the rebalance length is re-spaced by the
+# `rerank` job, well short of the bound.
+RANK_MAX_LENGTH = KERNEL_RANK_MAX_LENGTH
+RANK_REBALANCE_LENGTH = 32
+# A re-space waits for the list's open fills (a walk's cursor holds a
+# key of the old spacing); how long a waiting rerank sleeps between looks.
+RERANK_WAIT_SECONDS = 60
 # Idempotency key a webhook caller may supply on an ingest push (else one
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
@@ -223,9 +234,10 @@ class WebhookRunOutcome(StrEnum):
 # fill stops once it has its N rows, rather than materializing every
 # eligible row to take the first few.
 FILL_SCAN_CHUNK = 1000
-# Rows per write when a fill service touches many at once (binary):
+# Rows per write when a service touches many at once (binary):
 # admission materializes a fill's queue, cancel abandons what is left
-# of it, list delete purges, the cron sweep pages its deletes.
+# of it, list delete purges, the cron sweep pages its deletes, and a
+# re-space rewrites a sheet's ranks under its lock.
 FILL_WRITE_BATCH = 1000
 # Rows per digest: what one flush tick claims for one webhook node
 # (binary). A node with more due rows sends the rest on later ticks,

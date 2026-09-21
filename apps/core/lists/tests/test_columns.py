@@ -382,7 +382,6 @@ class ColumnDeleteTests(TestCase):
             admission.refill(
                 list_id=str(self.sheet.id),
                 column_key="contact_name",
-                rows=None,
                 resume_fill_id="",
                 confirmed_row_count=2,
             )

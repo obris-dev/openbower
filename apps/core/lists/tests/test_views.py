@@ -120,13 +120,23 @@ class ListsViewsTests(TestCase):
         self.assertEqual(added.json(), {"added": 5, "row_count": 5})
 
         first = self.client.get(reverse("lists_rows", kwargs={"id": list_id}), {"limit": 2}).json()
-        self.assertEqual([r["position"] for r in first["items"]], [1, 2])
-        self.assertEqual(first["next_cursor"], "2")
+        self.assertEqual([r["data"]["a"] for r in first["items"]], ["0", "1"])
+        # The cursor is opaque and self-contained (the last row's rank
+        # and id): nothing about order rides a row, and the next page
+        # needs no lookup.
+        self.assertTrue(first["next_cursor"].endswith("." + first["items"][-1]["id"]))
+        self.assertNotIn("position", first["items"][0])
         rest = self.client.get(
             reverse("lists_rows", kwargs={"id": list_id}), {"limit": 5, "after": first["next_cursor"]}
         ).json()
-        self.assertEqual([r["position"] for r in rest["items"]], [3, 4, 5])
+        self.assertEqual([r["data"]["a"] for r in rest["items"]], ["2", "3", "4"])
         self.assertIsNone(rest["next_cursor"])
+        row_id = first["items"][0]["id"]
+        bad_ranks = ("", "zz", "a\x00", "a1!", "a" * 100)
+        for bad in ("01ROW" + "0" * 21, "a0.nope", "not a cursor", *(f"{r}.{row_id}" for r in bad_ranks)):
+            with self.subTest(bad=bad):
+                resp = self.client.get(reverse("lists_rows", kwargs={"id": list_id}), {"after": bad})
+                self.assertEqual(resp.status_code, 400)
 
     def test_foreign_list_is_404(self):
         foreign = ListService(account_id="01AC" + "Z" * 22).create(

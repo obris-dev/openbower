@@ -194,7 +194,7 @@ class ProcessorTests(_SheetHarness):
         self.assertEqual(
             (run.status, run.kind, run.node_id, run.row_id), ("deferred", WEBHOOK, node_id, str(self.row.id))
         )
-        self.assertEqual((run.not_before, run.position), (next_window(NOW, INTERVAL), 1))
+        self.assertEqual((run.not_before, run.rank), (next_window(NOW, INTERVAL), self.row.rank))
         # Offered again for the same completion: covered, nothing queued.
         self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
 
@@ -230,7 +230,7 @@ class AdvanceTests(_SheetHarness):
 
         (run,) = list(self._webhook_runs())
         self.assertEqual((run.status, run.kind, run.node_id), (NodeRunStatus.DEFERRED, WEBHOOK, webhook_node_id))
-        self.assertEqual((run.list_id, run.position, run.fill_run_id), (str(self.sheet.id), self.row.position, None))
+        self.assertEqual((run.list_id, run.rank, run.fill_run_id), (str(self.sheet.id), self.row.rank, None))
         self.assertEqual(run.not_before, next_window(NOW, INTERVAL))
         self.assertEqual((run.queued_at, run.last_state_change_at), (NOW, NOW))
 
@@ -342,7 +342,7 @@ class _BackfilledSheet(_SheetHarness):
             )
 
     def _runs(self):
-        return NodeRun.objects.filter(kind=WEBHOOK).order_by("position")
+        return NodeRun.objects.filter(kind=WEBHOOK).order_by("rank", "id")
 
 
 class BackfillTests(_BackfilledSheet):
@@ -376,14 +376,17 @@ class BackfillTests(_BackfilledSheet):
     def test_the_job_enqueues_a_run_for_every_row_already_complete(self):
         node_id = self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
+        self.assertEqual(
+            (job.status, job.progress),
+            (JobStatus.DONE, {"after_id": str(self.third_row.id), "after_rank": self.third_row.rank}),
+        )
         runs = list(self._runs())
         self.assertEqual([r.row_id for r in runs], [str(self.row.id), str(self.second_row.id)])
         for run in runs:
             self.assertEqual(
                 (run.status, run.node_id, run.not_before), (NodeRunStatus.DEFERRED, node_id, next_window(NOW, INTERVAL))
             )
-        self.assertEqual([r.position for r in runs], [1, 2])
+        self.assertEqual([r.rank for r in runs], [self.row.rank, self.second_row.rank])
 
     def test_the_walk_pages_across_slices_and_a_doubled_slice_adds_nothing(self):
         # One row per page: three slices, each idempotent under the
@@ -392,12 +395,15 @@ class BackfillTests(_BackfilledSheet):
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
             self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3}))
+        self.assertEqual(
+            (job.status, job.progress),
+            (JobStatus.DONE, {"after_id": str(self.third_row.id), "after_rank": self.third_row.rank}),
+        )
         self.assertEqual(self._runs().count(), 2)
         kind = EnqueueRuns.model_validate(job.payload)
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
-            cursor = kind.run(job, kind.Progress(after_position=0))
-        self.assertEqual(cursor, kind.Progress(after_position=1))
+            cursor = kind.run(job, kind.Progress(after_id=""))
+        self.assertEqual(cursor, kind.Progress(after_id=str(self.row.id), after_rank=self.row.rank))
         self.assertEqual(self._runs().count(), 2)
 
     def test_a_page_re_walked_after_its_runs_were_sent_offers_nothing(self):
@@ -410,11 +416,11 @@ class BackfillTests(_BackfilledSheet):
         self._runs().update(status=NodeRunStatus.DONE)
         (job,) = list(Job.objects.all())
         kind = EnqueueRuns.model_validate(job.payload)
-        kind.run(job, kind.Progress(after_position=0))
+        kind.run(job, kind.Progress(after_id=""))
         self.assertEqual(self._runs().count(), 2)
         # A LATER completion of the same row is new work: one new run.
         self._settle(self.row, {"country": StoredCellState.FILLED}, at=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
-        kind.run(job, kind.Progress(after_position=0))
+        kind.run(job, kind.Progress(after_id=""))
         fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
         self.assertEqual([r.row_id for r in fresh], [str(self.row.id)])
 

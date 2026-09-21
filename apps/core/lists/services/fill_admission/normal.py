@@ -24,6 +24,7 @@ from agents.models import Agent
 from agents.services import AgentNotFound, AgentService
 from jobs.models import Job
 from jobs.services import JobService
+from openbower_kernel.fields import new_ulid
 from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
@@ -61,19 +62,20 @@ class FillAdmissionService(AdmissionBase):
         config: AgentConfig | None = None,
         agent_id: str = "",
         confirmed_row_count: int,
-        rows: int = 0,
+        max_row_count: int = 0,
     ) -> Job:
         """The one transaction. Exactly one of `config` (the quick tab:
         an ephemeral agent is created) or `agent_id` (a roster agent)
         is given; the serializer enforces the exclusivity, this method
         trusts it. Returns the fill job.
 
-        A fill is a CONSENT, so its walk has a fixed range: the rows at
-        or below `confirmed_row_count`, the count the user was shown.
-        Positions are dense and append-only, so a row appended after the
-        click sits above the range and is never walked; it shows unfilled
-        and the next refill takes it. `rows` scopes the fill to the FIRST
-        N eligible rows within that range (0 = all); rows past the last
+        A fill is a CONSENT, so its walk has a fixed set and a fixed
+        count: the rows that existed at the click (captured as the
+        newest row's id then; ids are insertion order, so a row appended
+        after is never walked; it shows unfilled and the next refill
+        takes it), walked in sheet order up to `confirmed_row_count`,
+        the count the user was shown. `max_row_count` scopes the fill to
+        the FIRST N eligible rows within that range (0 = all); rows past the last
         targeted one stay not-attempted (the designed state a later
         refill extends).
 
@@ -113,22 +115,26 @@ class FillAdmissionService(AdmissionBase):
             # node per agent per sheet is the run's own grain).
             node = self.workflows.get_or_create_column_agent_node(target_list, agent_id=str(agent.id))
             column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id)
-            until_position = row_count if rows else min(confirmed_row_count or row_count, row_count)
-            consented = min(rows, until_position) if rows else until_position
-            self._check_budget(resolved_config, consented=consented)
+            covered = self._covered(
+                row_count=row_count, confirmed_row_count=confirmed_row_count, max_row_count=max_row_count
+            )
             fill = FillJob(
                 list_id=str(target_list.id),
                 node_id=str(node.id),
                 agent_id=str(agent.id),
                 column_keys=column_keys,
                 mode=WalkMode.FRESH,
-                until_position=until_position,
-                limit=rows,
-                consented=consented,
+                # The consent SET: an id minted at the click. Ids are
+                # insertion order, so every row that exists now is older
+                # and a row appended after is newer and never walked.
+                until_id=new_ulid(),
+                covered=covered,
+                max_row_count=max_row_count,
             )
+            self._check_budget(resolved_config, consented=fill.consented)
             if (
                 not processor_for(account_id=self.account_id, node=node, scope=self._probe_scope(fill))
-                .probe(target_list, until_position=until_position)
+                .probe(target_list, until_id=fill.until_id, covered=fill.covered)
                 .found
             ):
                 raise NoEligibleRows()
@@ -153,7 +159,7 @@ class FillAdmissionService(AdmissionBase):
         *,
         list_id: str,
         column_key: str,
-        rows: int = 0,
+        max_row_count: int = 0,
         resume_fill_id: str = "",
         confirmed_row_count: int = 0,
     ) -> Job:
@@ -161,8 +167,8 @@ class FillAdmissionService(AdmissionBase):
         the column's rows without an answer (terminal outcomes are
         immutable, so recovery is never a reopened row). The range is
         the count the user was shown when one was (`confirmed_row_count`),
-        else the sheet as it stands; `rows` caps the target at the first
-        N (the next tranche of a scoped fill). A refill targets every
+        else the sheet as it stands; `max_row_count` caps the target at the
+        first N (the next tranche of a scoped fill). A refill targets every
         row still blank in the walked columns, settled or not: the click
         is the consent to re-spend on a settled blank, and an edited
         prompt applies without detection (a fill reads its agent live).
@@ -230,9 +236,9 @@ class FillAdmissionService(AdmissionBase):
             # unreachable from that surface. A fill always owns at least
             # one column, so a resume's set is never empty.
             walked = list(FillJob.model_validate(source.payload).column_keys) if source is not None else [column_key]
-            until_position = row_count if rows else min(confirmed_row_count or row_count, row_count)
-            consented = min(rows, until_position) if rows else until_position
-            self._check_budget(resolved_config, consented=consented)
+            covered = self._covered(
+                row_count=row_count, confirmed_row_count=confirmed_row_count, max_row_count=max_row_count
+            )
             fill = FillJob(
                 list_id=str(target_list.id),
                 node_id=str(node.id),
@@ -241,12 +247,16 @@ class FillAdmissionService(AdmissionBase):
                 mode=WalkMode.REMAINING,
                 owed_by=resume_fill_id,
                 judged_keys=walked,
-                until_position=until_position,
-                limit=rows,
-                consented=consented,
+                # The consent SET: an id minted at the click. Ids are
+                # insertion order, so every row that exists now is older
+                # and a row appended after is newer and never walked.
+                until_id=new_ulid(),
+                covered=covered,
+                max_row_count=max_row_count,
             )
+            self._check_budget(resolved_config, consented=fill.consented)
             probe = processor_for(account_id=self.account_id, node=node, scope=self._probe_scope(fill)).probe(
-                target_list, until_position=until_position
+                target_list, until_id=fill.until_id, covered=fill.covered
             )
             if not probe.found:
                 # EMPTY is diagnosed by the probe, which scanned to the
@@ -283,16 +293,20 @@ class FillAdmissionService(AdmissionBase):
         return JobService(account_id=self.account_id).enqueue(fill, user_id=self.user_id, target_id=str(target_list.id))
 
     @staticmethod
+    def _covered(*, row_count: int, confirmed_row_count: int, max_row_count: int) -> int:
+        """The consent's COUNT half, from the request: how many rows the
+        walk may look at in sheet order (the count the user was shown,
+        clamped to the sheet; the whole sheet for a scoped fill, whose
+        `max_row_count` counts qualifying rows). The job derives the
+        denominator from it; the set half is `until_id`, an id minted
+        at the click."""
+        return row_count if max_row_count else min(confirmed_row_count or row_count, row_count)
+
+    @staticmethod
     def _probe_scope(fill: FillJob) -> WalkScope:
         """The walk's scope as the probe sees it, before the job exists
         (the probe queues nothing, so it needs no fill id)."""
-        return WalkScope(
-            mode=fill.mode,
-            owed_by=fill.owed_by,
-            column_keys=fill.judged_keys,
-            until_position=fill.until_position,
-            limit=fill.limit,
-        )
+        return WalkScope(mode=fill.mode, owed_by=fill.owed_by, column_keys=fill.judged_keys)
 
     @staticmethod
     def _check_budget(config: AgentConfig, *, consented: int) -> None:

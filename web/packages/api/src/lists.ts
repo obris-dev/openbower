@@ -160,16 +160,17 @@ export const DERIVED_KEY_COLLISION_CODE = "derived_key_collision";
 
 /** The AI-column add's POST body (the server's AiColumnRequest): the
  * quick config XOR an existing agent (its OUTPUTS are the columns;
- * no column label rides the request), and the row count the user
- * consented to (echoed; the server 409s when the count changed,
- * growth or shrinkage). `rows` scopes the fill to the sheet's first N
+ * no column label rides the request), and the row count the user was
+ * shown (echoed; the fill covers at most that many rows, top down, so
+ * a row that landed after the page loaded waits for the next fill).
+ * `max_row_count` scopes the fill to the sheet's first N qualifying
  * rows; omitted means every row. The server admits the true eligible
  * count either way. */
 export type AiColumnBody = {
   config?: AgentConfig;
   agent_id?: string;
   confirmed_row_count: number;
-  rows?: number;
+  max_row_count?: number;
   concurrency?: number;
 };
 
@@ -465,9 +466,9 @@ export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiR
  * column's rows without an answer (answered rows are excluded
  * server-side, never re-run and never re-billed; appended rows are
  * covered, so resume and fill-remaining are the same gesture). The
- * column names everything and the server takes a fresh config
- * snapshot; the one optional body fact is `rows`, scoping the new run
- * to the next N unanswered rows (omitted means all of them, and the
+ * column names everything and the fill reads the agent's config
+ * live; the one optional body fact is `max_row_count`, scoping the new
+ * run to the next N unanswered rows (omitted means all of them, and the
  * server owns the true eligible count either way). Refusals
  * (same-column active, caps, empty target) surface through the funnel
  * as the server's verbatim detail plus code; the 201 body is the run
@@ -475,7 +476,7 @@ export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiR
 export async function postFillRefill(
   id: string,
   columnKey: string,
-  opts: { rows?: number; resumeFill?: string } = {},
+  opts: { max_row_count?: number; resumeFill?: string } = {},
 ): Promise<ApiResult<FillRunWire>> {
   // resumeFill bounds the new fill to THAT stopped fill's own
   // unresolved rows (Continue resumes; the extend gestures widen).
@@ -484,7 +485,7 @@ export async function postFillRefill(
   // drifts from the server's does not fail, it silently widens the
   // fill to the whole column against the user's metered key.
   const body: Record<string, unknown> = {};
-  if (opts.rows !== undefined) body.rows = opts.rows;
+  if (opts.max_row_count !== undefined) body.max_row_count = opts.max_row_count;
   if (opts.resumeFill !== undefined) body.resume_fill = opts.resumeFill;
   return fillResult(
     await http.post(

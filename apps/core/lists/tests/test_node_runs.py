@@ -421,7 +421,7 @@ def _webhook_run(sheet, row_id: str, *, status: NodeRunStatus, not_before) -> No
         kind=WEBHOOK,
         row_id=row_id,
         list_id=str(sheet.id),
-        position=1,
+        rank="a0",
         status=status,
         not_before=not_before,
         last_state_change_at=timezone.now(),

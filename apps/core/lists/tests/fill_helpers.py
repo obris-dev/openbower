@@ -86,6 +86,7 @@ def open_fill_job(
     agent_id: str,
     column_keys: list[str],
     consented: int,
+    covered: int | None = None,
     mode: WalkMode = WalkMode.FRESH,
     status: JobStatus = JobStatus.READY,
     targeted: bool = True,
@@ -94,7 +95,9 @@ def open_fill_job(
 ) -> Job:
     """A fill job built at the model level, its walk already done when
     `targeted` (the runs are the test's to create), so a lifecycle test
-    starts from a fill that is polling its runs."""
+    starts from a fill that is polling its runs. `consented` here is
+    the count the test means; the job derives its own from `covered`
+    and `max_row_count`."""
     job = JobService(account_id=account_id).enqueue(
         FillJob(
             list_id=list_id,
@@ -102,8 +105,8 @@ def open_fill_job(
             agent_id=agent_id,
             column_keys=column_keys,
             mode=mode,
-            consented=consented,
-            until_position=scope.pop("until_position", consented),
+            covered=consented if covered is None else covered,
+            until_id=scope.pop("until_id", ""),
             **scope,
         ),
         user_id=user_id,
@@ -111,7 +114,7 @@ def open_fill_job(
     )
     if targeted:
         cursor = FillJob.Progress(
-            after_position=consented,
+            after_id="",
             offered=consented,
             targeted_at=targeted_at or timezone.now(),
             targeted=consented,
@@ -196,7 +199,7 @@ def queued_row_ids(fill_run_id: str) -> list[str]:
     return [
         str(row_id)
         for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES)
-        .order_by("position")
+        .order_by("rank", "id")
         .values_list("row_id", flat=True)
     ]
 
@@ -212,19 +215,26 @@ def targeted(fill_run_id: str) -> set[str]:
     return {str(row_id) for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)}
 
 
-def targeted_positions(fill_run_id: str) -> list[int]:
-    """Those rows' sheet positions, in sheet order."""
-    return list(NodeRun.objects.filter(fill_run_id=fill_run_id).order_by("position").values_list("position", flat=True))
+def row_numbers(list_id: str) -> dict[str, int]:
+    """row id -> its 1-based number in SHEET ORDER (rank, id): what the
+    gutter would show. Derived here exactly as a renderer derives it,
+    since nothing stores a row number."""
+    ordered = ListRow.objects.filter(list_id=list_id).order_by("rank", "id").values_list("id", flat=True)
+    return {str(row_id): number for number, row_id in enumerate(ordered, start=1)}
+
+
+def targeted_numbers(fill_run_id: str) -> list[int]:
+    """The sheet numbers of the rows a fill targets, in sheet order."""
+    return [number for _row_id, number in targeted_pairs(fill_run_id)]
 
 
 def targeted_pairs(fill_run_id: str) -> list[tuple[str, int]]:
-    """(row id, position) for the rows a fill targets, in sheet order."""
-    return [
-        (str(row_id), position)
-        for row_id, position in NodeRun.objects.filter(fill_run_id=fill_run_id)
-        .order_by("position")
-        .values_list("row_id", "position")
+    """(row id, sheet number) for the rows a fill targets, in sheet order."""
+    numbers = row_numbers(consent_of(fill_run_id).list_id)
+    row_ids = [
+        str(row_id) for row_id in NodeRun.objects.filter(fill_run_id=fill_run_id).values_list("row_id", flat=True)
     ]
+    return sorted(((row_id, numbers[row_id]) for row_id in row_ids), key=lambda pair: pair[1])
 
 
 def fill_agent_id(column: AiColumn) -> str:

@@ -118,7 +118,7 @@ class BenchRunService:
                 kind=bench.kind,
                 row_id=None,
                 list_id="",
-                position=0,
+                rank="",
                 status=NodeRunStatus.READY,
                 input={"row": row, "config": config.model_dump()},
                 started_by=self.user_id,

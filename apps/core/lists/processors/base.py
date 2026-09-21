@@ -98,12 +98,6 @@ class WalkScope(BaseModel):
     # column the user clicked for a widening gesture, the resumed
     # fill's whole set for a Continue. Empty = the fill's own columns.
     column_keys: list[str] = []
-    # A fill's CONSENT RANGE: rows at or below this position (0 = no
-    # bound). Positions are dense and append-only, so a row appended
-    # after the click sits above it and is never walked.
-    until_position: int = 0
-    # A scoped fill's first N qualifying rows (0 = every qualifying row).
-    limit: int = 0
 
 
 class NodeProcessor(ABC):

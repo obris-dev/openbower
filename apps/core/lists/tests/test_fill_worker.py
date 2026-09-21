@@ -179,7 +179,7 @@ class ManualFillTestCase(TransactionTestCase):
                         fill_run_id=str(fill.id),
                         status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED),
                     )
-                    .order_by("position")
+                    .order_by("rank", "id")
                     .values_list("id", flat=True)
                 )
                 for task_id in ids:
@@ -192,7 +192,7 @@ class ManualFillTestCase(TransactionTestCase):
     def test_walks_the_sheet_and_completes(self) -> None:
         self.run_fill(answering_model(lambda prompt: "found: " + prompt.split()[-1]))
         self.assertEqual(self.status(), "complete")
-        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
+        rows = self.lists.rows_page(self.sheet, limit=10)
         self.assertEqual(rows[0].data["answer"], "found: acme.com")
         self.assertEqual(rows[1].data["answer"], "found: example.io")
         self.assertEqual(self._statuses(), {NodeRunStatus.DONE})
@@ -205,7 +205,7 @@ class ManualFillTestCase(TransactionTestCase):
     def test_blank_answers_land_diagnosed_not_written(self) -> None:
         self.run_fill(answering_model(lambda prompt: ""))
         self.assertEqual(self.status(), "complete")
-        for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
+        for row in self.lists.rows_page(self.sheet, limit=10):
             self.assertNotIn("answer", row.data)
         self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.NO_EVIDENCE})
         self.assertEqual(counting(self.fill), {"attempted": 2, "blank": 2})
@@ -213,7 +213,7 @@ class ManualFillTestCase(TransactionTestCase):
     def test_a_dropped_answer_is_preserved_for_audit(self) -> None:
         self.run_fill(unsure_model("Acme Holdings", confidence=0.62, reason="no record states the parent"))
         self.assertEqual(self.status(), "complete")
-        for row in self.lists.rows_page(self.sheet, after_position=0, limit=10):
+        for row in self.lists.rows_page(self.sheet, limit=10):
             self.assertNotIn("answer", row.data)
         self.assertEqual({c.state for c in ListCellState.objects.all()}, {StoredCellState.UNVERIFIED})
         for task in NodeRun.objects.filter(fill_run_id=str(self.fill.id)):
@@ -289,7 +289,7 @@ class ManualFillTestCase(TransactionTestCase):
         # cell state is written for a row that no longer exists (the
         # give-up blank has no cells, so nothing else would have refused
         # the write).
-        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
+        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("rank", "id").first()
         NodeRun.objects.filter(fill_run_id=str(self.fill.id), row_id=str(gone.id)).update(attempts=NODE_RUN_ATTEMPTS)
         ListRow.objects.filter(id=gone.id).delete()
         self.run_fill(answering_model(lambda prompt: "found"))
@@ -309,7 +309,7 @@ class ManualFillTestCase(TransactionTestCase):
         ):
             first_task = (
                 NodeRun.objects.filter(fill_run_id=str(self.fill.id))
-                .order_by("position")
+                .order_by("rank", "id")
                 .values_list("id", flat=True)[0]
             )
             handle_node_run(str(first_task), WORKER)
@@ -334,7 +334,7 @@ class ManualFillTestCase(TransactionTestCase):
         ):
             first_task = (
                 NodeRun.objects.filter(fill_run_id=str(self.fill.id))
-                .order_by("position")
+                .order_by("rank", "id")
                 .values_list("id", flat=True)[0]
             )
             outcome = handle_node_run(str(first_task), WORKER)
@@ -346,7 +346,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(NodeRun.objects.get(id=first_task).status, NodeRunStatus.DONE)
 
     def test_a_missing_row_closes_its_task_and_the_fill_goes_on(self) -> None:
-        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("position").first()
+        gone = ListRow.objects.filter(list_id=str(self.sheet.id)).order_by("rank", "id").first()
         ListRow.objects.filter(id=gone.id).delete()
         self.run_fill(answering_model(lambda prompt: "found"))
         self.assertEqual(self.status(), "complete")
@@ -371,7 +371,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(self.status(), "cancelled")
 
     def test_the_answer_an_occupied_cell_refused_is_kept(self) -> None:
-        rows = self.lists.rows_page(self.sheet, after_position=0, limit=10)
+        rows = self.lists.rows_page(self.sheet, limit=10)
         self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "mine, typed by hand"})
         self.run_fill(answering_model(lambda prompt: "what the model found"))
         task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
@@ -393,7 +393,7 @@ class ProvisionerTests(ManualFillTestCase):
     def test_it_publishes_each_ready_task_and_marks_it_queued(self) -> None:
         producer = MagicMock()
         producer.flush.return_value = 0  # the broker acked
-        tasks = list(NodeRun.objects.filter(fill_run_id=str(self.fill.id)).order_by("position"))
+        tasks = list(NodeRun.objects.filter(fill_run_id=str(self.fill.id)).order_by("rank", "id"))
         self.assertEqual({t.status for t in tasks}, {NodeRunStatus.READY})
 
         self._run_provisioner(producer)

@@ -13,7 +13,7 @@ from openbower_schema.fills import SETTLED_CELL_STATES
 from openbower_schema.webhooks import WebhookDigestData, WebhookDigestItem, WebhookSheetRef
 
 from ..constants import StoredCellState
-from ..models import List, ListRow
+from ..models import List
 
 # A column is DONE for a row when it holds an answer or a blank with a
 # reason. A retryable failure (a timeout, a missing tool) is neither:
@@ -51,7 +51,7 @@ def event_id_of(*, scope: str, row_id: str, stamp: str, test: bool) -> str:
 def build_digest_item(
     *,
     scope: str,
-    row: ListRow,
+    row_id: str,
     cells: dict[str, str],
     states: dict[str, str],
     completed_at: datetime | None,
@@ -68,9 +68,8 @@ def build_digest_item(
     fixed-width and gives a receiver nothing to parse."""
     stamp = (completed_at or sent_at).isoformat()
     return WebhookDigestItem(
-        event_id=event_id_of(scope=scope, row_id=str(row.id), stamp=stamp, test=test),
-        row_id=str(row.id),
-        position=row.position,
+        event_id=event_id_of(scope=scope, row_id=row_id, stamp=stamp, test=test),
+        row_id=row_id,
         completed_at=completed_at.isoformat() if completed_at else None,
         cells=cells,
         states=states,

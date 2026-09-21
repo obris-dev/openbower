@@ -116,15 +116,16 @@ class AiColumnRequest(serializers.Serializer):
     retyped), the other tab sends `agent_id`; exactly one of the two.
     No column label rides the request: the OUTPUTS are the columns
     (each output's key and label name what its cells land under).
-    `confirmed_row_count` echoes the count the user consented to: the
-    fill's range, so rows appended after the click are never walked."""
+    `confirmed_row_count` echoes the count the user was shown: the
+    fill covers at most that many rows, top down (rows appended after
+    the click are outside the consent set either way)."""
 
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     confirmed_row_count = serializers.IntegerField(min_value=0)
-    # Scope: fill only the FIRST N eligible rows (0 = all, the absent
-    # default; a sent value must be positive).
-    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+    # Scope: fill at most this many rows, the FIRST N eligible in sheet
+    # order (0 = all, the absent default; a sent value must be positive).
+    max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if (attrs.get("config") is not None) == bool(attrs.get("agent_id")):
@@ -149,13 +150,13 @@ class BenchRunRequest(serializers.Serializer):
 class ColumnRefillRequest(serializers.Serializer):
     """POST /v1/lists/{id}/columns/{key}/refill: the column names
     everything except the optional scope, so the body carries at most
-    `rows` (first N eligible unanswered rows; absent = all)."""
+    `max_row_count` (the first N eligible unanswered rows; absent = all)."""
 
     # Continue's leg: bound the new fill to THIS stopped fill's own
     # unresolved rows (resume, never widen).
     resume_fill = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
 
-    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+    max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
 
     # The consent echo, as the admit lane has. OPTIONAL because resume
     # spends what a previous consent already bought and the widening
@@ -304,9 +305,7 @@ def row_wire(
     """A sheet row with its AI cell states and its webhook cell words
     beside its values. ONE shape rather than paged reads walking in
     lockstep, which was a client-side join carried over the network."""
-    return WireListRow(
-        id=str(row.id), position=row.position, data=row.data, states=states or {}, webhooks=webhooks or {}
-    ).model_dump()
+    return WireListRow(id=str(row.id), data=row.data, states=states or {}, webhooks=webhooks or {}).model_dump()
 
 
 def _fill_run_wire(fill: Job, progress: FillProgress) -> dict[str, Any]:

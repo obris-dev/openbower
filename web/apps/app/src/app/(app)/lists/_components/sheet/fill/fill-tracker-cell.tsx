@@ -67,7 +67,7 @@ export function FillTrackerCell({
   runs: LiveRun[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
 }) {
   if (summary === undefined) {
     // Sized like the header line it resolves into. Once the page's
@@ -163,7 +163,7 @@ export function FillTrackerCell({
               onContinue={() => onRefill(column.key, { resumeId: summary.current_fill_id })}
             />
           )}
-          {!live && <RefillScope onRefill={(rows) => onRefill(column.key, { rows })} />}
+          {!live && <RefillScope onRefill={(maxRowCount) => onRefill(column.key, { maxRowCount })} />}
           <PromptPeek listId={listId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>

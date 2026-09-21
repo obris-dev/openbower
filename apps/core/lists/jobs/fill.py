@@ -3,13 +3,15 @@ runs (the first slices), and the wait for those runs to settle (the
 rest), one lifecycle on the one job row. `fill_run_id` on a run and on
 a cell is this job's id.
 
-The walk: one page of rows per slice within the consent's range
-(`until_position`: rows at or below the count the user echoed; a row
-appended after the click sits above it and is never walked), offered
+The walk: one page of rows per slice, in SHEET ORDER (the order the
+user sees the fill march down), over the consent set (`until_id`: the
+rows that existed at the click; a row appended after is newer and is
+never walked) and at most `covered` rows of it, offered
 to the agent kind's processor, which judges each row by the walk's
 mode and inserts under the open-run key so a re-walked slice is a
-no-op. A scoped fill (`limit`) offers windows no wider than what is
-still owed. When the range is walked (or the limit met) the target set
+no-op. A scoped fill (`max_row_count`) offers windows no wider than
+what is still owed. When the range is walked (or the scope met) the
+target set
 is WHOLE: the denominator settles to the runs actually queued (a count
 off the ledger, never an accumulator) and `targeted_at` is stamped.
 
@@ -23,10 +25,16 @@ own park and settle miss on a job stopped meanwhile.
 
 No list lock anywhere: the columns array is never written here, and
 the one guarantee that matters (a row offered once however many
-walkers offer it) is the open-run key on the processor's insert. A
-fill stopped mid-walk stops the walk, and a slice that landed runs
-after the stop's sweep abandons them itself, so nothing is left READY
-that nothing will ever run. A fill whose list is gone exits: the
+walkers offer it) is the open-run key on the processor's insert. The
+cursor names the last row walked (its id, and the rank it had), and
+the one thing that rewrites ranks, a re-space, waits for the list's
+open fills, so that rank is the truth between two slices; a row moved
+from below the cursor to above it during the seconds a walk takes is
+not walked and waits for the next refill, exactly like a row appended
+after the click, and one moved the other way is offered twice and
+dropped by the open-run key. A fill stopped mid-walk stops the walk,
+and a slice that landed runs after the stop's sweep abandons them
+itself, so nothing is left READY that nothing will ever run. A fill whose list is gone exits: the
 list's delete purges the job, and a job the delete missed finds no
 list and ends."""
 
@@ -45,15 +53,19 @@ from jobs.models import Job
 from ..constants import FILL_POLL_SECONDS, FILL_SCAN_CHUNK
 from ..processors import WalkMode, WalkScope, processor_for
 from ..services import fill_progress
-from ..services.lists import ListNotFound, ListService
+from ..services.lists import ListNotFound, ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.workflows import NodeNotFound, WorkflowService
 
 
 class FillProgress(BaseModel):
-    # The last sheet position walked; the next slice pages after it.
-    after_position: int = 0
-    # Runs queued so far, for a scoped fill's limit.
+    # The last row walked (its id, and the rank it had); the next slice
+    # pages after it in sheet order.
+    after_id: str = ""
+    after_rank: str = ""
+    # Rows walked so far, for the consent's count; runs queued so far,
+    # for a scoped fill's max_row_count.
+    walked: int = 0
     offered: int = 0
     # When the target set became whole, and the denominator it settled
     # to. Null while the walk is still queuing.
@@ -76,11 +88,20 @@ class FillJob(JobKind[FillProgress]):
     # columns it judges owed-ness across.
     owed_by: str = ""
     judged_keys: list[str] = []
-    # The consent range and the scoped fill's first N (0 = no bound).
-    until_position: int = 0
-    limit: int = 0
-    # The denominator at birth: the count the user was shown.
-    consented: int
+    # The consent SET (the newest row id at the click; "" = no bound),
+    # how many of its rows the walk may cover in sheet order (the count
+    # the user was shown; the whole sheet for a scoped fill), and the
+    # scoped fill's first N qualifying rows (0 = no bound).
+    until_id: str = ""
+    covered: int
+    max_row_count: int = 0
+
+    @property
+    def consented(self) -> int:
+        """The denominator at birth: the rows the user was shown, or a
+        scoped fill's N when that is smaller. Derived, so the two
+        numbers cannot disagree."""
+        return min(self.max_row_count, self.covered) if self.max_row_count else self.covered
 
     def scope(self, job: Job) -> WalkScope:
         return WalkScope(
@@ -88,8 +109,6 @@ class FillJob(JobKind[FillProgress]):
             fill_run_id=str(job.id),
             owed_by=self.owed_by,
             column_keys=self.judged_keys,
-            until_position=self.until_position,
-            limit=self.limit,
         )
 
     def run(self, job: Job, progress: FillProgress) -> FillProgress | None:
@@ -113,24 +132,25 @@ class FillJob(JobKind[FillProgress]):
             node = WorkflowService(account_id=job.account_id).get_node(self.node_id)
         except NodeNotFound:
             return None
-        page = lists.rows_page(
-            target_list,
-            after_position=progress.after_position,
-            limit=FILL_SCAN_CHUNK,
-            until_position=self.until_position,
-        )
+        # The covered count bounds the rows walked, in sheet order: the
+        # last page asks for only what the consent still allows.
+        remaining = self.covered - progress.walked
+        if remaining <= 0:
+            return self._targeted(job, progress)
+        after = RowCursor(progress.after_id, progress.after_rank) if progress.after_id else None
+        page = lists.rows_page(target_list, after=after, limit=min(FILL_SCAN_CHUNK, remaining), until_id=self.until_id)
         if not page:
             return self._targeted(job, progress)
         processor = processor_for(account_id=job.account_id, node=node, scope=self.scope(job))
         offered = progress.offered
         now = timezone.now()
-        if self.limit:
+        if self.max_row_count:
             # A scoped fill wants its first N qualifying rows: the page
             # is offered in windows no wider than what is still owed, so
             # the processor can never queue past N.
             start = 0
-            while start < len(page) and offered < self.limit:
-                window = page[start : start + (self.limit - offered)]
+            while start < len(page) and offered < self.max_row_count:
+                window = page[start : start + (self.max_row_count - offered)]
                 offered += processor.enqueue_runs(target_list, window, now=now)
                 start += len(window)
         else:
@@ -140,9 +160,15 @@ class FillJob(JobKind[FillProgress]):
             # ran before these runs existed, so sweep them now.
             NodeRunFlow.abandon_queued_for_fill(str(job.id))
             return None
-        if self.limit and offered >= self.limit:
-            return self._targeted(job, FillProgress(after_position=page[-1].position, offered=offered))
-        return FillProgress(after_position=page[-1].position, offered=offered)
+        advanced = FillProgress(
+            after_id=str(page[-1].id),
+            after_rank=page[-1].rank,
+            walked=progress.walked + len(page),
+            offered=offered,
+        )
+        if self.max_row_count and offered >= self.max_row_count:
+            return self._targeted(job, advanced)
+        return advanced
 
     def _targeted(self, job: Job, progress: FillProgress) -> FillProgress:
         """The target set is whole: the denominator settles to the runs
@@ -150,7 +176,9 @@ class FillJob(JobKind[FillProgress]):
         wait, so a fill whose rows all settled before the walk ended,
         or that targeted nothing, completes on the same tick."""
         return FillProgress(
-            after_position=progress.after_position,
+            after_id=progress.after_id,
+            after_rank=progress.after_rank,
+            walked=progress.walked,
             offered=progress.offered,
             targeted_at=timezone.now(),
             targeted=NodeRunFlow.count_for_fill(str(job.id)),
