@@ -15,7 +15,7 @@ import random
 from django.test import SimpleTestCase
 
 from openbower_kernel.fields import is_valid_ulid, new_ulid
-from openbower_kernel.ranks import DIGITS, RankError, key_between, keys_between, validate
+from openbower_kernel.ranks import DIGITS, RankError, first_key, key_between, keys_between, respace_keys, validate
 
 
 class RankTests(SimpleTestCase):
@@ -34,6 +34,26 @@ class RankTests(SimpleTestCase):
         self.assertEqual(sorted(keys), keys)
         self.assertEqual(len(set(keys)), 50_000)
         self.assertLessEqual(max(len(k) for k in keys), 4)
+
+    def test_the_first_key_is_the_one_an_empty_order_hands_out(self):
+        self.assertEqual(first_key(), "a0")
+        self.assertEqual(first_key(), keys_between(None, None, 1)[0])
+
+    def test_respace_keys_are_disjoint_ordered_and_take_the_shorter_side(self):
+        # Held keys just above the Y/Z head boundary: the keys below them
+        # need a longer head, so the fresh set goes ABOVE the highest.
+        held = ["Z1", "Z2", "Z3", "Z4", "Z5"]
+        fresh = respace_keys(held)
+        self.assertEqual(fresh, sorted(fresh))
+        self.assertEqual(len(fresh), len(held))
+        self.assertTrue(all(key > max(held) for key in fresh))
+        self.assertTrue(set(fresh).isdisjoint(held))
+        # Held at the top of a head: the next key up needs a longer head,
+        # so the fresh set goes BELOW the lowest.
+        fresh = respace_keys(["az"])
+        self.assertTrue(fresh[0] < "az" and len(fresh[0]) == 2)
+        for key in fresh:
+            validate(key)
 
     def test_a_key_exists_between_any_two_and_orders_between_them(self):
         a, b = "a0", "a1"

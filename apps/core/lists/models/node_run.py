@@ -88,9 +88,12 @@ class NodeRun(AccountScopedModel):
     # WHERE this task's row sits: the row's rank as it was when the run
     # was queued, so claims ordered by it march TOP TO BOTTOM down the
     # sheet the user is watching (a move after that reorders nothing
-    # already queued; the next fill reads the new order). Blank for a
-    # bench run, which has no sheet. The C collation, as the row's.
-    rank = models.CharField(_("rank"), max_length=RANK_MAX_LENGTH, blank=True, default="", db_collation="C")
+    # already queued; the next fill reads the new order). A bench run,
+    # which has no sheet, carries the first key as a constant (bench
+    # runs order among themselves by id); every run has one, and the
+    # check constraint below refuses the "" a forgotten writer would
+    # store. The C collation, as the row's.
+    rank = models.CharField(_("rank"), max_length=RANK_MAX_LENGTH, db_collation="C")
     status = models.CharField(_("status"), max_length=NODE_RUN_STATUS_MAX_LENGTH, default=NodeRunStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its
     # worker thread still exhausts across process restarts. Counting
@@ -157,6 +160,7 @@ class NodeRun(AccountScopedModel):
                 name="node_run_open_uniq",
             ),
             models.CheckConstraint(condition=~models.Q(kind=""), name="node_run_kind_named"),
+            models.CheckConstraint(condition=~models.Q(rank=""), name="node_run_rank_named"),
         ]
         indexes = [
             # The provisioner's READY pick, SPLIT by lane: a fill-backed

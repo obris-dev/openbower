@@ -34,11 +34,11 @@ auth + data services live in a separate private repo.
   by `-id` with `?after=<last id>` (ULIDs are time-sortable AND
   monotonic within a process: `openbower_kernel.fields.new_ulid` mints
   off python-ulid's locked strict generator, so id order is insertion
-  order even inside a bulk insert; helpers in the kernel), or by a dense integer rank where one exists (run results, where
-  `rank > :after` also gives cheap random access). `next_cursor` comes
-  from the last row of a full page.
+  order even inside a bulk insert; helpers in the kernel), or by the fractional rank where the collection carries one (a
+  sheet's rows, below). `next_cursor` comes from the last row of a
+  full page.
 - A sheet row's IDENTITY is its id and its ORDER is `rank`, a
-  fractional STRING key (unlike a node's dense integer rank) (`openbower_kernel.ranks`, the sheet's vocabulary over
+  fractional STRING key (the same key orders a node on its path) (`openbower_kernel.ranks`, the sheet's vocabulary over
   the `fractional-indexing` package): a move writes ONE row,
   never a renumbering, and nothing stores a row number (a renderer
   counts the page). ONE way to page rows, sheet order: the sheet and

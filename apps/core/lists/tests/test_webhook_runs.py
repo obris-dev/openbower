@@ -152,7 +152,7 @@ class ProcessorTests(_SheetHarness):
         # A kind with no processor (the barrier makes no runs of its
         # own): the factory says so loudly rather than walking nothing.
         node = self.workflows.get_node(node_id)
-        barrier = Node.objects.get(path_id=node.path_id, rank=0)
+        barrier = self.workflows.nodes_on_path(node.path_id)[0]
         with self.assertRaises(UnknownProcessor):
             processor_for(account_id=ACCOUNT, node=barrier)
 
@@ -174,11 +174,16 @@ class ProcessorTests(_SheetHarness):
 
     def test_wait_keys_are_empty_when_the_barrier_or_its_paths_are_gone(self):
         node_id = self._add_webhook_column(["answer"])
-        self.sheet.columns = [column for column in self.sheet.columns if column.key not in ("answer", "score")]
+        columns = list(self.sheet.columns)
+        self.sheet.columns = [column for column in columns if column.key not in ("answer", "score")]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
+        # The columns back, the barrier gone: each half empties the wait on its own.
+        self.sheet.columns = columns
+        self.sheet.save(update_fields=["columns", "updated_at"])
         node = self.workflows.get_node(node_id)
-        Node.objects.filter(path_id=node.path_id, rank=0).delete()
+        barrier = self.workflows.nodes_on_path(node.path_id)[0]
+        barrier.delete()
         self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
 
     def test_enqueue_runs_births_a_deferred_run_at_the_window_for_a_complete_row_only(self):
@@ -198,7 +203,7 @@ class ProcessorTests(_SheetHarness):
         # Offered again for the same completion: covered, nothing queued.
         self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
 
-    def test_wait_ahead_of_is_the_paths_rank_zero_and_refuses_a_node_without_one(self):
+    def test_wait_ahead_of_is_the_paths_first_node_and_refuses_a_node_without_one(self):
         node_id = self._add_webhook_column(["country"])
         node = self.workflows.get_node(node_id)
         self.assertEqual(self.workflows.wait_ahead_of(node).inbound_path_ids, [self.second.path_id])

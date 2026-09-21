@@ -36,11 +36,12 @@ MAX_LIST_ROWS = 50_000
 # exported CSV lands back in those tools.
 CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
-# A row's rank (openbower_kernel.ranks, which owns the column bound):
-# appends keep it at four characters for the largest sheet, and moves
-# into the same gap add about a character per six. A sheet whose
-# longest rank reaches the rebalance length is re-spaced by the
-# `rerank` job, well short of the bound.
+# A rank's bounds (openbower_kernel.ranks owns the column bound),
+# shared by every model that carries one, a row, a node, a run: appends
+# keep it at four characters for the largest sheet, and moves into the
+# same gap add about a character per six. Past the rebalance length a
+# sheet is re-spaced by the `rerank` job and a path in place, either
+# well short of the bound.
 RANK_MAX_LENGTH = KERNEL_RANK_MAX_LENGTH
 RANK_REBALANCE_LENGTH = 32
 # A re-space waits for the list's open fills (a walk's cursor holds a

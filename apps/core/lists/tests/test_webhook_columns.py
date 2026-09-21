@@ -103,7 +103,7 @@ class WebhookColumnTests(TestCase):
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] + 2, self.baseline[1] + 1))
         webhook_node = self.workflows.get_node(column.node_id)
         wait_node, same = self.workflows.nodes_on_path(webhook_node.path_id)
-        self.assertEqual((wait_node.rank, same.id), (0, webhook_node.id))
+        self.assertEqual((wait_node.rank, same.id), ("a0", webhook_node.id))
         # Two wait keys of two agents: two inbound paths, in the order given.
         self.assertEqual(config_as(wait_node, WaitUntil).inbound_path_ids, [self.second_path, self.first_path])
         webhook = config_as(webhook_node, Webhook)

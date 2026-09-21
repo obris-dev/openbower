@@ -93,8 +93,8 @@ class AiColumn(ColumnBase):
 
 
 class WebhookColumn(ColumnBase):
-    """A Send webhook column. It IS the webhook node at rank 1 of its
-    own path (the wait node at rank 0 names the paths it waits on); the
+    """A Send webhook column. It IS the second node of its own path
+    (the wait node before it names the paths it waits on); the
     column holds no row data, its cells show delivery state."""
 
     kind: Literal["webhook"] = "webhook"

@@ -1,6 +1,6 @@
 """The Send webhook column: what it is on the sheet (a column entry
-pointing at the webhook node at rank 1 of its own path, behind a wait
-node naming the paths it waits on), how it is added, read back, and
+pointing at the webhook node second on its own path, behind the wait
+node that starts it and names the paths it waits on), how it is added, read back, and
 changed, and its Test and Preview sends. The substrate persists the
 nodes it is handed (WorkflowService.create_path); this module knows
 what a webhook column's path looks like. Account-scoped like every

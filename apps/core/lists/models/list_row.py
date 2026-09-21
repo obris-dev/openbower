@@ -29,6 +29,9 @@ class ListRow(BaseModel):
         verbose_name_plural = _("list rows")
         constraints = [
             models.UniqueConstraint(fields=["list_id", "rank"], name="list_row_rank_uniq"),
+            # A CharField silently stores "" when a writer forgets the rank;
+            # refused at the insert, as on a node and a run.
+            models.CheckConstraint(condition=~models.Q(rank=""), name="list_row_rank_named"),
         ]
 
     def __str__(self) -> str:

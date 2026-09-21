@@ -2,12 +2,13 @@
 starts with. Its config names the PATHS it waits on (never nodes: a
 node appended or reordered on an upstream path later still means
 "after that path ends"), each of which ends in a column_agent node. No
-identity: nothing looks a wait node up by one, it is the path's rank 0
-(the rank key keeps that slot unique). A barrier, not a ledger: when
+identity: nothing looks a wait node up by one, it is the node that
+STARTS its path (its rank sorts first; a move never puts a node ahead
+of it). A barrier, not a ledger: when
 every column ending the paths it names is done for a row, the only
 effect is a run for each node behind it on the path (the advance in
-services/webhook_runs.py); the flush finds it as the path's rank 0 to
-re-resolve those columns at claim time."""
+services/webhook_runs.py); the flush finds it as the path's first node
+to re-resolve those columns at claim time."""
 
 from __future__ import annotations
 

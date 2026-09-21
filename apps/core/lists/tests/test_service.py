@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from django.db import IntegrityError
 from django.test import TestCase
 
 from jobs.constants import JobStatus
@@ -234,6 +235,12 @@ class ListServiceTests(TestCase):
                 service.move_row(target, str(mover.id), after_id=str(rows[1].id))
         self.assertLessEqual(max(len(r.rank) for r in service.rows_page(target, limit=10)), 4)
         self.assertEqual(Job.objects.filter(kind="rerank").count(), 1)
+
+    def test_a_row_with_no_rank_is_refused_at_the_insert(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
+        with self.assertRaisesMessage(IntegrityError, "list_row_rank_named"):
+            ListRow.objects.create(list_id=str(target.id), data={"domain": "acme.com", "name": "x"}, rank="")
 
     def test_row_cap_is_enforced(self):
         service = _service()

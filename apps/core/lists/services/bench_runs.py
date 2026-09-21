@@ -25,6 +25,7 @@ from django.utils import timezone
 from agents.providers import ModelUnavailable, model_for
 from agents.tools import registry as tool_registry
 from agents.tools.registry import UnknownTool
+from openbower_kernel.ranks import first_key
 from openbower_schema.agents import (
     TEST_KEY_MAX_LENGTH,
     TEST_ROW_MAX_KEYS,
@@ -118,7 +119,7 @@ class BenchRunService:
                 kind=bench.kind,
                 row_id=None,
                 list_id="",
-                rank="",
+                rank=first_key(),
                 status=NodeRunStatus.READY,
                 input={"row": row, "config": config.model_dump()},
                 started_by=self.user_id,

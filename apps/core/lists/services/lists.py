@@ -9,13 +9,13 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count
 from django.utils import timezone
 
 from agents.services import AgentService
 from jobs.services import JobService
 from openbower_kernel.fields import is_valid_ulid
-from openbower_kernel.ranks import RankError, key_between, keys_between
+from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn
@@ -379,7 +379,9 @@ class ListService:
     def rows_page(
         self, target: List, *, after: RowCursor | None = None, limit: int, until_id: str = ""
     ) -> list[ListRow]:
-        """A page of rows in SHEET ORDER, (rank, id), after a cursor; with
+        """A page of rows in SHEET ORDER after a cursor: ranks are unique
+        per sheet, so the keyset is on the rank alone (the id rides the
+        cursor to name the row, and breaks no tie). With
         `until_id`, none newer than it (a fill's consent set: the rows
         that existed at the click). The cursor's rank is the truth: a
         keyset needs no row to exist (a walk's cursor row deleted
@@ -394,7 +396,7 @@ class ListService:
         if until_id:
             rows = rows.filter(id__lte=until_id)
         if after is not None:
-            rows = rows.filter(Q(rank__gt=after.rank) | Q(rank=after.rank, id__gt=after.row_id))
+            rows = rows.filter(rank__gt=after.rank)
         return list(rows.order_by("rank", "id")[:limit])
 
     def move_row(self, target: List, row_id: str, *, after_id: str | None) -> ListRow:
@@ -424,12 +426,7 @@ class ListService:
                 if before is None:
                     raise RowNotFound(after_id)
                 before_rank = before.rank
-                nxt = (
-                    others.filter(Q(rank__gt=before.rank) | Q(rank=before.rank, id__gt=after_id))
-                    .order_by("rank", "id")
-                    .only("rank")
-                    .first()
-                )
+                nxt = others.filter(rank__gt=before.rank).order_by("rank", "id").only("rank").first()
             # Ranks are unique per sheet, so "already between" is strict.
             above = before_rank is None or before_rank < row.rank
             below = nxt is None or row.rank < nxt.rank
@@ -461,14 +458,9 @@ class ListService:
         cannot straddle the commit unless that page is read during the
         seconds the lock is held; the walk takes no lock by design.
 
-        The fresh keys sit entirely below or entirely above the old ones:
-        the unique (list, rank) index is checked row by row as an UPDATE
-        proceeds, so a fresh key a not-yet-visited row still holds would
-        collide, in an order the database chooses. A set disjoint from
-        every old key cannot, whatever the order and however the write
-        is batched. The side nearer a0 gives the shorter keys, so
-        re-spacing settles around a0 rather than climbing; either side
-        has room for about 10^46 keys."""
+        The fresh keys are disjoint from the old ones (respace_keys says
+        why: the unique index is checked row by row as the write
+        proceeds), so no write order can collide."""
         with transaction.atomic():
             locked = List.objects.select_for_update().filter(id=list_id, account_id=self.account_id).first()
             if locked is None:
@@ -478,9 +470,7 @@ class ListService:
             rows = list(ListRow.objects.filter(list_id=list_id).order_by("rank", "id").only("id", "rank"))
             if not rows:
                 return
-            below = keys_between(None, rows[0].rank, len(rows))
-            above = keys_between(rows[-1].rank, None, len(rows))
-            fresh = min(below, above, key=lambda keys: max(map(len, keys)))
+            fresh = respace_keys([row.rank for row in rows])
             for row, rank in zip(rows, fresh, strict=True):
                 row.rank = rank
             ListRow.objects.bulk_update(rows, ["rank"], batch_size=FILL_WRITE_BATCH)
