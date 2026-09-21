@@ -255,7 +255,7 @@ services:
 
   # The manual fill CONSUMER (the shared node-run consumer on the manual
   # lane): claims each published task off the bus, hands it to its
-  # node's processor (the fill's FROZEN config, landed on the sheet),
+  # node's processor (the agent's config read LIVE, landed on the sheet),
   # committing the offset after the settle so a mid-run death redelivers.
   # Needs the topics (kafka-setup) and the task migration (core-setup).
   # No restart policy (crash-is-a-signal); routine failures are handled

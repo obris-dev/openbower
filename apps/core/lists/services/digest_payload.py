@@ -13,16 +13,15 @@ from openbower_schema.fills import SETTLED_CELL_STATES
 from openbower_schema.webhooks import WebhookDigestData, WebhookDigestItem, WebhookSheetRef
 
 from ..constants import StoredCellState
-from ..models import List, ListRow
+from ..models import List
 
 # A column is DONE for a row when it holds an answer or a blank with a
 # reason. A retryable failure (a timeout, a missing tool) is neither:
 # the refill re-runs it, so a row carrying one is not complete yet, and
 # shipping it would mean shipping it again under a new completion once
-# the retry lands. Unlike admission's settled check this is not
-# config-relative: a blank with a reason is a real outcome for the
-# receiver whichever prompt produced it; re-asking is the sheet's
-# business.
+# the retry lands. A blank with a reason is a real outcome for the
+# receiver whichever prompt produced it; that the sheet re-asks on its
+# next fill is the sheet's business, not the receiver's.
 DONE_CELL_STATES: frozenset[str] = frozenset({StoredCellState.FILLED, *SETTLED_CELL_STATES})
 
 
@@ -51,7 +50,7 @@ def event_id_of(*, scope: str, row_id: str, stamp: str, test: bool) -> str:
 def build_digest_item(
     *,
     scope: str,
-    row: ListRow,
+    row_id: str,
     cells: dict[str, str],
     states: dict[str, str],
     completed_at: datetime | None,
@@ -68,9 +67,8 @@ def build_digest_item(
     fixed-width and gives a receiver nothing to parse."""
     stamp = (completed_at or sent_at).isoformat()
     return WebhookDigestItem(
-        event_id=event_id_of(scope=scope, row_id=str(row.id), stamp=stamp, test=test),
-        row_id=str(row.id),
-        position=row.position,
+        event_id=event_id_of(scope=scope, row_id=row_id, stamp=stamp, test=test),
+        row_id=row_id,
         completed_at=completed_at.isoformat() if completed_at else None,
         cells=cells,
         states=states,

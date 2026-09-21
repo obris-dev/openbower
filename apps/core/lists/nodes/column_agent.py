@@ -1,8 +1,9 @@
 """The column_agent kind: a node that runs one agent over a row and
 writes that agent's outputs to the sheet's columns. Its config names the
 agent. The bench node is the same kind with a blank agent: the account's
-one sheetless node that a TEST run's node_id points at (the drafted
-config a test runs rides the fill's frozen snapshot, never this node)."""
+one sheetless node that a bench run's node_id points at (the drafted
+config a bench run executes rides the run's own input, never this
+node)."""
 
 from __future__ import annotations
 

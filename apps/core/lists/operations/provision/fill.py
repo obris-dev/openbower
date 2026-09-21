@@ -25,7 +25,7 @@ class FillProvisionOperation(ProvisionOperation):
 
     def _one_pass(self) -> bool:
         worked = False
-        for fill in fill_progress.iter_live_fills():
+        for fill in fill_progress.iter_open_fills():
             if self.stop.is_set():
                 break
             # Beat PER FILL, not just once per pass: walking every live fill

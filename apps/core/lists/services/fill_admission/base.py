@@ -1,8 +1,8 @@
-"""What EVERY admission kind executes: the account/user custody and
-the add-time model gate. Strictly the
-shared kernel: a member lives here only while both kinds call it,
-so reading this file IS reading what the kinds have in common (no
-hooks, no overridables, nothing in-case)."""
+"""What admission executes before it decides anything: the
+account/user custody and the add-time model gate. Strictly the shared
+kernel of the admission paths (add and refill), so reading this file
+IS reading what they have in common (no hooks, no overridables,
+nothing in-case)."""
 
 from __future__ import annotations
 

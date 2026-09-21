@@ -9,12 +9,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 
-import ulid
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from common.ssrf import destination_block_reason
+from openbower_kernel.fields import new_ulid
 from openbower_schema.webhooks import WebhookEnvelope, WebhookEnvelopeData, WebhookPingData
 
 from ..constants import (
@@ -42,7 +42,7 @@ def envelope_of(*, test: bool, data: WebhookEnvelopeData) -> WebhookEnvelope:
     it is sent) and the clock are written HERE and nowhere else, so a
     preview and a send of the same data differ only in being sent."""
     return WebhookEnvelope(
-        id=str(ulid.ulid()),
+        id=new_ulid(),
         type=data.type,
         test=test,
         timestamp=timezone.now().isoformat(),

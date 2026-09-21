@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from jobs.constants import JOB_LOOP_IDLE_SECONDS, JobFailureCode
+from openbower_kernel.ranks import RANK_MAX_LENGTH as KERNEL_RANK_MAX_LENGTH
 from openbower_schema.fills import (
     FREE_SEARCH_FILL_BUDGET as FREE_SEARCH_FILL_BUDGET,
 )
@@ -35,6 +37,17 @@ MAX_LIST_ROWS = 50_000
 # exported CSV lands back in those tools.
 CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
+# A rank's bounds (openbower_kernel.ranks owns the column bound),
+# shared by every model that carries one, a row, a node, a run: appends
+# keep it at four characters for the largest sheet, and moves into the
+# same gap add about a character per six. Past the rebalance length a
+# sheet is re-spaced by the `rerank` job and a path in place, either
+# well short of the bound.
+RANK_MAX_LENGTH = KERNEL_RANK_MAX_LENGTH
+RANK_REBALANCE_LENGTH = 32
+# A re-space waits for the list's open fills (a walk's cursor holds a
+# key of the old spacing); how long a waiting rerank sleeps between looks.
+RERANK_WAIT_SECONDS = 60
 # Idempotency key a webhook caller may supply on an ingest push (else one
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
@@ -114,18 +127,10 @@ FILL_PUBLISH_BATCH = 1000
 # supersede (the bench must always answer).
 MAX_ACTIVE_FILLS = 4
 
-FILL_STATUS_MAX_LENGTH = 16
 NODE_RUN_STATUS_MAX_LENGTH = 16
 CELL_STATE_MAX_LENGTH = 32
-# The failed fill's two-tier error: code is the machine leg, message is
-# server-authored copy rendered verbatim (bounded like every authored
-# value).
-FILL_ERROR_CODE_MAX_LENGTH = 64
-FILL_ERROR_MESSAGE_MAX_LENGTH = 256
 # The claimant's identity stamp (hostname:pid); diagnostic, bounded.
 LEASED_BY_MAX_LENGTH = 128
-# A config's sha256 hex digest (services/fingerprint.py).
-CONFIG_FINGERPRINT_MAX_LENGTH = 64
 
 
 # Stable error codes for the column and fill lanes' admission
@@ -139,7 +144,6 @@ class FillErrorCode(StrEnum):
     COLUMN_REFUSED = "column_refused"
     FILL_ACTIVE = "fill_active"
     FILLS_FULL = "fills_full"
-    CONFIG_CHANGED = "config_changed"
     RESUME_NOT_FOUND = "resume_not_found"
     EMPTY_FILL = "empty_fill"
     NO_ELIGIBLE_ROWS = "no_eligible_rows"
@@ -232,9 +236,10 @@ class WebhookRunOutcome(StrEnum):
 # fill stops once it has its N rows, rather than materializing every
 # eligible row to take the first few.
 FILL_SCAN_CHUNK = 1000
-# Rows per write when a fill service touches many at once (binary):
-# admission materializes a fill's queue, cancel abandons what is left
-# of it, list delete purges, the cron sweep pages its deletes.
+# Rows per write when a service touches many at once (binary): a
+# walk's slice queues a page's runs, cancel abandons what is left
+# of it, list delete purges, the cron sweep pages its deletes, and a
+# re-space rewrites a sheet's ranks under its lock.
 FILL_WRITE_BATCH = 1000
 # Rows per digest: what one flush tick claims for one webhook node
 # (binary). A node with more due rows sends the rest on later ticks,
@@ -244,13 +249,31 @@ WEBHOOK_FLUSH_BATCH = 256
 
 # Stable codes for a fill that DIED, distinct from the admission
 # refusals above: those answer a request that never started, these
-# ride Fill.error_code and reach the client as the failed
+# ride the fill job's error_code and reach the client as the failed
 # fill's two-tier error. MODEL_UNRUNNABLE is deliberately the SAME
 # member the admission lane refuses under: an address that cannot run
 # is one fact, whether it is caught at the provider or at claim time.
 class FillFailureCode(StrEnum):
     FILL_UNRUNNABLE = "fill_unrunnable"
     MODEL_UNRUNNABLE = FillErrorCode.MODEL_UNRUNNABLE
+    # Deliberately the SAME members admission refuses under: the agent
+    # gone, or its provider retired, is one fact whether it is caught at
+    # the click or by the first run of a fill already walking.
+    AGENT_MISSING = FillErrorCode.COLUMN_AGENT_MISSING
+    PROVIDER_RETIRED = FillErrorCode.PROVIDER_RETIRED
+
+
+# The copy those two facts carry, at the click and mid-fill alike: the
+# user's next step, never internal vocabulary.
+AGENT_MISSING_MESSAGE = "The agent this column used has been deleted. Write a new prompt to fill it again."
+PROVIDER_RETIRED_MESSAGE = "This agent's provider is no longer supported; open the agent and pick a current model."
+# What a fill says when the RUNNER failed it (a slice that kept raising,
+# a tick that kept dying): the stored cause stays on the job for the
+# operator, the user reads a next step.
+JOB_FAILURE_COPY: dict[str, str] = {
+    JobFailureCode.CRASHED: "The fill stopped unexpectedly. Fill remaining finishes what it left.",
+    JobFailureCode.EXHAUSTED: "The fill's worker stopped responding. Fill remaining finishes what it left.",
+}
 
 
 class NodeRunStatus(StrEnum):
@@ -286,8 +309,8 @@ class NodeRunStatus(StrEnum):
     LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
     path: the whole list was gone when the task came up (deleted after
     the row was pushed), so the task settles terminally with nothing to
-    diagnose. A fill-backed task never sees it (its Fill was swept with
-    the list); it is the autofill worker's way to retire an orphaned
+    diagnose. A fill-backed task never sees it (its fill job was swept
+    with the list); it is the autofill worker's way to retire an orphaned
     task instead of a delete-cascade off the list."""
 
     # The non-terminal lifecycle, in order: READY (admitted, eligible,
@@ -327,21 +350,10 @@ NON_TERMINAL_NODE_RUN_STATES = (
 BENCH_RUN_MAX_AGE_SECONDS = 86_400
 
 
-class FillStatus(StrEnum):
-    """A fill's lifecycle. Terminal states are terminal: recovery
-    is a NEW fill (refill), never a reopened row."""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-# The statuses a fill can still be claimed into or cancelled from:
-# ONE definition, because "is this fill live" is asked by the queue,
-# the admission gate, the cancel path, and the derived-pending read.
-LIVE_FILL_STATUSES = (FillStatus.PENDING, FillStatus.RUNNING)
+# How long a targeted fill job parks between looks at its runs: the
+# jobs loop's own cadence, so a fill reads complete within seconds of
+# its last run settling and a retuned loop retunes this with it.
+FILL_POLL_SECONDS = JOB_LOOP_IDLE_SECONDS
 
 
 CELL_SOURCE_MAX_LENGTH = 8
@@ -381,8 +393,8 @@ class StoredCellState(StrEnum):
     FILLED = "filled"
     NO_EVIDENCE = "no_evidence"
     # Budget exhaustion: the model spent its request/tool budget
-    # without producing an answer. SETTLED (refill never re-targets
-    # it; the same config re-buys the same refusal), unlike
+    # without producing an answer. SETTLED: the model's own verdict, a
+    # quiet word on the sheet (every blank re-runs on the next fill), unlike
     # MODEL_ERROR, which is infrastructure and re-runs.
     NO_ANSWER = "no_answer"
     # An answer arrived but failed provenance verification (uncited,

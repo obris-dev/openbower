@@ -58,8 +58,9 @@ export const DELETE_WEBHOOK_COLUMN_CONSEQUENCE = "This stops sending; nothing el
 export const GAP_DESTINATION = "Choose a destination.";
 export const GAP_WAIT = "Choose at least one column to wait for.";
 
-/** The stepper's line: the count is the rows this page has loaded, not
- * the sheet's, and says so once there is more than one. */
-export function rowLine(position: number, count: number): string {
-  return count > 1 ? `Row ${position} of ${count} loaded` : `Row ${position}`;
+/** The stepper's line: `place` is the row's place among the loaded
+ * rows counted from one; the count is the rows this page has loaded,
+ * not the sheet's, and says so once there is more than one. */
+export function rowLine(place: number, count: number): string {
+  return count > 1 ? `Row ${place} of ${count} loaded` : `Row ${place}`;
 }

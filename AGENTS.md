@@ -31,10 +31,32 @@ auth + data services live in a separate private repo.
   (unpaged is allowed only where a HARD CAP bounds the whole
   collection, stated at the cap's constant, as the agents roster's
   MAX_AGENTS does): order
-  by `-id` with `?after=<last id>` (ULIDs are time-sortable; helpers in
-  the kernel), or by a dense rank where one exists (run results, where
-  `rank > :after` also gives cheap random access). `next_cursor` comes
-  from the last row of a full page.
+  by `-id` with `?after=<last id>` (ULIDs are time-sortable AND
+  monotonic within a process: `openbower_kernel.fields.new_ulid` mints
+  off python-ulid's locked strict generator, so id order is insertion
+  order even inside a bulk insert; helpers in the kernel), or by the fractional rank where the collection carries one (a
+  sheet's rows, below). `next_cursor` comes from the last row of a
+  full page.
+- A sheet row's IDENTITY is its id and its ORDER is `rank`, a
+  fractional STRING key (the same key orders a node on its path) (`openbower_kernel.ranks`, the sheet's vocabulary over
+  the `fractional-indexing` package): a move writes ONE row,
+  never a renumbering, and nothing stores a row number (a renderer
+  counts the page). ONE way to page rows, sheet order: the sheet and
+  the export keyset by `(rank, id)` off the opaque cursor the server
+  hands back; a WALK (a
+  fill, a backfill, a probe) pages the same way, off a
+  `RowCursor` that names the last row walked AND its rank (the rank is
+  the truth, so a keyset needs no row to exist; the client gets it as
+  the opaque `next_cursor`, `rank.id`, and hands it straight back, so
+  no page needs a lookup). A fill's consent
+  is a SET (the rows that existed at the click, an id bound) and a
+  COUNT (at most that many walked, in sheet order); a row moved out
+  from under a walk is the next refill's, exactly like a row appended
+  after the click, and one moved the other way is offered twice and
+  dropped by the open-run key. A rank is only ever compared, never
+  interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
+  `rerank` job re-spaces the sheet. Rank columns carry the C collation
+  (byte order is the scheme's order).
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -72,20 +94,34 @@ auth + data services live in a separate private repo.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
   command over an operation (the reclaim_node_runs command over
-  NodeRunFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
+  NodeRunFlow.reclaim_stale_processing and abandon_orphans). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
   never a lock.
 - BACKGROUND work a request must not do (a sheet-sized walk, a file
   build) is a Job: a row in the `jobs` app's one table, a kind = a
-  typed payload class with a `Progress` cursor and a `run(job,
-  progress)` that does ONE bounded slice and hands back where it
-  stopped, registered from the owning app's `jobs` package. The
+  typed payload class (`JobKind[Progress]`, typed by its own cursor)
+  with a `run(job, progress)` that does ONE bounded slice and hands
+  back where it stopped, registered from the owning app's `jobs`
+  package; `JobService(account_id=).enqueue(kind, user_id=)` for a job a user asked for,
+  `enqueue_system(...)` for one nobody did (its user is NULL, never a
+  sentinel). The
   `jobs` compose service works them within seconds (a loop like the
   provisioners); every transition is a compare-and-set on the job's
   status, `attempts` counts unexpected exits only, and every slice is
-  idempotent because a reclaimed job re-walks its last one. A job is
-  never a NodeRun (a run is one node applied to one row) and a
-  request never walks a sheet: admission decides and queues.
+  idempotent because a reclaimed job re-walks its last one. A kind
+  waiting on something outside the job raises `JobWaiting` as its
+  slice's last act (parked until it asked to be woken, no attempt
+  spent); a stop from outside (a
+  user's cancel, a worker failing the job) goes through
+  `JobService.Global.stop`, which runs the kind's `on_stop` then flips the
+  status, and the runner's own transitions are predicated on
+  PROCESSING so a stopped job is never resurrected. A job is never a
+  NodeRun (a run is one node applied to one row) and a request never
+  walks a sheet: admission decides and queues. A FILL is a job of kind
+  `fill` (lists/jobs/fill.py): the consent is its payload, the walk
+  its first slices, the wait for its runs the rest; `fill_run_id` on a
+  run or a cell is the job's id, and a fill reads its agent's config
+  LIVE (no snapshot, no fingerprint; a refill targets every blank).
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (lists/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(

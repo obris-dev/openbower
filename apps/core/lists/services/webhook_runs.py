@@ -63,7 +63,7 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     if not waits:
         return 0
     target_list = List.objects.filter(id=list_id, account_id=account_id).first()
-    row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "position").first()
+    row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "rank").first()
     if target_list is None or row is None:
         return 0
     offered = 0

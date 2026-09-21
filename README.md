@@ -22,7 +22,7 @@ Run requirements and setup docs land with the phases that need them.
 
 ## Running it (the self-host footprint)
 
-A working deploy is six long-running services plus a one-shot
+A working deploy is the services below plus a one-shot
 migrator, and `docker-compose.yml` carries all of them: `make up` on
 a fresh clone builds the images, seeds `apps/core/.env` from its
 example, and serves. The containers bind-mount the checkout, so edits
@@ -33,7 +33,10 @@ hot-reload without a rebuild.
 | db      | Postgres 16 (host port 5433) | `make local-dbshell` for psql |
 | core-setup | migrations and the cache table, once per start; core, the workers, and the cron wait for it to finish | `make logs` |
 | core    | the Django api on :8002 | `make logs-core` |
-| worker  | `manage.py fill_worker --kinds normal`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
+| jobs    | the background jobs loop (`manage.py run_jobs`): a fill's walk over its sheet, the webhook backfill, the rank re-space | `make logs` |
+| fill-provisioner, fill-consumer | the manual fill lane: the provisioner publishes an open fill's queued runs to the bus, the consumer claims each, runs the research agent, and lands the cell | `make logs` |
+| autofill-provisioner, autofill-consumer | the same two roles for automatic runs and the agent bench | `make logs` |
+| ingest-worker | the webhook ingest consumer | `make logs` |
 | cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of bench runs older than a day, the stale-run reclaim, the webhook flush and delivery prune) | `make logs-cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `make logs-web` |
 
@@ -43,14 +46,9 @@ dependencies survive in named volumes, while the Python venv is an
 anonymous volume the next start re-syncs (`make prune-venvs` clears the
 strays). `make reset` removes the named volumes too, which is how you
 get a clean database. The stack needs Docker Compose v2.24 or newer. `make logs` tails
-everything. Compose runs exactly ONE worker PER FILL KIND (a normal
-one and a test one). The worker takes `--once`
-(exit when no fill has claimable work, the suite's smoke). SIGTERM
-or SIGINT lets the NORMAL worker's rows in flight finish before it
-exits, so restarting it is always safe and can take a while (a row
-already talking to a provider is allowed to finish); the test
-worker's short grace kills its bench row instead, costing one metered
-call and one counted attempt on a throwaway diagnostic. `make db-up` starts just the database,
+everything. SIGTERM or SIGINT lets a consumer's rows in flight finish
+before it exits, so restarting one is always safe and can take a while
+(a row already talking to a provider is allowed to finish). `make db-up` starts just the database,
 which is what the host-run test suite needs.
 
 Signing in needs an identity provider, which is a SEPARATE service (the

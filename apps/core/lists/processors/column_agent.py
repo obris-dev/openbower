@@ -9,13 +9,13 @@ variable it references renders non-blank (a prompt with no variables
 asks the same question everywhere, so every row qualifies). Born READY
 under the fill.
 
-REMAINING (a refill): judged across the fill's whole column set, a row
-is done only when EVERY column is settled under THIS config (a
-diagnosis the same config would just reproduce) or already holds a
-value (a user's or a prior fill's, which write-if-blank would refuse);
-a FILLED cell settles unconditionally. Infrastructure-tier states and
-never-attempted rows re-run. A resume additionally offers only the rows
-the stopped fill still owed (its ABANDONED runs, read rather than
+REMAINING (a refill): judged across the walked column set, a row is
+done only when EVERY column already holds a value (a user's or a prior
+fill's, which write-if-blank would refuse); every blank re-runs,
+settled or not (the click is the consent to re-spend on a settled
+blank, and a fill reads its agent live, so an edited prompt applies
+without detection). A resume additionally offers only the rows the
+stopped fill still owed (its ABANDONED runs, read rather than
 reconstructed). Then the prompt must be able to act on it. Born READY
 under the fill.
 
@@ -24,8 +24,8 @@ every column it owns (write-if-blank would keep those values, so the
 run would only buy a skip); if ANY is blank the node runs and
 write-if-blank protects the sent ones. Born READY, no fill.
 
-Memory is bounded by one page: the settled and owed sets are asked per
-page against the ids in hand and dropped when the page is done.
+Memory is bounded by one page: the owed set is asked per page against
+the ids in hand and dropped when the page is done.
 
 THE EXECUTION. A claimed run travels one of three lanes, told apart by
 what it carries:
@@ -33,11 +33,11 @@ what it carries:
 - Bench (`input` set): the drafted config and the hand-fed row ride the
   run itself; it lands its result ON ITSELF (no sheet write, no cell
   truth, no advance), and a config-tier failure settles it unrun.
-- Fill-backed (`fill_run_id` set): the Fill's FROZEN config and column
-  set (mid-fill agent edits never apply), the claim-time model gate (a
-  config-tier refusal fails the WHOLE fill, since it fails every row
-  identically), the row off the sheet, and completion nudged after
-  every settle.
+- Fill-backed (`fill_run_id` set): the fill job's consent names the
+  agent and the column set; the agent's config is read LIVE (an edit
+  reaches the next row), the claim-time model gate fails the WHOLE
+  fill (a config-tier refusal fails every row identically), the row
+  comes off the sheet, and the fill job polls its runs for completion.
 - Automatic (neither): the row, its list, the node's column set, and
   the agent's config resolved LIVE; a gone row or list settles
   ROW_MISSING or LIST_MISSING, a gone or retired agent settles the run
@@ -60,24 +60,25 @@ from agents.providers import ModelUnavailable, model_for
 from agents.runtime.prompts import prompt_variables
 from agents.services import AgentNotFound, AgentService
 from agents.tools import registry as tool_registry
+from jobs.models import Job
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
 from ..constants import (
+    AGENT_MISSING_MESSAGE,
     FILL_RETRY_BACKOFF_SECONDS,
     FILL_SCAN_CHUNK,
+    PROVIDER_RETIRED_MESSAGE,
     RETRY_CAUSES,
     FillFailureCode,
-    FillStatus,
     NodeRunStatus,
 )
-from ..models import Fill, List, ListRow, NodeRun
+from ..models import List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
-from ..services.cell_states import CellStateService
 from ..services.fill_processing.cell_run import run_cell
 from ..services.fill_processing.landing import LandingContext, land_row
-from ..services.fingerprint import config_fingerprint
+from ..services.lists import ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.workflows import agent_id_of, columns_for_node
 from .base import NodeProcessor, RunOutcome, WalkMode
@@ -128,13 +129,13 @@ def _park_if_retriable(flow: NodeRunFlow, task: NodeRun, run, result: CellRunRes
 class _Lane(NamedTuple):
     """A claimed run's resolved inputs: the config to run, the identity
     its writes land under (None for a run that owns its input and so
-    lands on itself), the row it runs on, and the Fill it belongs to
-    (None off the fill lane)."""
+    lands on itself), the row it runs on, and the fill job it belongs
+    to (None off the fill lane)."""
 
     config: AgentConfig
     ctx: LandingContext | None
     row_data: dict
-    fill: Fill | None
+    fill_run_id: str | None
 
 
 def row_is_eligible(data: dict, variables: set[str]) -> bool:
@@ -160,25 +161,29 @@ class AIColumnProcessor(NodeProcessor):
     KIND: ClassVar[str] = COLUMN_AGENT
 
     @cached_property
-    def fill(self) -> Fill:
-        """The fill a FRESH or REMAINING walk queues under: its frozen
-        config is the prompt and the fingerprint the judgement uses."""
-        return Fill.objects.get(id=self.scope.fill_run_id, account_id=self.account_id)
-
-    @cached_property
     def variables(self) -> set[str]:
-        return prompt_variables(AgentConfig(**self.fill.config_snapshot).prompt)
+        """The prompt's variables, off the node's agent as it is NOW: a
+        fill reads its agent live, so the judgement does too."""
+        agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
+        return prompt_variables(agent.config().prompt)
 
-    @cached_property
-    def judged_keys(self) -> list[str]:
-        """The columns a REMAINING walk judges owed-ness across."""
-        return list(self.scope.column_keys) or list(self.fill.column_keys)
+    def judged_keys(self, target_list: List) -> list[str]:
+        """The columns a REMAINING walk judges owed-ness across: the
+        walk's own set, else every column this node fills here."""
+        return list(self.scope.column_keys) or columns_for_node(target_list, str(self.node.id))
 
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime) -> int:
+    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
         facts = self._page_facts(rows)
-        owed = [row for row in rows if self._qualifies(target_list, row, facts)]
+        owed: list[ListRow] = []
+        for row in rows:
+            if not self._qualifies(target_list, row, facts):
+                continue
+            owed.append(row)
+            if limit and len(owed) == limit:
+                # The limit is reached: the rest of the page is not judged.
+                break
         if not owed:
             return 0
         fill_run_id = self.scope.fill_run_id or None
@@ -190,7 +195,7 @@ class AIColumnProcessor(NodeProcessor):
                 kind=COLUMN_AGENT,
                 row_id=str(row.id),
                 list_id=str(target_list.id),
-                position=row.position,
+                rank=row.rank,
                 status=NodeRunStatus.READY,
                 last_state_change_at=now,
             )
@@ -199,20 +204,26 @@ class AIColumnProcessor(NodeProcessor):
         NodeRun.objects.bulk_create(runs, ignore_conflicts=True)
         return len(runs)
 
-    def probe(self, target_list: List, *, until_position: int = 0) -> Probe:
+    def probe(self, target_list: List, *, until_id: str = "", covered: int = 0) -> Probe:
         """Scan for the FIRST row this walk would queue, in sheet order
-        within the range, without queuing anything: admission's zero
-        check. Pages exactly as the walk does and stops at the first
-        hit, so a sheet with work near the top costs one page."""
-        after = 0
+        within the consent (the set, `until_id`, and the count,
+        `covered`; "" and 0 mean unbounded), without queuing anything:
+        admission's zero check. Pages exactly as the walk does, bounded
+        exactly as the walk is, and stops at the first hit, so a sheet
+        with work near the top costs one page and a hit past what the
+        walk may cover is not a hit."""
+        lists = ListService(account_id=self.account_id)
+        after: RowCursor | None = None
         dropped_any = False
+        walked = 0
         while True:
-            rows = ListRow.objects.filter(list_id=str(target_list.id), position__gt=after)
-            if until_position:
-                rows = rows.filter(position__lte=until_position)
-            page = list(rows.order_by("position").only("id", "position", "data")[:FILL_SCAN_CHUNK])
+            remaining = covered - walked if covered else FILL_SCAN_CHUNK
+            if remaining <= 0:
+                return Probe(found=False, dropped_any=dropped_any)
+            page = lists.rows_page(target_list, after=after, limit=min(FILL_SCAN_CHUNK, remaining), until_id=until_id)
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
+            walked += len(page)
             facts = self._page_facts(page)
             for row in page:
                 verdict = self._judge(target_list, row, facts)
@@ -220,14 +231,14 @@ class AIColumnProcessor(NodeProcessor):
                     return Probe(found=True, dropped_any=dropped_any)
                 if verdict is _Verdict.DROPPED:
                     dropped_any = True
-            after = page[-1].position
+            after = RowCursor(str(page[-1].id), page[-1].rank)
 
     # The execution.
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         if task.input:
             lane: _Lane | RunOutcome = _Lane(
-                config=AgentConfig(**task.input["config"]), ctx=None, row_data=task.input["row"], fill=None
+                config=AgentConfig(**task.input["config"]), ctx=None, row_data=task.input["row"], fill_run_id=None
             )
         elif task.fill_run_id:
             lane = self._fill_lane(task, flow=flow)
@@ -238,7 +249,6 @@ class AIColumnProcessor(NodeProcessor):
         close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
         if flow.exhausted(task):
             self._land(task, lane, give_up_blank(task), close=close, flow=flow)
-            self._finish(lane)
             return RunOutcome.DONE
         try:
             run = run_cell(lane.config, lane.row_data)
@@ -248,8 +258,8 @@ class AIColumnProcessor(NodeProcessor):
             # does not resolve tools). It fails every row identically,
             # so retrying buys nothing: the fill fails loudly, the
             # automatic run settles and moves on.
-            if lane.fill is not None:
-                fill_progress.fail(str(lane.fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            if lane.fill_run_id is not None:
+                fill_progress.fail(lane.fill_run_id, code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             else:
                 logger.warning("autofill: node %s unrunnable (%s); settling task %s", task.node_id, e, task.id)
             _settle_unrun(flow, task)
@@ -258,39 +268,59 @@ class AIColumnProcessor(NodeProcessor):
         if _park_if_retriable(flow, task, run, result):
             return RunOutcome.PARKED
         self._land(task, lane, result, close=close, flow=flow)
-        self._finish(lane)
         return RunOutcome.DONE
 
     def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
-        fill = Fill.objects.filter(id=task.fill_run_id).first()
-        if fill is None:
+        from ..jobs.fill import FillJob
+
+        job = Job.objects.filter(id=task.fill_run_id, kind=FillJob.KIND).first()
+        if job is None:
             # The owning fill is gone (its list was deleted, which purges
             # both in one transaction); nothing to run or land.
             _settle_unrun(flow, task)
             return RunOutcome.DONE
-        # RUNNING on first claim: a live fill with a row in flight is
-        # running. CAS from PENDING so it is a cheap no-op once flipped.
-        Fill.objects.filter(id=fill.id, status=FillStatus.PENDING).update(status=FillStatus.RUNNING)
-        config = AgentConfig(**fill.config_snapshot)
+        consent = FillJob.model_validate(job.payload)
+        try:
+            agent = AgentService(account_id=task.account_id).get_for_fill(consent.agent_id)
+        except AgentNotFound:
+            # The agent was deleted mid-fill (an ephemeral one dies with
+            # its last column): a config-tier fact, so the WHOLE fill
+            # fails and says so; this task settles unrun, the cell
+            # stays never-attempted.
+            fill_progress.fail(str(job.id), code=FillFailureCode.AGENT_MISSING, message=AGENT_MISSING_MESSAGE)
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        if agent.provider_retired:
+            # Acting on a substituted spec would be a guess: the same
+            # fact admission refuses under, caught here mid-fill.
+            fill_progress.fail(str(job.id), code=FillFailureCode.PROVIDER_RETIRED, message=PROVIDER_RETIRED_MESSAGE)
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        config = agent.config()
         # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
         # hours later re-resolves against the current world).
         try:
             model_for(config.provider, config.source, config.model)
         except ModelUnavailable as e:
-            fill_progress.fail(str(fill.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
+            fill_progress.fail(str(job.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             _settle_unrun(flow, task)
             return RunOutcome.DONE
-        row = ListRow.objects.filter(id=task.row_id, list_id=fill.list_id).first()
+        row = ListRow.objects.filter(id=task.row_id, list_id=consent.list_id).first()
         if row is None:
-            if not List.objects.filter(id=fill.list_id).exists():
+            if not List.objects.filter(id=consent.list_id).exists():
                 # The whole list went away mid-walk: a user deletion is
                 # CANCELLED, never a failure story.
-                fill_progress.cancel(str(fill.id))
+                fill_progress.cancel(str(job.id))
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
-            fill_progress.try_finish(str(fill.id))
             return RunOutcome.ROW_MISSING
-        ctx = LandingContext.from_fill(fill, node_id=task.node_id)
-        return _Lane(config=config, ctx=ctx, row_data=row.data, fill=fill)
+        ctx = LandingContext(
+            account_id=task.account_id,
+            list_id=consent.list_id,
+            column_keys=tuple(consent.column_keys),
+            fill_run_id=str(job.id),
+            node_id=task.node_id,
+        )
+        return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=str(job.id))
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
         row = ListRow.objects.filter(id=task.row_id).first()
@@ -328,10 +358,9 @@ class AIColumnProcessor(NodeProcessor):
             list_id=str(target_list.id),
             column_keys=column_keys,
             fill_run_id=None,
-            config_fingerprint=config_fingerprint(config),
             node_id=task.node_id,
         )
-        return _Lane(config=config, ctx=ctx, row_data=row.data, fill=None)
+        return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=None)
 
     def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> None:
         if lane.ctx is None:
@@ -340,12 +369,6 @@ class AIColumnProcessor(NodeProcessor):
             flow.settle(task.id, payload.model_dump(), status=NodeRunStatus.DONE)
             return
         land_row(lane.ctx, task.row_id, payload, close=close)
-
-    def _finish(self, lane: _Lane) -> None:
-        """Completion nudge after a settle; the automatic lane has no
-        fill to finish."""
-        if lane.fill is not None:
-            fill_progress.try_finish(str(lane.fill.id))
 
     # The judgement.
 
@@ -366,8 +389,7 @@ class AIColumnProcessor(NodeProcessor):
             # dropped would blame the prompt for a row the scope excluded.
             if facts.owed is not None and row_id not in facts.owed:
                 return _Verdict.DONE
-            done = facts.settled.get(row_id, frozenset())
-            if all(key in done or str(row.data.get(key, "") or "").strip() for key in self.judged_keys):
+            if all(str(row.data.get(key, "") or "").strip() for key in self.judged_keys(target_list)):
                 return _Verdict.DONE
         if mode in (WalkMode.FRESH, WalkMode.REMAINING):
             return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
@@ -375,30 +397,21 @@ class AIColumnProcessor(NodeProcessor):
         return _Verdict.DONE
 
     def _page_facts(self, rows: Sequence[ListRow]) -> _PageFacts:
-        """The two membership sets a REMAINING walk asks per page: which
-        of these rows the resumed fill still owed, and which of the
-        fill's columns each row already has settled under this config."""
-        if self.scope.mode is not WalkMode.REMAINING:
-            return _PageFacts(owed=None, settled={})
+        """The one membership set a REMAINING walk asks per page: which
+        of these rows the resumed fill still owed."""
+        if self.scope.mode is not WalkMode.REMAINING or not self.scope.owed_by:
+            return _PageFacts(owed=None)
         ids = [str(row.id) for row in rows]
-        owed = None
-        if self.scope.owed_by:
-            owed = {
-                str(row_id)
-                for row_id in NodeRun.objects.filter(
-                    account_id=self.account_id,
-                    fill_run_id=self.scope.owed_by,
-                    status=NodeRunStatus.ABANDONED,
-                    row_id__in=ids,
-                ).values_list("row_id", flat=True)
-            }
-        settled: dict[str, set[str]] = {}
-        cell_states = CellStateService(account_id=self.account_id)
-        for row_id, column_key in cell_states.iter_settled(
-            str(self.fill.list_id), row_ids=ids, column_keys=self.judged_keys, fingerprint=self.fill.config_fingerprint
-        ):
-            settled.setdefault(str(row_id), set()).add(column_key)
-        return _PageFacts(owed=owed, settled=settled)
+        owed = {
+            str(row_id)
+            for row_id in NodeRun.objects.filter(
+                account_id=self.account_id,
+                fill_run_id=self.scope.owed_by,
+                status=NodeRunStatus.ABANDONED,
+                row_id__in=ids,
+            ).values_list("row_id", flat=True)
+        }
+        return _PageFacts(owed=owed)
 
 
 class _Verdict(StrEnum):
@@ -410,7 +423,6 @@ class _Verdict(StrEnum):
 
 class _PageFacts(NamedTuple):
     owed: set[str] | None
-    settled: dict[str, set[str]]
 
 
 register(AIColumnProcessor)

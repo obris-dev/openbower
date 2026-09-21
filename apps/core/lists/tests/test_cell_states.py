@@ -29,7 +29,6 @@ class CellStateScopingTests(TestCase):
             list_id=str(self.sheet.id),
             row_id=str(self.row.id),
             fill_run_id=None,
-            config_fingerprint="fp",
             states={"answer": StoredCellState.FILLED},
             tools={},
             source=CellSource.FILL,
@@ -44,16 +43,15 @@ class CellStateScopingTests(TestCase):
             len(list(service.iter_states(list_id, row_id=str(self.row.id), column_keys=["answer"]))),
             len(list(service.iter_recorded(list_id, row_ids=row_ids, column_keys=["answer"]))),
             len(list(service.iter_counts_by_column(list_id, column_keys=["answer"]))),
-            len(list(service.iter_settled(list_id, row_ids=row_ids, column_keys=["answer"], fingerprint="fp"))),
         ]
 
     def test_every_iterator_sees_the_accounts_records(self):
-        self.assertEqual(self._reads(self.mine), [1, 0, 1, 1])
+        self.assertEqual(self._reads(self.mine), [1, 0, 1])
         # iter_recorded drops a clean filled record by design; the other
-        # three see it.
+        # two see it.
 
     def test_another_account_sees_nothing_through_any_iterator(self):
-        self.assertEqual(self._reads(self.theirs), [0, 0, 0, 0])
+        self.assertEqual(self._reads(self.theirs), [0, 0, 0])
 
 
 class CellSourceTests(TestCase):
@@ -65,7 +63,6 @@ class CellSourceTests(TestCase):
         cell_truth.write(
             **write,
             fill_run_id=None,
-            config_fingerprint="",
             states={"answer": StoredCellState.FILLED},
             tools={},
             source=CellSource.FILL,
@@ -75,7 +72,6 @@ class CellSourceTests(TestCase):
         cell_truth.write(
             **write,
             fill_run_id=None,
-            config_fingerprint="",
             states={"answer": StoredCellState.FILLED},
             tools={},
             source=CellSource.MANUAL,
@@ -86,7 +82,6 @@ class CellSourceTests(TestCase):
         cell_truth.write(
             **write,
             fill_run_id=None,
-            config_fingerprint="",
             states={"answer": StoredCellState.FILLED},
             tools={},
             source=CellSource.FILL,

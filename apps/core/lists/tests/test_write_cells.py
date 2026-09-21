@@ -31,7 +31,7 @@ def _service(account="01AC" + "A" * 22, user="01US" + "A" * 22) -> ListService:
 def _sheet(service: ListService, rows: list[dict[str, str]]):
     target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
     service.add_rows(target, rows)
-    return target, service.rows_page(target, after_position=0, limit=len(rows))
+    return target, service.rows_page(target, limit=len(rows))
 
 
 class WriteIfBlankTests(TestCase):

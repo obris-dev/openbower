@@ -39,7 +39,7 @@ export type SheetFills = {
   pollTrouble: boolean;
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -217,9 +217,11 @@ export function SheetTable({
         )}
       </thead>
       <tbody className="divide-y divide-hairline">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <tr key={row.id} className="align-top">
-            <td className="px-4 py-2.5 text-right tabular-nums text-faint">{row.position}</td>
+            {/* The row number is counted here: the page's array IS the
+                sheet order, and nothing about order rides the row. */}
+            <td className="px-4 py-2.5 text-right tabular-nums text-faint">{index + 1}</td>
             {columns.map((column) => {
               // A state dresses only AI cells; without one, a value
               // is the plain filled cell and no value is

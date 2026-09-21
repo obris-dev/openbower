@@ -13,12 +13,23 @@ from django.db.models import Count
 from django.utils import timezone
 
 from agents.services import AgentService
+from jobs.services import JobService
+from openbower_kernel.fields import is_valid_ulid
+from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
+from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn
 
-from ..constants import CELL_MAX_LENGTH, MAX_FOLDERS, MAX_LIST_ROWS
-from ..models import Fill, Folder, List, ListRow, NodeRun
-from . import cell_truth, webhook_runs
+from ..constants import (
+    CELL_MAX_LENGTH,
+    FILL_WRITE_BATCH,
+    MAX_FOLDERS,
+    MAX_LIST_ROWS,
+    RANK_MAX_LENGTH,
+    RANK_REBALANCE_LENGTH,
+)
+from ..models import Folder, List, ListRow, NodeRun
+from . import cell_truth, fill_progress, webhook_runs
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -42,6 +53,57 @@ class FolderNotFound(Exception):
 
 class RowNotFound(Exception):
     """Missing row OR one outside the given list (reads as not-found)."""
+
+
+class RowRankTooDeep(Exception):
+    """A move would write a rank past the column bound: the gap has been
+    split past what a re-space has caught up with. The move must wait
+    for the sheet's re-space."""
+
+
+class FillsOpen(Exception):
+    """A re-space refused because the list has open fills: a walk's
+    cursor holds a key of the old spacing and would land somewhere else
+    under the new one."""
+
+
+class InvalidRowCursor(Exception):
+    """A rows cursor this server did not write."""
+
+
+# Neither alphabet contains a dot (ranks are base 62, ids Crockford
+# base 32), so a cursor splits unambiguously.
+_CURSOR_SEPARATOR = "."
+
+
+class RowCursor(NamedTuple):
+    """Where a page of rows in sheet order continues from: the last row
+    seen, its id and its rank. Self-contained, so the client can hand
+    it straight back as the page's `next_cursor` (`wire` / `parse`) and
+    the next page needs no lookup."""
+
+    row_id: str
+    rank: str
+
+    def wire(self) -> str:
+        """The opaque string a client echoes: rank, a dot, id. Neither
+        alphabet contains a dot (ranks are base 62, ids Crockford base
+        32), so the split is unambiguous."""
+        return f"{self.rank}{_CURSOR_SEPARATOR}{self.row_id}"
+
+    @classmethod
+    def parse(cls, raw: str) -> RowCursor:
+        """Read a cursor a client sent back. Raises InvalidRowCursor for
+        anything this server did not write (a bare id, a stale format,
+        garbage), which the view answers as a 400."""
+        rank, separator, row_id = raw.partition(_CURSOR_SEPARATOR)
+        if not separator or not is_valid_ulid(row_id):
+            raise InvalidRowCursor(raw)
+        try:
+            validate_rank(rank)
+        except RankError as e:
+            raise InvalidRowCursor(raw) from e
+        return cls(row_id, rank)
 
 
 class CellMismatch(NamedTuple):
@@ -198,9 +260,9 @@ class ListService:
         return target
 
     def add_rows(self, target: List, rows: list[dict[str, str]]) -> list[ListRow]:
-        """Append rows (each a data dict keyed by column keys). Positions
-        are dense and 1-based; the count ceiling AND the cell clamp live
-        here so every entry path (import, snapshot, manual) hits one
+        """Append rows (each a data dict keyed by column keys), ranked
+        after the sheet's last row; the count ceiling AND the cell clamp
+        live here so every entry path (import, snapshot, manual) hits one
         writer's rules (authored values clamp, never reject). Returns the
         created rows (WITH ids, a ULID assigned before insert): a caller
         that only wants a count takes len(), and the push path needs the
@@ -219,9 +281,9 @@ class ListService:
             stored_rows.append(stored)
         rows = stored_rows
         with transaction.atomic():
-            # Positions allocate from the current count, so concurrent
+            # Ranks allocate after the sheet's last row, so concurrent
             # appends must serialize on the list row or the second one
-            # collides with the (list_id, position) unique constraint.
+            # collides with the (list_id, rank) unique constraint.
             try:
                 locked = List.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except List.DoesNotExist as e:
@@ -229,9 +291,15 @@ class ListService:
             current = ListRow.objects.filter(list_id=str(locked.id)).count()
             if current + len(rows) > MAX_LIST_ROWS:
                 raise ListsFull(f"a list holds at most {MAX_LIST_ROWS} rows")
+            last = (
+                ListRow.objects.filter(list_id=str(locked.id))
+                .order_by("-rank", "-id")
+                .values_list("rank", flat=True)
+                .first()
+            )
             created = [
-                ListRow(list_id=str(locked.id), position=current + offset, data=data)
-                for offset, data in enumerate(rows, start=1)
+                ListRow(list_id=str(locked.id), rank=rank, data=data)
+                for rank, data in zip(keys_between(last, None, len(rows)), rows, strict=True)
             ]
             ListRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
@@ -308,26 +376,117 @@ class ListService:
                 )
         return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched))
 
-    def rows_page(self, target: List, *, after_position: int, limit: int, until_position: int = 0) -> list[ListRow]:
-        """Rows after a position in sheet order, at most `limit`; with
-        `until_position`, none above it (a fill's consent range)."""
-        rows = ListRow.objects.filter(list_id=str(target.id), position__gt=after_position)
-        if until_position:
-            rows = rows.filter(position__lte=until_position)
-        return list(rows.order_by("position")[:limit])
+    def rows_page(
+        self, target: List, *, after: RowCursor | None = None, limit: int, until_id: str = ""
+    ) -> list[ListRow]:
+        """A page of rows in SHEET ORDER after a cursor: ranks are unique
+        per sheet, so the keyset is on the rank alone (the id rides the
+        cursor to name the row, and breaks no tie). With
+        `until_id`, none newer than it (a fill's consent set: the rows
+        that existed at the click). The cursor's rank is the truth: a
+        keyset needs no row to exist (a walk's cursor row deleted
+        mid-walk is fine), and the one thing that rewrites ranks, the
+        re-space a deep move queues, waits for the list's open fills
+        (`respace`), while the sheet's own scroll tolerates the one
+        overlapping page it could see. A row moved from below the cursor
+        to above it between two pages is not walked, exactly like a row
+        appended after the click; one moved the other way is offered
+        twice, and the open-run key drops the second."""
+        rows = ListRow.objects.filter(list_id=str(target.id))
+        if until_id:
+            rows = rows.filter(id__lte=until_id)
+        if after is not None:
+            rows = rows.filter(rank__gt=after.rank)
+        return list(rows.order_by("rank", "id")[:limit])
+
+    def move_row(self, target: List, row_id: str, *, after_id: str | None) -> ListRow:
+        """Put the row right after `after_id` (None: at the top). ONE
+        write, on the moved row: its new rank is a key between its two
+        new neighbours; none at all when it already sits there (a row
+        dropped on itself or on the row it follows), so a no-op never
+        deepens a key. Under the list lock, so two moves into the same
+        gap cannot compute the same key. A key past RANK_REBALANCE_LENGTH
+        means the gap has been split too many times: the sheet's ranks
+        are re-spaced by a job, after this write commits."""
+        with transaction.atomic():
+            locked = List.objects.select_for_update().filter(id=str(target.id), account_id=self.account_id).first()
+            if locked is None:
+                raise ListNotFound(str(target.id))
+            row = ListRow.objects.filter(id=row_id, list_id=str(locked.id)).first()
+            if row is None:
+                raise RowNotFound(row_id)
+            if after_id == row_id:
+                return row
+            others = ListRow.objects.filter(list_id=str(locked.id)).exclude(id=row_id)
+            if after_id is None:
+                before_rank = None
+                nxt = others.order_by("rank", "id").only("rank").first()
+            else:
+                before = others.filter(id=after_id).only("rank").first()
+                if before is None:
+                    raise RowNotFound(after_id)
+                before_rank = before.rank
+                nxt = others.filter(rank__gt=before.rank).order_by("rank", "id").only("rank").first()
+            # Ranks are unique per sheet, so "already between" is strict.
+            above = before_rank is None or before_rank < row.rank
+            below = nxt is None or row.rank < nxt.rank
+            if above and below:
+                return row
+            key = key_between(before_rank, nxt.rank if nxt is not None else None)
+            if len(key) > RANK_MAX_LENGTH:
+                raise RowRankTooDeep(row_id)
+            row.rank = key
+            row.save(update_fields=["rank", "updated_at"])
+            if len(row.rank) > RANK_REBALANCE_LENGTH:
+                # The kind imports this service; the edge back is local.
+                from ..jobs.rerank import Rerank
+
+                jobs = JobService(account_id=self.account_id)
+                if not jobs.has_open(Rerank, target_id=str(locked.id)):
+                    jobs.enqueue_system(Rerank(list_id=str(locked.id)), target_id=str(locked.id))
+        return row
+
+    def respace(self, list_id: str) -> None:
+        """Re-space the sheet's ranks: the same order, fresh keys with no
+        fractional tail. One transaction under the list lock, so a move
+        cannot interleave a key computed against the old spacing; a
+        sheet holds at most MAX_LIST_ROWS rows, so the lock is held for
+        seconds at the worst. Refused (FillsOpen) while the list has an
+        open fill, checked under the lock: a walk's cursor holds a key
+        of the old spacing. A fill admitted after that check reads its
+        first page no earlier than this transaction, and its cursor
+        cannot straddle the commit unless that page is read during the
+        seconds the lock is held; the walk takes no lock by design.
+
+        The fresh keys are disjoint from the old ones (respace_keys says
+        why: the unique index is checked row by row as the write
+        proceeds), so no write order can collide."""
+        with transaction.atomic():
+            locked = List.objects.select_for_update().filter(id=list_id, account_id=self.account_id).first()
+            if locked is None:
+                raise ListNotFound(list_id)
+            if fill_progress.open_fills().filter(target_id=list_id).exists():
+                raise FillsOpen(list_id)
+            rows = list(ListRow.objects.filter(list_id=list_id).order_by("rank", "id").only("id", "rank"))
+            if not rows:
+                return
+            fresh = respace_keys([row.rank for row in rows])
+            for row, rank in zip(rows, fresh, strict=True):
+                row.rank = rank
+            ListRow.objects.bulk_update(rows, ["rank"], batch_size=FILL_WRITE_BATCH)
 
     def column_values(self, target: List, *, key: str, limit: int) -> list[str]:
-        """One column's non-empty values in position order (the use-time
+        """One column's non-empty values in sheet order (the use-time
         read behind seeding: the CALLER interprets them). Walks the rows
         server-side so a 25k-row sheet never round-trips to the browser
         just to extract a column."""
         out: list[str] = []
-        after = 0
+        after: RowCursor | None = None
         while len(out) < limit:
-            rows = self.rows_page(target, after_position=after, limit=1000)
+            rows = self.rows_page(target, after=after, limit=1000)
             if not rows:
                 break
-            after = rows[-1].position
+            after = RowCursor(str(rows[-1].id), rows[-1].rank)
             for row in rows:
                 value = str(row.data.get(key, "") or "").strip()
                 if value:
@@ -351,7 +510,7 @@ class ListService:
             # service must not rely on that.
             if not List.objects.select_for_update().filter(id=target.id, account_id=self.account_id):
                 return
-            fills = Fill.objects.filter(list_id=str(target.id))
+            fills = fill_progress.fill_jobs().filter(target_id=str(target.id))
             # ROWS FIRST, then the queue, because that is the order the
             # consumer's terminal write takes them: write_cells locks the
             # ListRow, then the task settle writes the NodeRun, both in
@@ -377,11 +536,11 @@ class ListService:
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,
             # so a survivor is litter no surface can ever show. The ids
-            # come from the FILL rows, which are list-scoped and current;
+            # come from the FILL jobs, which are list-scoped and current;
             # the caller's `target` may be a snapshot taken before the
             # column it is about to delete even existed.
             AgentService(account_id=self.account_id).delete_ephemeral(
-                [str(agent_id) for agent_id in fills.values_list("agent_id", flat=True)]
+                [consent.agent_id for _fill_run_id, consent in fill_progress.iter_consents(fills)]
             )
             # The fill-backed runs went first (they point at nodes). This
             # list's autofill runs are NOT purged: they carry list_id and a
@@ -393,5 +552,9 @@ class ListService:
             # untouched.
             WorkflowService(account_id=self.account_id).delete_for_list(str(target.id))
             cell_truth.purge_list(str(target.id))
-            fills.delete()
+            # Every job of the list's goes with it, by target: the fills,
+            # a webhook backfill, a re-space (one delete; a tick holding
+            # one of them finds no list on its next slice and ends, its
+            # settle missing on the deleted row).
+            JobService(account_id=self.account_id).delete_for_target(str(target.id))
             List.objects.filter(id=target.id, account_id=self.account_id).delete()

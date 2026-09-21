@@ -27,7 +27,10 @@ from collections.abc import Iterator, Sequence
 from django.db import models
 from django.utils import timezone
 
-from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus
+from jobs.constants import OPEN_JOB_STATES
+from jobs.models import Job
+
+from ..constants import FILL_WRITE_BATCH, NODE_RUN_ATTEMPTS, NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus
 from ..models import NodeRun
 from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 
@@ -50,7 +53,7 @@ class NodeRunFlow:
     def iter_ready(*, limit: int) -> Iterator[NodeRun]:
         """The autofill provisioner's pick, LAZILY (single-pass): up to
         `limit` READY null-run (autofill) tasks that are due (a parked
-        retry backs off in `not_before`), in (list_id, position, id)
+        retry backs off in `not_before`), in (list_id, rank, id)
         order. Grouping by list first is breadth-first across lists and
         is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick
@@ -61,25 +64,53 @@ class NodeRunFlow:
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
-        yield from qs.defer("result").order_by("list_id", "position", "id")[:limit].iterator()
+        yield from qs.defer("result").order_by("list_id", "rank", "id")[:limit].iterator()
 
     @staticmethod
     def iter_ready_for_fill(fill_run_id: str, *, limit: int) -> Iterator[NodeRun]:
         """The manual provisioner's per-fill pick, LAZILY (single-pass):
         up to `limit` of this fill's READY, due tasks in SHEET ORDER
-        (position) so the fill marches top to bottom down the sheet the
+        (rank) so the fill marches top to bottom down the sheet the
         user is watching. A flat `limit` per fill is the fairness point:
         a wide fill cannot flood the bus ahead of a smaller one beside
-        it. `node_run_fill_idx` (fill_run_id equality, then position)
+        it. `node_run_fill_idx` (fill_run_id equality, then rank)
         serves it so the LIMIT stops early. Streamed via .iterator()."""
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         yield from (
             NodeRun.objects.filter(due, fill_run_id=fill_run_id, status=NodeRunStatus.READY)
             .defer("result")
-            .order_by("position", "id")[:limit]
+            .order_by("rank", "id")[:limit]
             .iterator()
         )
+
+    @staticmethod
+    def has_open_for_fill(fill_run_id: str) -> bool:
+        """Whether the fill still owes a run: any task in a non-terminal
+        state (the fill job's poll asks this each time it wakes)."""
+        return NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES).exists()
+
+    @staticmethod
+    def count_for_fill(fill_run_id: str) -> int:
+        """Every run the fill's walk queued, whatever became of it: the
+        denominator the fill settles to once its target set is whole."""
+        return NodeRun.objects.filter(fill_run_id=fill_run_id).count()
+
+    @staticmethod
+    def abandon_queued_for_fill(fill_run_id: str) -> int:
+        """READY | QUEUED -> ABANDONED for a stopped fill: consent
+        granted and not spent, recorded rather than deleted, the only
+        honest answer to what the fill still owed (a later resume reads
+        it). Deliberately NOT PROCESSING: a task a consumer already owns
+        runs to its own terminal CAS and LANDS its cell (the settle keys
+        on the task's status, not the fill's), so in-flight spend is
+        sunk cost and cancel granularity is between tasks; leaving it
+        alone. The stop's own fast path; abandon_orphans is what makes
+        the rule hold whatever died in between. Returns how many were
+        abandoned."""
+        return NodeRun.objects.filter(
+            fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)
+        ).update(status=NodeRunStatus.ABANDONED, updated_at=timezone.now())
 
     @staticmethod
     def mark_queued(task: NodeRun) -> bool:
@@ -199,10 +230,10 @@ class NodeRunFlow:
         The UPDATE matches status DEFERRED again, so two flush ticks
         overlapping on one node split its due rows between them instead
         of both sending the same digest; what this worker won is
-        re-read by its stamp. Returns the claimed runs in (position, id)
+        re-read by its stamp. Returns the claimed runs in (rank, id)
         order, empty when another tick got there first."""
         due = NodeRun.objects.filter(kind=WEBHOOK, node_id=node_id, status=NodeRunStatus.DEFERRED, not_before__lte=now)
-        ids = list(due.order_by("position", "id").values_list("id", flat=True)[:limit])
+        ids = list(due.order_by("rank", "id").values_list("id", flat=True)[:limit])
         if not ids:
             return []
         NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.DEFERRED).update(
@@ -213,7 +244,7 @@ class NodeRunFlow:
             attempts=models.F("attempts") + 1,
         )
         won = NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.PROCESSING, leased_by=self.worker_id)
-        return list(won.order_by("position", "id"))
+        return list(won.order_by("rank", "id"))
 
     def settle_many(self, task_ids: Sequence[str], result: dict, *, status: NodeRunStatus) -> int:
         """PROCESSING -> a terminal state for a batch this worker holds,
@@ -257,6 +288,54 @@ class NodeRunFlow:
         return NodeRun.objects.filter(
             id__in=list(task_ids), status=NodeRunStatus.PROCESSING, leased_by=self.worker_id
         ).update(**fields)
+
+    @staticmethod
+    def started_fills(fill_run_ids: Sequence[str]) -> set[str]:
+        """Which of these fills has had a run claimed (attempts > 0): the
+        line between the wire's pending and running. Every caller keeps
+        the ids to OPEN fills, since a settled fill's word never depends
+        on it, so the read is bounded by live work, never by history."""
+        if not fill_run_ids:
+            return set()
+        return set(
+            NodeRun.objects.filter(fill_run_id__in=list(fill_run_ids), attempts__gt=0)
+            .values_list("fill_run_id", flat=True)
+            .distinct()
+        )
+
+    @staticmethod
+    def abandon_orphans(*, now: datetime.datetime | None = None, batch: int = FILL_WRITE_BATCH) -> int:
+        """READY | QUEUED runs whose fill is no longer open -> ABANDONED:
+        the one absolute form of "a closed fill has no runnable runs".
+        The stop sweeps its own queue at once, but a process can die
+        between any two steps, and a slice can insert into a fill that
+        closed under it; this judges from the state alone, so it is
+        idempotent, safe to miss, and safe to double. Paged by fill id
+        (a keyset over the distinct ids, one page in memory at a time),
+        each page one small read of the jobs and one update by id."""
+        now = now or timezone.now()
+        queued = NodeRun.objects.filter(
+            status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED), fill_run_id__isnull=False
+        )
+        abandoned = 0
+        last = ""
+        while True:
+            page = list(
+                queued.filter(fill_run_id__gt=last)
+                .order_by("fill_run_id")
+                .values_list("fill_run_id", flat=True)
+                .distinct()[:batch]
+            )
+            if not page:
+                return abandoned
+            closed = list(
+                Job.objects.filter(id__in=page).exclude(status__in=OPEN_JOB_STATES).values_list("id", flat=True)
+            )
+            if closed:
+                abandoned += queued.filter(fill_run_id__in=[str(fill_id) for fill_id in closed]).update(
+                    status=NodeRunStatus.ABANDONED, last_state_change_at=now
+                )
+            last = page[-1]
 
     @staticmethod
     def reclaim_stale_processing(*, now: datetime.datetime | None = None) -> int:

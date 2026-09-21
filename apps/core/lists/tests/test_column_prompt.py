@@ -69,7 +69,7 @@ class ColumnPromptTestCase(TestCase):
 class ColumnPromptTests(ColumnPromptTestCase):
     def test_get_reads_the_columns_current_config(self) -> None:
         # Surfaces peeking at "what fills this column" read the CURRENT
-        # config here, never a fill's frozen snapshot.
+        # config here, the one a fill reads live.
         self.admit()
         url = reverse("lists_column_prompt", kwargs={"id": str(self.sheet.id), "key": "answer"})
         resp = self.client.get(url)
@@ -116,9 +116,9 @@ class ColumnPromptTests(ColumnPromptTestCase):
         self.assertEqual(roster.prompt, "Sharper ask for {{company}}")
 
     def test_an_edit_during_a_live_fill_is_accepted(self) -> None:
-        # The live fill keeps its frozen snapshot (mid-fill edits never
-        # apply), so the server accepts; the CLIENT disables the
-        # affordance to avoid mixed-config confusion in one fill.
+        # A fill reads its agent live, so the edit reaches the running
+        # fill's next row; the server accepts, and the CLIENT disables
+        # the affordance to avoid mixing two asks in one fill.
         fill = self.admit()
         resp = self.put_prompt("Edited mid-fill for {{company}}")
         self.assertEqual(resp.status_code, 200, resp.content)

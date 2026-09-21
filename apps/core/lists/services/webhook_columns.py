@@ -1,6 +1,6 @@
 """The Send webhook column: what it is on the sheet (a column entry
-pointing at the webhook node at rank 1 of its own path, behind a wait
-node naming the paths it waits on), how it is added, read back, and
+pointing at the webhook node second on its own path, behind the wait
+node that starts it and names the paths it waits on), how it is added, read back, and
 changed, and its Test and Preview sends. The substrate persists the
 nodes it is handed (WorkflowService.create_path); this module knows
 what a webhook column's path looks like. Account-scoped like every
@@ -14,7 +14,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
-from jobs.services import enqueue
+from jobs.services import JobService
 from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
@@ -25,7 +25,7 @@ from ..jobs.enqueue_runs import EnqueueRuns
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
-from ..processors import WalkMode, WalkScope
+from ..processors import WalkScope
 from ..processors.webhook import WebhookProcessor
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
@@ -175,10 +175,11 @@ class WebhookColumnService:
         page per slice, the node's processor judging each row), queued
         in this transaction so it can never see a column that was
         rolled back."""
-        walk = EnqueueRuns(
-            list_id=str(target_list.id), node_id=str(webhook_node.id), scope=WalkScope(mode=WalkMode.BACKFILL)
+        JobService(account_id=self.account_id).enqueue(
+            EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)),
+            user_id=self.user_id,
+            target_id=str(target_list.id),
         )
-        enqueue(self.account_id, walk)
 
     # The cells.
 
@@ -288,7 +289,7 @@ class WebhookColumnService:
         states = {k: state for k, (state, _updated_at) in records.items()}
         item = build_digest_item(
             scope=scope,
-            row=row,
+            row_id=str(row.id),
             cells=stored,
             states=states,
             completed_at=completion_of(records, wait_keys),
