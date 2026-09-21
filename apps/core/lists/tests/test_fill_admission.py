@@ -41,7 +41,7 @@ from ..services.fill_admission import (
 )
 from ..services.fills import FillService
 from ..services.lists import ListService
-from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_positions
+from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_numbers
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -186,7 +186,7 @@ class QuickPathTests(AdmissionTestCase):
             {"kind": "plain", "key": "answer", "label": "Answer", "type": "text"},
         ]
         self.sheet.save(update_fields=["columns"])
-        rows = self.lists.rows_page(self.sheet, after_position=0, limit=1)
+        rows = self.lists.rows_page(self.sheet, limit=1)
         self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "taken"})
         with self.assertRaises(ColumnCollision):
             self.admit()
@@ -230,7 +230,23 @@ class QuickPathTests(AdmissionTestCase):
         # fill covers exactly what was reviewed, and the newcomer shows
         # unfilled for the next refill: no refusal, no surprise spend.
         fill = self.admit(confirmed_row_count=1)
-        self.assertEqual((confirmed_row_count(str(fill.id)), targeted_positions(str(fill.id))), (1, [1]))
+        self.assertEqual((confirmed_row_count(str(fill.id)), targeted_numbers(str(fill.id))), (1, [1]))
+
+    def test_the_probe_stops_where_the_walk_would(self) -> None:
+        # The only row the prompt can act on sits past the count the
+        # user was shown: the walk would never reach it, so admission
+        # refuses rather than opening a fill that targets nothing.
+        sheet = self.lists.create(
+            owner_id=USER,
+            label="Lagging",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+        )
+        self.lists.add_rows(sheet, [{}, {"company": "acme.com"}])
+        with self.assertRaises(NoEligibleRows):
+            self.admit(list_id=str(sheet.id), confirmed_row_count=1)
+        fill = self.admit(list_id=str(sheet.id), confirmed_row_count=2)
+        self.assertEqual(targeted_numbers(str(fill.id)), [2])
 
     def test_a_shrunken_sheet_admits_and_fills_less(self) -> None:
         # Reviewed 99, the sheet has 2: fewer rows than consented is
@@ -345,28 +361,28 @@ class ScopedFillTests(AdmissionTestCase):
         self.lists.add_rows(self.sheet, [{"company": ""}, {"company": "initech.com"}, {"company": "umbrella.io"}])
 
     def test_scoped_admit_targets_the_first_n_eligible(self) -> None:
-        # rows=3 walks positions 1, 2, then SKIPS the variable-blank
-        # row at 3 (it would render an empty ask) and takes position 4:
+        # max_row_count=3 walks rows 1, 2, then SKIPS the variable-blank
+        # row at 3 (it would render an empty ask) and takes row 4:
         # first N means first N usable.
-        fill = self.admit(rows=3, confirmed_row_count=5)
+        fill = self.admit(max_row_count=3, confirmed_row_count=5)
         self.assertEqual(confirmed_row_count(str(fill.id)), 3)
-        # The cutoff is the LAST TARGETED position, not the sheet size.
-        self.assertEqual(targeted_positions(str(fill.id)), [1, 2, 4])
+        # The cutoff is the LAST TARGETED row, not the sheet size.
+        self.assertEqual(targeted_numbers(str(fill.id)), [1, 2, 4])
 
     def test_rows_past_the_cutoff_have_no_outcome_rows(self) -> None:
-        # Not-attempted is the ABSENCE of an outcome row: position 5
-        # (past the scoped cutoff) and position 3 (ineligible) never
+        # Not-attempted is the ABSENCE of an outcome row: row 5
+        # (past the scoped cutoff) and row 3 (ineligible) never
         # materialize.
-        fill = self.admit(rows=3, confirmed_row_count=5)
-        self.assertEqual(len(targeted_positions(str(fill.id))), 3)
-        self.assertNotIn(3, targeted_positions(str(fill.id)))
-        self.assertNotIn(5, targeted_positions(str(fill.id)))
+        fill = self.admit(max_row_count=3, confirmed_row_count=5)
+        self.assertEqual(len(targeted_numbers(str(fill.id))), 3)
+        self.assertNotIn(3, targeted_numbers(str(fill.id)))
+        self.assertNotIn(5, targeted_numbers(str(fill.id)))
 
     def test_a_scoped_admit_ranges_over_the_sheet_and_stops_at_n(self) -> None:
         # A scoped fill asked for the first N usable rows; the sheet
         # total was never the number it consented to, so the range is
         # the sheet as it stands and N is the ceiling.
-        fill = self.admit(rows=1, confirmed_row_count=1)
+        fill = self.admit(max_row_count=1, confirmed_row_count=1)
         self.assertEqual(confirmed_row_count(str(fill.id)), 1)
 
     def test_no_eligible_rows_refuses(self) -> None:
@@ -403,7 +419,7 @@ class ScopedFillTests(AdmissionTestCase):
         config = quick_config(tools=AgentTools(web_search=True))
         with self.assertRaises(FreeSearchBudget):
             self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over)
-        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over, rows=4)
+        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over, max_row_count=4)
         self.assertEqual(fill_status(str(fill.id)), "pending")
         self.assertEqual(confirmed_row_count(str(fill.id)), 4)
 

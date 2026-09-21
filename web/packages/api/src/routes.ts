@@ -78,7 +78,7 @@ export const apiRoutes = {
     import: `/${API_VERSION}/lists/import`,
     // GET / PATCH {label} / DELETE.
     detail: (id: string) => `/${API_VERSION}/lists/${id}`,
-    // GET: keyset rows by position (?after=&limit=). POST: append rows.
+    // GET: keyset rows in sheet order (?after=<the page's next_cursor, verbatim>&limit=). POST: append rows.
     rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
     // POST: append one blank column (no fill attached).
     columns: (id: string) => `/${API_VERSION}/lists/${id}/columns`,

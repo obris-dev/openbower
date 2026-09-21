@@ -8,6 +8,7 @@ from ..constants import (
     NODE_KIND_MAX_LENGTH,
     NODE_RUN_STATUS_MAX_LENGTH,
     NON_TERMINAL_NODE_RUN_STATES,
+    RANK_MAX_LENGTH,
     NodeRunStatus,
 )
 from ..nodes.registry import WEBHOOK
@@ -84,11 +85,12 @@ class NodeRun(AccountScopedModel):
     # default: a CharField stores "" when a writer forgets it, and the
     # check constraint below turns that into a failed insert.
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
-    # WHERE this task's row lives: its sheet position, 1-based and
-    # snapshot-coherent (positions are append-only), so claims ordered
-    # by it march TOP TO BOTTOM down the sheet the user is watching. 0
-    # for a bench run, which has no sheet.
-    position = models.IntegerField(_("position"), default=0)
+    # WHERE this task's row sits: the row's rank as it was when the run
+    # was queued, so claims ordered by it march TOP TO BOTTOM down the
+    # sheet the user is watching (a move after that reorders nothing
+    # already queued; the next fill reads the new order). Blank for a
+    # bench run, which has no sheet. The C collation, as the row's.
+    rank = models.CharField(_("rank"), max_length=RANK_MAX_LENGTH, blank=True, default="", db_collation="C")
     status = models.CharField(_("status"), max_length=NODE_RUN_STATUS_MAX_LENGTH, default=NodeRunStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its
     # worker thread still exhausts across process restarts. Counting
@@ -163,7 +165,7 @@ class NodeRun(AccountScopedModel):
             # the ordering pathkey an equality does (it sorts the whole
             # READY set instead of stopping at the LIMIT). So each lane
             # gets a partial index holding only its rows. In both, status
-            # leads (one equality opens it); the position/id tail lets the
+            # leads (one equality opens it); the rank/id tail lets the
             # LIMIT stop early; not_before rides the leaf (INCLUDE) so a
             # parked task is rejected without a heap fetch, never a seek
             # key (below the ordering columns it cannot be one).
@@ -171,28 +173,28 @@ class NodeRun(AccountScopedModel):
             # Fill-backed: fill_run_id = :f seeks the fill's tasks. A fill
             # is single-list, so list_id earns no place here.
             models.Index(
-                fields=["status", "fill_run_id", "position", "id"],
+                fields=["status", "fill_run_id", "rank", "id"],
                 include=["not_before"],
                 name="node_run_fill_idx",
                 condition=models.Q(fill_run_id__isnull=False),
             ),
             # Autofill firehose: partial on the null-run rows, so status
-            # leads straight into the (list_id, position, id) order with no
+            # leads straight into the (list_id, rank, id) order with no
             # IS NULL in the key. list_id sits BEFORE the sort columns, so a
             # per-list or set-sharded pick (list_id = ANY(...)) SEEKS its
             # lists rather than scanning. `kind` rides the leaf beside
             # not_before so the pick's lane filter stays index-only.
             models.Index(
-                fields=["status", "list_id", "position", "id"],
+                fields=["status", "list_id", "rank", "id"],
                 include=["not_before", "kind"],
                 name="node_run_autofill_idx",
                 condition=models.Q(fill_run_id__isnull=True),
             ),
             # The flush's claim: a webhook node's DEFERRED runs due at or
-            # before now, in (position, id) order. Partial on the kind so
+            # before now, in (rank, id) order. Partial on the kind so
             # the agent lanes' rows never widen it.
             models.Index(
-                fields=["node_id", "status", "not_before", "position", "id"],
+                fields=["node_id", "status", "not_before", "rank", "id"],
                 name="node_run_webhook_due_idx",
                 condition=models.Q(kind=WEBHOOK),
             ),

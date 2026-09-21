@@ -75,6 +75,13 @@ class JobService:
         someone forgot."""
         return self._enqueue(kind, user_id=None, target_id=target_id)
 
+    def has_open(self, kind: type[JobKind], *, target_id: str) -> bool:
+        """Whether a job of this kind is already open for this target:
+        the guard a derived job checks before queuing itself twice."""
+        return Job.objects.filter(
+            account_id=self.account_id, kind=kind.KIND, target_id=target_id, status__in=OPEN_JOB_STATES
+        ).exists()
+
     def _enqueue(self, kind: JobKind, *, user_id: str | None, target_id: str) -> Job:
         now = timezone.now()
         return Job.objects.create(

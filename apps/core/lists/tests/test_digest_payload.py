@@ -28,7 +28,7 @@ ROW_ID = "01ROW" + "A" * 21
 
 
 def _row() -> ListRow:
-    return ListRow(id=ROW_ID, list_id=LIST_ID, position=3, data={"company": "acme.com", "answer": "yes"})
+    return ListRow(id=ROW_ID, list_id=LIST_ID, rank="a2", data={"company": "acme.com", "answer": "yes"})
 
 
 FILLED = StoredCellState.FILLED
@@ -56,7 +56,7 @@ class ItemTests(SimpleTestCase):
     def test_event_id_is_derived_from_scope_row_and_completion_time(self):
         item = build_digest_item(
             scope=LIST_ID,
-            row=_row(),
+            row_id=str(_row().id),
             cells={"company": "acme.com"},
             states={"answer": "filled"},
             completed_at=T2,
@@ -67,7 +67,6 @@ class ItemTests(SimpleTestCase):
         self.assertRegex(item.event_id, rf"^[0-9a-f]{{{EVENT_ID_HEX_LENGTH}}}$")
         self.assertEqual(item.completed_at, T2.isoformat())
         self.assertEqual(item.row_id, ROW_ID)
-        self.assertEqual(item.position, 3)
         # Cells are exactly what the caller chose, never the whole row.
         self.assertEqual(item.cells, {"company": "acme.com"})
         self.assertEqual(item.states, {"answer": "filled"})
@@ -76,7 +75,7 @@ class ItemTests(SimpleTestCase):
         def item(**overrides):
             base = {
                 "scope": LIST_ID,
-                "row": _row(),
+                "row_id": str(_row().id),
                 "cells": {},
                 "states": {},
                 "completed_at": T2,
@@ -99,7 +98,7 @@ class ItemTests(SimpleTestCase):
 
     def test_an_incomplete_sample_ids_on_the_send_time_and_carries_no_completion(self):
         item = build_digest_item(
-            scope=LIST_ID, row=_row(), cells={}, states={}, completed_at=None, sent_at=SENT, test=True
+            scope=LIST_ID, row_id=str(_row().id), cells={}, states={}, completed_at=None, sent_at=SENT, test=True
         )
         self.assertEqual(item.event_id, event_id_of(scope=LIST_ID, row_id=ROW_ID, stamp=SENT.isoformat(), test=True))
         self.assertIsNone(item.completed_at)
@@ -107,7 +106,7 @@ class ItemTests(SimpleTestCase):
     def test_data_names_the_sheet_and_the_waited_columns(self):
         target = List(id=LIST_ID, label="Prospects", columns=[])
         item = build_digest_item(
-            scope=LIST_ID, row=_row(), cells={}, states={}, completed_at=None, sent_at=SENT, test=True
+            scope=LIST_ID, row_id=str(_row().id), cells={}, states={}, completed_at=None, sent_at=SENT, test=True
         )
         data = build_digest_data(target, waited_on=["answer"], items=[item])
         self.assertEqual(data.type, "digest")

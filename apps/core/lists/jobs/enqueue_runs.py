@@ -8,7 +8,10 @@ carries no consent and no range.
 Walking a sheet is not a request's job (a 50k-row sheet paged inside
 the request would hold every other writer behind it), and it is not a
 NodeRun (a run is one node on one row; this MAKES runs), so it is a
-job: one page per slice, the cursor the last position walked. No lock:
+job: one page per slice in sheet order, the cursor the last row walked
+(by id, with the rank it had, so a re-spacing mid-walk is harmless and
+a row moved out from under the walk is the next walk's, like a row
+appended after). No lock:
 the columns array is never written here, and the one guarantee that
 matters, a row offered once however many walkers and landings offer
 it, is the open-run key on the processor's insert, so a reclaimed slice
@@ -27,13 +30,15 @@ from jobs.models import Job
 
 from ..constants import FILL_SCAN_CHUNK
 from ..processors import WalkScope, processor_for
-from ..services.lists import ListNotFound, ListService
+from ..services.lists import ListNotFound, ListService, RowCursor
 from ..services.workflows import NodeNotFound, WorkflowService
 
 
 class BackfillProgress(BaseModel):
-    # The last sheet position walked; the next slice pages after it.
-    after_position: int = 0
+    # The last row walked (its id, and the rank it had); the next slice
+    # pages after it in sheet order.
+    after_id: str = ""
+    after_rank: str = ""
 
 
 class EnqueueRuns(JobKind[BackfillProgress]):
@@ -55,12 +60,13 @@ class EnqueueRuns(JobKind[BackfillProgress]):
             node = WorkflowService(account_id=job.account_id).get_node(self.node_id)
         except NodeNotFound:
             return None
-        page = lists.rows_page(target_list, after_position=progress.after_position, limit=FILL_SCAN_CHUNK)
+        after = RowCursor(progress.after_id, progress.after_rank) if progress.after_id else None
+        page = lists.rows_page(target_list, after=after, limit=FILL_SCAN_CHUNK)
         if not page:
             return None
         processor = processor_for(account_id=job.account_id, node=node, scope=WalkScope())
         processor.enqueue_runs(target_list, page, now=timezone.now())
-        return BackfillProgress(after_position=page[-1].position)
+        return BackfillProgress(after_id=str(page[-1].id), after_rank=page[-1].rank)
 
 
 register(EnqueueRuns)

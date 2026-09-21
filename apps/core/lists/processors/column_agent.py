@@ -70,6 +70,7 @@ from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
 from ..services.fill_processing.cell_run import run_cell
 from ..services.fill_processing.landing import LandingContext, land_row
+from ..services.lists import ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.workflows import agent_id_of, columns_for_node
 from .base import NodeProcessor, RunOutcome, WalkMode
@@ -179,7 +180,7 @@ class AIColumnProcessor(NodeProcessor):
                 kind=COLUMN_AGENT,
                 row_id=str(row.id),
                 list_id=str(target_list.id),
-                position=row.position,
+                rank=row.rank,
                 status=NodeRunStatus.READY,
                 last_state_change_at=now,
             )
@@ -188,20 +189,26 @@ class AIColumnProcessor(NodeProcessor):
         NodeRun.objects.bulk_create(runs, ignore_conflicts=True)
         return len(runs)
 
-    def probe(self, target_list: List, *, until_position: int = 0) -> Probe:
+    def probe(self, target_list: List, *, until_id: str = "", covered: int = 0) -> Probe:
         """Scan for the FIRST row this walk would queue, in sheet order
-        within the range, without queuing anything: admission's zero
-        check. Pages exactly as the walk does and stops at the first
-        hit, so a sheet with work near the top costs one page."""
-        after = 0
+        within the consent (the set, `until_id`, and the count,
+        `covered`; "" and 0 mean unbounded), without queuing anything:
+        admission's zero check. Pages exactly as the walk does, bounded
+        exactly as the walk is, and stops at the first hit, so a sheet
+        with work near the top costs one page and a hit past what the
+        walk may cover is not a hit."""
+        lists = ListService(account_id=self.account_id)
+        after: RowCursor | None = None
         dropped_any = False
+        walked = 0
         while True:
-            rows = ListRow.objects.filter(list_id=str(target_list.id), position__gt=after)
-            if until_position:
-                rows = rows.filter(position__lte=until_position)
-            page = list(rows.order_by("position").only("id", "position", "data")[:FILL_SCAN_CHUNK])
+            remaining = covered - walked if covered else FILL_SCAN_CHUNK
+            if remaining <= 0:
+                return Probe(found=False, dropped_any=dropped_any)
+            page = lists.rows_page(target_list, after=after, limit=min(FILL_SCAN_CHUNK, remaining), until_id=until_id)
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
+            walked += len(page)
             facts = self._page_facts(page)
             for row in page:
                 verdict = self._judge(target_list, row, facts)
@@ -209,7 +216,7 @@ class AIColumnProcessor(NodeProcessor):
                     return Probe(found=True, dropped_any=dropped_any)
                 if verdict is _Verdict.DROPPED:
                     dropped_any = True
-            after = page[-1].position
+            after = RowCursor(str(page[-1].id), page[-1].rank)
 
     # The execution.
 

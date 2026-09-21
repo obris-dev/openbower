@@ -111,7 +111,6 @@ class ColumnWebhookTestTests(TestCase):
         self.assertEqual(data.waited_on, ["answer", "score"])
         [item] = data.items
         self.assertEqual(item.row_id, str(self.rows[0].id))
-        self.assertEqual(item.position, 1)
         # The caller's edited value wins over the stored cell; only the
         # payload columns ride.
         self.assertEqual(item.cells, {"company": "edited.example", "answer": "yes"})

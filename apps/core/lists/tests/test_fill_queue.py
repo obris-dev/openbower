@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from jobs.constants import JobStatus
 from jobs.models import Job
+from openbower_kernel.ranks import keys_between
 from openbower_schema.fills import CellRunResult
 
 from ..constants import NodeRunStatus, StoredCellState
@@ -49,7 +50,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
         consented=rows,
     )
     now = timezone.now()
-    for n in range(rows):
+    for n, rank in enumerate(keys_between(None, None, rows)):
         NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
@@ -57,7 +58,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
             kind=COLUMN_AGENT,
             row_id=f"01ROW{n:021d}",
             list_id=list_id,
-            position=n + 1,
+            rank=rank,
             status=NodeRunStatus.READY,
             last_state_change_at=now,
         )
@@ -172,7 +173,7 @@ class CompletionTests(TestCase):
 
     def test_the_poll_leaves_a_fill_with_work_remaining_open(self) -> None:
         fill = make_run(rows=2)
-        task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
+        task = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("rank", "id").first()
         land(fill, task)
         tick_fill(str(fill.id))
         fill.refresh_from_db()
@@ -235,7 +236,7 @@ class CompletionTests(TestCase):
         # because a non-terminal task said so. The PROCESSING task the
         # worker still owns is left to its own terminal CAS.
         fill = make_run(rows=3)
-        first = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position").first()
+        first = NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("rank", "id").first()
         land(fill, first)
         self.assertTrue(fill_progress.cancel(str(fill.id)))
         by_status = dict(
@@ -260,7 +261,7 @@ class CompletionTests(TestCase):
 
     def test_counters_derive_from_tasks_and_cells(self) -> None:
         fill = make_run(rows=2)
-        tasks = list(NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("position"))
+        tasks = list(NodeRun.objects.filter(fill_run_id=str(fill.id)).order_by("rank", "id"))
         land(fill, tasks[0])  # FILLED
         land(fill, tasks[1], state=StoredCellState.NO_EVIDENCE)  # blank
         counters = derive_counters(str(fill.id))

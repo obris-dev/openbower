@@ -251,8 +251,12 @@ WebhookCellState = Literal["waiting", "sent", "failed"]
 
 
 class ListRowWire(BaseModel):
+    """A row in SHEET ORDER: the page's array order is the order, and a
+    row number is whatever the renderer counts. Nothing about order
+    rides the row itself (the server keeps a rank a move rewrites on
+    one row; a client never needs it)."""
+
     id: str
-    position: int = Field(description="1-based dense display/paging order.")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},
@@ -270,7 +274,12 @@ class ListRowWire(BaseModel):
 
 class ListRowsPage(BaseModel):
     items: list[ListRowWire]
-    next_cursor: str | None = Field(default=None, description="The last position when more rows exist.")
+    next_cursor: str | None = Field(
+        default=None,
+        description="An opaque cursor for the next page when more rows exist: hand it back as ?after= "
+        "verbatim (it carries what the server needs to continue; nothing about it is for the client "
+        "to read).",
+    )
 
 
 class ListsPage(BaseModel):

@@ -4,7 +4,7 @@ import { csvField, saveCsvFile } from "./csv";
 import { exportableColumns } from "./lib/exportable-columns";
 
 /** Build the sheet's CSV client-side from the same rows pages the table
- * reads (the house rule: no server CSV surface). Pages by position via
+ * reads (the house rule: no server CSV surface). Pages in sheet order via
  * the server's own cursors. */
 export async function downloadSheetCsv(
   detail: ListSummary,

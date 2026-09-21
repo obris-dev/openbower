@@ -129,7 +129,7 @@ class FlushWebhooksTests(TransactionTestCase):
             return FlushWebhooksOperation(worker_id=worker).run(now=now)
 
     def _runs(self):
-        return NodeRun.objects.filter(kind=WEBHOOK).order_by("position")
+        return NodeRun.objects.filter(kind=WEBHOOK).order_by("rank", "id")
 
     def test_nothing_is_due_before_the_window(self):
         for row in self.rows:
@@ -139,6 +139,23 @@ class FlushWebhooksTests(TransactionTestCase):
         report = self._tick(fake, now=BOUNDARY - timedelta(seconds=1))
         self.assertEqual((report.nodes, fake.calls), (0, []))
         self.assertEqual({run.status for run in self._runs()}, {NodeRunStatus.DEFERRED})
+
+    def test_the_digest_reads_in_sheet_order_after_a_move(self):
+        # The runs are queued in the sheet's order of the time, then the
+        # newest row is moved to the top: the digest follows the sheet
+        # as it is at delivery, not the order the runs were queued in.
+        # FAILS on the runs' own (rank, id) or on id order.
+        for row in self.rows:
+            self._complete(row)
+        self._add_column()
+        self.lists.move_row(self.sheet, str(self.rows[2].id), after_id=None)
+        fake = _FakeSender()
+        self._tick(fake)
+        (envelope,) = fake.bodies()
+        self.assertEqual(
+            [item.row_id for item in envelope.data.items],
+            [str(self.rows[2].id), str(self.rows[0].id), str(self.rows[1].id)],
+        )
 
     def test_one_digest_carries_every_due_row_in_sheet_order_and_settles_them_sent(self):
         for row in self.rows:
@@ -154,7 +171,7 @@ class FlushWebhooksTests(TransactionTestCase):
         self.assertEqual(envelope.data.sheet.id, str(self.sheet.id))
         self.assertEqual(envelope.data.waited_on, ["answer", "country"])
         items = envelope.data.items
-        self.assertEqual([item.position for item in items], [1, 2, 3])
+        self.assertEqual([item.row_id for item in items], [str(row.id) for row in self.rows])
         first = items[0]
         self.assertEqual(first.cells, {"company": "acme.com", "country": ""})
         self.assertEqual(first.states, {"answer": "filled", "country": "filled"})
@@ -193,8 +210,8 @@ class FlushWebhooksTests(TransactionTestCase):
         self._tick(fake, now=next_window(later, INTERVAL))
 
         first, second = fake.bodies()
-        self.assertEqual([item.position for item in first.data.items], [1, 2])
-        self.assertEqual([item.position for item in second.data.items], [3])
+        self.assertEqual([item.row_id for item in first.data.items], [str(row.id) for row in self.rows[:2]])
+        self.assertEqual([item.row_id for item in second.data.items], [str(self.rows[2].id)])
 
     def test_the_batch_cap_splits_a_node_across_ticks(self):
         for row in self.rows:
@@ -206,7 +223,10 @@ class FlushWebhooksTests(TransactionTestCase):
             second = self._tick(fake)
         self.assertEqual((first.sent, second.sent), (2, 1))
         one, two = fake.bodies()
-        self.assertEqual(([i.position for i in one.data.items], [i.position for i in two.data.items]), ([1, 2], [3]))
+        self.assertEqual(
+            ([i.row_id for i in one.data.items], [i.row_id for i in two.data.items]),
+            ([str(row.id) for row in self.rows[:2]], [str(self.rows[2].id)]),
+        )
 
     def test_a_paused_column_and_a_disabled_destination_skip_without_claiming(self):
         self._complete(self.rows[0])
@@ -299,7 +319,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
         self.assertEqual(report.sent, 2)
         (envelope,) = fake.bodies()
-        self.assertEqual([item.position for item in envelope.data.items], [1, 3])
+        self.assertEqual([item.row_id for item in envelope.data.items], [str(self.rows[0].id), str(self.rows[2].id)])
         self.assertEqual(self._runs().get(row_id=gone).status, NodeRunStatus.ROW_MISSING)
 
     def test_a_deleted_list_settles_list_missing(self):
@@ -378,7 +398,7 @@ class FlushWebhooksTests(TransactionTestCase):
             kind=COLUMN_AGENT,
             row_id=str(self.rows[0].id),
             list_id=str(self.sheet.id),
-            position=1,
+            rank=self.rows[0].rank,
             status=NodeRunStatus.READY,
             not_before=BOUNDARY - timedelta(hours=1),
             last_state_change_at=BOUNDARY,

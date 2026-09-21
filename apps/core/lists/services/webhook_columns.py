@@ -287,7 +287,7 @@ class WebhookColumnService:
         states = {k: state for k, (state, _updated_at) in records.items()}
         item = build_digest_item(
             scope=scope,
-            row=row,
+            row_id=str(row.id),
             cells=stored,
             states=states,
             completed_at=completion_of(records, wait_keys),

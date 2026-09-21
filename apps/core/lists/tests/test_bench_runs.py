@@ -83,10 +83,10 @@ class BenchRunServiceTests(TestCase):
         self.assertEqual(run.input, {"row": {"company": "acme.com"}, "config": quick_config().model_dump()})
         self.assertEqual(run.started_by, USER)
         # row_id NULL: the row rides `input` and no ListRow exists for
-        # it; list_id "" and position 0: no sheet by construction.
+        # it; list_id "" and a blank rank: no sheet by construction.
         self.assertIsNone(run.row_id)
         self.assertIsNone(run.fill_run_id)
-        self.assertEqual((run.list_id, run.position, run.status), ("", 0, NodeRunStatus.READY))
+        self.assertEqual((run.list_id, run.rank, run.status), ("", "", NodeRunStatus.READY))
         # The run's node is the account's bench node: the one sheetless
         # column_agent node, no workflow, no path, a blank agent.
         bench = Node.objects.get(account_id=ACCOUNT, workflow_id="")

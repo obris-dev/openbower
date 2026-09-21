@@ -50,7 +50,7 @@ class NodeRunFlow:
     def iter_ready(*, limit: int) -> Iterator[NodeRun]:
         """The autofill provisioner's pick, LAZILY (single-pass): up to
         `limit` READY null-run (autofill) tasks that are due (a parked
-        retry backs off in `not_before`), in (list_id, position, id)
+        retry backs off in `not_before`), in (list_id, rank, id)
         order. Grouping by list first is breadth-first across lists and
         is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick
@@ -61,23 +61,23 @@ class NodeRunFlow:
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
-        yield from qs.defer("result").order_by("list_id", "position", "id")[:limit].iterator()
+        yield from qs.defer("result").order_by("list_id", "rank", "id")[:limit].iterator()
 
     @staticmethod
     def iter_ready_for_fill(fill_run_id: str, *, limit: int) -> Iterator[NodeRun]:
         """The manual provisioner's per-fill pick, LAZILY (single-pass):
         up to `limit` of this fill's READY, due tasks in SHEET ORDER
-        (position) so the fill marches top to bottom down the sheet the
+        (rank) so the fill marches top to bottom down the sheet the
         user is watching. A flat `limit` per fill is the fairness point:
         a wide fill cannot flood the bus ahead of a smaller one beside
-        it. `node_run_fill_idx` (fill_run_id equality, then position)
+        it. `node_run_fill_idx` (fill_run_id equality, then rank)
         serves it so the LIMIT stops early. Streamed via .iterator()."""
         now = timezone.now()
         due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         yield from (
             NodeRun.objects.filter(due, fill_run_id=fill_run_id, status=NodeRunStatus.READY)
             .defer("result")
-            .order_by("position", "id")[:limit]
+            .order_by("rank", "id")[:limit]
             .iterator()
         )
 
@@ -232,10 +232,10 @@ class NodeRunFlow:
         The UPDATE matches status DEFERRED again, so two flush ticks
         overlapping on one node split its due rows between them instead
         of both sending the same digest; what this worker won is
-        re-read by its stamp. Returns the claimed runs in (position, id)
+        re-read by its stamp. Returns the claimed runs in (rank, id)
         order, empty when another tick got there first."""
         due = NodeRun.objects.filter(kind=WEBHOOK, node_id=node_id, status=NodeRunStatus.DEFERRED, not_before__lte=now)
-        ids = list(due.order_by("position", "id").values_list("id", flat=True)[:limit])
+        ids = list(due.order_by("rank", "id").values_list("id", flat=True)[:limit])
         if not ids:
             return []
         NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.DEFERRED).update(
@@ -246,7 +246,7 @@ class NodeRunFlow:
             attempts=models.F("attempts") + 1,
         )
         won = NodeRun.objects.filter(id__in=ids, status=NodeRunStatus.PROCESSING, leased_by=self.worker_id)
-        return list(won.order_by("position", "id"))
+        return list(won.order_by("rank", "id"))
 
     def settle_many(self, task_ids: Sequence[str], result: dict, *, status: NodeRunStatus) -> int:
         """PROCESSING -> a terminal state for a batch this worker holds,

@@ -1,7 +1,8 @@
 import type { ListColumn } from "@bower/api";
 
 export type SampleStepper = {
-  position: number;
+  // The sample's place among the loaded rows, 0-based; the line the
+  // stepper renders counts from one.
   index: number;
   count: number;
   onStep: (delta: 1 | -1) => void;

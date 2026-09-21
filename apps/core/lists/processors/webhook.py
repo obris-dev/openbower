@@ -123,12 +123,13 @@ class WebhookProcessor(NodeProcessor):
         sendable: list[NodeRun] = []
         incomplete: list[str] = []
         items = []
-        # The claim's order is (position, id): the digest reads top to
-        # bottom of the sheet.
-        for run in claimed:
-            row = rows.get(run.row_id)
-            if row is None:
-                continue
+        # The digest reads top to bottom of the sheet AS IT IS: by the
+        # rows' live ranks, not the rank stamped on each run when it was
+        # queued (a row moved since would otherwise report in its old
+        # place). The rows are loaded either way, so the sort is free.
+        present = [run for run in claimed if run.row_id in rows]
+        for run in sorted(present, key=lambda run: (rows[run.row_id].rank, run.row_id)):
+            row = rows[run.row_id]
             completed_at = completion_of(records[run.row_id], wait_keys)
             if completed_at is None:
                 # A refill re-opened a waited-on cell since the advance:
@@ -140,7 +141,7 @@ class WebhookProcessor(NodeProcessor):
             items.append(
                 build_digest_item(
                     scope=node_id,
-                    row=row,
+                    row_id=run.row_id,
                     cells={key: str(row.data.get(key) or "") for key in payload_keys},
                     states={key: state for key, (state, _updated_at) in records[run.row_id].items()},
                     completed_at=completed_at,
@@ -242,7 +243,7 @@ class WebhookProcessor(NodeProcessor):
                     kind=WEBHOOK,
                     row_id=str(row.id),
                     list_id=list_id,
-                    position=row.position,
+                    rank=row.rank,
                     status=NodeRunStatus.DEFERRED,
                     not_before=window,
                     queued_at=now,

@@ -1,12 +1,16 @@
 """Cursor-pagination helpers shared by `/v1` list endpoints.
 
 Lists order by `-id` (ULIDs are time-sortable) and page with
-`?after=<last id>`; a full page implies a `next_cursor`, a short page
-means the end. `parse_limit` bounds `?limit=` without letting a caller
+`?after=<last id>`, or by a richer key the endpoint names (a sheet's
+rows page by rank and id behind an opaque cursor); either way a full
+page implies a `next_cursor`, a short page means the end. `parse_limit` bounds `?limit=` without letting a caller
 error a view with garbage.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
@@ -26,7 +30,9 @@ def parse_limit(request: Request, *, default: int, maximum: int) -> int:
     return min(int(raw), maximum)
 
 
-def next_cursor_from(rows: list, *, limit: int) -> str | None:
-    """The `next_cursor` for a page: the last row's id when the page is
-    full (there may be more), None otherwise."""
-    return str(rows[-1].id) if len(rows) == limit else None
+def next_cursor_from(rows: list, *, limit: int, cursor: Callable[[Any], str] = lambda row: str(row.id)) -> str | None:
+    """The `next_cursor` for a page: the last row's cursor when the page
+    is full (there may be more), None otherwise. The cursor is the
+    row's id unless the endpoint pages by something richer (a sheet's
+    rows, by rank and id)."""
+    return cursor(rows[-1]) if len(rows) == limit else None
