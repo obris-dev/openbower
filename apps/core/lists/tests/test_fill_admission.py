@@ -28,7 +28,6 @@ from ..constants import (
 from ..jobs.rerank import Rerank
 from ..models import Node, NodeRun
 from ..services import fill_progress
-from ..services.cell_truth import CellOrigin
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -195,7 +194,10 @@ class QuickPathTests(AdmissionTestCase):
             str(rows[0].id),
             {"answer": "taken"},
             column_keys=("answer",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         with self.assertRaises(ColumnCollision):
             self.admit()

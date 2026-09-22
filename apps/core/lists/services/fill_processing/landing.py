@@ -29,21 +29,25 @@ from django.db import transaction
 
 from openbower_schema.fills import CellRunResult
 
-from ...constants import NodeRunStatus, StoredCellState
-from ..cell_truth import CellOrigin, declined_cause_of
+from ...constants import CellSource, NodeRunStatus, StoredCellState
+from ..cell_truth import declined_cause_of
 from ..lists import ListService
 from ..node_runs import NodeRunFlow
 
 
 class LandingContext(NamedTuple):
-    """Where a run lands: the sheet and the columns the run is
-    responsible for. A fill-backed caller builds it from its fill job's
-    consent (the column set it owns); the automatic path (autofill)
-    from the task plus the agent's resolved column set."""
+    """Where a run lands and as what, the same for every row it lands:
+    the sheet, the columns the run is responsible for, who is writing
+    (an agent here) and the fill the records belong to (None for an
+    automatic run). A fill-backed caller builds it from its fill job's
+    consent; the automatic path (autofill) from the task plus the
+    agent's resolved column set."""
 
     account_id: str
     list_id: str
     column_keys: tuple[str, ...]
+    source: CellSource
+    fill_run_id: str | None
 
 
 class ClaimLost(Exception):
@@ -65,14 +69,13 @@ def land_row(
     row_id: str,
     run_result: CellRunResult,
     *,
-    origin: CellOrigin,
     flow: NodeRunFlow,
     task_id: str,
     lists: ListService | None = None,
 ) -> Landed | None:
-    """Write what a run produced onto its row, attributed to the origin
-    its caller names, in one transaction, and settle the run DONE
-    through `flow` with the result stored on it.
+    """Write what a run produced onto its row, under the context, in
+    one transaction, and settle the run DONE through `flow` with the
+    result stored on it.
     Returns None when the settle missed (the lease was reclaimed):
     nothing was written. Raises the ListService's ListNotFound /
     RowNotFound as they are: a deleted sheet is the caller's story to
@@ -85,7 +88,8 @@ def land_row(
                 row_id,
                 dict(run_result.cells),
                 column_keys=ctx.column_keys,
-                origin=origin,
+                source=ctx.source,
+                fill_run_id=ctx.fill_run_id,
                 declined_cause=declined_cause_of(run_result),
                 tools=run_result.tools,
             )

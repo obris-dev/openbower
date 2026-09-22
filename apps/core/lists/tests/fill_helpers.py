@@ -37,7 +37,6 @@ from ..models import ListRow, Node, NodeRun
 from ..processors import WalkMode
 from ..serializers import fill_run_wire
 from ..services import advance, fill_progress
-from ..services.cell_truth import CellOrigin
 from ..services.fills import page_progress
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
@@ -172,7 +171,8 @@ def settle(
             row_id,
             dict.fromkeys(answered, FILLED_VALUE),
             column_keys=consent.column_keys,
-            origin=CellOrigin(CellSource.AGENT, fill_run_id),
+            source=CellSource.AGENT,
+            fill_run_id=fill_run_id,
             declined_cause=declined,
             tools=tools or {},
         )

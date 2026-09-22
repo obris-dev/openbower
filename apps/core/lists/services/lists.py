@@ -27,11 +27,12 @@ from ..constants import (
     MAX_LIST_ROWS,
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
+    CellSource,
     StoredCellState,
 )
 from ..models import Folder, List, ListRow, NodeRun
 from . import cell_truth, fill_progress, webhook_runs
-from .cell_truth import CellOrigin, column_states
+from .cell_truth import column_states
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -318,9 +319,10 @@ class ListService:
         cells: dict[str, str],
         *,
         column_keys: Sequence[str],
-        origin: CellOrigin,
-        declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE,
-        tools: Mapping[str, str] | None = None,
+        source: CellSource,
+        fill_run_id: str | None,
+        declined_cause: StoredCellState | None,
+        tools: Mapping[str, str],
     ) -> CellWriteResult:
         """THE cell writer: over `column_keys` (the columns this write
         is responsible for: a fill's consent, a hand-typed edit's own
@@ -329,9 +331,13 @@ class ListService:
         a value and the record that says what it is can never be
         written apart. Every column lands in one bucket of the result
         and each bucket has one state (column_states): an unanswered
-        column's is `declined_cause`, the run's own reason, and every
-        record carries `origin` and the run's `tools`. A value for a
-        key outside the columns is ignored. Write-if-blank per key, so
+        column's is `declined_cause`, the run's own reason (None for a
+        person's write, which leaves no record there), and every
+        record carries who wrote it (`source`), the fill it belongs to
+        (`fill_run_id`, None off a fill) and the run's `tools`. Every
+        one of those is named at every call: a write that forgot who
+        it was would be a cell nobody can audit. A value for a key outside
+        the columns is ignored. Write-if-blank per key, so
         a user's cell is never destroyed (rows accept arbitrary keys
         from import, snapshot, and manual entry, so nothing here is
         machine-owned by construction). Values clamp at CELL_MAX_LENGTH
@@ -343,10 +349,10 @@ class ListService:
                 account_id=self.account_id,
                 list_id=list_id,
                 row_id=row_id,
-                fill_run_id=origin.fill_run_id,
+                fill_run_id=fill_run_id,
                 states=column_states(written, declined_cause=declined_cause),
-                tools=dict(tools or {}),
-                source=origin.source,
+                tools=dict(tools),
+                source=source,
             )
         return written
 

@@ -12,7 +12,6 @@ from django.test.utils import CaptureQueriesContext
 
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin
 from lists.models import ListRow
-from lists.services.cell_truth import CellOrigin
 from lists.services.lists import ListNotFound, ListService, RowNotFound
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
@@ -44,7 +43,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "1,200"},
             column_keys=("employees",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ())
@@ -60,7 +62,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name"},
             column_keys=("name",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.occupied, ("name",))
         self.assertEqual(result.written, ())
@@ -75,7 +80,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "x" * (CELL_MAX_LENGTH + 8)},
             column_keys=("name",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.written, ("name",))
         row.refresh_from_db()
@@ -89,7 +97,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "around fifty"},
             column_keys=("employees",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.written, ())
         self.assertEqual([m.key for m in result.mismatched], ["employees"])
@@ -106,7 +117,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "", "revenue": "   "},
             column_keys=("employees", "revenue"),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result, ((), (), (), ("employees", "revenue")))
         row.refresh_from_db()
@@ -124,11 +138,50 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name", "employees": "42", "founded": "next spring", "revenue": ""},
             column_keys=("name", "employees", "founded", "revenue", "domain"),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         buckets = [*result.written, *result.occupied, *(m.key for m in result.mismatched), *result.unanswered]
         self.assertEqual(sorted(buckets), sorted(("name", "employees", "founded", "revenue", "domain")))
         self.assertEqual(result.unanswered, ("revenue", "domain"))
+
+    def test_a_persons_unanswered_column_leaves_no_record_and_an_agents_carries_its_cause(self):
+        # A person has no cause to record: the columns they left blank
+        # stay absent from the ledger (never attempted). An agent's run
+        # names why it left a column blank, and that column gets the
+        # record. FAILS if a person's blank is recorded under a
+        # borrowed cause, or an agent's blank goes unrecorded.
+        from lists.constants import StoredCellState
+        from lists.models import ListCellState
+
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": ""}])
+        service.write_cells(
+            str(target.id),
+            str(row.id),
+            {"name": "typed"},
+            column_keys=("name", "employees"),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
+        )
+        recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(recorded, {"name": StoredCellState.FILLED})
+        service.write_cells(
+            str(target.id),
+            str(row.id),
+            {},
+            column_keys=("employees",),
+            source=CellSource.AGENT,
+            fill_run_id=None,
+            declined_cause=StoredCellState.NO_EVIDENCE,
+            tools={},
+        )
+        recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(recorded, {"name": StoredCellState.FILLED, "employees": StoredCellState.NO_EVIDENCE})
 
     def test_mixed_dict_partial_outcomes(self):
         service = _service()
@@ -138,7 +191,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name", "employees": "42", "founded": "next spring", "domain": ""},
             column_keys=("name", "employees", "founded", "domain"),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ("name",))
@@ -159,7 +215,10 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"note": "Series B, 2024"},
             column_keys=("note",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.assertEqual(result.written, ("note",))
         row.refresh_from_db()
@@ -175,7 +234,10 @@ class WriteIfBlankTests(TestCase):
                 "01RW" + "Z" * 22,
                 {"name": "x"},
                 column_keys=("name",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         with self.assertRaises(RowNotFound):  # a row outside the list is missing too
             service.write_cells(
@@ -183,7 +245,10 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         with self.assertRaises(ListNotFound):
             service.write_cells(
@@ -191,7 +256,10 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         with self.assertRaises(ListNotFound):  # cross-tenant reads as missing
             _service(account="01AC" + "Z" * 22).write_cells(
@@ -199,7 +267,10 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
 
 
@@ -339,7 +410,7 @@ class LockGranularityTests(TransactionTestCase):
             status=NodeRunStatus.READY,
         )
         assert flow.claim(str(task.id)) is not None
-        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",))
+        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",), CellSource.AGENT, None)
 
         def order(queries, *verbs):
             touched = []
@@ -353,7 +424,7 @@ class LockGranularityTests(TransactionTestCase):
 
         with CaptureQueriesContext(connection) as captured:
             run = CellRunResult(cells={"employees": "12"})
-            land_row(ctx, str(row.id), run, origin=CellOrigin(CellSource.AGENT), flow=flow, task_id=str(task.id))
+            land_row(ctx, str(row.id), run, flow=flow, task_id=str(task.id))
         self.assertEqual(
             order(captured.captured_queries, "update", "insert"),
             ["lists_listrow", "lists_listcellstate", "lists_noderun"],
@@ -375,7 +446,10 @@ class LockGranularityTests(TransactionTestCase):
                 str(row.id),
                 {"employees": "12"},
                 column_keys=("employees",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         locked = [q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"].upper()]
         self.assertTrue(locked, "the write took no row lock at all")

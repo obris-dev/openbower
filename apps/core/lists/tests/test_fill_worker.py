@@ -48,7 +48,6 @@ from ..constants import (
 from ..models import List, ListCellState, ListRow, NodeRun
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.provision import FillProvisionOperation
-from ..services.cell_truth import CellOrigin
 from ..services.fill_admission import FillAdmissionService
 from ..services.fills import FillService, page_progress
 from ..services.lists import ListService
@@ -435,7 +434,10 @@ class ManualFillTestCase(TransactionTestCase):
             str(rows[0].id),
             {"answer": "mine, typed by hand"},
             column_keys=("answer",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.run_fill(answering_model(lambda prompt: "what the model found"))
         task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))

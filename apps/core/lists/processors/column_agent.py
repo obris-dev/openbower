@@ -78,7 +78,6 @@ from ..constants import (
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
-from ..services.cell_truth import CellOrigin
 from ..services.fill_processing.cell_run import run_cell
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.lists import ListService, RowCursor
@@ -142,9 +141,9 @@ class _RunEnded(Exception):
 
 
 class _SheetLane(NamedTuple):
-    """A claimed run on a sheet row: the config to run, the row, where
-    its writes land, and the origin they carry (an agent's, under the
-    fill that owns the run or none). It LANDS on the row, and a config
+    """A claimed run on a sheet row: the config to run, the row, and
+    where its writes land and as what (an agent's, under the fill that
+    owns the run or none). It LANDS on the row, and a config
     that cannot run fails the whole fill when one owns the run (a
     config-tier fault fails every row identically) or is logged for an
     automatic run."""
@@ -152,15 +151,15 @@ class _SheetLane(NamedTuple):
     config: AgentConfig
     row_data: dict
     ctx: LandingContext
-    origin: CellOrigin
 
     def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
-        land_row(self.ctx, task.row_id, run_result, origin=self.origin, flow=flow, task_id=str(task.id))
+        land_row(self.ctx, task.row_id, run_result, flow=flow, task_id=str(task.id))
         return RunOutcome.LANDED
 
     def unrunnable(self, task: NodeRun, error: Exception) -> None:
-        if self.origin.fill_run_id is not None:
-            fill_progress.fail(self.origin.fill_run_id, code=FillFailureCode.MODEL_UNRUNNABLE, message=str(error))
+        fill_run_id = self.ctx.fill_run_id
+        if fill_run_id is not None:
+            fill_progress.fail(fill_run_id, code=FillFailureCode.MODEL_UNRUNNABLE, message=str(error))
             return
         logger.warning("autofill: node %s unrunnable (%s); settling task %s", task.node_id, error, task.id)
 
@@ -387,8 +386,10 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=consent.list_id,
             column_keys=tuple(consent.column_keys),
+            source=CellSource.AGENT,
+            fill_run_id=str(job.id),
         )
-        return _SheetLane(config=config, row_data=row.data, ctx=ctx, origin=CellOrigin(CellSource.AGENT, str(job.id)))
+        return _SheetLane(config=config, row_data=row.data, ctx=ctx)
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         row = ListRow.objects.filter(id=task.row_id).first()
@@ -425,8 +426,10 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=str(target_list.id),
             column_keys=column_keys,
+            source=CellSource.AGENT,
+            fill_run_id=None,
         )
-        return _SheetLane(config=config, row_data=row.data, ctx=ctx, origin=CellOrigin(CellSource.AGENT))
+        return _SheetLane(config=config, row_data=row.data, ctx=ctx)
 
     # Is work needed for a row? One rule per walk mode. The rule is
     # bound ONCE per page (a resume reads the page's one fact there) and

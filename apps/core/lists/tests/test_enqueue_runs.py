@@ -25,7 +25,6 @@ from lists.nodes.registry import COLUMN_AGENT
 from lists.processors import WalkMode, WalkScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.services import cell_truth, fill_progress
-from lists.services.cell_truth import CellOrigin
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.workflows import WorkflowService
@@ -199,7 +198,10 @@ class RemainingRuleTests(_Harness):
             str(self.rows[0].id),
             {"answer": "answered"},
             column_keys=("answer",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self._settle(self.rows[0], StoredCellState.FILLED)
         self._settle(self.rows[1], StoredCellState.NO_EVIDENCE)
@@ -209,7 +211,10 @@ class RemainingRuleTests(_Harness):
             str(self.rows[4].id),
             {"answer": "typed"},
             column_keys=("answer",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.rows = self.lists.rows_page(self.sheet, limit=10)
         processor = self._processor(
@@ -225,7 +230,10 @@ class RemainingRuleTests(_Harness):
                 str(row.id),
                 {"answer": "now answered"},
                 column_keys=("answer",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         self.assertEqual(processor.probe(self.sheet), (False, True))
 

@@ -24,7 +24,6 @@ from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
-from ..services.cell_truth import CellOrigin
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.fills import FillNotFound, FillService, page_progress
 from ..services.lists import CellWriteResult, ListService
@@ -83,6 +82,8 @@ def _ctx(fill: Job, task: NodeRun) -> LandingContext:
         account_id=ACCOUNT,
         list_id=fill.target_id,
         column_keys=("answer",),
+        source=CellSource.AGENT,
+        fill_run_id=str(fill.id),
     )
 
 
@@ -102,7 +103,6 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
             _ctx(fill, task),
             claimed.row_id,
             run,
-            origin=CellOrigin(CellSource.AGENT, str(fill.id)),
             flow=flow,
             task_id=str(claimed.id),
             lists=_SheetThatTakesEverything(account_id=ACCOUNT),
@@ -143,7 +143,6 @@ class TerminalWriteTests(TestCase):
                 _ctx(fill, task),
                 claimed.row_id,
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
-                origin=CellOrigin(CellSource.AGENT, str(fill.id)),
                 flow=original,
                 task_id=str(claimed.id),
                 lists=_SheetThatTakesEverything(account_id=ACCOUNT),

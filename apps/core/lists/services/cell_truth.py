@@ -25,7 +25,7 @@ in depth, not the guard.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from openbower_kernel.batches import iter_id_pages
 from openbower_schema.fills import CellRunResult
@@ -37,16 +37,6 @@ if TYPE_CHECKING:
     from .lists import CellWriteResult
 
 
-class CellOrigin(NamedTuple):
-    """Where a cell's record came from: who wrote it (an agent or a
-    person) and, for an agent's run, the fill that owns the run (None
-    for an automatic one). Read by the fills poll (a fill's counters
-    and a column's summary come off the records its fill wrote)."""
-
-    source: CellSource
-    fill_run_id: str | None = None
-
-
 def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
     """WHY an output the run did not answer is empty: the run's own
     cause, or NO_EVIDENCE when it recorded none (a run stored before
@@ -54,23 +44,26 @@ def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
     return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
 
 
-def column_states(written: CellWriteResult, *, declined_cause: StoredCellState) -> dict[str, StoredCellState]:
+def column_states(written: CellWriteResult, *, declined_cause: StoredCellState | None) -> dict[str, StoredCellState]:
     """One state per bucket of the write result: written or OCCUPIED
     is FILLED (an occupied cell holds a user's value that write-if-
     blank protected; re-running it would only buy a skip, and what the
     model said is in the stored run for a human to compare), a value
     the column's shape refused is TYPE_MISMATCH (its own cause, the
     user's next step differs), and an UNANSWERED column carries the
-    writer's declined cause, which keeps it targetable instead of
-    reading as answered. Every column the write was asked for is in
-    exactly one bucket, so this maps and never defaults."""
+    write's declined cause, which keeps it targetable instead of
+    reading as answered; a write with NO cause (a person's) leaves an
+    unanswered column with no record, which reads as never attempted.
+    Every column the write was asked for is in exactly one bucket, so
+    this maps and never defaults."""
     states: dict[str, StoredCellState] = {}
     for key in (*written.written, *written.occupied):
         states[key] = StoredCellState.FILLED
     for mismatch in written.mismatched:
         states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-    for key in written.unanswered:
-        states[key] = declined_cause
+    if declined_cause is not None:
+        for key in written.unanswered:
+            states[key] = declined_cause
     return states
 
 

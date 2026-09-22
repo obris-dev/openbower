@@ -22,7 +22,6 @@ from openbower_schema.fills import FillRunWire
 
 from ..constants import CellSource, StoredCellState
 from ..models import ListCellState, NodeRun
-from ..services.cell_truth import CellOrigin
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
 from .fill_helpers import (
@@ -113,7 +112,10 @@ class RefillTargetTests(RefillTestCase):
             str(rows[2].id),
             {"answer": "typed by hand"},
             column_keys=("answer",),
-            origin=CellOrigin(CellSource.MANUAL),
+            source=CellSource.MANUAL,
+            fill_run_id=None,
+            declined_cause=None,
+            tools={},
         )
         self.cancel(fill["id"])
 
@@ -154,7 +156,10 @@ class RefillTargetTests(RefillTestCase):
                 str(row.id),
                 {"answer": "done"},
                 column_keys=("answer",),
-                origin=CellOrigin(CellSource.MANUAL),
+                source=CellSource.MANUAL,
+                fill_run_id=None,
+                declined_cause=None,
+                tools={},
             )
         self.cancel(fill["id"])
 
