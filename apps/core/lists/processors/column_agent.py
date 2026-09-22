@@ -186,11 +186,6 @@ class AIColumnProcessor(NodeProcessor):
         agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
         return prompt_variables(agent.config().prompt)
 
-    def judged_keys(self, target_list: List) -> list[str]:
-        """The columns a REMAINING walk judges owed-ness across: the
-        walk's own set, else every column this node fills here."""
-        return list(self.scope.column_keys) or columns_for_node(target_list, str(self.node.id))
-
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
@@ -417,9 +412,9 @@ class AIColumnProcessor(NodeProcessor):
         if mode is WalkMode.FRESH:
             return self._judge_fresh(row)
         if mode is WalkMode.REMAINING:
-            return self._judge_remaining(target_list, row, resumed_owed)
+            return self._judge_remaining(row, resumed_owed)
         if mode is WalkMode.PUSHED:
-            return self._judge_pushed(target_list, row)
+            return self._judge_pushed(row)
         # A structural walk (a webhook column added, its wait set
         # changed) means nothing to an agent node.
         return _Verdict.DONE
@@ -428,24 +423,25 @@ class AIColumnProcessor(NodeProcessor):
         """A new fill: every row the prompt can act on."""
         return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
 
-    def _judge_remaining(self, target_list: List, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
-        """A refill: a row with a blank in the judged columns. A resume
+    def _judge_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
+        """A refill: a row with a blank in the scope's columns. A resume
         additionally offers only the rows the stopped fill still owed;
         that bound goes FIRST, so a row the stopped fill never consented
         to is not counted as dropped (which would blame the prompt for
         a row the scope excluded)."""
         if resumed_owed is not None and str(row.id) not in resumed_owed:
             return _Verdict.DONE
-        if all(has_value(row.data, key) for key in self.judged_keys(target_list)):
+        if all(has_value(row.data, key) for key in self.scope.column_keys):
             return _Verdict.DONE
         return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
 
-    def _judge_pushed(self, target_list: List, row: ListRow) -> _Verdict:
+    def _judge_pushed(self, row: ListRow) -> _Verdict:
         """Rows a push appended: the node runs unless the push filled
-        every column it owns here (write-if-blank would keep those
+        every column the scope names (the columns the node fills on the
+        sheet, as the starter read them; write-if-blank would keep those
         values, so a run would only buy a skip). A node filling no
-        column here owes nothing."""
-        keys = columns_for_node(target_list, str(self.node.id))
+        column owes nothing."""
+        keys = self.scope.column_keys
         if not keys or all(has_value(row.data, key) for key in keys):
             return _Verdict.DONE
         return _Verdict.OWED

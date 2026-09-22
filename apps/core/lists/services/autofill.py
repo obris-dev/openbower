@@ -32,12 +32,14 @@ def enqueue_rows(*, account_id: str, target_list: List, rows: list) -> int:
     runs queued; a re-enqueue of an already-queued (row, node) is a
     no-op under the open-run key, so this can under-count a redelivery
     (the sole caller ignores it)."""
-    node_ids = list(columns_by_node(target_list))
-    if not node_ids or not rows:
+    keys_by_node = columns_by_node(target_list)
+    if not keys_by_node or not rows:
         return 0
     now = timezone.now()
-    scope = WalkScope(mode=WalkMode.PUSHED)
     queued = 0
-    for node in WorkflowService(account_id=account_id).nodes_by_id(node_ids):
+    for node in WorkflowService(account_id=account_id).nodes_by_id(list(keys_by_node)):
+        # The columns the judgement looks at ride the scope: the starter
+        # decides them, the processor never reads the sheet for them.
+        scope = WalkScope(mode=WalkMode.PUSHED, column_keys=keys_by_node[str(node.id)])
         queued += processor_for(account_id=account_id, node=node, scope=scope).enqueue_runs(target_list, rows, now=now)
     return queued

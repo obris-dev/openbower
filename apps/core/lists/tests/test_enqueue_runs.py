@@ -199,7 +199,9 @@ class RemainingRuleTests(_Harness):
         self._settle(self.rows[2], StoredCellState.MODEL_ERROR)
         self.lists.write_cells(str(self.sheet.id), str(self.rows[4].id), {"answer": "typed"})
         self.rows = self.lists.rows_page(self.sheet, limit=10)
-        processor = self._processor(WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(fill.id)))
+        processor = self._processor(
+            WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(fill.id), column_keys=["answer"])
+        )
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
         self.assertEqual(self._numbers(self._runs(fill)), [2, 3])
         # Row 4 has no company: dropped, and the probe says so once
@@ -225,7 +227,12 @@ class RemainingRuleTests(_Harness):
                 last_state_change_at=NOW,
             )
         resumed = self._fill()
-        scope = WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(resumed.id), resumed_fill_id=str(stopped.id))
+        scope = WalkScope(
+            mode=WalkMode.REMAINING,
+            fill_run_id=str(resumed.id),
+            resumed_fill_id=str(stopped.id),
+            column_keys=["answer"],
+        )
         processor = self._processor(scope)
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
         self.assertEqual(self._numbers(self._runs(resumed)), [2, 3])
@@ -234,7 +241,7 @@ class RemainingRuleTests(_Harness):
 class PushedRuleTests(_Harness):
     def test_a_node_the_push_fully_filled_gets_no_run_and_the_rank_is_stamped(self):
         pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
-        processor = self._processor(WalkScope(mode=WalkMode.PUSHED))
+        processor = self._processor(WalkScope(mode=WalkMode.PUSHED, column_keys=["answer"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
         (run,) = list(self._runs())
         self.assertEqual(
@@ -242,17 +249,37 @@ class PushedRuleTests(_Harness):
         )
         self.assertEqual(self._numbers([run]), [6])
 
-    def test_a_node_filling_no_column_here_owes_a_pushed_row_nothing(self):
-        # The node's columns were removed from this sheet: there is
-        # nothing to fill, so the judgement says so instead of queuing a
-        # run the consumer would only settle unrun. FAILS if the no-
-        # column case reads as owed.
-        self.sheet.columns = [column for column in self.sheet.columns if column.kind != "ai"]
-        self.sheet.save(update_fields=["columns", "updated_at"])
+    def test_a_node_filling_no_column_owes_a_pushed_row_nothing(self):
+        # A scope naming no column (the node's columns were removed from
+        # the sheet): there is nothing to fill, so the judgement says so
+        # instead of queuing a run the consumer would only settle unrun.
+        # FAILS if the no-column case reads as owed.
         pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
         processor = self._processor(WalkScope(mode=WalkMode.PUSHED))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 0)
         self.assertFalse(self._runs().exists())
+
+    def test_the_pushed_rule_judges_the_scopes_columns_never_the_sheets(self):
+        # One entry point for the judged columns: the starter puts them
+        # on the scope. Here the scope names a column the push left
+        # blank while the sheet's own column for the node is filled, so
+        # the scope's answer (owed) and the sheet's (done) differ. FAILS
+        # if the rule reads the sheet again.
+        pushed = self.lists.add_rows(self.sheet, [{"company": "done.io", "answer": "sent"}])
+        processor = self._processor(WalkScope(mode=WalkMode.PUSHED, column_keys=["other"]))
+        self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
+
+    def test_the_autofill_service_hands_each_node_its_own_columns(self):
+        # The service reads the sheet ONCE and builds a scope per node
+        # carrying that node's keys, so a node the push fully filled
+        # gets no run and one it left blank does, through the real
+        # entry point. FAILS if the service stops carrying the keys.
+        from lists.services.autofill import enqueue_rows
+
+        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
+        self.assertEqual(enqueue_rows(account_id=ACCOUNT, target_list=self.sheet, rows=pushed), 1)
+        (run,) = list(self._runs())
+        self.assertEqual(run.row_id, str(pushed[0].id))
 
 
 class FillJobWalkTests(_Harness):

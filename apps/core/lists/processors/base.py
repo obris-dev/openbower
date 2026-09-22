@@ -109,9 +109,12 @@ class WalkScope(BaseModel):
     # still owed, its ABANDONED runs, are the only ones offered. "" =
     # the column's whole remainder.
     resumed_fill_id: str = ""
-    # The columns a REMAINING walk judges owed-ness across: the one
-    # column the user clicked for a widening gesture, the resumed
-    # fill's whole set for a Continue. Empty = the fill's own columns.
+    # The columns this walk judges across, DECIDED BY THE STARTER and
+    # never read off the sheet by the processor: for a REMAINING walk
+    # the one column the user clicked (a widening gesture) or the
+    # resumed fill's whole set (Continue); for a PUSHED walk the
+    # columns the node fills on the sheet, as the autofill service read
+    # them. Empty for the modes that judge by no column.
     column_keys: list[str] = []
 
 
