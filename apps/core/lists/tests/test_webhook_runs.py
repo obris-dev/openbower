@@ -30,6 +30,7 @@ from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
 from lists.services import advance, cell_truth
+from lists.services.cell_truth import CellTruth
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fill_processing.landing import LandingContext, land_row
@@ -125,7 +126,6 @@ class _SheetHarness(TestCase):
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
             column_keys=keys,
-            fill_run_id=None,
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
         self._land_row(ctx, run, node)
@@ -151,7 +151,7 @@ class _SheetHarness(TestCase):
         )
         claimed = flow.claim(str(task.id))
         assert claimed is not None
-        land_row(ctx, str(self.row.id), run, flow=flow, task_id=str(task.id))
+        land_row(ctx, str(self.row.id), run, truth=CellTruth.of_agent_run(None, run), flow=flow, task_id=str(task.id))
 
     def _webhook_runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK, row_id=str(self.row.id)).order_by("id")
@@ -405,7 +405,7 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None)
+        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys)
         self._land_row(ctx, ctx_run, self.second)
         advance.advance_rows(
             account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)

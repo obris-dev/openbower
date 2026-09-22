@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
 from openbower_kernel.batches import iter_id_pages
+from openbower_schema.fills import CellRunResult
 
 from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
 from ..models import ListCellState
@@ -47,6 +48,19 @@ class CellTruth(NamedTuple):
     fill_run_id: str | None = None
     declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE
     tools: Mapping[str, str] = {}
+
+    @classmethod
+    def of_agent_run(cls, fill_run_id: str | None, run_result: CellRunResult) -> CellTruth:
+        """The truth an agent's run lands under: its own declined cause
+        (NO_EVIDENCE when it recorded none: a run stored before causes
+        were, a give-up with nothing behind it) and its tool statuses,
+        for the fill that owns the run (None for an automatic one)."""
+        return cls(
+            source=CellSource.AGENT,
+            fill_run_id=fill_run_id,
+            declined_cause=StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE),
+            tools=run_result.tools,
+        )
 
 
 def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, StoredCellState]:

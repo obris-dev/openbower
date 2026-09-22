@@ -29,23 +29,21 @@ from django.db import transaction
 
 from openbower_schema.fills import CellRunResult
 
-from ...constants import CellSource, NodeRunStatus, StoredCellState
+from ...constants import NodeRunStatus, StoredCellState
 from ..cell_truth import CellTruth
 from ..lists import ListService
 from ..node_runs import NodeRunFlow
 
 
 class LandingContext(NamedTuple):
-    """Who a run lands for: the identity a row's writes need. A
-    fill-backed caller builds it from its fill job's consent (the
-    column set it owns, the job id the cells belong to); the automatic
-    path (autofill) builds it from the task plus the agent's resolved
-    column set, with `fill_run_id` NULL (the cell belongs to no run)."""
+    """Where a run lands: the sheet and the columns the run is
+    responsible for. A fill-backed caller builds it from its fill job's
+    consent (the column set it owns); the automatic path (autofill)
+    from the task plus the agent's resolved column set."""
 
     account_id: str
     list_id: str
     column_keys: tuple[str, ...]
-    fill_run_id: str | None
 
 
 class ClaimLost(Exception):
@@ -62,32 +60,23 @@ class Landed(NamedTuple):
     declined: StoredCellState
 
 
-def _declined_cause(run_result: CellRunResult) -> StoredCellState:
-    """WHY an output the run did not answer is empty: the run's own
-    cause, or NO_EVIDENCE when it recorded none (a run stored before
-    causes were, a give-up with nothing behind it)."""
-    return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
-
-
 def land_row(
     ctx: LandingContext,
     row_id: str,
     run_result: CellRunResult,
     *,
+    truth: CellTruth,
     flow: NodeRunFlow,
     task_id: str,
     lists: ListService | None = None,
 ) -> Landed | None:
-    """Write what a run produced onto its row, in one transaction, and
-    settle the run DONE through `flow` with the result stored on it.
+    """Write what a run produced onto its row under the truth its
+    caller built, in one transaction, and settle the run DONE through
+    `flow` with the result stored on it.
     Returns None when the settle missed (the lease was reclaimed):
     nothing was written. Raises the ListService's ListNotFound /
     RowNotFound as they are: a deleted sheet is the caller's story to
     resolve."""
-    declined = _declined_cause(run_result)
-    truth = CellTruth(
-        source=CellSource.AGENT, fill_run_id=ctx.fill_run_id, declined_cause=declined, tools=run_result.tools
-    )
     writer = lists or ListService(account_id=ctx.account_id)
     try:
         with transaction.atomic():
@@ -101,4 +90,4 @@ def land_row(
                 raise ClaimLost()
     except ClaimLost:
         return None
-    return Landed(frozenset((*written.written, *written.occupied)), declined)
+    return Landed(frozenset((*written.written, *written.occupied)), truth.declined_cause)

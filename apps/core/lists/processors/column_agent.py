@@ -77,6 +77,7 @@ from ..constants import (
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
+from ..services.cell_truth import CellTruth
 from ..services.fill_processing.cell_run import run_cell
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.lists import ListService, RowCursor
@@ -153,7 +154,8 @@ class _SheetLane(NamedTuple):
     fill_run_id: str | None
 
     def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
-        land_row(self.ctx, task.row_id, run_result, flow=flow, task_id=str(task.id))
+        truth = CellTruth.of_agent_run(self.fill_run_id, run_result)
+        land_row(self.ctx, task.row_id, run_result, truth=truth, flow=flow, task_id=str(task.id))
         return RunOutcome.LANDED
 
     def unrunnable(self, task: NodeRun, error: Exception) -> None:
@@ -385,7 +387,6 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=consent.list_id,
             column_keys=tuple(consent.column_keys),
-            fill_run_id=str(job.id),
         )
         return _SheetLane(config=config, row_data=row.data, ctx=ctx, fill_run_id=str(job.id))
 
@@ -424,7 +425,6 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=str(target_list.id),
             column_keys=column_keys,
-            fill_run_id=None,
         )
         return _SheetLane(config=config, row_data=row.data, ctx=ctx, fill_run_id=None)
 

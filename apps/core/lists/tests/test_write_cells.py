@@ -339,7 +339,7 @@ class LockGranularityTests(TransactionTestCase):
             status=NodeRunStatus.READY,
         )
         assert flow.claim(str(task.id)) is not None
-        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",), None)
+        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",))
 
         def order(queries, *verbs):
             touched = []
@@ -352,7 +352,8 @@ class LockGranularityTests(TransactionTestCase):
             return touched
 
         with CaptureQueriesContext(connection) as captured:
-            land_row(ctx, str(row.id), CellRunResult(cells={"employees": "12"}), flow=flow, task_id=str(task.id))
+            run = CellRunResult(cells={"employees": "12"})
+            land_row(ctx, str(row.id), run, truth=CellTruth.of_agent_run(None, run), flow=flow, task_id=str(task.id))
         self.assertEqual(
             order(captured.captured_queries, "update", "insert"),
             ["lists_listrow", "lists_listcellstate", "lists_noderun"],
