@@ -238,21 +238,7 @@ class AIColumnProcessor(NodeProcessor):
     # The execution.
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
-        if task.is_preview:
-            try:
-                config = AgentConfig(**task.input["config"])
-                row_data = task.input["row"]
-            except (KeyError, TypeError, ValidationError) as e:
-                # An input this build cannot read: settled unrun once, not
-                # parked to the attempt cap with the builder's button busy.
-                logger.warning("preview: run %s carries an unreadable input (%s); settling unrun", task.id, e)
-                _settle_unrun(flow, task)
-                return RunOutcome.DONE
-            lane: _Lane | RunOutcome = _Lane(config=config, ctx=None, row_data=row_data, fill_run_id=None)
-        elif task.fill_run_id:
-            lane = self._fill_lane(task, flow=flow)
-        else:
-            lane = self._live_lane(task, flow=flow)
+        lane = self._lane(task, flow=flow)
         if isinstance(lane, RunOutcome):
             return lane
         close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
@@ -279,6 +265,32 @@ class AIColumnProcessor(NodeProcessor):
             return RunOutcome.PARKED
         self._land(task, lane, result, close=close, flow=flow)
         return RunOutcome.DONE
+
+    def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+        """Which of the three lanes this run is on, by what the run
+        carries (its own input, a fill, or a row alone), and that lane's
+        config, row, and landing context; or the outcome that ends the
+        run before it executes (its subject is gone, its input is
+        unreadable)."""
+        if task.is_preview:
+            return self._preview_lane(task, flow=flow)
+        if task.fill_run_id:
+            return self._fill_lane(task, flow=flow)
+        return self._live_lane(task, flow=flow)
+
+    @staticmethod
+    def _preview_lane(task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+        try:
+            config = AgentConfig(**task.input["config"])
+            row_data = task.input["row"]
+        except (KeyError, TypeError, ValidationError) as e:
+            # An input this build cannot read: settled unrun once, not
+            # parked to the attempt cap with the builder's button busy.
+            logger.warning("preview: run %s carries an unreadable input (%s); settling unrun", task.id, e)
+            _settle_unrun(flow, task)
+            return RunOutcome.DONE
+        # No landing context: a run that owns its input lands on itself.
+        return _Lane(config=config, ctx=None, row_data=row_data, fill_run_id=None)
 
     def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
         from ..jobs.fill import FillJob
