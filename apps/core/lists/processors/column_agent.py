@@ -386,7 +386,7 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=consent.list_id,
             column_keys=tuple(consent.column_keys),
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
             fill_run_id=str(job.id),
         )
         return _SheetLane(config=config, row_data=row.data, ctx=ctx)
@@ -426,7 +426,7 @@ class AIColumnProcessor(NodeProcessor):
             account_id=task.account_id,
             list_id=str(target_list.id),
             column_keys=column_keys,
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
             fill_run_id=None,
         )
         return _SheetLane(config=config, row_data=row.data, ctx=ctx)

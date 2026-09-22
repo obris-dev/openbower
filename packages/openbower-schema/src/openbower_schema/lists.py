@@ -224,6 +224,12 @@ WireCellState = Literal[
     # the row's retries) parks first and lands after the attempt cap.
     "tool_not_configured",
     "tool_unavailable",
+    # A Send webhook column's cell (the column holds no value): the
+    # row's digest delivered, or its last send gave up (the delivery
+    # log says why). While a send is owed the cell is `pending`, off
+    # the open run, exactly as an agent cell is.
+    "sent",
+    "failed",
 ]
 
 
@@ -241,15 +247,6 @@ class CellStateWire(BaseModel):
     tools: dict[str, str] = {}
 
 
-# A Send webhook column's per-row word, derived from the row's NEWEST
-# run for that column: `waiting` while a run is owed (the row completed
-# and its digest has not gone out, or went out and is being retried),
-# `sent` once one delivered, `failed` when the last one gave up. A row
-# with no entry has never been due for that column (never complete, or
-# the column was added after and the row was not complete then).
-WebhookCellState = Literal["waiting", "sent", "failed"]
-
-
 class ListRowWire(BaseModel):
     """A row in SHEET ORDER: the page's array order is the order, and a
     row number is whatever the renderer counts. Nothing about order
@@ -260,15 +257,11 @@ class ListRowWire(BaseModel):
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},
-        description="AI cell states keyed by column key: every cell without a value, plus "
-        "filled cells whose run had a degraded tool. Slim on absences by contract, so a "
-        "long-filled sheet carries almost nothing here. A value in `data` with no entry here "
-        "IS filled and clean, and never-attempted is likewise an absence.",
-    )
-    webhooks: dict[str, WebhookCellState] = Field(
-        default={},
-        description="Send webhook cell words keyed by the webhook column's key, off the row's newest "
-        "run for that column. Absent for a row that has never been due for the column.",
+        description="Cell states keyed by column key, for every node column (AI and Send webhook "
+        "alike): every cell without a value, plus filled cells whose run had a degraded tool. "
+        "Slim on absences by contract, so a long-filled sheet carries almost nothing here. A "
+        "value in `data` with no entry here IS filled and clean; never-attempted (an AI cell no "
+        "fill reached, a webhook cell whose row was never due) is likewise an absence.",
     )
 
 

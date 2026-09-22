@@ -16,7 +16,7 @@ from lists.services.fill_progress import word_of
 from openbower_schema.fills import FillStatusWire
 from openbower_schema.lists import ColumnType as WireColumnType
 from openbower_schema.lists import ListOrigin as WireListOrigin
-from openbower_schema.lists import WebhookCellState, WireCellState
+from openbower_schema.lists import WireCellState
 from openbower_schema.runs import OPEN_NODE_RUN_STATES, NodeRunStatusWire
 
 
@@ -33,9 +33,6 @@ class WireEnumParityTests(SimpleTestCase):
         # typed over the wire vocabulary, so a new stored state must
         # reach it.
         self.assertEqual(set(get_args(WireCellState)) - {"pending"}, {v.value for v in constants.StoredCellState})
-
-    def test_webhook_cell_state_parity(self):
-        self.assertEqual(set(get_args(WebhookCellState)), {v.value for v in constants.WebhookCellWord})
 
     def test_node_run_status_parity(self):
         # The contract's status literal and its OPEN partition are the

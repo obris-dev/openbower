@@ -209,15 +209,6 @@ class WebhookColumnErrorCode(StrEnum):
     COLUMN_NOT_DATA = "column_not_data"
 
 
-class WebhookCellWord(StrEnum):
-    """What a Send webhook cell says for a row, off its newest run: the
-    server side of the wire's WebhookCellState (parity pinned)."""
-
-    WAITING = "waiting"
-    SENT = "sent"
-    FAILED = "failed"
-
-
 class WebhookRunOutcome(StrEnum):
     """What a webhook run's stored result says about its delivery. SENT
     and FAILED are what a DONE run holds; RETRYING rides a run parked
@@ -360,13 +351,13 @@ CELL_SOURCE_MAX_LENGTH = 8
 
 
 class CellSource(StrEnum):
-    """Who wrote a cell's state: an AGENT (a fill's run or an automatic
-    one; which fill, if any, is the record's fill_run_id) or a person
+    """Who wrote a cell's state: a NODE's run (an agent's, a webhook's;
+    which fill, if any, is the record's fill_run_id) or a person
     (MANUAL, once the grid can be edited; that writer does not exist
     yet). Completion is source-agnostic: a filled cell is done whoever
     filled it."""
 
-    AGENT = "agent"
+    NODE = "node"
     MANUAL = "manual"
 
 
@@ -422,6 +413,13 @@ class StoredCellState(StrEnum):
     # Continue re-targets it.
     TOOL_NOT_CONFIGURED = "tool_not_configured"
     TOOL_UNAVAILABLE = "tool_unavailable"
+    # A column that holds no value (a Send webhook's) records its
+    # outcome here instead: the row's digest delivered, or its last
+    # send gave up (the delivery log says why). Waiting is not stored:
+    # an open run covering the column IS waiting, as a queued run IS
+    # pending for an agent column.
+    SENT = "sent"
+    FAILED = "failed"
 
 
 # The causes that PARK a row for retry instead of settling a cell (the

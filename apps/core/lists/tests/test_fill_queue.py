@@ -82,7 +82,7 @@ def _ctx(fill: Job, task: NodeRun) -> LandingContext:
         account_id=ACCOUNT,
         list_id=fill.target_id,
         column_keys=("answer",),
-        source=CellSource.AGENT,
+        source=CellSource.NODE,
         fill_run_id=str(fill.id),
     )
 

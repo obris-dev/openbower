@@ -122,7 +122,7 @@ class _Harness(TestCase):
             fill_run_id=None,
             states={"answer": state},
             tools={},
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
         )
 
 

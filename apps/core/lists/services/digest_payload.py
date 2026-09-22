@@ -16,13 +16,16 @@ from ..constants import StoredCellState
 from ..models import List
 
 # A column is DONE for a row when it holds an answer or a blank with a
-# reason. A retryable failure (a timeout, a missing tool) is neither:
-# the refill re-runs it, so a row carrying one is not complete yet, and
+# reason, or, for a column that holds no value, when its send went out.
+# A retryable failure (a timeout, a missing tool) is neither: the
+# refill re-runs it, so a row carrying one is not complete yet, and
 # shipping it would mean shipping it again under a new completion once
-# the retry lands. A blank with a reason is a real outcome for the
-# receiver whichever prompt produced it; that the sheet re-asks on its
-# next fill is the sheet's business, not the receiver's.
-DONE_CELL_STATES: frozenset[str] = frozenset({StoredCellState.FILLED, *SETTLED_CELL_STATES})
+# the retry lands. A failed send is not done either: nothing reached
+# the receiver, and a barrier behind it must not open. A blank with a
+# reason is a real outcome for the receiver whichever prompt produced
+# it; that the sheet re-asks on its next fill is the sheet's business,
+# not the receiver's.
+DONE_CELL_STATES: frozenset[str] = frozenset({StoredCellState.FILLED, StoredCellState.SENT, *SETTLED_CELL_STATES})
 
 
 def completion_of(records: Mapping[str, tuple[str, datetime]], wait_keys: list[str]) -> datetime | None:

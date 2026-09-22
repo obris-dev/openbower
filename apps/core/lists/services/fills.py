@@ -17,10 +17,11 @@ from agents.constants import ToolStatus
 from jobs.constants import OPEN_JOB_STATES
 from jobs.models import Job
 from openbower_schema.fills import ColumnFillSummary, FillCounters
-from openbower_schema.lists import AiColumn, CellStateWire
+from openbower_schema.lists import AiColumn, CellStateWire, WebhookColumn
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
 from ..models import List, ListCellState, ListRow, NodeRun
+from ..nodes.registry import WEBHOOK
 from . import fill_progress
 from .cell_states import CellStateService
 from .node_runs import NodeRunFlow
@@ -141,56 +142,73 @@ class FillService:
         return self.get(fill_run_id)
 
     def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, CellStateWire]]:
-        """row id -> {column key: CellStateWire} for one page of rows.
+        """row id -> {column key: CellStateWire} for one page of rows,
+        every node column's (AI and Send webhook alike), off ONE ledger.
 
         Two sources, and neither is a stored "pending":
 
-        DIAGNOSED BLANKS come from ListCellState, one indexed query,
+        RECORDED states come from ListCellState, one indexed query,
         each with the tool statuses of the run that wrote it. FILLED
         travels ONLY when that run had a degraded tool (the value is
         the renderer's already; the mark beside it is not): a clean
         filled cell is the absence of an entry. Never-attempted is
         the absence of a record.
 
-        PENDING is DERIVED: a cell is pending when a queued task on an
-        open fill covers its column. The fill's column set was frozen
-        at consent and the queue still holds it, so this is exact
-        without anything having been written to the sheet at admission
-        and without anything needing to be swept when a fill stops.
+        PENDING is DERIVED from the open runs covering a cell: for an
+        AI column, a queued run on an open fill whose consent names
+        the column; for a webhook column, an open run of its node for
+        the row (a send owed, or being retried). Nothing is written to
+        the sheet at admission and nothing needs sweeping at a stop.
 
-        Pending is applied SECOND on purpose: a cell an earlier fill
-        diagnosed and an open fill has re-queued is being worked on
+        Pending is applied SECOND on purpose: a cell an earlier run
+        diagnosed and an open one has re-queued is being worked on
         now, and that is what the user should see.
         """
         ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
-        if not ai_keys or not rows:
+        webhook_key_by_node = {
+            column.node_id: column.key for column in target_list.columns if isinstance(column, WebhookColumn)
+        }
+        keys = ai_keys | set(webhook_key_by_node.values())
+        if not keys or not rows:
             return {}
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
-        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=ai_keys)
+        recorded = self.cell_states.iter_recorded(str(target_list.id), row_ids=row_ids, column_keys=keys)
         for row_id, column_key, state, tools in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())
             if state == StoredCellState.FILLED and not degraded:
                 continue
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
-        live = {
-            fill_run_id: [key for key in consent.column_keys if key in ai_keys]
-            for fill_run_id, consent in fill_progress.iter_consents(
-                fill_progress.open_fills().filter(account_id=self.account_id, target_id=str(target_list.id))
-            )
-        }
-        if not live:
-            return states
-        queued = NodeRun.objects.filter(
-            account_id=self.account_id,
-            fill_run_id__in=list(live),
-            row_id__in=row_ids,
-            status__in=NON_TERMINAL_NODE_RUN_STATES,
-        ).values_list("fill_run_id", "row_id")
-        for fill_run_id, row_id in queued:
-            for column_key in live[fill_run_id]:
-                states.setdefault(row_id, {})[column_key] = CellStateWire(state=PENDING)
+        if ai_keys:
+            live = {
+                fill_run_id: [key for key in consent.column_keys if key in ai_keys]
+                for fill_run_id, consent in fill_progress.iter_consents(
+                    fill_progress.open_fills().filter(account_id=self.account_id, target_id=str(target_list.id))
+                )
+            }
+            if live:
+                queued = NodeRun.objects.filter(
+                    account_id=self.account_id,
+                    fill_run_id__in=list(live),
+                    row_id__in=row_ids,
+                    status__in=NON_TERMINAL_NODE_RUN_STATES,
+                ).values_list("fill_run_id", "row_id")
+                for fill_run_id, row_id in queued:
+                    for column_key in live[fill_run_id]:
+                        states.setdefault(row_id, {})[column_key] = CellStateWire(state=PENDING)
+        if webhook_key_by_node:
+            # One query on the open-run key: (row, node) over the open
+            # null-fill runs.
+            owed = NodeRun.objects.filter(
+                account_id=self.account_id,
+                kind=WEBHOOK,
+                node_id__in=list(webhook_key_by_node),
+                row_id__in=row_ids,
+                status__in=NON_TERMINAL_NODE_RUN_STATES,
+            ).values_list("row_id", "node_id")
+            for row_id, node_id in owed:
+                states.setdefault(row_id, {})[webhook_key_by_node[node_id]] = CellStateWire(state=PENDING)
         return states
 
     def column_summaries(self, target_list: List) -> list[ColumnFillSummary]:

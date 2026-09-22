@@ -356,6 +356,31 @@ class ListService:
             )
         return written
 
+    def record_states(
+        self,
+        list_id: str,
+        row_id: str,
+        states: dict[str, StoredCellState],
+        *,
+        source: CellSource,
+        fill_run_id: str | None,
+        tools: Mapping[str, str],
+    ) -> None:
+        """The ledger alone, for a node whose column holds no value (a
+        Send webhook's: SENT, or FAILED): the same records write_cells
+        writes beside a value, under the same identity, so the rows
+        page, the counts and the barriers read one ledger whatever the
+        column's kind."""
+        cell_truth.write(
+            account_id=self.account_id,
+            list_id=list_id,
+            row_id=row_id,
+            fill_run_id=fill_run_id,
+            states=states,
+            tools=dict(tools),
+            source=source,
+        )
+
     def _write_values(
         self, list_id: str, row_id: str, cells: dict[str, str], *, column_keys: Sequence[str]
     ) -> CellWriteResult:

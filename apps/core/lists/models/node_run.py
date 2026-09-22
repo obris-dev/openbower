@@ -208,10 +208,10 @@ class NodeRun(AccountScopedModel):
                 condition=models.Q(status=NodeRunStatus.DEFERRED),
             ),
             # The NEWEST run per (row, node) for one page of rows (the
-            # rows page's cell word, the digest's re-check). The due
-            # index leads with the node and would walk its whole history
-            # to answer for a page. Partial on the kind for the same
-            # reason as the due index.
+            # webhook kind's owed-ness: a completion newer than its
+            # newest run). The due index leads with the node and would
+            # walk its whole history to answer for a page. Partial on
+            # the kind for the same reason as the due index.
             models.Index(
                 fields=["row_id", "node_id", "-id"],
                 name="node_run_cell_idx",

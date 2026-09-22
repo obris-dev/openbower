@@ -4,7 +4,9 @@ next boundary of the node's cadence, so every row completing inside
 one window rides one digest. The barrier is the wait node ahead of the
 webhook on its path; this is the ONE place that resolves it to columns
 (the flush, the backfill, the advance, and the column's config read all
-ask here). The walk scope is irrelevant to this kind: a webhook judges
+ask here). What a send made of each row lands on the cell ledger like
+any other column's outcome (SENT, FAILED), so the rows page, the
+counts and a barrier behind this column read one ledger. The walk scope is irrelevant to this kind: a webhook judges
 every pass the same way.
 
 Its runs execute per NODE, not per run: `_process_batch` is one tick's
@@ -23,16 +25,20 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import ClassVar, NamedTuple
 
+from django.db import transaction
+
+from openbower_schema.lists import WebhookColumn
 from webhooks.constants import DeliveryStatus
 from webhooks.models import WebhookDestination
 from webhooks.services import Sent, WebhookDestinationService
 
-from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus, WebhookRunOutcome
+from ..constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import WEBHOOK
 from ..nodes.webhook import Webhook
 from ..services.cell_states import CellStateService
 from ..services.digest_payload import build_digest_data, build_digest_item, completion_of
+from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
 from ..services.webhook_paths import wait_keys_for
 from ..services.webhook_runs import WebhookRunResult
@@ -69,14 +75,16 @@ class _BatchEnded(Exception):
     told, raised as the builder's last act so it hands back one shape."""
 
 
-class _BatchLane(NamedTuple):
+class _SendableBatch(NamedTuple):
     """One node's claimed batch, resolved and ready to send: the
-    destination, the digest's inputs (the sheet, the barrier's columns,
-    the payload's), the window a park goes to, and the sendable runs in
-    sheet order with their rows, cell records and completion times."""
+    destination, the digest's inputs (the sheet, the column this node
+    is on the sheet, the barrier's columns, the payload's), the window
+    a park goes to, and the sendable runs in sheet order with their
+    rows, cell records and completion times."""
 
     destination: WebhookDestination
     target_list: List
+    column_key: str
     wait_keys: list[str]
     payload_keys: list[str]
     window: datetime
@@ -92,14 +100,16 @@ class WebhookProcessor(NodeProcessor):
     def _process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
         tally = BatchTally()
         try:
-            lane = self._lane(tasks, flow=flow, now=now, tally=tally)
+            batch = self._resolve(tasks, flow=flow, now=now, tally=tally)
         except _BatchEnded:
             return tally
-        sent = self._deliver(lane, now=now)
-        self._settle(flow, lane.sendable, sent, window=lane.window, tally=tally)
+        sent = self._deliver(batch, now=now)
+        self._settle(flow, batch, sent, tally=tally)
         return tally
 
-    def _lane(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime, tally: BatchTally) -> _BatchLane:
+    def _resolve(
+        self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime, tally: BatchTally
+    ) -> _SendableBatch:
         """Resolve what the batch needs or end it: a paused column or a
         disabled destination hands the batch back untouched (its window
         stays, the attempt is handed back, the next tick finds it due
@@ -167,9 +177,18 @@ class WebhookProcessor(NodeProcessor):
         if not sendable:
             raise _BatchEnded()
         by_key = {column.key: column for column in target_list.columns}
-        return _BatchLane(
+        column_key = next(
+            (c.key for c in target_list.columns if isinstance(c, WebhookColumn) and c.node_id == str(self.node.id)), ""
+        )
+        if not column_key:
+            # The column is gone from the sheet while its node lingers:
+            # nothing to land the outcome on, and nothing to send for.
+            tally.failed += fail_claimed(flow, sendable, error=COLUMN_REMOVED)
+            raise _BatchEnded()
+        return _SendableBatch(
             destination=destination,
             target_list=target_list,
+            column_key=column_key,
             wait_keys=wait_keys,
             payload_keys=[key for key in webhook.payload_keys if key in by_key],
             window=window,
@@ -179,7 +198,7 @@ class WebhookProcessor(NodeProcessor):
             completed_at=completed_at,
         )
 
-    def _deliver(self, lane: _BatchLane, *, now: datetime) -> Sent:
+    def _deliver(self, batch: _SendableBatch, *, now: datetime) -> Sent:
         """ONE digest of the sendable rows, delivered OUTSIDE any
         transaction: the POST is the slow, external part, and nothing
         here holds one open. Every attempt is its own delivery row and
@@ -190,29 +209,30 @@ class WebhookProcessor(NodeProcessor):
             build_digest_item(
                 scope=node_id,
                 row_id=run.row_id,
-                cells={key: str(lane.rows[run.row_id].data.get(key) or "") for key in lane.payload_keys},
-                states={key: state for key, (state, _updated_at) in lane.records[run.row_id].items()},
-                completed_at=lane.completed_at[run.row_id],
+                cells={key: str(batch.rows[run.row_id].data.get(key) or "") for key in batch.payload_keys},
+                states={key: state for key, (state, _updated_at) in batch.records[run.row_id].items()},
+                completed_at=batch.completed_at[run.row_id],
                 sent_at=now,
                 test=False,
             )
-            for run in lane.sendable
+            for run in batch.sendable
         ]
-        data = build_digest_data(lane.target_list, waited_on=lane.wait_keys, items=items)
-        destinations = WebhookDestinationService(account_id=self.account_id, user_id=lane.destination.user_id)
-        return destinations.deliver(lane.destination, test=False, data=data)
+        data = build_digest_data(batch.target_list, waited_on=batch.wait_keys, items=items)
+        destinations = WebhookDestinationService(account_id=self.account_id, user_id=batch.destination.user_id)
+        return destinations.deliver(batch.destination, test=False, data=data)
 
-    def _settle(
-        self, flow: NodeRunFlow, runs: list[NodeRun], sent: Sent, *, window: datetime, tally: BatchTally
-    ) -> None:
-        """Settle by what came back: sent, or parked to the next window
-        on a transient failure until the attempt cap, or failed at once
-        on a rejection."""
+    def _settle(self, flow: NodeRunFlow, batch: _SendableBatch, sent: Sent, *, tally: BatchTally) -> None:
+        """Land what came back: SENT on every row's cell (the column's
+        record on the ledger, then the runs closed, in the landing's
+        lock order), or parked to the next window on a transient
+        failure until the attempt cap, or FAILED at once on a
+        rejection. A retry in flight records nothing: the open run IS
+        the cell's pending."""
         delivery = sent.delivery
-        ids = [str(run.id) for run in runs]
+        runs = batch.sendable
         if delivery.status == DeliveryStatus.OK:
             result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
-            tally.settled += flow.settle_many(ids, result.model_dump(), status=NodeRunStatus.DONE)
+            tally.settled += self._land(flow, batch, runs, StoredCellState.SENT, result)
             # A run the reclaim took back mid-flight is re-offered too:
             # the advance is idempotent, and its row did complete.
             tally.settled_rows.extend((run.list_id, run.row_id) for run in runs if run.row_id)
@@ -220,17 +240,45 @@ class WebhookProcessor(NodeProcessor):
         failed = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error)
         if delivery.status != DeliveryStatus.TRANSIENT:
             # Rejected or blocked: a retry buys the same answer.
-            tally.failed += flow.settle_many(ids, failed.model_dump(), status=NodeRunStatus.DONE)
+            tally.failed += self._land(flow, batch, runs, StoredCellState.FAILED, failed)
             return
         # Transient: the attempt the claim stamped counts; past the cap
         # the run fails, the rest wait for the next window.
-        exhausted = [str(run.id) for run in runs if run.attempts > NODE_RUN_ATTEMPTS]
+        exhausted = [run for run in runs if run.attempts > NODE_RUN_ATTEMPTS]
         retrying = [str(run.id) for run in runs if run.attempts <= NODE_RUN_ATTEMPTS]
-        tally.failed += flow.settle_many(exhausted, failed.model_dump(), status=NodeRunStatus.DONE)
+        tally.failed += self._land(flow, batch, exhausted, StoredCellState.FAILED, failed)
         parked = WebhookRunResult(
             outcome=WebhookRunOutcome.RETRYING, delivery_id=str(delivery.id), error=delivery.error
         )
-        tally.parked += flow.park_batch(retrying, not_before=window, result=parked.model_dump())
+        tally.parked += flow.park_batch(retrying, not_before=batch.window, result=parked.model_dump())
+
+    def _land(
+        self,
+        flow: NodeRunFlow,
+        batch: _SendableBatch,
+        runs: Sequence[NodeRun],
+        state: StoredCellState,
+        result: WebhookRunResult,
+    ) -> int:
+        """The batch's landing: one cell record per row (this node's
+        column, SENT or FAILED, under the node as writer and no fill),
+        then the runs closed DONE with the result stored, one
+        transaction, ListCellState before NodeRun (the order the
+        deletes take)."""
+        if not runs:
+            return 0
+        lists = ListService(account_id=self.account_id)
+        with transaction.atomic():
+            for run in runs:
+                lists.record_states(
+                    str(batch.target_list.id),
+                    run.row_id,
+                    {batch.column_key: state},
+                    source=CellSource.NODE,
+                    fill_run_id=None,
+                    tools={},
+                )
+            return flow.settle_many([str(run.id) for run in runs], result.model_dump(), status=NodeRunStatus.DONE)
 
     def wait_keys(self, target_list: List) -> list[str]:
         """The columns the barrier ahead of this node waits on, in sheet

@@ -241,9 +241,9 @@ export function SheetTable({
                   className={`px-4 py-2.5 ${isNumericColumn(column) ? "text-right tabular-nums" : ""}`}
                 >
                   {kind === "webhook" ? (
-                    // The column holds no value: its cell is the word
-                    // the row's newest send left, off THIS row object.
-                    <WebhookCellState word={row.webhooks[column.key]} />
+                    // The column holds no value: its cell is its state
+                    // off the same ledger as an AI cell's.
+                    <WebhookCellState entry={row.states?.[column.key]} />
                   ) : state !== undefined ? (
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's

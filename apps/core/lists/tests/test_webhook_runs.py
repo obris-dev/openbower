@@ -22,7 +22,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, TickReport
-from lists.constants import CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
+from lists.constants import CellSource, NodeRunStatus, StoredCellState
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
@@ -33,10 +33,10 @@ from lists.services import advance, cell_truth
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fill_processing.landing import LandingContext, land_row
+from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
-from lists.services.webhook_runs import WebhookRunResult
 from lists.services.workflows import NodeNotFound, WorkflowService
 from openbower_schema.fills import CellRunResult
 from openbower_schema.lists import ListRowsPage
@@ -125,7 +125,7 @@ class _SheetHarness(TestCase):
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
             column_keys=keys,
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
             fill_run_id=None,
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
@@ -281,7 +281,7 @@ class ProcessorTests(_SheetHarness):
                 fill_run_id=None,
                 states=states,
                 tools={},
-                source=CellSource.AGENT,
+                source=CellSource.NODE,
             )
 
 
@@ -364,7 +364,7 @@ class AdvanceTests(_SheetHarness):
                 fill_run_id=None,
                 states={"country": StoredCellState.FILLED},
                 tools={},
-                source=CellSource.AGENT,
+                source=CellSource.NODE,
             )
         offers: list[list[str]] = []
         real = WebhookProcessor.enqueue_runs
@@ -406,7 +406,7 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, CellSource.AGENT, None)
+        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, CellSource.NODE, None)
         self._land_row(ctx, ctx_run, self.second)
         advance.advance_rows(
             account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)
@@ -510,7 +510,7 @@ class _BackfilledSheet(_SheetHarness):
                 fill_run_id=None,
                 states=states,
                 tools={},
-                source=CellSource.AGENT,
+                source=CellSource.NODE,
             )
 
     def _runs(self):
@@ -677,58 +677,60 @@ class BackfillTests(_BackfilledSheet):
         self.assertEqual([r.row_id for r in fresh], [str(self.row.id)])
 
 
-class CellWordTests(_BackfilledSheet):
-    """The cell's word off the row's newest run for its webhook column."""
+class CellStateTests(_BackfilledSheet):
+    """A Send webhook column's cell speaks off the ONE ledger: SENT or
+    FAILED recorded at the send's landing, pending off an open run,
+    absence when the row was never due."""
 
-    def _words(self) -> dict[str, dict[str, str]]:
+    def _states(self) -> dict[str, dict[str, str]]:
         rows = [self.row, self.second_row, self.third_row]
-        columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
-        return {row_id: dict(words) for row_id, words in columns.cell_states_for_rows(self.sheet, rows).items()}
+        states = FillService(account_id=ACCOUNT).cell_states_for_rows(self.sheet, rows)
+        return {
+            row_id: {key: entry.state for key, entry in entries.items() if key == "crm_sync"}
+            for row_id, entries in states.items()
+        }
 
-    def test_the_three_words_and_the_absence(self):
+    def test_sent_failed_pending_and_the_absence(self):
         self._add_webhook_column(["country", "answer"])
         first, second = list(self._runs())
-        NodeRun.objects.filter(id=first.id).update(
-            status=NodeRunStatus.DONE,
-            result=WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id="d").model_dump(),
-        )
-        NodeRun.objects.filter(id=second.id).update(
-            status=NodeRunStatus.DONE, result=WebhookRunResult(outcome=WebhookRunOutcome.FAILED, error="x").model_dump()
-        )
+        lists = ListService(account_id=ACCOUNT)
+        for run, state in ((first, StoredCellState.SENT), (second, StoredCellState.FAILED)):
+            lists.record_states(
+                str(self.sheet.id), run.row_id, {"crm_sync": state}, source=CellSource.NODE, fill_run_id=None, tools={}
+            )
+            NodeRun.objects.filter(id=run.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(
-            self._words(),
+            {row_id: words for row_id, words in self._states().items() if words},
             {str(self.row.id): {"crm_sync": "sent"}, str(self.second_row.id): {"crm_sync": "failed"}},
         )
-        # Row 3 was never complete: no run, no word. A run parked mid-
-        # retry is open, so it reads waiting.
-        NodeRun.objects.filter(id=second.id).update(
-            status=NodeRunStatus.DEFERRED,
-            result=WebhookRunResult(outcome=WebhookRunOutcome.RETRYING, error="x").model_dump(),
-        )
-        self.assertEqual(self._words()[str(self.second_row.id)], {"crm_sync": "waiting"})
+        # Row 3 was never complete: no run, no record, no word. A run
+        # parked mid-retry is open, so its cell reads pending over the
+        # failed record beneath it.
+        NodeRun.objects.filter(id=second.id).update(status=NodeRunStatus.DEFERRED)
+        self.assertEqual(self._states()[str(self.second_row.id)], {"crm_sync": "pending"})
 
-    def test_the_newest_run_speaks_after_a_re_completion(self):
+    def test_a_re_completion_reads_pending_over_a_sent_record(self):
         self._add_webhook_column(["country", "answer"])
         (first, _second) = list(self._runs())
-        NodeRun.objects.filter(id=first.id).update(
-            status=NodeRunStatus.DONE,
-            result=WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id="d").model_dump(),
+        ListService(account_id=ACCOUNT).record_states(
+            str(self.sheet.id),
+            first.row_id,
+            {"crm_sync": StoredCellState.SENT},
+            source=CellSource.NODE,
+            fill_run_id=None,
+            tools={},
         )
-        self.assertEqual(self._words()[str(self.row.id)], {"crm_sync": "sent"})
+        NodeRun.objects.filter(id=first.id).update(status=NodeRunStatus.DONE)
+        self.assertEqual(self._states()[str(self.row.id)], {"crm_sync": "sent"})
         self._land(self.second, {"country": "CA"}, now=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
-        self.assertEqual(self._words()[str(self.row.id)], {"crm_sync": "waiting"})
+        self.assertEqual(self._states()[str(self.row.id)], {"crm_sync": "pending"})
 
     def test_a_run_retired_for_a_missing_row_says_nothing(self):
         self._add_webhook_column(["country", "answer"])
         self._runs().update(status=NodeRunStatus.ROW_MISSING)
-        self.assertEqual(self._words(), {})
+        self.assertEqual({row_id: words for row_id, words in self._states().items() if words}, {})
 
-    def test_a_sheet_without_a_webhook_column_pays_no_query(self):
-        with CaptureQueriesContext(connection) as queries:
-            self.assertEqual(self._words(), {})
-        self.assertEqual(len(queries.captured_queries), 0)
-
-    def test_the_rows_page_carries_the_words_in_one_query(self):
+    def test_the_rows_page_carries_the_states_in_one_ledger_read(self):
         self._add_webhook_column(["country", "answer"])
         login_session(self.client)
         url = reverse("lists_rows", kwargs={"id": str(self.sheet.id)})
@@ -736,9 +738,13 @@ class CellWordTests(_BackfilledSheet):
             resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200, resp.content)
         page = ListRowsPage(**resp.json())
-        self.assertEqual([item.webhooks for item in page.items], [{"crm_sync": "waiting"}, {"crm_sync": "waiting"}, {}])
+        self.assertEqual(
+            [item.states.get("crm_sync").state if "crm_sync" in item.states else None for item in page.items],
+            ["pending", "pending", None],
+        )
+        ledger_reads = [q["sql"] for q in queries.captured_queries if "lists_listcellstate" in q["sql"]]
         run_reads = [q["sql"] for q in queries.captured_queries if "lists_noderun" in q["sql"]]
-        self.assertEqual(len(run_reads), 1)
+        self.assertEqual((len(ledger_reads), len(run_reads)), (1, 1))
 
 
 class CustodyTests(_BackfilledSheet):

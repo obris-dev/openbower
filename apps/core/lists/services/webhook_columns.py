@@ -8,7 +8,6 @@ lists service."""
 
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime
 
 from django.db import transaction
@@ -20,7 +19,7 @@ from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
-from ..constants import WebhookCellWord, WebhookColumnErrorCode
+from ..constants import WebhookColumnErrorCode
 from ..jobs.enqueue_runs import EnqueueRuns
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
@@ -32,7 +31,6 @@ from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
 from .webhook_paths import inbound_paths_for
-from .webhook_runs import cell_words_for
 from .workflows import WorkflowService, config_as
 
 
@@ -180,25 +178,6 @@ class WebhookColumnService:
             user_id=self.user_id,
             target_id=str(target_list.id),
         )
-
-    # The cells.
-
-    def cell_states_for_rows(self, target_list: List, rows: list[ListRow]) -> dict[str, dict[str, WebhookCellWord]]:
-        """row id -> {webhook column key: word} for a page of rows, one
-        query for the whole page (none for a sheet without a webhook
-        column). Rows with nothing to say are absent."""
-        key_by_node = {
-            column.node_id: column.key for column in target_list.columns if isinstance(column, WebhookColumn)
-        }
-        if not key_by_node or not rows:
-            return {}
-        words = cell_words_for(
-            account_id=self.account_id, node_ids=list(key_by_node), row_ids=[str(row.id) for row in rows]
-        )
-        by_row: dict[str, dict[str, WebhookCellWord]] = defaultdict(dict)
-        for (row_id, node_id), word in words.items():
-            by_row[row_id][key_by_node[node_id]] = word
-        return dict(by_row)
 
     # The sends.
 

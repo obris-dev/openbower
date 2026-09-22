@@ -171,7 +171,7 @@ def settle(
             row_id,
             dict.fromkeys(answered, FILLED_VALUE),
             column_keys=consent.column_keys,
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
             fill_run_id=fill_run_id,
             declined_cause=declined,
             tools=tools or {},

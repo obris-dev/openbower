@@ -44,7 +44,6 @@ from .lists import (
     ListSummary,
     PlainColumn,
     RowsAdded,
-    WebhookCellState,
     WebhookColumn,
 )
 from .runs import NodeRunWire
@@ -98,7 +97,6 @@ __all__ = [
     "NodeRunWire",
     "PlainColumn",
     "RowsAdded",
-    "WebhookCellState",
     "WebhookColumn",
     "WebhookColumnConfigWire",
     "WebhookColumnPreviewResponse",

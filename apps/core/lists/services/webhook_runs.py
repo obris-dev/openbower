@@ -1,6 +1,7 @@
 """A webhook node's runs on the ledger: what a run's stored result
-says, the cell word read off the newest run, and the two purges its
-owners call. How a row EARNS one is the WebhookProcessor's judgement,
+says and the two purges its owners call. What its cell SAYS is on the
+cell ledger like every other column's (SENT, FAILED, or pending off
+an open run), written at the send's landing. How a row EARNS one is the WebhookProcessor's judgement,
 offered the row by the workflow advance (services/advance.py) inside
 every terminal landing. A webhook run is a NodeRun of kind webhook, born DEFERRED at the
 next window of its node's cadence (the WebhookProcessor's judgement),
@@ -19,12 +20,10 @@ Trusted-process module like node_runs.py: account ids are passed in.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from django.db import transaction
 from pydantic import BaseModel
 
-from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, WebhookCellWord, WebhookRunOutcome
+from ..constants import WebhookRunOutcome
 from ..models import NodeRun
 from ..nodes.registry import WEBHOOK
 
@@ -36,37 +35,6 @@ class WebhookRunResult(BaseModel):
     outcome: WebhookRunOutcome
     delivery_id: str = ""
     error: str = ""
-
-
-def cell_words_for(
-    *, account_id: str, node_ids: Sequence[str], row_ids: Sequence[str]
-) -> dict[tuple[str, str], WebhookCellWord]:
-    """(row id, node id) -> the cell's word for a page of rows, off each
-    pair's NEWEST run (ids are time-ordered), in one query served by
-    `node_run_cell_idx`. An open run says waiting; a DONE run
-    says what its result says (a run parked mid-retry is open, so it
-    reads waiting too); a run retired because its row or list went
-    missing says nothing."""
-    if not node_ids or not row_ids:
-        return {}
-    newest = (
-        NodeRun.objects.filter(
-            account_id=account_id, kind=WEBHOOK, node_id__in=list(node_ids), row_id__in=list(row_ids)
-        )
-        .order_by("row_id", "node_id", "-id")
-        .distinct("row_id", "node_id")
-        .values_list("row_id", "node_id", "status", "result")
-    )
-    words: dict[tuple[str, str], WebhookCellWord] = {}
-    for row_id, node_id, status, result in newest:
-        if status in NON_TERMINAL_NODE_RUN_STATES:
-            words[(row_id, node_id)] = WebhookCellWord.WAITING
-        elif status == NodeRunStatus.DONE:
-            outcome = WebhookRunResult.model_validate(result).outcome
-            words[(row_id, node_id)] = (
-                WebhookCellWord.SENT if outcome == WebhookRunOutcome.SENT else WebhookCellWord.FAILED
-            )
-    return words
 
 
 def purge_for_node(node_id: str) -> int:

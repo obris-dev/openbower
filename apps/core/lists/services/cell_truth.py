@@ -1,8 +1,9 @@
 """The one writer of ListCellState: what a writer made of each cell.
 
-In production only ListService.write_cells calls `write`, inside the
-same transaction as the value write: the sheet row and its truth can
-never be written apart. The purges are the
+In production only the ListService calls `write`: write_cells inside
+the same transaction as the value write, so the sheet row and its
+truth can never be written apart, and record_states for a column that
+holds no value (a Send webhook's outcome). The purges are the
 owners' (a list's, a column's).
 
 A record exists for every cell a fill has RESOLVED, filled ones

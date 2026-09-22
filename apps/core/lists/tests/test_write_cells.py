@@ -175,7 +175,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {},
             column_keys=("employees",),
-            source=CellSource.AGENT,
+            source=CellSource.NODE,
             fill_run_id=None,
             declined_cause=StoredCellState.NO_EVIDENCE,
             tools={},
@@ -410,7 +410,7 @@ class LockGranularityTests(TransactionTestCase):
             status=NodeRunStatus.READY,
         )
         assert flow.claim(str(task.id)) is not None
-        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",), CellSource.AGENT, None)
+        ctx = LandingContext("01AC" + "A" * 22, str(sheet.id), ("employees",), CellSource.NODE, None)
 
         def order(queries, *verbs):
             touched = []

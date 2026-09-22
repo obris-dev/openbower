@@ -17,6 +17,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.db import connection
 from django.test import TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 
 from common.testing import TEST_IDENTITY
 from jobs.services import JobRunner
@@ -105,7 +106,7 @@ class FlushDeferredTests(TransactionTestCase):
                 fill_run_id=None,
                 states={"answer": StoredCellState.FILLED, "country": country},
                 tools={},
-                source=CellSource.AGENT,
+                source=CellSource.NODE,
             )
 
     def _add_column(self, *, now: datetime = COMPLETED, wait_keys=("country", "answer")) -> str:
@@ -304,6 +305,44 @@ class FlushDeferredTests(TransactionTestCase):
         stored = WebhookRunResult.model_validate(run.result)
         self.assertEqual((stored.outcome, stored.error), (WebhookRunOutcome.FAILED, answer.error))
         self.assertEqual(stored.delivery_id, str(WebhookDelivery.objects.get().id))
+
+    def test_a_send_lands_sent_on_the_ledger_and_a_rejection_failed(self):
+        # The webhook column's cell is on the ONE ledger, written at the
+        # send's landing under the node as writer and no fill, before the
+        # run closes (the landing's lock order). FAILS if the send stops
+        # recording, or records under a fill, or the record follows the
+        # run close.
+        from lists.models import ListCellState
+
+        self._complete(self.rows[0])
+        self._complete(self.rows[1])
+        self._add_column()
+        fake = _FakeSender()
+        # One row per digest, so the second tick's rejection lands on
+        # the second row alone.
+        with (
+            patch("lists.operations.flush_deferred.DEFERRED_FLUSH_BATCH", 1),
+            CaptureQueriesContext(connection) as queries,
+        ):
+            self._tick(fake)
+        record = ListCellState.objects.get(row_id=str(self.rows[0].id), column_key="crm_sync")
+        self.assertEqual(
+            (record.state, record.source, record.fill_run_id), (StoredCellState.SENT, CellSource.NODE, None)
+        )
+        # The claim is its own statement before the send; the landing is
+        # the ledger insert then the close, so the record must precede
+        # the LAST noderun update (the settle).
+        heads = [q["sql"].lower().split(" where ")[0] for q in queries.captured_queries]
+        recorded = next(
+            i for i, head in enumerate(heads) if head.startswith("insert") and "lists_listcellstate" in head
+        )
+        settled = max(i for i, head in enumerate(heads) if head.startswith("update") and "lists_noderun" in head)
+        self.assertLess(recorded, settled)
+
+        with patch("lists.operations.flush_deferred.DEFERRED_FLUSH_BATCH", 1):
+            self._tick(_FakeSender(REJECTED))
+        record = ListCellState.objects.get(row_id=str(self.rows[1].id), column_key="crm_sync")
+        self.assertEqual(record.state, StoredCellState.FAILED)
 
     def test_a_rejected_delivery_fails_the_run_at_once(self):
         self._fails_at_once(REJECTED)

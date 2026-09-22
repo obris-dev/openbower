@@ -26,7 +26,9 @@ export type SearchProviderChoice = AgentCatalog["search_provider"] | null;
 // are typed against that partition, so a cause added server-side
 // fails the build here instead of rendering an unnamed cell.
 type SettledCause = SettledCellState;
-type RetryableCause = Exclude<RenderableCellState, "pending" | "filled" | SettledCause>;
+// `sent` and `failed` are a Send webhook cell's, rendered by its own
+// cell; an AI cell never carries them.
+type RetryableCause = Exclude<RenderableCellState, "pending" | "filled" | "sent" | "failed" | SettledCause>;
 
 const SETTLED_CAUSES: Record<SettledCause, { word: string; cause: string }> = {
   no_evidence: { word: "none found", cause: "No evidence found" },
