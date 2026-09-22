@@ -50,7 +50,7 @@ resolved row, closing the run inside its own transaction)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property, partial
@@ -189,10 +189,10 @@ class AIColumnProcessor(NodeProcessor):
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
-        resumed_owed = self._resumed_owed_row_ids(rows)
+        judge = self._rule_for_page(rows)
         owed: list[ListRow] = []
         for row in rows:
-            if self._judge(target_list, row, resumed_owed) is not _Verdict.OWED:
+            if judge(row) is not _Verdict.OWED:
                 continue
             owed.append(row)
             if limit and len(owed) == limit:
@@ -238,9 +238,9 @@ class AIColumnProcessor(NodeProcessor):
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
             walked += len(page)
-            resumed_owed = self._resumed_owed_row_ids(page)
+            judge = self._rule_for_page(page)
             for row in page:
-                verdict = self._judge(target_list, row, resumed_owed)
+                verdict = judge(row)
                 if verdict is _Verdict.OWED:
                     return Probe(found=True, dropped_any=dropped_any)
                 if verdict is _Verdict.DROPPED:
@@ -404,20 +404,21 @@ class AIColumnProcessor(NodeProcessor):
         return RunOutcome.LANDED
 
     # The judgement: does this node owe the row a run now? One rule per
-    # walk mode, dispatched here; each rule reads the row's own data
-    # plus, for a resume, the one page-level fact read once per page.
+    # walk mode. The rule is bound ONCE per page (a resume reads the
+    # page's one fact there) and then asked per row with the row alone.
 
-    def _judge(self, target_list: List, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
+    def _rule_for_page(self, rows: Sequence[ListRow]) -> Callable[[ListRow], _Verdict]:
         mode = self.scope.mode
         if mode is WalkMode.FRESH:
-            return self._judge_fresh(row)
+            return self._judge_fresh
         if mode is WalkMode.REMAINING:
-            return self._judge_remaining(row, resumed_owed)
+            resumed_owed = self._resumed_owed_row_ids(rows)
+            return lambda row: self._judge_remaining(row, resumed_owed)
         if mode is WalkMode.PUSHED:
-            return self._judge_pushed(row)
+            return self._judge_pushed
         # A structural walk (a webhook column added, its wait set
         # changed) means nothing to an agent node.
-        return _Verdict.DONE
+        return lambda row: _Verdict.DONE
 
     def _judge_fresh(self, row: ListRow) -> _Verdict:
         """A new fill: every row the prompt can act on."""
