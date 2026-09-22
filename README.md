@@ -38,7 +38,7 @@ hot-reload without a rebuild.
 | autofill-provisioner, autofill-consumer | the same two roles for automatic runs (a pushed row's AI columns) | `make logs` |
 | preview-consumer | the builder's Test on its own lane: the autofill provisioner routes a preview run here, so a watched one-row diagnostic never waits behind a fill or a pushed-row burst | `make logs-autofill` |
 | ingest-worker | the webhook ingest consumer | `make logs` |
-| cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of preview runs older than a day, the stale-run reclaim, the webhook flush and delivery prune) | `make logs-cron` |
+| cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of preview runs older than a day, the stale-run reclaim, the deferred flush and delivery prune) | `make logs-cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `make logs-web` |
 
 `make stop` halts the stack in place and `make up` resumes it;

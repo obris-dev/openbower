@@ -3,7 +3,7 @@ run inside every terminal landing), what a run's stored result says,
 the cell word read off the newest run, and the two purges its owners
 call. A webhook run is a NodeRun of kind webhook, born DEFERRED at the
 next window of its node's cadence (the WebhookProcessor's judgement),
-and claimed by the flush (operations/flush_webhooks.py), never by the
+and claimed by the flush (operations/flush_deferred.py), never by the
 agent worker.
 
 The wait node is a barrier, not a ledger: when every column it waits

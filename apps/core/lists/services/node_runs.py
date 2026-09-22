@@ -232,22 +232,23 @@ class NodeRunFlow:
     # flush at their window and settled or parked together.
 
     @staticmethod
-    def iter_due_webhook_nodes(*, now: datetime.datetime) -> Iterator[str]:
-        """The webhook nodes with a DEFERRED run due at or before `now`,
-        each once, LAZILY: the flush materializes the list before it
-        claims, since claiming mutates what this reads."""
-        due = NodeRun.objects.filter(kind=WEBHOOK, status=NodeRunStatus.DEFERRED, not_before__lte=now)
+    def iter_due_nodes(*, now: datetime.datetime) -> Iterator[str]:
+        """The nodes with a DEFERRED run due at or before `now`, whatever
+        their kind, each once, LAZILY: the flush materializes the list
+        before it claims, since claiming mutates what this reads. Rides
+        the due index, partial on DEFERRED."""
+        due = NodeRun.objects.filter(status=NodeRunStatus.DEFERRED, not_before__lte=now)
         yield from due.values_list("node_id", flat=True).distinct().iterator()
 
-    def claim_webhook_batch(self, node_id: str, *, now: datetime.datetime, limit: int) -> list[NodeRun]:
-        """DEFERRED -> PROCESSING for up to `limit` of one webhook node's
-        due runs, in sheet order, stamping this worker and the attempt.
+    def claim_due_batch(self, node_id: str, *, now: datetime.datetime, limit: int) -> list[NodeRun]:
+        """DEFERRED -> PROCESSING for up to `limit` of one node's due
+        runs, in sheet order, stamping this worker and the attempt.
         The UPDATE matches status DEFERRED again, so two flush ticks
         overlapping on one node split its due rows between them instead
         of both sending the same digest; what this worker won is
         re-read by its stamp. Returns the claimed runs in (rank, id)
         order, empty when another tick got there first."""
-        due = NodeRun.objects.filter(kind=WEBHOOK, node_id=node_id, status=NodeRunStatus.DEFERRED, not_before__lte=now)
+        due = NodeRun.objects.filter(node_id=node_id, status=NodeRunStatus.DEFERRED, not_before__lte=now)
         ids = list(due.order_by("rank", "id").values_list("id", flat=True)[:limit])
         if not ids:
             return []

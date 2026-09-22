@@ -4,7 +4,7 @@ config classes in lists/nodes are what a node IS at rest; a processor
 is what the kind DOES. Every walker that queues runs (the enqueue job,
 autofill, the advance) asks the factory for the processor of the node
 it holds and hands it the rows; every dispatcher that executes runs
-(the node-run consumer, the webhook flush) asks the same factory and
+(the node-run consumer, the deferred flush) asks the same factory and
 hands it the claimed run or the node. The per-kind judgement and the
 per-kind execution live in one place per kind, and the walkers and
 dispatchers know nothing about kinds.

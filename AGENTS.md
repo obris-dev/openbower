@@ -130,7 +130,7 @@ auth + data services live in a separate private repo.
   `process_run(task, flow)` for a kind whose runs are claimed one at a
   time off the topic, or `process_batch(flow, now)` for a kind that
   claims and settles a node's due runs together, for the dispatchers
-  (the node-run consumer, the webhook flush), which claim or iterate
+  (the node-run consumer, the deferred flush), which claim or iterate
   and hand over knowing no kind. A kind overrides exactly one of the
   two; the other keeps its raising default. The node config classes in
   lists/nodes stay what a node IS at rest.

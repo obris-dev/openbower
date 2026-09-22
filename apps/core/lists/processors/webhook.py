@@ -63,7 +63,7 @@ def fail_due(flow: NodeRunFlow, node_id: str, *, now: datetime, error: str) -> i
     gone, and waiting forever would be a lie. Nothing is sent. A module
     function because the gone-COLUMN case has no node to build a
     processor from."""
-    claimed = flow.claim_webhook_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
+    claimed = flow.claim_due_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
     result = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, error=error)
     return flow.settle_many([str(run.id) for run in claimed], result.model_dump(), status=NodeRunStatus.DONE)
 
@@ -86,7 +86,7 @@ class WebhookProcessor(NodeProcessor):
             tally.skipped += 1
             return tally
 
-        claimed = flow.claim_webhook_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
+        claimed = flow.claim_due_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
         if not claimed:
             return tally
         claimed_ids = [str(run.id) for run in claimed]
@@ -169,7 +169,7 @@ class WebhookProcessor(NodeProcessor):
         ids = [str(run.id) for run in runs]
         if delivery.status == DeliveryStatus.OK:
             result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
-            tally.sent += flow.settle_many(ids, result.model_dump(), status=NodeRunStatus.DONE)
+            tally.settled += flow.settle_many(ids, result.model_dump(), status=NodeRunStatus.DONE)
             return
         failed = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error)
         if delivery.status != DeliveryStatus.TRANSIENT:

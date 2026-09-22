@@ -58,10 +58,11 @@ class RunOutcome(StrEnum):
 @dataclass
 class BatchTally:
     """What `process_batch` did with a node's due runs: runs, not
-    digests (one digest carries many runs). `skipped` counts a NODE the
-    gates turned away without claiming."""
+    batches (one batch carries many runs). `settled` is the runs that
+    reached DONE; `skipped` counts a NODE the gates turned away without
+    claiming."""
 
-    sent: int = 0
+    settled: int = 0
     parked: int = 0
     failed: int = 0
     skipped: int = 0

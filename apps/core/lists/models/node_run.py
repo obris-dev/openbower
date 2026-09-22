@@ -199,13 +199,13 @@ class NodeRun(AccountScopedModel):
                 condition=models.Q(fill_run_id__isnull=True),
             ),
             # A node's due runs: DEFERRED at or before now, in (rank, id)
-            # order (the flush's claim). Partial on the one kind that
-            # asks today, so the agent lanes' rows never widen it; a
-            # second deferred kind widens the predicate, not the key.
+            # order (the flush's pick and claim). Partial on DEFERRED, so
+            # it holds only the runs still waiting for a window, whatever
+            # their kind, and shrinks as they are claimed.
             models.Index(
-                fields=["node_id", "status", "not_before", "rank", "id"],
+                fields=["node_id", "not_before", "rank", "id"],
                 name="node_run_due_idx",
-                condition=models.Q(kind=WEBHOOK),
+                condition=models.Q(status=NodeRunStatus.DEFERRED),
             ),
             # The NEWEST run per (row, node) for one page of rows (the
             # rows page's cell word, the digest's re-check). The due

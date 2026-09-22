@@ -1,8 +1,10 @@
-"""The flush: one cron tick over every webhook node with runs due,
-handing each node to its processor, which sends ONE digest of the
-node's due rows and settles the runs by what came back. Global (not
-account-scoped): a trusted process, like the reclaim, scoping every
-read by the node it found.
+"""The flush: one cron tick over every node with a DEFERRED run due,
+handing each node to its processor's batch method, which claims the
+node's due runs together and settles them by what it did (the webhook
+kind sends ONE digest of them). Knows no kind: a kind that defers is
+one that overrides process_batch. Global (not account-scoped): a
+trusted process, like the reclaim, scoping every read by the node it
+found.
 
 Safe to miss (each run holds its own window in `not_before`) and safe
 to double (the claim's status predicate). A node that raises is logged
@@ -21,6 +23,11 @@ from django.utils import timezone
 
 from ..models import Node
 from ..processors import BatchTally, processor_for
+
+# The ONE kind-specific line: a node that is gone has no processor to
+# ask, and its due runs still need a terminal shape their cell word can
+# read. The webhook kind's is the only one today; a second deferring
+# kind branches here on the runs' stored kind, as the reclaim does.
 from ..processors.webhook import COLUMN_REMOVED, fail_due
 from ..services.node_runs import NodeRunFlow
 
@@ -30,22 +37,22 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FlushReport:
     """One tick's tallies, for the command's log line: runs, not
-    digests (one digest carries many runs)."""
+    batches (one batch carries many runs)."""
 
     nodes: int = 0
-    sent: int = 0
+    settled: int = 0
     parked: int = 0
     failed: int = 0
     skipped: int = 0
 
     def absorb(self, tally: BatchTally) -> None:
-        self.sent += tally.sent
+        self.settled += tally.settled
         self.parked += tally.parked
         self.failed += tally.failed
         self.skipped += tally.skipped
 
 
-class FlushWebhooksOperation:
+class FlushDeferredOperation:
     def __init__(self, *, worker_id: str) -> None:
         self.flow = NodeRunFlow(worker_id=worker_id)
 
@@ -53,7 +60,7 @@ class FlushWebhooksOperation:
         now = now or timezone.now()
         report = FlushReport()
         # Materialized first: the claims below mutate what the pick reads.
-        for node_id in list(self.flow.iter_due_webhook_nodes(now=now)):
+        for node_id in list(self.flow.iter_due_nodes(now=now)):
             report.nodes += 1
             try:
                 node = Node.objects.filter(id=node_id).first()
@@ -73,5 +80,5 @@ class FlushWebhooksOperation:
                 # a bug) must not stop every other account's tick: log the
                 # traceback and move on. Its claimed runs come back
                 # DEFERRED through the reclaim.
-                logger.exception("flush_webhooks: node %s failed; skipping it this tick", node_id)
+                logger.exception("flush_deferred: node %s failed; skipping it this tick", node_id)
         return report

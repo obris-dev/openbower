@@ -13,7 +13,7 @@ import socket
 
 from django.core.management.base import BaseCommand
 
-from ...operations.flush_webhooks import FlushWebhooksOperation
+from ...operations.flush_deferred import FlushDeferredOperation
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options) -> None:
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
-        report = FlushWebhooksOperation(worker_id=worker_id).run()
+        report = FlushDeferredOperation(worker_id=worker_id).run()
         logger.info(
-            "flush_webhooks: nodes=%d sent=%d parked=%d failed=%d skipped=%d",
+            "flush_deferred: nodes=%d settled=%d parked=%d failed=%d skipped=%d",
             report.nodes,
-            report.sent,
+            report.settled,
             report.parked,
             report.failed,
             report.skipped,

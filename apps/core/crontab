@@ -11,4 +11,4 @@
 0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py prune_preview_runs
 */15 * * * * uv run --frozen --package openbower-core python apps/core/manage.py reclaim_node_runs
 0 * * * * uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
-* * * * * uv run --frozen --package openbower-core python apps/core/manage.py flush_webhooks
+* * * * * uv run --frozen --package openbower-core python apps/core/manage.py flush_deferred

@@ -23,7 +23,7 @@ from jobs.services import JobRunner
 from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
-from lists.operations.flush_webhooks import FlushWebhooksOperation
+from lists.operations.flush_deferred import FlushDeferredOperation
 from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, next_window
 from lists.services import cell_truth, webhook_runs
 from lists.services.digest_payload import event_id_of
@@ -70,7 +70,7 @@ class _FakeSender:
         return [WebhookEnvelope(**json.loads(call["body"])) for call in self.calls]
 
 
-class FlushWebhooksTests(TransactionTestCase):
+class FlushDeferredTests(TransactionTestCase):
     def setUp(self) -> None:
         self.lists = ListService(account_id=ACCOUNT)
         self.workflows = WorkflowService(account_id=ACCOUNT)
@@ -126,7 +126,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
     def _tick(self, fake: _FakeSender, *, now: datetime = BOUNDARY, worker: str = WORKER):
         with patch("webhooks.services.destinations.WebhookSender", return_value=fake):
-            return FlushWebhooksOperation(worker_id=worker).run(now=now)
+            return FlushDeferredOperation(worker_id=worker).run(now=now)
 
     def _runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK).order_by("rank", "id")
@@ -165,7 +165,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
         report = self._tick(fake)
 
-        self.assertEqual((report.nodes, report.sent, report.parked, report.failed), (1, 3, 0, 0))
+        self.assertEqual((report.nodes, report.settled, report.parked, report.failed), (1, 3, 0, 0))
         (envelope,) = fake.bodies()
         self.assertEqual((envelope.type, envelope.test), ("digest", False))
         self.assertEqual(envelope.data.sheet.id, str(self.sheet.id))
@@ -221,7 +221,7 @@ class FlushWebhooksTests(TransactionTestCase):
         with patch("lists.processors.webhook.WEBHOOK_FLUSH_BATCH", 2):
             first = self._tick(fake)
             second = self._tick(fake)
-        self.assertEqual((first.sent, second.sent), (2, 1))
+        self.assertEqual((first.settled, second.settled), (2, 1))
         one, two = fake.bodies()
         self.assertEqual(
             ([i.row_id for i in one.data.items], [i.row_id for i in two.data.items]),
@@ -261,7 +261,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
         WebhookDestination.objects.filter(id=self.destination.id).update(enabled=True)
         report = self._tick(fake)
-        self.assertEqual((report.sent, len(fake.calls)), (1, 1))
+        self.assertEqual((report.settled, len(fake.calls)), (1, 1))
         self.assertEqual(Node.objects.get(id=node_id).kind, WEBHOOK)
 
     def test_a_transient_failure_parks_to_the_next_window_and_fails_past_the_cap(self):
@@ -271,7 +271,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
         report = self._tick(fake)
 
-        self.assertEqual((report.parked, report.failed, report.sent), (1, 0, 0))
+        self.assertEqual((report.parked, report.failed, report.settled), (1, 0, 0))
         run = self._runs().get()
         self.assertEqual((run.status, run.attempts, run.parked, run.leased_by), (NodeRunStatus.DEFERRED, 1, True, ""))
         self.assertEqual(run.not_before, next_window(BOUNDARY, INTERVAL))
@@ -317,7 +317,7 @@ class FlushWebhooksTests(TransactionTestCase):
 
         report = self._tick(fake)
 
-        self.assertEqual(report.sent, 2)
+        self.assertEqual(report.settled, 2)
         (envelope,) = fake.bodies()
         self.assertEqual([item.row_id for item in envelope.data.items], [str(self.rows[0].id), str(self.rows[2].id)])
         self.assertEqual(self._runs().get(row_id=gone).status, NodeRunStatus.ROW_MISSING)
@@ -351,13 +351,13 @@ class FlushWebhooksTests(TransactionTestCase):
             self._complete(row)
         node_id = self._add_column()
         first = NodeRunFlow(worker_id="flush-a:1")
-        held = first.claim_webhook_batch(node_id, now=BOUNDARY, limit=10)
+        held = first.claim_due_batch(node_id, now=BOUNDARY, limit=10)
         self.assertEqual(len(held), 3)
         fake = _FakeSender()
 
         report = self._tick(fake, worker="flush-b:2")
 
-        self.assertEqual((report.nodes, report.sent, fake.calls), (0, 0, []))
+        self.assertEqual((report.nodes, report.settled, fake.calls), (0, 0, []))
         result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id="x")
         self.assertEqual(
             first.settle_many([str(r.id) for r in held], result.model_dump(), status=NodeRunStatus.DONE), 3
@@ -412,10 +412,10 @@ class FlushWebhooksTests(TransactionTestCase):
         self._add_column(now=BOUNDARY - timedelta(hours=2))
         with (
             patch("webhooks.services.destinations.WebhookSender", return_value=_FakeSender()),
-            self.assertLogs("lists.management.commands.flush_webhooks", level="INFO") as logs,
+            self.assertLogs("lists.management.commands.flush_deferred", level="INFO") as logs,
         ):
-            call_command("flush_webhooks")
-        self.assertIn("sent=1", logs.output[0])
+            call_command("flush_deferred")
+        self.assertIn("settled=1", logs.output[0])
         self.assertEqual(self._runs().get().status, NodeRunStatus.DONE)
 
 

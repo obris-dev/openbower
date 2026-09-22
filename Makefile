@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-webhooks run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -163,8 +163,8 @@ prune-preview-runs: ## Run the preview-run prune once, in the cron container (pr
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_preview_runs
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
-flush-webhooks: ## Run the webhook flush once, in the cron container (sends every digest that is due)
-	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_webhooks
+flush-deferred: ## Run the deferred flush once, in the cron container (sends every digest that is due)
+	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_deferred
 run-jobs: ## Run one jobs tick by hand, in the jobs container (the service loops on its own)
 	$(COMPOSE) exec jobs uv run --frozen --package openbower-core python apps/core/manage.py run_jobs --once
 
