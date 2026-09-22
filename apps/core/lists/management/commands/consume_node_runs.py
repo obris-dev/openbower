@@ -19,15 +19,16 @@ import threading
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from ...ingest.topics import AUTOFILL_RUNS, FILL_RUNS, TEST_RUNS
+from ...ingest.topics import AUTOFILL_RUNS, FILL_RUNS, PREVIEW_RUNS
 from ...operations.consume_node_runs import NodeRunConsumer
 
 logger = logging.getLogger(__name__)
 
-# The lane each consumer serves, by name: the automatic firehose, the
-# UI-driven (fill-backed) tasks, or the isolated bench-TEST lane. The
-# handler routes on the task itself; this only says which bus to read.
-_TOPICS = {"autofill": AUTOFILL_RUNS, "manual": FILL_RUNS, "test": TEST_RUNS}
+# The lane each consumer serves, by name: the automatic firehose (pushed
+# rows), the preview (the builder's Test), or the UI-driven (fill-backed)
+# tasks. The handler
+# routes on the task itself; this only says which bus to read.
+_TOPICS = {"autofill": AUTOFILL_RUNS, "manual": FILL_RUNS, "preview": PREVIEW_RUNS}
 
 
 class Command(BaseCommand):

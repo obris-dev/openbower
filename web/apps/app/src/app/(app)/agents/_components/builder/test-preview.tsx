@@ -41,7 +41,7 @@ function describeSearch(search: NonNullable<CellRunResult["tool_calls"]>[number]
   return `reported a problem this page can't name (${tool}${via})`;
 }
 
-/** The test bench's INPUTS AND RESULTS: hand-fed values for the
+/** The test preview's INPUTS AND RESULTS: hand-fed values for the
  * prompt's {{tokens}}, every one removable (removal strips the token,
  * the chip-toggle semantics), the cells a run would write, the
  * searches with each query's diagnosis, and the evidence the model
@@ -49,7 +49,7 @@ function describeSearch(search: NonNullable<CellRunResult["tool_calls"]>[number]
  * from the rendered prompt (use-time interpretation; no magic row
  * keys). The Test ACTION lives in the pinned footer with the other
  * primary verbs. */
-export function TestBench({
+export function TestPreview({
   inputKeys,
   lists,
   listsLoading = false,
@@ -105,7 +105,7 @@ export function TestBench({
     const next = { ...testRow };
     for (const key of inputKeys) {
       const value = first.data[key];
-      // Clamped at the bench bound so the FIELD shows exactly what a
+      // Clamped at the preview bound so the FIELD shows exactly what a
       // test will run: a borrowed sheet cell can be far wider than
       // the wire's row bound, and sending it whole would refuse the
       // whole test.
@@ -201,7 +201,7 @@ export function TestBench({
                 <Input
                   id={`test-${key}`}
                   value={testRow[key] ?? ""}
-                  // The admission REFUSES past the bound (never
+                  // The server REFUSES past the bound (never
                   // truncates); the input carrying it keeps the
                   // refusal unreachable from here.
                   maxLength={TEST_VALUE_MAX_LENGTH}

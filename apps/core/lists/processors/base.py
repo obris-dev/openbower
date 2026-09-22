@@ -24,7 +24,7 @@ silently doing nothing.
 
 A processor is constructed for ONE node of its kind, account-scoped,
 with the WALK SCOPE that says what this pass is for (a fresh fill under
-a Fill, the remaining rows of a refill, the rows a push appended, a
+a fill job, the remaining rows of a refill, the rows a push appended, a
 structural backfill); a kind reads the parts of the scope it cares
 about and ignores the rest. Execution ignores the scope: a run carries
 its own identity."""
@@ -71,16 +71,16 @@ class WalkMode(StrEnum):
     """What a pass over rows is FOR. The agent kind judges each mode by
     a different rule; the webhook kind judges every mode the same way."""
 
-    # A fresh fill: every row the prompt can act on, under a Fill.
+    # A fresh fill: every row the prompt can act on, under a fill job.
     FRESH = "fresh"
-    # A refill: the rows not yet settled under this config, and not
-    # already owed by the run being resumed, under a Fill.
+    # A refill: the rows still blank in the walked columns, and not
+    # already owed by the run being resumed, under a fill job.
     REMAINING = "remaining"
     # Rows a push appended: the node runs unless the push filled every
-    # column it owns. No Fill.
+    # column it owns. No fill job.
     PUSHED = "pushed"
     # A structural walk over the whole sheet (a webhook column added or
-    # its wait set changed). No Fill.
+    # its wait set changed). No fill job.
     BACKFILL = "backfill"
 
 
@@ -89,7 +89,7 @@ class WalkScope(BaseModel):
     and handed to the processor at construction."""
 
     mode: WalkMode = WalkMode.BACKFILL
-    # The Fill the runs belong to, for FRESH and REMAINING; "" otherwise.
+    # The fill job the runs belong to, for FRESH and REMAINING; "" otherwise.
     fill_run_id: str = ""
     # The stopped fill a REMAINING walk resumes: rows it still owed are
     # the only ones offered. "" = the column's whole remainder.
@@ -98,12 +98,6 @@ class WalkScope(BaseModel):
     # column the user clicked for a widening gesture, the resumed
     # fill's whole set for a Continue. Empty = the fill's own columns.
     column_keys: list[str] = []
-    # A fill's CONSENT RANGE: rows at or below this position (0 = no
-    # bound). Positions are dense and append-only, so a row appended
-    # after the click sits above it and is never walked.
-    until_position: int = 0
-    # A scoped fill's first N qualifying rows (0 = every qualifying row).
-    limit: int = 0
 
 
 class NodeProcessor(ABC):
@@ -115,11 +109,12 @@ class NodeProcessor(ABC):
         self.scope = scope
 
     @abstractmethod
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime) -> int:
+    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         """Queue a run for every row among `rows` this node owes one to,
-        under the open-run key, and return how many were queued. Reads
-        its own inputs for the page; born in the state the kind's lane
-        expects."""
+        under the open-run key, and return how many were queued; with
+        `limit`, stop at that many, judging no further (0 = every owed
+        row in `rows`). Reads its own inputs for the page; born in the
+        state the kind's lane expects."""
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """Execute ONE run of this node that the caller already claimed

@@ -17,12 +17,11 @@ from agents.services import AgentService
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
-from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode, FillStatus
-from ..models import Fill, List, ListRow
+from ..constants import MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode
+from ..models import List, ListRow
 from ..nodes.webhook import Webhook
-from . import cell_truth, webhook_runs
+from . import cell_truth, fill_progress, webhook_runs
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
-from .fill_progress import stop_fill
 from .lists import ListNotFound
 from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
 
@@ -261,12 +260,10 @@ class ColumnService:
             # together), so a live sibling is stopped too rather than
             # left writing into a column that no longer exists; the
             # sibling refills.
-            for fill_run_id in Fill.objects.filter(
-                list_id=str(target_list.id),
-                status__in=LIVE_FILL_STATUSES,
-                column_keys__contains=[key],
-            ).values_list("id", flat=True):
-                stop_fill(str(fill_run_id), FillStatus.CANCELLED)
+            open_here = fill_progress.open_fills().filter(target_id=str(target_list.id))
+            for fill_run_id, consent in fill_progress.iter_consents(open_here):
+                if key in consent.column_keys:
+                    fill_progress.cancel(fill_run_id)
 
             cell_truth.purge_column(str(target_list.id), key)
             target_list.columns = columns

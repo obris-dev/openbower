@@ -1,13 +1,14 @@
-"""The refusal taxonomy, admission's shared vocabulary. Kind-agnostic
-on purpose: both admission kinds raise from this one set, so the
-wire's error shapes cannot fork by kind."""
+"""The refusal taxonomy, admission's shared vocabulary. Both admission paths (an add, a refill) raise from this one set, so the
+wire's error shapes cannot fork."""
 
 from __future__ import annotations
 
 from ...constants import (
+    AGENT_MISSING_MESSAGE,
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
+    PROVIDER_RETIRED_MESSAGE,
     FillErrorCode,
 )
 
@@ -29,7 +30,7 @@ class ColumnAgentMissing(FillRefused):
     code = FillErrorCode.COLUMN_AGENT_MISSING
 
     def __init__(self) -> None:
-        super().__init__("The agent this column used has been deleted. Write a new prompt to fill it again.")
+        super().__init__(AGENT_MISSING_MESSAGE)
 
 
 class SameColumnFillActive(FillRefused):
@@ -91,30 +92,6 @@ class FreeSearchBudget(FillRefused):
             f"{FREE_SEARCH_FILL_BUDGET} per fill. Switch search to a metered vendor (a deployment setting) for"
             " metered search."
         )
-
-
-class TestFillActive(FillRefused):
-    """A TEAMMATE'S test run is observably live (a fresh heartbeat, or
-    too young to have missed one). Your own live test never refuses:
-    it is superseded (cancelled) by the new start."""
-
-    code = FillErrorCode.TEST_ACTIVE
-
-    def __init__(self) -> None:
-        super().__init__("A teammate's test is running; wait a moment for it to finish.")
-
-
-class TestRowInvalid(FillRefused):
-    """A hand-fed test row past the wire's bench bounds: REFUSED,
-    never truncated, because a truncated test would diagnose a
-    different row than the user typed. The bounds ship in x-constants,
-    so a client can make this refusal unreachable; the copy names the
-    bound that fired."""
-
-    code = FillErrorCode.TEST_ROW_INVALID
-
-    def __init__(self, why: str) -> None:
-        super().__init__(why)
 
 
 class ColumnTypeChanged(FillRefused):
@@ -213,7 +190,7 @@ class ProviderRetiredRefusal(FillRefused):
     code = FillErrorCode.PROVIDER_RETIRED
 
     def __init__(self) -> None:
-        super().__init__("This agent's provider is no longer supported; open the agent and pick a current model.")
+        super().__init__(PROVIDER_RETIRED_MESSAGE)
 
 
 class ResumeRunNotFound(FillRefused):
@@ -231,21 +208,6 @@ class ResumeRunNotFound(FillRefused):
 
     def __init__(self) -> None:
         super().__init__("That fill is not on this sheet; start a new fill instead.")
-
-
-class ResumeConfigChanged(FillRefused):
-    """Continue means finish THAT fill's consented work, and the config
-    it consented under is part of the consent: resuming it under a
-    different prompt would be a different fill wearing its name. The
-    widening gestures run the new config."""
-
-    code = FillErrorCode.CONFIG_CHANGED
-
-    def __init__(self) -> None:
-        super().__init__(
-            "The prompt changed since this fill stopped. Use Fill next rows or Fill all remaining "
-            "to run it with the new prompt."
-        )
 
 
 class ModelUnrunnable(FillRefused):

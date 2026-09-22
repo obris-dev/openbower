@@ -35,10 +35,10 @@ const PROMPT_TOGGLE_CHARS = 256;
  * (Retry for a failed run, Continue for one the user stopped), the
  * scoped continue for terminal runs, and
  * the prompt peek with its inline EDIT (reading and writing the
- * column-scoped prompt endpoint, the column's CURRENT config, never a
- * run's frozen snapshot; a live run disables the affordance, since
- * the live run holds its snapshot and an edit only reaches the
- * NEXT run). The Popover primitive carries the disclosure floor
+ * column-scoped prompt endpoint, the column's CURRENT config; a live
+ * run disables the affordance, since a fill reads its agent live and
+ * an edit mid-fill would mix two asks in one run's rows). The Popover
+ * primitive carries the disclosure floor
  * (aria-expanded, Escape, outside-click, focus return). A MISSING
  * summary means the poll has not answered for this column yet: the
  * first page pending, or a just-added column whose entry arrives on
@@ -67,7 +67,7 @@ export function FillTrackerCell({
   runs: LiveRun[];
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
 }) {
   if (summary === undefined) {
     // Sized like the header line it resolves into. Once the page's
@@ -163,7 +163,7 @@ export function FillTrackerCell({
               onContinue={() => onRefill(column.key, { resumeId: summary.current_fill_id })}
             />
           )}
-          {!live && <RefillScope onRefill={(rows) => onRefill(column.key, { rows })} />}
+          {!live && <RefillScope onRefill={(maxRowCount) => onRefill(column.key, { maxRowCount })} />}
           <PromptPeek listId={listId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>
@@ -203,15 +203,15 @@ function ResumeContinue({ verb, onContinue }: { verb: "Retry" | "Continue"; onCo
 }
 
 /** The peek at what fills this column: the column's CURRENT config
- * from the column-scoped prompt endpoint (never a run's frozen
- * snapshot, which is what a PAST run ran), the prompt under a
+ * from the column-scoped prompt endpoint (a fill reads its agent
+ * live, so this is what the next row runs under), the prompt under a
  * few-line clamp with an expand toggle, the model address beneath,
  * plus the inline EDIT: a plain bounded textarea with Save/Cancel
  * (the drawer's full editor is overkill here), Save calling the same
  * endpoint, a refusal rendered verbatim (tier 1). While the fill is
- * LIVE the affordance disables: the live run holds its frozen
- * snapshot, so an edit mid-walk would only invite mixed-config
- * confusion; stopping first keeps one run one config. Mounted per
+ * LIVE the affordance disables: a fill reads its agent live, so an
+ * edit mid-walk would mix two asks in one run's rows; stopping first
+ * keeps one run one ask. Mounted per
  * popover open, so each open re-reads the current truth. */
 function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: string; live: boolean }) {
   const [config, setConfig] = useState<ColumnPromptWire | null>(null);
@@ -383,8 +383,8 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
       )}
       {edited && !editing && (
         <p className="mt-1.5 text-xs text-faint">
-          Blanks settled under the old prompt will run again on the next fill; use Fill next rows
-          or Fill all remaining to start it.
+          Blanks settled under the old prompt will run again on the next fill; use Fill next or
+          Fill all remaining to start it.
         </p>
       )}
     </div>

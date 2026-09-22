@@ -51,7 +51,7 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     behind a wait node naming the landed node's path is offered the
     row, and its processor decides whether the row is owed a run now.
     Returns the runs offered (a re-completion while one is open inserts
-    nothing under the open-run key). A node with no path (the bench) or
+    nothing under the open-run key). A node with no path (the preview) or
     a path no wait names returns at the first read, so the common
     landing pays one node read and one indexed query."""
     now = now or timezone.now()
@@ -63,7 +63,7 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     if not waits:
         return 0
     target_list = List.objects.filter(id=list_id, account_id=account_id).first()
-    row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "position").first()
+    row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "rank").first()
     if target_list is None or row is None:
         return 0
     offered = 0
@@ -79,7 +79,7 @@ def cell_words_for(
 ) -> dict[tuple[str, str], WebhookCellWord]:
     """(row id, node id) -> the cell's word for a page of rows, off each
     pair's NEWEST run (ids are time-ordered), in one query served by
-    `node_run_webhook_cell_idx`. An open run says waiting; a DONE run
+    `node_run_cell_idx`. An open run says waiting; a DONE run
     says what its result says (a run parked mid-retry is open, so it
     reads waiting too); a run retired because its row or list went
     missing says nothing."""

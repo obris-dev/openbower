@@ -11,7 +11,7 @@ import { DEFAULT_SCOPE_ROWS, parseScopeRows } from "./lib/fill-scope";
  * only beside a terminal run: one run per column is the invariant, so
  * a refill during a live walk could only be refused. A refusal
  * renders verbatim below (tier 1: the server wrote it). */
-export function RefillScope({ onRefill }: { onRefill: (rows?: number) => Promise<string | null> }) {
+export function RefillScope({ onRefill }: { onRefill: (maxRowCount?: number) => Promise<string | null> }) {
   const [rowsText, setRowsText] = useState(String(DEFAULT_SCOPE_ROWS));
   const [busy, setBusy] = useState<"next" | "all" | null>(null);
   const [refusal, setRefusal] = useState("");

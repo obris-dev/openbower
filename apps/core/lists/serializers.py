@@ -1,23 +1,24 @@
-"""Request validation + wire builders for /v1/lists and /v1/fills.
+"""Request validation + wire builders for /v1/lists and /v1/runs.
 Wire dicts mirror
 the schema package's models one-to-one (the web types against those)."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rest_framework import serializers
 
 from agents.serializers import AgentConfigRequest
+from jobs.models import Job
 from openbower_schema.agents import PROMPT_MAX_LENGTH
-from openbower_schema.fills import CellRunResult, FillError
-from openbower_schema.fills import FillRunDetail as WireFillRunDetail
+from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookCellState, WebhookColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
+from openbower_schema.runs import NodeRunWire as WireNodeRun
 
 from .constants import (
     COLUMN_KEY_GRAMMAR,
@@ -31,9 +32,11 @@ from .constants import (
     MAX_LIST_ROWS,
     MAX_ROWS_PER_ADD,
     ColumnType,
-    FillStatus,
 )
-from .models import Fill, Folder, List, ListRow
+from .models import Folder, List, ListRow, NodeRun
+
+if TYPE_CHECKING:
+    from .services.fills import FillReadout
 
 
 class ColumnDef(serializers.Serializer):
@@ -113,15 +116,16 @@ class AiColumnRequest(serializers.Serializer):
     retyped), the other tab sends `agent_id`; exactly one of the two.
     No column label rides the request: the OUTPUTS are the columns
     (each output's key and label name what its cells land under).
-    `confirmed_row_count` echoes the count the user consented to: the
-    fill's range, so rows appended after the click are never walked."""
+    `confirmed_row_count` echoes the count the user was shown: the
+    fill covers at most that many rows, top down (rows appended after
+    the click are outside the consent set either way)."""
 
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
     confirmed_row_count = serializers.IntegerField(min_value=0)
-    # Scope: fill only the FIRST N eligible rows (0 = all, the absent
-    # default; a sent value must be positive).
-    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+    # Scope: fill at most this many rows, the FIRST N eligible in sheet
+    # order (0 = all, the absent default; a sent value must be positive).
+    max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if (attrs.get("config") is not None) == bool(attrs.get("agent_id")):
@@ -129,15 +133,15 @@ class AiColumnRequest(serializers.Serializer):
         return attrs
 
 
-class TestFillRequest(serializers.Serializer):
-    """POST /v1/fills/test: a drafted config plus ONE inline row, the
-    bench's hand-fed values. SHAPE only: the bench bounds are refused
-    by the admission (never truncated), so the refusal rides the
+class PreviewRunRequest(serializers.Serializer):
+    """POST /v1/runs/preview: a drafted config plus ONE inline row, the
+    preview's hand-fed values. SHAPE only: the preview bounds are refused
+    by the service (never truncated), so the refusal rides the
     {error, detail} envelope instead of DRF's field shape, which the
     client cannot read."""
 
     config = AgentConfigRequest()
-    # trim_whitespace=False: the bench's whole value is fidelity to
+    # trim_whitespace=False: the preview's whole value is fidelity to
     # what a fill would run, so a hand-fed value must reach the model
     # exactly as typed, never silently stripped.
     row = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
@@ -146,13 +150,13 @@ class TestFillRequest(serializers.Serializer):
 class ColumnRefillRequest(serializers.Serializer):
     """POST /v1/lists/{id}/columns/{key}/refill: the column names
     everything except the optional scope, so the body carries at most
-    `rows` (first N eligible unanswered rows; absent = all)."""
+    `max_row_count` (the first N eligible unanswered rows; absent = all)."""
 
     # Continue's leg: bound the new fill to THIS stopped fill's own
     # unresolved rows (resume, never widen).
     resume_fill = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
 
-    rows = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
+    max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
 
     # The consent echo, as the admit lane has. OPTIONAL because resume
     # spends what a previous consent already bought and the widening
@@ -280,11 +284,17 @@ def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
     ).model_dump()
 
 
-def fill_run_detail_wire(fill: Fill, result: CellRunResult | None) -> dict[str, Any]:
-    """The single-run read (GET /v1/fills/{id}): the poll envelope's
-    fields plus kind and, for a COMPLETE test run, its stored result.
-    Reads the poll builder so the two projections cannot drift."""
-    return WireFillRunDetail(**fill_run_wire(fill), kind=fill.kind, result=result).model_dump()
+def node_run_wire(run: NodeRun, result: CellRunResult | None) -> dict[str, Any]:
+    """One run by id (GET /v1/runs/{id}, and the preview's POST and cancel
+    echoes): its status, its stored result once it finished with one,
+    and its latest state change for the client's staleness read."""
+    return WireNodeRun(
+        id=str(run.id),
+        status=run.status,
+        result=result,
+        heartbeat_at=(run.last_state_change_at or run.created_at).isoformat(),
+        created_at=run.created_at.isoformat(),
+    ).model_dump()
 
 
 def row_wire(
@@ -295,60 +305,61 @@ def row_wire(
     """A sheet row with its AI cell states and its webhook cell words
     beside its values. ONE shape rather than paged reads walking in
     lockstep, which was a client-side join carried over the network."""
-    return WireListRow(
-        id=str(row.id), position=row.position, data=row.data, states=states or {}, webhooks=webhooks or {}
-    ).model_dump()
+    return WireListRow(id=str(row.id), data=row.data, states=states or {}, webhooks=webhooks or {}).model_dump()
 
 
-def _fill_run_wire(fill: Fill, counters: Any, heartbeat: Any) -> dict[str, Any]:
-    # Two-tier error: both legs travel together or not at all (a code
-    # with no copy would leave the client nothing to render verbatim),
-    # gated on the DOCUMENTED predicate exactly as the column summary
-    # gates last_error: one fact, one rule, on every wire. Counters and
-    # the heartbeat DERIVE from the task rows and cell states at read
-    # time (passed in, so a page of runs pays ONE grouped read, not per
-    # run); nothing writes them onto the fill anymore.
-    error = (
-        FillError(code=fill.error_code, message=fill.error_message)
-        if fill.status == FillStatus.FAILED and fill.error_code
-        else None
-    )
+def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
+    # The fill is a JOB of kind fill: its consent is the payload, its
+    # walk's cursor the progress, its lifecycle the job's. The wire's
+    # five words derive from the job's status plus whether a run has
+    # been claimed. Two-tier error: both legs travel together or not at
+    # all (a code with no copy would leave the client nothing to render
+    # verbatim), gated on the DOCUMENTED predicate exactly as the column
+    # summary gates last_error: one fact, one rule, on every wire.
+    # Counters, the heartbeat and the started flag DERIVE from the task
+    # rows and cell states at read time (page_progress, the one reader,
+    # passed in); nothing writes them onto the job.
+    from .jobs.fill import FillJob
+    from .services import fill_progress
+
+    consent = FillJob.model_validate(fill.payload)
+    cursor = FillJob.Progress.model_validate(fill.progress)
+    status = fill_progress.status_of(fill, started=progress.started)
+    error = fill_progress.error_of(fill.status, fill.error_code, fill.error)
     return WireFillRun(
         id=str(fill.id),
-        list_id=fill.list_id,
-        agent_id=fill.agent_id,
-        status=fill.status,
-        column_keys=fill.column_keys or [],
-        counters=counters,
-        confirmed_row_count=fill.confirmed_row_count,
-        targeted_at=fill.targeted_at.isoformat() if fill.targeted_at else None,
-        # The base model's attribution field is the wire's started_by;
-        # authorization stays account membership.
-        started_by=fill.user_id,
-        heartbeat_at=heartbeat.isoformat() if heartbeat else None,
+        list_id=fill.target_id,
+        agent_id=consent.agent_id,
+        status=status,
+        column_keys=consent.column_keys,
+        counters=progress.counters,
+        confirmed_row_count=cursor.targeted if cursor.targeted_at else consent.consented,
+        targeted_at=cursor.targeted_at.isoformat() if cursor.targeted_at else None,
+        # A fill is always asked for by a user (admission enqueues it
+        # attributed), so the job's user is never NULL here; authorization
+        # stays account membership.
+        started_by=fill.user_id or "",
+        heartbeat_at=progress.heartbeat.isoformat(),
         error=error,
         created_at=fill.created_at.isoformat(),
-        updated_at=fill.updated_at.isoformat(),
+        updated_at=fill.last_state_change_at.isoformat(),
     ).model_dump()
 
 
-def fill_run_wire(fill: Fill) -> dict[str, Any]:
-    """ONE run's wire, for the echo paths (admit/cancel/refill) that
-    return a single fill. The fills PAGE uses fill_runs_wire, which reads
-    all runs' progress in a fixed number of queries."""
-    from .services.fills import derive_counters, derive_heartbeat
-
-    return _fill_run_wire(fill, derive_counters(fill), derive_heartbeat(fill))
+def fill_run_wire(fill: Job) -> dict[str, Any]:
+    """ONE run's wire, for the echo paths (admit/cancel/refill): the
+    page's reader with one fill, so there is one derivation."""
+    return fill_runs_wire([fill])[0]
 
 
-def fill_runs_wire(fills: list[Fill]) -> list[dict[str, Any]]:
+def fill_runs_wire(fills: list[Job]) -> list[dict[str, Any]]:
     """A PAGE of runs' wires, paying a FIXED number of grouped reads for
-    all of them (not derive_counters + derive_heartbeat per run, which is
-    a 3+4N walk on the four-second poll)."""
+    all of them (never per run, which would be a 3+4N walk on the
+    four-second poll)."""
     from .services.fills import page_progress
 
-    progress = page_progress([str(fill.id) for fill in fills])
-    return [_fill_run_wire(fill, *progress[str(fill.id)]) for fill in fills]
+    progress = page_progress(fills)
+    return [_fill_run_wire(fill, progress[str(fill.id)]) for fill in fills]
 
 
 class WebhookColumnTestRequest(serializers.Serializer):

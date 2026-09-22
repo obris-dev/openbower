@@ -10,10 +10,14 @@ from typing import get_args
 
 from django.test import SimpleTestCase
 
+from jobs.constants import JobStatus
 from lists import constants
+from lists.services.fill_progress import word_of
+from openbower_schema.fills import FillStatusWire
 from openbower_schema.lists import ColumnType as WireColumnType
 from openbower_schema.lists import ListOrigin as WireListOrigin
 from openbower_schema.lists import WebhookCellState, WireCellState
+from openbower_schema.runs import OPEN_NODE_RUN_STATES, NodeRunStatusWire
 
 
 class WireEnumParityTests(SimpleTestCase):
@@ -32,3 +36,22 @@ class WireEnumParityTests(SimpleTestCase):
 
     def test_webhook_cell_state_parity(self):
         self.assertEqual(set(get_args(WebhookCellState)), {v.value for v in constants.WebhookCellWord})
+
+    def test_node_run_status_parity(self):
+        # The contract's status literal and its OPEN partition are the
+        # server's NodeRunStatus and NON_TERMINAL set, member for member:
+        # the preview poll derives its loop predicate off the wire, so a
+        # status added on one side only would either never terminate a
+        # poll or end one early.
+        self.assertEqual(set(get_args(NodeRunStatusWire)), {str(status) for status in constants.NodeRunStatus})
+        self.assertEqual(set(OPEN_NODE_RUN_STATES), {str(status) for status in constants.NON_TERMINAL_NODE_RUN_STATES})
+
+    def test_fill_status_parity(self):
+        # Every job status has a word, and every word is reachable: the
+        # derivation is exhaustive, so a status added to the job's
+        # lifecycle fails here instead of reading as pending forever.
+        words = set(get_args(FillStatusWire))
+        derived = {word_of(status, started=started) for status in JobStatus for started in (False, True)}
+        self.assertEqual(derived, words)
+        with self.assertRaises(ValueError):
+            word_of("paused", started=False)

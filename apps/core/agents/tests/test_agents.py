@@ -207,8 +207,7 @@ class PatchAndBoundsTests(TestCase):
 
 
 class StoredConfigCoercionTests(TestCase):
-    """The read a stored row can never 500. Both custodies share it:
-    the agent row, and the fill's frozen snapshot."""
+    """The read a stored row can never 500."""
 
     def test_a_provider_the_enum_no_longer_knows_is_trailed(self):
         # The substitution used to happen BEFORE the coercion, so its

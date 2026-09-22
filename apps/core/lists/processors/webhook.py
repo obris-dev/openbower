@@ -113,7 +113,7 @@ class WebhookProcessor(NodeProcessor):
             flow.settle_many(missing, {}, status=NodeRunStatus.ROW_MISSING)
         records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
         cell_states = CellStateService(account_id=self.account_id)
-        for row_id, column_key, state, updated_at, _fingerprint in cell_states.iter_records(
+        for row_id, column_key, state, updated_at in cell_states.iter_records(
             list_id, row_ids=list(rows), column_keys=wait_keys
         ):
             records[row_id][column_key] = (state, updated_at)
@@ -123,12 +123,13 @@ class WebhookProcessor(NodeProcessor):
         sendable: list[NodeRun] = []
         incomplete: list[str] = []
         items = []
-        # The claim's order is (position, id): the digest reads top to
-        # bottom of the sheet.
-        for run in claimed:
-            row = rows.get(run.row_id)
-            if row is None:
-                continue
+        # The digest reads top to bottom of the sheet AS IT IS: by the
+        # rows' live ranks, not the rank stamped on each run when it was
+        # queued (a row moved since would otherwise report in its old
+        # place). The rows are loaded either way, so the sort is free.
+        present = [run for run in claimed if run.row_id in rows]
+        for run in sorted(present, key=lambda run: (rows[run.row_id].rank, run.row_id)):
+            row = rows[run.row_id]
             completed_at = completion_of(records[run.row_id], wait_keys)
             if completed_at is None:
                 # A refill re-opened a waited-on cell since the advance:
@@ -140,7 +141,7 @@ class WebhookProcessor(NodeProcessor):
             items.append(
                 build_digest_item(
                     scope=node_id,
-                    row=row,
+                    row_id=run.row_id,
                     cells={key: str(row.data.get(key) or "") for key in payload_keys},
                     states={key: state for key, (state, _updated_at) in records[run.row_id].items()},
                     completed_at=completed_at,
@@ -203,7 +204,7 @@ class WebhookProcessor(NodeProcessor):
         node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
         return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
 
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime) -> int:
+    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         """A row is owed a run when it is complete for the barrier's
         columns AND that completion is newer than the newest run this
         node already holds for it. The open-run key alone guards only
@@ -219,7 +220,7 @@ class WebhookProcessor(NodeProcessor):
         row_ids = [str(row.id) for row in rows]
         records: dict[str, dict[str, tuple[str, datetime]]] = defaultdict(dict)
         cell_states = CellStateService(account_id=self.account_id)
-        for row_id, column_key, state, updated_at, _fingerprint in cell_states.iter_records(
+        for row_id, column_key, state, updated_at in cell_states.iter_records(
             list_id, row_ids=row_ids, column_keys=wait_keys
         ):
             records[row_id][column_key] = (state, updated_at)
@@ -228,6 +229,8 @@ class WebhookProcessor(NodeProcessor):
         window = next_window(now, webhook.interval_seconds)
         runs: list[NodeRun] = []
         for row in rows:
+            if limit and len(runs) == limit:
+                break
             completed_at = completion_of(records.get(str(row.id), {}), wait_keys)
             if completed_at is None:
                 continue
@@ -242,7 +245,7 @@ class WebhookProcessor(NodeProcessor):
                     kind=WEBHOOK,
                     row_id=str(row.id),
                     list_id=list_id,
-                    position=row.position,
+                    rank=row.rank,
                     status=NodeRunStatus.DEFERRED,
                     not_before=window,
                     queued_at=now,
@@ -256,7 +259,7 @@ class WebhookProcessor(NodeProcessor):
 
     def _newest_run_at(self, row_ids: Sequence[str]) -> dict[str, datetime]:
         """row id -> when this node's newest run for it was queued, for
-        the rows that have one (served by `node_run_webhook_cell_idx`)."""
+        the rows that have one (served by `node_run_cell_idx`)."""
         newest = (
             NodeRun.objects.filter(
                 account_id=self.account_id, kind=WEBHOOK, node_id=str(self.node.id), row_id__in=list(row_ids)

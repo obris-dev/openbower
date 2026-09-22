@@ -820,7 +820,7 @@ class RuntimeTests(TestCase):
         self.assertTrue(all(s["status"] == "rate_limited" for s in body["tool_calls"]))
         # The run names the tools that did not serve: without this
         # map a blank cell loses its degraded mark (the run-detail
-        # read serves it back to the bench verbatim). FAILS if
+        # read serves it back to the preview verbatim). FAILS if
         # run_cell stops recording per-tool statuses; the wire
         # projection itself is pinned where the worker writes it.
         self.assertEqual(body["tools"], {"find_contacts": "rate_limited"})
@@ -1334,10 +1334,9 @@ class AgenticLoopTests(TestCase):
         # toggled find_contacts was never offered (its provider is not
         # configured), and the missing tool may be exactly why the
         # output is empty. The cell reads tool_not_configured, which
-        # re-runs on Continue once the provider is set up; provider credentials
-        # live in deployment settings, outside the config fingerprint,
-        # so no settled state could re-open on setup. The price is a
-        # consent-gated re-buy per Continue until then.
+        # re-runs on Continue once the provider is set up (provider
+        # credentials live in deployment settings, outside the config).
+        # The price is a consent-gated re-buy per Continue until then.
         from agents.tools.search.providers.base import SearchHit
         from agents.tools.search.providers.duckduckgo import _Page
 

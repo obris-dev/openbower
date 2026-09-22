@@ -22,9 +22,13 @@ from .lists import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
 
-# The SETTLED partition of WireCellState: diagnoses the same config would
-# just reproduce, so they hold (and never re-spend) until the config
-# changes; every other cause re-runs on the next fill. A wire fact
+# The SETTLED partition of WireCellState: the model's own verdicts (a
+# quiet word on the sheet rather than a warning), as opposed to
+# infrastructure's causes. Every blank re-runs on the next fill; the
+# partition is how the sheet SPEAKS, not what a refill targets. One
+# server-side reader branches on it too: a webhook digest treats FILLED
+# plus this partition as a completed row (digest_payload.DONE_CELL_STATES),
+# so a member added here changes when webhooks fire. A wire fact
 # (x-constants) so the client derives the partition instead of
 # hand-retyping it beside its copy.
 SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
@@ -59,7 +63,7 @@ class CellAssessment(BaseModel):
     discarded: what the model staked on the answer, the account it
     gave of the evidence, and the value the floor dropped ("" when
     the answer landed). A typed wire shape, not a bare dict: the
-    bench renders these fields, and z.any() is a contract that
+    preview renders these fields, and z.any() is a contract that
     promises nothing."""
 
     confidence: float = 0.0
@@ -73,12 +77,12 @@ class CellRunResult(BaseModel):
     evidence the model saw, each tool call's diagnosis, and the causes
     behind any blank.
 
-    ONE shape for both landings. A NORMAL row's answers land in sheet
-    columns; a TEST row lands on its own task; both store this record,
-    so a reader that had to ask which landing produced it would be
-    reading two contracts through one field. The bench reads it
-    VERBATIM off the run-detail wire (FillRunDetail carries it whole),
-    so there is no second projection to drift.
+    ONE shape for both landings. A sheet row's answers land in its
+    columns; a preview run lands on itself; both store this record, so a
+    reader that had to ask which landing produced it would be reading
+    two contracts through one field. The preview reads it VERBATIM off
+    the run wire (NodeRunWire carries it whole), so there is no second
+    projection to drift.
 
     What LANDED is the sheet row plus its cell states; the difference
     between the two is the audit story (an answer write-if-blank
@@ -162,48 +166,19 @@ class FillRunWire(BaseModel):
         "the click); a run cannot complete before it is set.",
     )
     started_by: str = Field(description="User id, ATTRIBUTION only; authorization is account membership.")
-    heartbeat_at: str | None = Field(
-        default=None,
-        description="The latest state change across this run's tasks (derived); the client judges "
-        "staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented "
-        "as failure).",
+    heartbeat_at: str = Field(
+        description="The fill's latest movement (derived): a run's state change, or the job's own "
+        "when that is newer (queuing, parking between polls, stopping), so a fill that has queued "
+        "nothing yet still reads as alive from its enqueue. The client judges staleness against "
+        "ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
     )
     error: FillError | None = Field(
         default=None,
         description="This run's error, both legs (tier 1: the message renders verbatim); "
         "None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.",
     )
-    # The config snapshot frozen at admission stays STORED, not wired:
-    # nothing renders it on a poll; GET /v1/fills/{id} (FillRunDetail)
-    # is where it lands when a surface needs it.
     created_at: str
-    updated_at: str
-
-
-# A fill's OPERATING MODE: "normal" writes a sheet; "test" is the
-# bench's one-row diagnostic run, landing its result on its task
-# instead of a sheet (the throwaway rides the real execution path on
-# purpose).
-FillKindWire = Literal["normal", "test"]
-
-
-class FillRunDetail(FillRunWire):
-    """One run, read by id (GET /v1/fills/{id}): the poll envelope's
-    fields plus what a single-run read can afford. `result` is the
-    completed TEST run's stored CellRunResult (its one task's record);
-    the `result` field below owns the full predicate. A test run
-    carries no sheet, so `list_id` and `agent_id` are blank ("") for
-    kind=test, and `confirmed_row_count`/`column_keys` describe the
-    hand-fed row rather than a consent echo."""
-
-    kind: FillKindWire = "normal"
-    result: CellRunResult | None = Field(
-        default=None,
-        description="A test run's stored result (its one task's record), served whenever that task"
-        " FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not"
-        " strand a paid result); None while the task is unfinished, and always for kind=normal (a"
-        " normal fill's results live on the sheet).",
-    )
+    updated_at: str = Field(description="The fill's last transition (a claim, a park, a settle, a stop).")
 
 
 class ColumnFillSummary(BaseModel):
@@ -261,10 +236,9 @@ class FillRunPage(BaseModel):
 class ColumnPromptWire(BaseModel):
     """The column's CURRENT fill config as the server holds it (GET),
     and the echo after a column-scoped edit (PATCH
-    /lists/{id}/columns/{key}/prompt). Live fills keep their frozen
-    snapshot; an edit reaches the NEXT fill's admission, so surfaces
-    peeking at "what fills this column" read HERE, never a fill's
-    snapshot."""
+    /lists/{id}/columns/{key}/prompt). A fill reads its agent live, so
+    an edit reaches a running fill's next row; surfaces peeking at
+    "what fills this column" read HERE."""
 
     prompt: str
     model: str
