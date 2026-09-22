@@ -394,7 +394,7 @@ class ManualFillTestCase(TransactionTestCase):
                 .values_list("id", flat=True)[0]
             )
             outcome = handle_node_run(str(first_task), WORKER)
-        self.assertEqual(outcome, "done")
+        self.assertEqual(outcome, "exited")
         self.assertEqual(self.status(), "failed")
         self.fill.refresh_from_db()
         self.assertEqual(self.fill.error_code, FillFailureCode.MODEL_UNRUNNABLE)

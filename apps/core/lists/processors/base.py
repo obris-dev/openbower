@@ -51,11 +51,16 @@ from ..services.node_runs import NodeRunFlow
 
 
 class RunOutcome(StrEnum):
-    """What `process_run` did with the claimed run, for the consumer's
-    log and its tests: settled terminally (with or without a value),
-    parked for a retry, or retired because its row or list vanished."""
+    """What `process_run` did with the claimed run, for the base's
+    advance, the consumer's log, and the tests. LANDED: the run WROTE
+    its row (a value, or a diagnosis), so the workflow may have more to
+    do for that row. EXITED: the run ended and wrote nothing the
+    workflow should act on (skipped unrun, a config that cannot run, a
+    preview landing on itself, a crash past its attempts). PARKED: a
+    retry later. ROW_MISSING | LIST_MISSING: retired, its subject gone."""
 
-    DONE = "done"
+    LANDED = "landed"
+    EXITED = "exited"
     PARKED = "parked"
     ROW_MISSING = "row_missing"
     LIST_MISSING = "list_missing"
@@ -127,13 +132,13 @@ class NodeProcessor(ABC):
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """The consumer's call: the kind's `_process_run`, then the
-        advance for a run that reached DONE on a row (a run with no row,
-        the preview, advances nothing). The advance runs AFTER the
+        advance for a run that LANDED on its row (an exited, parked, or
+        retired run advances nothing). The advance runs AFTER the
         kind's own transaction: it inserts under the open-run key, so a
         repeat is a no-op, and a crash between the two is closed by
         re-offering, never by ordering."""
         outcome = self._process_run(task, flow=flow)
-        if outcome is RunOutcome.DONE and task.row_id:
+        if outcome is RunOutcome.LANDED:
             advance_rows(account_id=task.account_id, list_id=task.list_id, row_ids=[task.row_id], node_id=task.node_id)
         return outcome
 

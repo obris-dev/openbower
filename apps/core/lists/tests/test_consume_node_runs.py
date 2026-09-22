@@ -54,7 +54,7 @@ class ProcessNodeRunTests(AutofillHarness):
         self.assertEqual(task.status, NodeRunStatus.READY)
 
         result = self._handle(task, answering_model(lambda prompt: "found it"))
-        self.assertEqual(result, "done")
+        self.assertEqual(result, "landed")
 
         # 1) The value lands on the sheet row.
         row = ListRow.objects.get(id=row_id)
@@ -74,7 +74,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # task terminal, a redelivery finds nothing READY | QUEUED to
         # claim and drops.
         _, task, _ = self._one_ready_task()
-        self.assertEqual(self._handle(task, answering_model(lambda prompt: "found it")), "done")
+        self.assertEqual(self._handle(task, answering_model(lambda prompt: "found it")), "landed")
 
         second = self._handle(task, answering_model(lambda prompt: "should never run"))
         self.assertIsNone(second)
@@ -112,7 +112,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # an unpatched run raises ModelUnavailable and settles DONE with an
         # empty result, byte-identical to the skip. If the skip ever stops
         # firing, this run REACHES the model and lands a non-empty result.
-        self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+        self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "exited")
 
         task.refresh_from_db()
         self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
@@ -130,7 +130,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # consumer settles it (there is no node to build a processor
         # from), so the trace is the consumer's.
         with self.assertLogs("lists.operations.consume_node_runs", level="WARNING") as logs:
-            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "exited")
         self.assertIn(f"node {task.node_id} is gone", logs.output[0])
 
         task.refresh_from_db()
@@ -144,7 +144,7 @@ class ProcessNodeRunTests(AutofillHarness):
         Agent.objects.filter(id=agent_id_of(Node.objects.get(id=task.node_id))).delete()
 
         with self.assertNoLogs("lists.processors.column_agent", level="WARNING"):
-            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "done")
+            self.assertEqual(self._handle(task, answering_model(lambda prompt: "must not run")), "exited")
 
         task.refresh_from_db()
         self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
@@ -171,7 +171,7 @@ class ProcessNodeRunTests(AutofillHarness):
             patch("lists.processors.column_agent.AIColumnProcessor.process_run", side_effect=RuntimeError("boom")),
             self.assertLogs("lists.operations.consume_node_runs", level="ERROR"),
         ):
-            self.assertEqual(handle_node_run(str(task.id), WORKER), "done")
+            self.assertEqual(handle_node_run(str(task.id), WORKER), "exited")
 
         task.refresh_from_db()
         self.assertEqual((task.status, task.result), (NodeRunStatus.DONE, {}))
@@ -202,7 +202,7 @@ class ProcessNodeRunTests(AutofillHarness):
 
         # The model would answer if reached; give-up must short-circuit it.
         result = self._handle(task, answering_model(lambda prompt: "never reached"))
-        self.assertEqual(result, "done")
+        self.assertEqual(result, "landed")
 
         row = ListRow.objects.get(id=row_id)
         self.assertNotIn("answer", row.data)  # blank landed, not the model's answer

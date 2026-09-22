@@ -69,7 +69,7 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
         # settles silently).
         logger.warning("node run %s: node %s is gone; settling it unrun", task.id, task.node_id)
         flow.settle(task.id, status=NodeRunStatus.DONE, result={})
-        return RunOutcome.DONE
+        return RunOutcome.EXITED
     try:
         return processor_for(account_id=task.account_id, node=node).process_run(task, flow=flow)
     except (ListNotFound, RowNotFound):
@@ -93,7 +93,7 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
         logger.exception("node run %s crashed on attempt %d", task.id, task.attempts)
         if flow.exhausted(task):
             flow.settle(task.id, {}, status=NodeRunStatus.DONE)
-            return RunOutcome.DONE
+            return RunOutcome.EXITED
         flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result={})
         return RunOutcome.PARKED
 

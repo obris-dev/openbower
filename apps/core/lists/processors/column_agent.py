@@ -255,8 +255,7 @@ class AIColumnProcessor(NodeProcessor):
             return ended.outcome
         close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
         if flow.exhausted(task):
-            self._land(task, lane, give_up_blank(task), close=close, flow=flow)
-            return RunOutcome.DONE
+            return self._land(task, lane, give_up_blank(task), close=close, flow=flow)
         try:
             run = run_cell(lane.config, lane.row_data)
         except CONFIG_TIER_ERRORS as e:
@@ -271,12 +270,11 @@ class AIColumnProcessor(NodeProcessor):
                 lane_name = "preview" if task.is_preview else "autofill"
                 logger.warning("%s: node %s unrunnable (%s); settling task %s", lane_name, task.node_id, e, task.id)
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            return RunOutcome.EXITED
         result = to_result(run)
         if _park_if_retriable(flow, task, run, result):
             return RunOutcome.PARKED
-        self._land(task, lane, result, close=close, flow=flow)
-        return RunOutcome.DONE
+        return self._land(task, lane, result, close=close, flow=flow)
 
     def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         """Which of the three lanes this run is on, by what the run
@@ -299,7 +297,7 @@ class AIColumnProcessor(NodeProcessor):
             # parked to the attempt cap with the builder's button busy.
             logger.warning("preview: run %s carries an unreadable input (%s); settling unrun", task.id, e)
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE) from e
+            raise _RunEnded(RunOutcome.EXITED) from e
         # No landing context: a run that owns its input lands on itself.
         return _Lane(config=config, ctx=None, row_data=row_data, fill_run_id=None)
 
@@ -311,7 +309,7 @@ class AIColumnProcessor(NodeProcessor):
             # The owning fill is gone (its list was deleted, which purges
             # both in one transaction); nothing to run or land.
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE)
+            raise _RunEnded(RunOutcome.EXITED)
         consent = FillJob.model_validate(job.payload)
         try:
             agent = AgentService(account_id=task.account_id).get_for_fill(consent.agent_id)
@@ -322,13 +320,13 @@ class AIColumnProcessor(NodeProcessor):
             # stays never-attempted.
             fill_progress.fail(str(job.id), code=FillFailureCode.AGENT_MISSING, message=AGENT_MISSING_MESSAGE)
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE) from None
+            raise _RunEnded(RunOutcome.EXITED) from None
         if agent.provider_retired:
             # Acting on a substituted spec would be a guess: the same
             # fact admission refuses under, caught here mid-fill.
             fill_progress.fail(str(job.id), code=FillFailureCode.PROVIDER_RETIRED, message=PROVIDER_RETIRED_MESSAGE)
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE)
+            raise _RunEnded(RunOutcome.EXITED)
         config = agent.config()
         # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
         # hours later re-resolves against the current world).
@@ -337,7 +335,7 @@ class AIColumnProcessor(NodeProcessor):
         except ModelUnavailable as e:
             fill_progress.fail(str(job.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE) from e
+            raise _RunEnded(RunOutcome.EXITED) from e
         row = ListRow.objects.filter(id=task.row_id, list_id=consent.list_id).first()
         if row is None:
             if not List.objects.filter(id=consent.list_id).exists():
@@ -369,21 +367,21 @@ class AIColumnProcessor(NodeProcessor):
         column_keys = columns_for_node(target_list, task.node_id)
         if not column_keys:
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE)
+            raise _RunEnded(RunOutcome.EXITED)
         try:
             agent = AgentService(account_id=task.account_id).get_for_fill(agent_id_of(self.node))
         except AgentNotFound:
             # An agent delete leaves its columns orphaned on purpose:
             # the allowed shape, so no warning.
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE) from None
+            raise _RunEnded(RunOutcome.EXITED) from None
         if agent.provider_retired:
             # A retired provider cannot run its stored config; settle
             # rather than burn attempts on a run that will never
             # succeed. The cell stays never-attempted, targetable later.
             logger.warning("autofill: node %s provider retired; settling task %s unrun", task.node_id, task.id)
             _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.DONE)
+            raise _RunEnded(RunOutcome.EXITED)
         config = agent.config()
         ctx = LandingContext(
             account_id=task.account_id,
@@ -393,13 +391,16 @@ class AIColumnProcessor(NodeProcessor):
         )
         return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=None)
 
-    def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> None:
+    def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> RunOutcome:
+        """Write what the run produced. On a sheet row that is LANDED
+        (the workflow may owe the row more); a run that owns its input
+        lands ON ITSELF (no sheet write, no cell truth, no sheet at all)
+        and so EXITS as far as the workflow is concerned."""
         if lane.ctx is None:
-            # A run that owns its input lands ON ITSELF: no sheet write,
-            # no cell truth, no advance (there is no sheet at all).
             flow.settle(task.id, payload.model_dump(), status=NodeRunStatus.DONE)
-            return
+            return RunOutcome.EXITED
         land_row(lane.ctx, task.row_id, payload, close=close)
+        return RunOutcome.LANDED
 
     # The judgement.
 

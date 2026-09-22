@@ -172,10 +172,10 @@ class ProcessorTests(_SheetHarness):
         with self.assertRaises(NotImplementedError):
             processor_for(account_id=ACCOUNT, node=self.first).process_batch(flow=flow, now=datetime.now(UTC))
 
-    def test_the_base_advances_after_a_done_run_on_a_row_and_after_each_settled_batch_row(self):
+    def test_the_base_advances_after_a_landed_run_and_after_each_settled_batch_row(self):
         # The advance is the base's, run after the kind's half on BOTH
-        # shapes: a DONE run on a row is offered downstream, a run with
-        # no row (the preview) is not, a parked run is not; a batch
+        # shapes: a run that LANDED on its row is offered downstream; an
+        # exited, parked, or retired run is not, on a row or off; a batch
         # advances every (list, row) it settled. FAILS if a kind is
         # left to call the advance itself, or the public pair stops
         # wrapping the private one.
@@ -186,21 +186,15 @@ class ProcessorTests(_SheetHarness):
         on_row = NodeRun(account_id=ACCOUNT, list_id="L1", row_id="R1", node_id=str(self.first.id))
         preview = NodeRun(account_id=ACCOUNT, list_id="", row_id=None, node_id=str(self.first.id))
         calls: list[tuple] = []
-        with (
-            patch(
-                "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
-            ),
-            patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.DONE),
-        ):
+        spy = patch(
+            "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+        )
+        with spy, patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.LANDED):
             agent.process_run(on_row, flow=flow)
-            agent.process_run(preview, flow=flow)
-        with (
-            patch(
-                "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
-            ),
-            patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.PARKED),
-        ):
-            agent.process_run(on_row, flow=flow)
+        for outcome in (RunOutcome.EXITED, RunOutcome.PARKED, RunOutcome.ROW_MISSING):
+            with spy, patch.object(AIColumnProcessor, "_process_run", return_value=outcome):
+                agent.process_run(on_row, flow=flow)
+                agent.process_run(preview, flow=flow)
         self.assertEqual(
             calls, [(("account_id", ACCOUNT), ("list_id", "L1"), ("node_id", str(self.first.id)), ("row_ids", ["R1"]))]
         )
