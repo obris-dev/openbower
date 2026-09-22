@@ -191,7 +191,10 @@ class QuickPathTests(AdmissionTestCase):
         self.sheet.save(update_fields=["columns"])
         rows = self.lists.rows_page(self.sheet, limit=1)
         self.lists.write_cells(
-            str(self.sheet.id), str(rows[0].id), {"answer": "taken"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(self.sheet.id),
+            str(rows[0].id),
+            {"answer": "taken"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
         )
         with self.assertRaises(ColumnCollision):
             self.admit()

@@ -39,15 +39,16 @@ if TYPE_CHECKING:
 
 class CellTruth(NamedTuple):
     """What a writer knows about the cells beyond their values: who
-    wrote them, every column it OWNS (each gets a record, answered or
-    not, which is what keeps the counts an indexed read and absence
-    meaning never attempted), the fill the cells belong to (None off a
-    fill), the cause an owned column the writer did not answer
-    carries, and the run's per-tool statuses. A hand-typed value is
-    `CellTruth(source=MANUAL)`: it owns only what it wrote."""
+    wrote them, the COLUMNS it is responsible for (it writes only
+    those, and each gets a record, answered or not, which is what
+    keeps the counts an indexed read and absence meaning never
+    attempted), the fill the cells belong to (None off a fill), the
+    cause a column the writer did not answer carries, and the run's
+    per-tool statuses. A fill's columns are its consent; a hand-typed
+    value's are exactly the keys it typed."""
 
     source: CellSource
-    owned_keys: tuple[str, ...] = ()
+    column_keys: tuple[str, ...]
     fill_run_id: str | None = None
     declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE
     tools: Mapping[str, str] = {}
@@ -62,7 +63,7 @@ def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, Store
     TYPE_MISMATCH (its own cause, the user's next step differs), and
     every other owned column carries the writer's declined cause, which
     keeps it targetable instead of reading as answered."""
-    states = dict.fromkeys(truth.owned_keys, truth.declined_cause)
+    states = dict.fromkeys(truth.column_keys, truth.declined_cause)
     for key in (*written.written, *written.occupied):
         states[key] = StoredCellState.FILLED
     for mismatch in written.mismatched:

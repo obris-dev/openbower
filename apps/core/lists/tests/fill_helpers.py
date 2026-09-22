@@ -166,7 +166,7 @@ def settle(
     answered = [key for key in consent.column_keys if key not in unanswered]
     truth = CellTruth(
         source=CellSource.FILL,
-        owned_keys=tuple(consent.column_keys),
+        column_keys=tuple(consent.column_keys),
         fill_run_id=fill_run_id,
         declined_cause=declined,
         tools=tools or {},

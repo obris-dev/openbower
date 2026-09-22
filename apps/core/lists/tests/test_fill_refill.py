@@ -109,7 +109,10 @@ class RefillTargetTests(RefillTestCase):
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill["id"], str(rows[0].id), None)
         self.lists.write_cells(
-            str(self.sheet.id), str(rows[2].id), {"answer": "typed by hand"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(self.sheet.id),
+            str(rows[2].id),
+            {"answer": "typed by hand"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
         )
         self.cancel(fill["id"])
 
@@ -146,7 +149,10 @@ class RefillTargetTests(RefillTestCase):
         settle_all(fill["id"], None)
         for row in rows:
             self.lists.write_cells(
-                str(self.sheet.id), str(row.id), {"answer": "done"}, truth=CellTruth(source=CellSource.MANUAL)
+                str(self.sheet.id),
+                str(row.id),
+                {"answer": "done"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
             )
         self.cancel(fill["id"])
 

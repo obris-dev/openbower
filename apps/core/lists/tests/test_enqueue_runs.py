@@ -195,13 +195,19 @@ class RemainingRuleTests(_Harness):
         # on the sheet. FAILS if a settled blank is skipped again.
         fill = self._fill()
         self.lists.write_cells(
-            str(self.sheet.id), str(self.rows[0].id), {"answer": "answered"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(self.sheet.id),
+            str(self.rows[0].id),
+            {"answer": "answered"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
         )
         self._settle(self.rows[0], StoredCellState.FILLED)
         self._settle(self.rows[1], StoredCellState.NO_EVIDENCE)
         self._settle(self.rows[2], StoredCellState.MODEL_ERROR)
         self.lists.write_cells(
-            str(self.sheet.id), str(self.rows[4].id), {"answer": "typed"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(self.sheet.id),
+            str(self.rows[4].id),
+            {"answer": "typed"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
         )
         self.rows = self.lists.rows_page(self.sheet, limit=10)
         processor = self._processor(
@@ -213,7 +219,10 @@ class RemainingRuleTests(_Harness):
         # every owed row holds a value.
         for row in (self.rows[1], self.rows[2]):
             self.lists.write_cells(
-                str(self.sheet.id), str(row.id), {"answer": "now answered"}, truth=CellTruth(source=CellSource.MANUAL)
+                str(self.sheet.id),
+                str(row.id),
+                {"answer": "now answered"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
             )
         self.assertEqual(processor.probe(self.sheet), (False, True))
 

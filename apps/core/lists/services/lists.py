@@ -318,13 +318,12 @@ class ListService:
         construction). Values clamp at CELL_MAX_LENGTH (authored input
         clamps, never rejects) and pass the column's shape validator
         before anything writes; a blank value writes nothing and
-        reports nothing. A writer that owns columns writes only those
-        (a run answering a key it does not own is ignored) and every
-        owned column gets a record, answered or not."""
-        if truth.owned_keys:
-            cells = {key: value for key, value in cells.items() if key in truth.owned_keys}
+        reports nothing. A writer writes only the columns its truth
+        names (a run answering a key it does not own is ignored) and
+        every one of them gets a record, answered or not."""
+        owned = {key: value for key, value in cells.items() if key in truth.column_keys}
         with transaction.atomic():
-            written = self._write_values(list_id, row_id, cells)
+            written = self._write_values(list_id, row_id, owned)
             cell_truth.write(
                 account_id=self.account_id,
                 list_id=list_id,

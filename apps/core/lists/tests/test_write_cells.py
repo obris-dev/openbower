@@ -40,7 +40,10 @@ class WriteIfBlankTests(TestCase):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
         result = service.write_cells(
-            str(target.id), str(row.id), {"employees": "1,200"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(target.id),
+            str(row.id),
+            {"employees": "1,200"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("employees",)),
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ())
@@ -52,7 +55,10 @@ class WriteIfBlankTests(TestCase):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.write_cells(
-            str(target.id), str(row.id), {"name": "Machine Name"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(target.id),
+            str(row.id),
+            {"name": "Machine Name"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
         )
         self.assertEqual(result.occupied, ("name",))
         self.assertEqual(result.written, ())
@@ -66,7 +72,7 @@ class WriteIfBlankTests(TestCase):
             str(target.id),
             str(row.id),
             {"name": "x" * (CELL_MAX_LENGTH + 8)},
-            truth=CellTruth(source=CellSource.MANUAL),
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
         )
         self.assertEqual(result.written, ("name",))
         row.refresh_from_db()
@@ -76,7 +82,10 @@ class WriteIfBlankTests(TestCase):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.write_cells(
-            str(target.id), str(row.id), {"employees": "around fifty"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(target.id),
+            str(row.id),
+            {"employees": "around fifty"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("employees",)),
         )
         self.assertEqual(result.written, ())
         self.assertEqual([m.key for m in result.mismatched], ["employees"])
@@ -89,7 +98,10 @@ class WriteIfBlankTests(TestCase):
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         before = dict(ListRow.objects.get(id=row.id).data)
         result = service.write_cells(
-            str(target.id), str(row.id), {"employees": "", "revenue": "   "}, truth=CellTruth(source=CellSource.MANUAL)
+            str(target.id),
+            str(row.id),
+            {"employees": "", "revenue": "   "},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("employees", "revenue")),
         )
         self.assertEqual(result, ((), (), ()))
         row.refresh_from_db()
@@ -102,7 +114,7 @@ class WriteIfBlankTests(TestCase):
             str(target.id),
             str(row.id),
             {"name": "Machine Name", "employees": "42", "founded": "next spring", "domain": ""},
-            truth=CellTruth(source=CellSource.MANUAL),
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("name", "employees", "founded", "domain")),
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ("name",))
@@ -119,7 +131,10 @@ class WriteIfBlankTests(TestCase):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.write_cells(
-            str(target.id), str(row.id), {"note": "Series B, 2024"}, truth=CellTruth(source=CellSource.MANUAL)
+            str(target.id),
+            str(row.id),
+            {"note": "Series B, 2024"},
+            truth=CellTruth(source=CellSource.MANUAL, column_keys=("note",)),
         )
         self.assertEqual(result.written, ("note",))
         row.refresh_from_db()
@@ -131,17 +146,31 @@ class WriteIfBlankTests(TestCase):
         other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=ListOrigin.MANUAL)
         with self.assertRaises(RowNotFound):
             service.write_cells(
-                str(target.id), "01RW" + "Z" * 22, {"name": "x"}, truth=CellTruth(source=CellSource.MANUAL)
+                str(target.id),
+                "01RW" + "Z" * 22,
+                {"name": "x"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
             )
         with self.assertRaises(RowNotFound):  # a row outside the list is missing too
-            service.write_cells(str(other.id), str(row.id), {"name": "x"}, truth=CellTruth(source=CellSource.MANUAL))
+            service.write_cells(
+                str(other.id),
+                str(row.id),
+                {"name": "x"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
+            )
         with self.assertRaises(ListNotFound):
             service.write_cells(
-                "01LS" + "Z" * 22, str(row.id), {"name": "x"}, truth=CellTruth(source=CellSource.MANUAL)
+                "01LS" + "Z" * 22,
+                str(row.id),
+                {"name": "x"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
             )
         with self.assertRaises(ListNotFound):  # cross-tenant reads as missing
             _service(account="01AC" + "Z" * 22).write_cells(
-                str(target.id), str(row.id), {"name": "x"}, truth=CellTruth(source=CellSource.MANUAL)
+                str(target.id),
+                str(row.id),
+                {"name": "x"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("name",)),
             )
 
 
@@ -312,7 +341,10 @@ class LockGranularityTests(TransactionTestCase):
         row = ListRow.objects.get(list_id=str(sheet.id))
         with CaptureQueriesContext(connection) as captured:
             lists.write_cells(
-                str(sheet.id), str(row.id), {"employees": "12"}, truth=CellTruth(source=CellSource.MANUAL)
+                str(sheet.id),
+                str(row.id),
+                {"employees": "12"},
+                truth=CellTruth(source=CellSource.MANUAL, column_keys=("employees",)),
             )
         locked = [q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"].upper()]
         self.assertTrue(locked, "the write took no row lock at all")

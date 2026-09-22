@@ -87,7 +87,7 @@ def land_row(
     declined = _declined_cause(run)
     truth = CellTruth(
         source=CellSource.FILL,
-        owned_keys=ctx.column_keys,
+        column_keys=ctx.column_keys,
         fill_run_id=ctx.fill_run_id,
         declined_cause=declined,
         tools=run.tools,
