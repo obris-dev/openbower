@@ -2,7 +2,7 @@
 run (three rules, one per walk mode) and how one of its runs executes,
 in ONE place.
 
-THE JUDGEMENT.
+WHICH ROWS NEED WORK.
 
 FRESH (a new fill): a row the prompt can act on, meaning at least one
 variable it references renders non-blank (a prompt with no variables
@@ -199,10 +199,10 @@ class AIColumnProcessor(NodeProcessor):
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
-        judge = self._rule_for_page(rows)
+        work_status = self._work_status_for_page(rows)
         owed: list[ListRow] = []
         for row in rows:
-            if judge(row) is not _Verdict.OWED:
+            if work_status(row) is not _WorkStatus.NEEDED:
                 continue
             owed.append(row)
             if limit and len(owed) == limit:
@@ -248,12 +248,12 @@ class AIColumnProcessor(NodeProcessor):
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
             walked += len(page)
-            judge = self._rule_for_page(page)
+            work_status = self._work_status_for_page(page)
             for row in page:
-                verdict = judge(row)
-                if verdict is _Verdict.OWED:
+                status = work_status(row)
+                if status is _WorkStatus.NEEDED:
                     return Probe(found=True, dropped_any=dropped_any)
-                if verdict is _Verdict.DROPPED:
+                if status is _WorkStatus.BLOCKED:
                     dropped_any = True
             after = RowCursor(str(page[-1].id), page[-1].rank)
 
@@ -413,40 +413,40 @@ class AIColumnProcessor(NodeProcessor):
         land_row(lane.ctx, task.row_id, payload, close=close)
         return RunOutcome.LANDED
 
-    # The judgement: does this node owe the row a run now? One rule per
-    # walk mode. The rule is bound ONCE per page (a resume reads the
-    # page's one fact there) and then asked per row with the row alone.
+    # Is work needed for a row? One rule per walk mode. The rule is
+    # bound ONCE per page (a resume reads the page's one fact there) and
+    # then asked per row with the row alone.
 
-    def _rule_for_page(self, rows: Sequence[ListRow]) -> Callable[[ListRow], _Verdict]:
+    def _work_status_for_page(self, rows: Sequence[ListRow]) -> Callable[[ListRow], _WorkStatus]:
         mode = self.scope.mode
         if mode is WalkMode.FRESH:
-            return self._judge_fresh
+            return self._work_status_fresh
         if mode is WalkMode.REMAINING:
             resumed_owed = self._resumed_owed_row_ids(rows)
-            return lambda row: self._judge_remaining(row, resumed_owed)
+            return lambda row: self._work_status_remaining(row, resumed_owed)
         if mode is WalkMode.PUSHED:
-            return self._judge_pushed
+            return self._work_status_pushed
         # A structural walk (a webhook column added, its wait set
         # changed) means nothing to an agent node.
-        return lambda row: _Verdict.DONE
+        return lambda row: _WorkStatus.NONE
 
-    def _judge_fresh(self, row: ListRow) -> _Verdict:
+    def _work_status_fresh(self, row: ListRow) -> _WorkStatus:
         """A new fill: every row the prompt can act on."""
-        return _Verdict.OWED if self._prompt_can_act(row) else _Verdict.DROPPED
+        return _WorkStatus.NEEDED if self._prompt_can_act(row) else _WorkStatus.BLOCKED
 
-    def _judge_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
+    def _work_status_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _WorkStatus:
         """A refill: a row with a blank in the scope's columns. A resume
         additionally offers only the rows the stopped fill still owed;
         that bound goes FIRST, so a row the stopped fill never consented
         to is not counted as dropped (which would blame the prompt for
         a row the scope excluded)."""
         if resumed_owed is not None and str(row.id) not in resumed_owed:
-            return _Verdict.DONE
+            return _WorkStatus.NONE
         if has_every_value(row.data, self.scope.column_keys):
-            return _Verdict.DONE
-        return _Verdict.OWED if self._prompt_can_act(row) else _Verdict.DROPPED
+            return _WorkStatus.NONE
+        return _WorkStatus.NEEDED if self._prompt_can_act(row) else _WorkStatus.BLOCKED
 
-    def _judge_pushed(self, row: ListRow) -> _Verdict:
+    def _work_status_pushed(self, row: ListRow) -> _WorkStatus:
         """Rows a push appended: the node runs unless the push filled
         every column the scope names (the columns the node fills on the
         sheet, as the starter read them; write-if-blank would keep those
@@ -454,8 +454,8 @@ class AIColumnProcessor(NodeProcessor):
         column owes nothing."""
         keys = self.scope.column_keys
         if not keys or has_every_value(row.data, keys):
-            return _Verdict.DONE
-        return _Verdict.OWED
+            return _WorkStatus.NONE
+        return _WorkStatus.NEEDED
 
     def _resumed_owed_row_ids(self, rows: Sequence[ListRow]) -> set[str] | None:
         """The rows on this page the resumed fill still owed (its
@@ -475,17 +475,18 @@ class AIColumnProcessor(NodeProcessor):
         }
 
 
-class _Verdict(StrEnum):
-    """Whether this node owes a row a run now."""
+class _WorkStatus(StrEnum):
+    """Whether this node has work to do on a row now."""
 
-    OWED = "owed"
+    # Queue a run.
+    NEEDED = "needed"
     # Nothing left for this node to do on the row.
-    DONE = "done"
-    # The row needs a run the prompt cannot act on (every variable it
-    # references is blank): skipped, and counted, so admission can tell
-    # "the column is finished" from "your prompt reads columns these
-    # rows have not got".
-    DROPPED = "dropped"
+    NONE = "none"
+    # A run is needed but the prompt has nothing to read (every column
+    # it references is blank): skipped, and counted, so admission can
+    # tell "the column is finished" from "your prompt reads columns
+    # these rows have not got".
+    BLOCKED = "blocked"
 
 
 register(AIColumnProcessor)

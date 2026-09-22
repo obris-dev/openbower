@@ -149,13 +149,13 @@ class FreshRuleTests(_Harness):
         fill = self._fill()
         processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
         judged: list[str] = []
-        real = processor._judge_fresh
+        real = processor._work_status_fresh
 
         def counting(row):
             judged.append(row.data.get("company", ""))
             return real(row)
 
-        with patch.object(processor, "_judge_fresh", side_effect=counting):
+        with patch.object(processor, "_work_status_fresh", side_effect=counting):
             self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW, limit=2), 2)
         self.assertEqual(self._numbers(self._runs(fill)), [1, 2])
         self.assertEqual(judged, ["acme.com", "example.io"])
