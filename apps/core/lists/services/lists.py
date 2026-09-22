@@ -144,13 +144,16 @@ def cells_for_storage(
 
 
 class CellWriteResult(NamedTuple):
-    """One write_cells call's per-key verdicts: every attempted key
-    lands in exactly one of these. Blank values are ABSENT from all
-    three (a machine blank writes nothing and is not an event)."""
+    """One write_cells call's verdict on EVERY column it was asked to
+    write: each lands in exactly one of these. A value landed
+    (written), a value was already there and write-if-blank kept it
+    (occupied), the column's shape refused the value (mismatched), or
+    no value arrived for the column, missing or blank (unanswered)."""
 
     written: tuple[str, ...]
     occupied: tuple[str, ...]
     mismatched: tuple[CellMismatch, ...]
+    unanswered: tuple[str, ...]
 
 
 class FolderService:
@@ -307,23 +310,24 @@ class ListService:
             locked.save(update_fields=["row_count", "updated_at"])
         return created
 
-    def write_cells(self, list_id: str, row_id: str, cells: dict[str, str], *, truth: CellTruth) -> CellWriteResult:
-        """THE cell writer: the values onto the sheet row and their TRUTH
-        onto the cell ledger, in one transaction, so a value and the
-        record that says what it is can never be written apart (a
-        fill's landing, and the hand-typed edit when it ships, both
-        come here). Write-if-blank per key, so a user's cell is never
-        destroyed (rows accept arbitrary keys from import, snapshot,
-        and manual entry, so nothing here is machine-owned by
-        construction). Values clamp at CELL_MAX_LENGTH (authored input
-        clamps, never rejects) and pass the column's shape validator
-        before anything writes; a blank value writes nothing and
-        reports nothing. A writer writes only the columns its truth
-        names (a run answering a key it does not own is ignored) and
-        every one of them gets a record, answered or not."""
-        owned = {key: value for key, value in cells.items() if key in truth.column_keys}
+    def write_cells(
+        self, list_id: str, row_id: str, cells: dict[str, str], *, column_keys: Sequence[str], truth: CellTruth
+    ) -> CellWriteResult:
+        """THE cell writer: over `column_keys` (the columns this write
+        is responsible for: a fill's consent, a hand-typed edit's own
+        keys), the values in `cells` onto the sheet row and one truth
+        record per column onto the cell ledger, in one transaction, so
+        a value and the record that says what it is can never be
+        written apart. Every column lands in one bucket of the result
+        and each bucket has one state (column_states). A value for a
+        key outside the columns is ignored. Write-if-blank per key, so
+        a user's cell is never destroyed (rows accept arbitrary keys
+        from import, snapshot, and manual entry, so nothing here is
+        machine-owned by construction). Values clamp at CELL_MAX_LENGTH
+        (authored input clamps, never rejects) and pass the column's
+        shape validator before anything writes."""
         with transaction.atomic():
-            written = self._write_values(list_id, row_id, owned)
+            written = self._write_values(list_id, row_id, cells, column_keys=column_keys)
             cell_truth.write(
                 account_id=self.account_id,
                 list_id=list_id,
@@ -335,10 +339,16 @@ class ListService:
             )
         return written
 
-    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
-        """The value half of write_cells: the sheet row alone."""
-        if not any(value.strip() for value in cells.values()):
-            return CellWriteResult((), (), ())
+    def _write_values(
+        self, list_id: str, row_id: str, cells: dict[str, str], *, column_keys: Sequence[str]
+    ) -> CellWriteResult:
+        """The value half of write_cells: the sheet row alone. A column
+        with no value, or a blank one, is UNANSWERED: it writes nothing
+        and the row is not even locked when every column is."""
+        cells = {key: cells.get(key, "") for key in column_keys}
+        unanswered = tuple(key for key, value in cells.items() if not value.strip())
+        if len(unanswered) == len(cells):
+            return CellWriteResult((), (), (), unanswered)
         with transaction.atomic():
             # The hazard this guards is a read-modify-write of ONE
             # row's data, so the lock is on THAT ROW: without it two
@@ -380,9 +390,9 @@ class ListService:
             written: list[str] = []
             occupied: list[str] = []
             mismatched: list[CellMismatch] = []
-            for key, value in cells.items():  # input order for the verdicts
+            for key, value in cells.items():  # column order for the verdicts
                 if not value.strip():
-                    continue  # a blank writes nothing and reports nothing
+                    continue  # unanswered, named above
                 if key not in candidates:
                     occupied.append(key)
                 elif key in why_by_key:
@@ -397,7 +407,7 @@ class ListService:
                 ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(
                     data=row_cells, updated_at=timezone.now()
                 )
-        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched))
+        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched), unanswered)
 
     def rows_page(
         self, target: List, *, after: RowCursor | None = None, limit: int, until_id: str = ""

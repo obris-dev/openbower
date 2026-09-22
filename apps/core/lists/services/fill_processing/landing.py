@@ -86,16 +86,14 @@ def land_row(
     resolve."""
     declined = _declined_cause(run_result)
     truth = CellTruth(
-        source=CellSource.FILL,
-        column_keys=ctx.column_keys,
-        fill_run_id=ctx.fill_run_id,
-        declined_cause=declined,
-        tools=run_result.tools,
+        source=CellSource.FILL, fill_run_id=ctx.fill_run_id, declined_cause=declined, tools=run_result.tools
     )
     writer = lists or ListService(account_id=ctx.account_id)
     try:
         with transaction.atomic():
-            written = writer.write_cells(ctx.list_id, row_id, dict(run_result.cells), truth=truth)
+            written = writer.write_cells(
+                ctx.list_id, row_id, dict(run_result.cells), column_keys=ctx.column_keys, truth=truth
+            )
             # The close comes AFTER the sheet write (the lock order the
             # deletes share) and inside its transaction: a reclaimed
             # lease's miss rolls the sheet write back with it.

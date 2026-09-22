@@ -434,7 +434,8 @@ class ManualFillTestCase(TransactionTestCase):
             str(self.sheet.id),
             str(rows[0].id),
             {"answer": "mine, typed by hand"},
-            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+            column_keys=("answer",),
+            truth=CellTruth(source=CellSource.MANUAL),
         )
         self.run_fill(answering_model(lambda prompt: "what the model found"))
         task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))

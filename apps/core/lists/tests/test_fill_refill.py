@@ -112,7 +112,8 @@ class RefillTargetTests(RefillTestCase):
             str(self.sheet.id),
             str(rows[2].id),
             {"answer": "typed by hand"},
-            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+            column_keys=("answer",),
+            truth=CellTruth(source=CellSource.MANUAL),
         )
         self.cancel(fill["id"])
 
@@ -152,7 +153,8 @@ class RefillTargetTests(RefillTestCase):
                 str(self.sheet.id),
                 str(row.id),
                 {"answer": "done"},
-                truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+                column_keys=("answer",),
+                truth=CellTruth(source=CellSource.MANUAL),
             )
         self.cancel(fill["id"])
 

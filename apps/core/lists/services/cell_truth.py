@@ -38,36 +38,34 @@ if TYPE_CHECKING:
 
 
 class CellTruth(NamedTuple):
-    """What a writer knows about the cells beyond their values: who
-    wrote them, the COLUMNS it is responsible for (it writes only
-    those, and each gets a record, answered or not, which is what
-    keeps the counts an indexed read and absence meaning never
-    attempted), the fill the cells belong to (None off a fill), the
-    cause a column the writer did not answer carries, and the run's
-    per-tool statuses. A fill's columns are its consent; a hand-typed
-    value's are exactly the keys it typed."""
+    """The identity a write's records carry, beyond the values: who
+    wrote them, the fill they belong to (None off a fill), the cause
+    an unanswered column carries, and the run's per-tool statuses.
+    Which columns get a record is the write's own `column_keys`."""
 
     source: CellSource
-    column_keys: tuple[str, ...]
     fill_run_id: str | None = None
     declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE
     tools: Mapping[str, str] = {}
 
 
 def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, StoredCellState]:
-    """The state of every column the write touched, from what the
-    value write reported: written or OCCUPIED is FILLED (an occupied
-    cell holds a user's value that write-if-blank protected; re-running
-    it would only buy a skip, and what the model said is in the stored
-    run for a human to compare), a value the column's shape refused is
-    TYPE_MISMATCH (its own cause, the user's next step differs), and
-    every other owned column carries the writer's declined cause, which
-    keeps it targetable instead of reading as answered."""
-    states = dict.fromkeys(truth.column_keys, truth.declined_cause)
+    """One state per bucket of the write result: written or OCCUPIED
+    is FILLED (an occupied cell holds a user's value that write-if-
+    blank protected; re-running it would only buy a skip, and what the
+    model said is in the stored run for a human to compare), a value
+    the column's shape refused is TYPE_MISMATCH (its own cause, the
+    user's next step differs), and an UNANSWERED column carries the
+    writer's declined cause, which keeps it targetable instead of
+    reading as answered. Every column the write was asked for is in
+    exactly one bucket, so this maps and never defaults."""
+    states: dict[str, StoredCellState] = {}
     for key in (*written.written, *written.occupied):
         states[key] = StoredCellState.FILLED
     for mismatch in written.mismatched:
         states[mismatch.key] = StoredCellState.TYPE_MISMATCH
+    for key in written.unanswered:
+        states[key] = truth.declined_cause
     return states
 
 

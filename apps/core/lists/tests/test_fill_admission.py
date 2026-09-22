@@ -194,7 +194,8 @@ class QuickPathTests(AdmissionTestCase):
             str(self.sheet.id),
             str(rows[0].id),
             {"answer": "taken"},
-            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+            column_keys=("answer",),
+            truth=CellTruth(source=CellSource.MANUAL),
         )
         with self.assertRaises(ColumnCollision):
             self.admit()

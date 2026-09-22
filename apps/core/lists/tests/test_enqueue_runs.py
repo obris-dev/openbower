@@ -198,7 +198,8 @@ class RemainingRuleTests(_Harness):
             str(self.sheet.id),
             str(self.rows[0].id),
             {"answer": "answered"},
-            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+            column_keys=("answer",),
+            truth=CellTruth(source=CellSource.MANUAL),
         )
         self._settle(self.rows[0], StoredCellState.FILLED)
         self._settle(self.rows[1], StoredCellState.NO_EVIDENCE)
@@ -207,7 +208,8 @@ class RemainingRuleTests(_Harness):
             str(self.sheet.id),
             str(self.rows[4].id),
             {"answer": "typed"},
-            truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+            column_keys=("answer",),
+            truth=CellTruth(source=CellSource.MANUAL),
         )
         self.rows = self.lists.rows_page(self.sheet, limit=10)
         processor = self._processor(
@@ -222,7 +224,8 @@ class RemainingRuleTests(_Harness):
                 str(self.sheet.id),
                 str(row.id),
                 {"answer": "now answered"},
-                truth=CellTruth(source=CellSource.MANUAL, column_keys=("answer",)),
+                column_keys=("answer",),
+                truth=CellTruth(source=CellSource.MANUAL),
             )
         self.assertEqual(processor.probe(self.sheet), (False, True))
 
