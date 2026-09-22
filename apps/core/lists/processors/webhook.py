@@ -111,10 +111,13 @@ class WebhookProcessor(NodeProcessor):
             batch = self._resolve(tasks, flow=flow, now=now)
         except _BatchEnded as ended:
             return ended.tally
-        held = BatchTally(parked=flow.park_batch(batch.incomplete, not_before=batch.window, restore_attempt=True))
+        parked = flow.park_batch(batch.incomplete, not_before=batch.window, restore_attempt=True)
+        held = BatchTally(parked=parked)
         if not batch.sendable:
             return held
-        return held + self._settle(flow, batch, self._deliver(batch, now=now))
+        sent = self._deliver(batch, now=now)
+        landed = self._settle(flow, batch, sent)
+        return held + landed
 
     def _resolve(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> _SendableBatch:
         """Resolve what the batch needs or end it: a paused column or a
