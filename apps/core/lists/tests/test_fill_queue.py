@@ -26,7 +26,7 @@ from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
 from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.fills import FillNotFound, FillService, page_progress
-from ..services.lists import CellWriteResult
+from ..services.lists import CellWriteResult, ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 from .fill_helpers import fill_status, open_fill_job, tick_fill
 
@@ -66,14 +66,13 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
     return fill
 
 
-class _SheetThatTakesEverything:
+class _SheetThatTakesEverything(ListService):
     """The sheet writer as these tests need it: the fill here names no
-    real list, so a FILLED landing is simulated by a writer that reports
-    every key written. The landing's real writer is covered by the
-    worker and view tests."""
+    real list, so the VALUE half is faked to report every key written
+    while the truth half stays the real one. The landing's real value
+    writer is covered by the worker and view tests."""
 
-    @staticmethod
-    def write_cells(list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
         return CellWriteResult(tuple(cells), (), ())
 
 
@@ -104,7 +103,7 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
             run,
             flow=flow,
             task_id=str(claimed.id),
-            lists=_SheetThatTakesEverything(),
+            lists=_SheetThatTakesEverything(account_id=ACCOUNT),
         )
         is not None
     )
@@ -144,7 +143,7 @@ class TerminalWriteTests(TestCase):
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
                 flow=original,
                 task_id=str(claimed.id),
-                lists=_SheetThatTakesEverything(),
+                lists=_SheetThatTakesEverything(account_id=ACCOUNT),
             )
             is not None
         )

@@ -30,6 +30,7 @@ from ..constants import (
 )
 from ..models import Folder, List, ListRow, NodeRun
 from . import cell_truth, fill_progress, webhook_runs
+from .cell_truth import CellTruth, column_states
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -306,14 +307,37 @@ class ListService:
             locked.save(update_fields=["row_count", "updated_at"])
         return created
 
-    def write_cells(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
-        """THE cell writer for machine answers: write-if-blank per key,
-        so a user's cell is never destroyed (rows accept arbitrary keys
-        from import, snapshot, and manual entry, so nothing here is
-        machine-owned by construction). Values clamp at CELL_MAX_LENGTH
-        (authored input clamps, never rejects) and pass the column's
-        shape validator before anything writes; a blank value writes
-        nothing and reports nothing."""
+    def write_cells(self, list_id: str, row_id: str, cells: dict[str, str], *, truth: CellTruth) -> CellWriteResult:
+        """THE cell writer: the values onto the sheet row and their TRUTH
+        onto the cell ledger, in one transaction, so a value and the
+        record that says what it is can never be written apart (a
+        fill's landing, and the hand-typed edit when it ships, both
+        come here). Write-if-blank per key, so a user's cell is never
+        destroyed (rows accept arbitrary keys from import, snapshot,
+        and manual entry, so nothing here is machine-owned by
+        construction). Values clamp at CELL_MAX_LENGTH (authored input
+        clamps, never rejects) and pass the column's shape validator
+        before anything writes; a blank value writes nothing and
+        reports nothing. A writer that owns columns writes only those
+        (a run answering a key it does not own is ignored) and every
+        owned column gets a record, answered or not."""
+        if truth.owned_keys:
+            cells = {key: value for key, value in cells.items() if key in truth.owned_keys}
+        with transaction.atomic():
+            written = self._write_values(list_id, row_id, cells)
+            cell_truth.write(
+                account_id=self.account_id,
+                list_id=list_id,
+                row_id=row_id,
+                fill_run_id=truth.fill_run_id,
+                states=column_states(truth, written),
+                tools=dict(truth.tools),
+                source=truth.source,
+            )
+        return written
+
+    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+        """The value half of write_cells: the sheet row alone."""
         if not any(value.strip() for value in cells.values()):
             return CellWriteResult((), (), ())
         with transaction.atomic():
@@ -511,16 +535,18 @@ class ListService:
             if not List.objects.select_for_update().filter(id=target.id, account_id=self.account_id):
                 return
             fills = fill_progress.fill_jobs().filter(target_id=str(target.id))
-            # ROWS FIRST, then the queue, because that is the order the
-            # consumer's terminal write takes them: write_cells locks the
-            # ListRow, then the task settle writes the NodeRun, both in
-            # one transaction. Deleting the other way round is an ABBA
-            # deadlock against any fill running on this sheet, and
-            # Postgres resolves it by aborting one side: a 500 on the
-            # delete, or a burned row attempt. Rows vanishing first is
-            # already a state the worker handles (RowNotFound resolves
-            # the fill CANCELLED, never failed).
+            # ROWS FIRST, then their truth, then the queue, because that
+            # is the order a landing takes them: write_cells locks the
+            # ListRow and writes its ListCellState records, then the
+            # task settle writes the NodeRun, all in one transaction.
+            # Deleting in another order is an ABBA deadlock against any
+            # fill running on this sheet, which Postgres resolves by
+            # aborting one side: a 500 on the delete, or a burned row
+            # attempt. Rows vanishing first is already a state the
+            # worker handles (RowNotFound resolves the fill CANCELLED,
+            # never failed).
             ListRow.objects.filter(list_id=str(target.id)).delete()
+            cell_truth.purge_list(str(target.id))
             # Bounded by the PARENT key alone, deliberately. The
             # account column is denormalized defence in depth for
             # READS; on a purge it is a liability, because a task whose
@@ -553,7 +579,6 @@ class ListService:
             # Its preview runs carry no list and no fill, so nothing here
             # reaches them either; the cron prunes them by age.
             WorkflowService(account_id=self.account_id).delete_for_list(str(target.id))
-            cell_truth.purge_list(str(target.id))
             # Every job of the list's goes with it, by target: the fills,
             # a webhook backfill, a re-space (one delete; a tick holding
             # one of them finds no list on its next slice and ends, its

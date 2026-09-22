@@ -23,10 +23,12 @@ from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
+    CellSource,
 )
 from ..jobs.rerank import Rerank
 from ..models import Node, NodeRun
 from ..services import fill_progress
+from ..services.cell_truth import CellTruth
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -188,7 +190,9 @@ class QuickPathTests(AdmissionTestCase):
         ]
         self.sheet.save(update_fields=["columns"])
         rows = self.lists.rows_page(self.sheet, limit=1)
-        self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "taken"})
+        self.lists.write_cells(
+            str(self.sheet.id), str(rows[0].id), {"answer": "taken"}, truth=CellTruth(source=CellSource.MANUAL)
+        )
         with self.assertRaises(ColumnCollision):
             self.admit()
         # Nothing committed: no fill, no ephemeral, no columns change.

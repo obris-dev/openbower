@@ -255,6 +255,12 @@ class ColumnService:
             # structured record is what answers questions about it.
             ListRow.objects.filter(list_id=str(target_list.id)).update(data=_JsonbWithoutKey("data", Value(key)))
 
+            # The column's truth goes BEFORE any run is touched: a landing
+            # takes ListRow, then ListCellState, then NodeRun, and the
+            # cancel below abandons runs, so the same order here is what
+            # keeps this delete off an ABBA deadlock with a fill landing.
+            cell_truth.purge_column(str(target_list.id), key)
+
             # Every fill that touched this column stops. A fill can own
             # SEVERAL columns (one multi-output agent makes them
             # together), so a live sibling is stopped too rather than
@@ -264,8 +270,6 @@ class ColumnService:
             for fill_run_id, consent in fill_progress.iter_consents(open_here):
                 if key in consent.column_keys:
                     fill_progress.cancel(fill_run_id)
-
-            cell_truth.purge_column(str(target_list.id), key)
             target_list.columns = columns
             target_list.save(update_fields=["columns", "updated_at"])
             self._prune_payload_key(columns, workflows, key=key)

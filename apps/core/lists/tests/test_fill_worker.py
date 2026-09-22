@@ -40,6 +40,7 @@ from ..constants import (
     AGENT_MISSING_MESSAGE,
     NODE_RUN_ATTEMPTS,
     PROVIDER_RETIRED_MESSAGE,
+    CellSource,
     FillFailureCode,
     NodeRunStatus,
     StoredCellState,
@@ -47,6 +48,7 @@ from ..constants import (
 from ..models import List, ListCellState, ListRow, NodeRun
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.provision import FillProvisionOperation
+from ..services.cell_truth import CellTruth
 from ..services.fill_admission import FillAdmissionService
 from ..services.fills import FillService, page_progress
 from ..services.lists import ListService
@@ -428,7 +430,12 @@ class ManualFillTestCase(TransactionTestCase):
 
     def test_the_answer_an_occupied_cell_refused_is_kept(self) -> None:
         rows = self.lists.rows_page(self.sheet, limit=10)
-        self.lists.write_cells(str(self.sheet.id), str(rows[0].id), {"answer": "mine, typed by hand"})
+        self.lists.write_cells(
+            str(self.sheet.id),
+            str(rows[0].id),
+            {"answer": "mine, typed by hand"},
+            truth=CellTruth(source=CellSource.MANUAL),
+        )
         self.run_fill(answering_model(lambda prompt: "what the model found"))
         task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
         row = ListRow.objects.get(id=rows[0].id)

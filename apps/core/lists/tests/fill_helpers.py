@@ -36,7 +36,8 @@ from ..jobs.fill import FillJob
 from ..models import ListRow, Node, NodeRun
 from ..processors import WalkMode
 from ..serializers import fill_run_wire
-from ..services import advance, cell_truth, fill_progress
+from ..services import advance, fill_progress
+from ..services.cell_truth import CellTruth
 from ..services.fills import page_progress
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
@@ -158,31 +159,27 @@ def settle(
     if cause == StoredCellState.TRANSIENT:
         assert flow.park(str(task.id), backoff_seconds=0, result={}), f"park missed for {fill_run_id}/{row_id}"
         return
-    per_column = (
-        causes if causes is not None else ({} if cause is None else cell_truth.uniform(consent.column_keys, cause))
+    # `causes` names the columns the run did NOT answer; a run carries
+    # one declined cause, so they all carry the same one.
+    unanswered = set(causes) if causes is not None else (set(consent.column_keys) if cause is not None else set())
+    declined = next(iter(causes.values())) if causes else (cause or StoredCellState.NO_EVIDENCE)
+    answered = [key for key in consent.column_keys if key not in unanswered]
+    truth = CellTruth(
+        source=CellSource.FILL,
+        owned_keys=tuple(consent.column_keys),
+        fill_run_id=fill_run_id,
+        declined_cause=declined,
+        tools=tools or {},
     )
-    states = {key: per_column.get(key, StoredCellState.FILLED) for key in consent.column_keys}
-    answered = [key for key, value in states.items() if value == StoredCellState.FILLED]
-    # A deliberate restatement of land_row (the per-column `causes`
-    # it cannot express), in land_row's own lock order: ListRow,
-    # NodeRun, ListCellState, one transaction.
+    # land_row's own shape and lock order: the sheet write (values and
+    # truth as one), then the settle, one transaction, then the advance.
     with transaction.atomic():
-        if answered:
-            ListService(account_id=job.account_id).write_cells(
-                consent.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
-            )
+        ListService(account_id=job.account_id).write_cells(
+            consent.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE), truth=truth
+        )
         landed = flow.settle(str(task.id), result={"tools": tools or {}}, status=NodeRunStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
-        cell_truth.write(
-            account_id=job.account_id,
-            list_id=consent.list_id,
-            row_id=row_id,
-            fill_run_id=fill_run_id,
-            states=states,
-            tools=tools or {},
-            source=CellSource.FILL,
-        )
-        advance.advance_rows(account_id=job.account_id, list_id=consent.list_id, row_ids=[row_id], node_id=task.node_id)
+    advance.advance_rows(account_id=job.account_id, list_id=consent.list_id, row_ids=[row_id], node_id=task.node_id)
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:

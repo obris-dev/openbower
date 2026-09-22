@@ -1,14 +1,17 @@
 """Landing a run on its row: the ONE writer of a resolved row.
 
-A row is resolved when three writes land together: the sheet value
-(write-if-blank, through ListService), the task's close with the run
-stored on it, and the cell truth (one ListCellState per column the
-fill owns, carrying the run's tool statuses). They share ONE
-transaction on purpose: a task whose lease was reclaimed mid-run must
-produce NOTHING, never a value from one attempt wearing a diagnosis
-from another, so a close that misses rolls the value write back with
-it. What the landing unlocks downstream (the workflow advance) is the
-processors' base's, after the run's own transaction.
+A row is resolved when two writes land together: the sheet write
+(ListService.write_cells: the values write-if-blank AND the cell
+truth, one ListCellState per column the run owns, in one call so the
+two can never disagree) and the run's close with its result stored on
+it. They share ONE transaction on purpose: a task whose lease was
+reclaimed mid-run must produce NOTHING, never a value from one attempt
+wearing a diagnosis from another, so a close that misses rolls the
+sheet write back with it. The lock order is ListRow, ListCellState,
+NodeRun, the order both delete paths take (the reverse is an ABBA
+deadlock against a mid-fill delete). What the landing unlocks
+downstream (the workflow advance) is the processors' base's, after the
+run's own transaction.
 
 Two callers land rows, and before this module each restated the
 writes: the consumer's terminal path, and its give-up past the
@@ -27,7 +30,7 @@ from django.db import transaction
 from openbower_schema.fills import CellRunResult
 
 from ...constants import CellSource, NodeRunStatus, StoredCellState
-from .. import cell_truth
+from ..cell_truth import CellTruth
 from ..lists import ListService
 from ..node_runs import NodeRunFlow
 
@@ -66,15 +69,6 @@ def _declined_cause(run: CellRunResult) -> StoredCellState:
     return StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
 
 
-def _unanswered(column_keys: tuple[str, ...], declined: StoredCellState) -> dict[str, StoredCellState]:
-    """The starting state of every column the run owns: UNANSWERED,
-    carrying the run's declined cause. The sheet write then moves the
-    columns it filled to FILLED and the ones it refused to
-    TYPE_MISMATCH; the rest keep the cause, which is what keeps them
-    targetable by Continue."""
-    return dict.fromkeys(column_keys, declined)
-
-
 def land_row(
     ctx: LandingContext,
     row_id: str,
@@ -87,50 +81,26 @@ def land_row(
     """Write what a run produced onto its row, in one transaction, and
     settle the run DONE through `flow` with the result stored on it.
     Returns None when the settle missed (the lease was reclaimed):
-    nothing was written.
-
-    Per COLUMN, because a run answers outputs independently: a column
-    the run answered settles FILLED (an OCCUPIED cell counts answered
-    too: it holds a user's value that write-if-blank protected, and
-    re-running it would only buy a skip; what the model said is in the
-    stored run for a human to compare); a value the column's shape
-    refused settles TYPE_MISMATCH (its own cause, the user's next step
-    differs); every other column carries the run's declined cause and
-    stays targetable instead of reading as answered. Raises the
-    ListService's ListNotFound / RowNotFound as they are: a deleted
-    sheet is the caller's story to resolve."""
+    nothing was written. Raises the ListService's ListNotFound /
+    RowNotFound as they are: a deleted sheet is the caller's story to
+    resolve."""
     declined = _declined_cause(run)
-    states = _unanswered(ctx.column_keys, declined)
-    answered: set[str] = set()
+    truth = CellTruth(
+        source=CellSource.FILL,
+        owned_keys=ctx.column_keys,
+        fill_run_id=ctx.fill_run_id,
+        declined_cause=declined,
+        tools=run.tools,
+    )
+    writer = lists or ListService(account_id=ctx.account_id)
     try:
         with transaction.atomic():
-            if run.cells:
-                keys = set(ctx.column_keys)
-                mapped = {key: value for key, value in run.cells.items() if key in keys}
-                writer = lists or ListService(account_id=ctx.account_id)
-                written = writer.write_cells(ctx.list_id, row_id, mapped)
-                answered = {*written.written, *written.occupied}
-                for column_key in answered:
-                    states[column_key] = StoredCellState.FILLED
-                for mismatch in written.mismatched:
-                    states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-            # Close BEFORE the ledger: the terminal order is ListRow,
-            # NodeRun, ListCellState, the same order both delete
-            # paths take (the reverse is an ABBA deadlock against a
-            # mid-fill delete, and a blank landing holds no ListRow
-            # lock to serialize on), and a reclaimed lease bows out
-            # before any ledger write.
+            written = writer.write_cells(ctx.list_id, row_id, dict(run.cells), truth=truth)
+            # The close comes AFTER the sheet write (the lock order the
+            # deletes share) and inside its transaction: a reclaimed
+            # lease's miss rolls the sheet write back with it.
             if not flow.settle(task_id, result=run.model_dump(), status=NodeRunStatus.DONE):
                 raise ClaimLost()
-            cell_truth.write(
-                account_id=ctx.account_id,
-                list_id=ctx.list_id,
-                row_id=row_id,
-                fill_run_id=ctx.fill_run_id,
-                states=states,
-                tools=run.tools,
-                source=CellSource.FILL,
-            )
     except ClaimLost:
         return None
-    return Landed(frozenset(answered), declined)
+    return Landed(frozenset((*written.written, *written.occupied)), declined)

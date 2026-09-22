@@ -1,4 +1,9 @@
-"""The one writer of ListCellState: what a fill made of each cell.
+"""The one writer of ListCellState: what a writer made of each cell.
+
+In production only ListService.write_cells calls `write`, inside the
+same transaction as the value write, handing in a CellTruth: the sheet
+row and its truth can never be written apart. The purges are the
+owners' (a list's, a column's).
 
 A record exists for every cell a fill has RESOLVED, filled ones
 included. There is nothing to write at admission (a queued NodeRun on
@@ -20,10 +25,50 @@ in depth, not the guard.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, NamedTuple
+
 from openbower_kernel.batches import iter_id_pages
 
 from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
 from ..models import ListCellState
+
+if TYPE_CHECKING:
+    from .lists import CellWriteResult
+
+
+class CellTruth(NamedTuple):
+    """What a writer knows about the cells beyond their values: who
+    wrote them, every column it OWNS (each gets a record, answered or
+    not, which is what keeps the counts an indexed read and absence
+    meaning never attempted), the fill the cells belong to (None off a
+    fill), the cause an owned column the writer did not answer
+    carries, and the run's per-tool statuses. A hand-typed value is
+    `CellTruth(source=MANUAL)`: it owns only what it wrote."""
+
+    source: CellSource
+    owned_keys: tuple[str, ...] = ()
+    fill_run_id: str | None = None
+    declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE
+    tools: Mapping[str, str] = {}
+
+
+def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, StoredCellState]:
+    """The state of every column the write touched, from what the
+    value write reported: written or OCCUPIED is FILLED (an occupied
+    cell holds a user's value that write-if-blank protected; re-running
+    it would only buy a skip, and what the model said is in the stored
+    run for a human to compare), a value the column's shape refused is
+    TYPE_MISMATCH (its own cause, the user's next step differs), and
+    every other owned column carries the writer's declined cause, which
+    keeps it targetable instead of reading as answered."""
+    states = dict.fromkeys(truth.owned_keys, truth.declined_cause)
+    for key in (*written.written, *written.occupied):
+        states[key] = StoredCellState.FILLED
+    for mismatch in written.mismatched:
+        states[mismatch.key] = StoredCellState.TYPE_MISMATCH
+    return states
+
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
 # `source` rides the upsert: a fill landing over a hand-written cell
