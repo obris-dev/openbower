@@ -1,8 +1,8 @@
 """The one writer of ListCellState: what a writer made of each cell.
 
 In production only ListService.write_cells calls `write`, inside the
-same transaction as the value write, handing in a CellTruth: the sheet
-row and its truth can never be written apart. The purges are the
+same transaction as the value write: the sheet row and its truth can
+never be written apart. The purges are the
 owners' (a list's, a column's).
 
 A record exists for every cell a fill has RESOLVED, filled ones
@@ -25,7 +25,6 @@ in depth, not the guard.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
 from openbower_kernel.batches import iter_id_pages
@@ -38,32 +37,24 @@ if TYPE_CHECKING:
     from .lists import CellWriteResult
 
 
-class CellTruth(NamedTuple):
-    """The identity a write's records carry, beyond the values: who
-    wrote them, the fill they belong to (None off a fill), the cause
-    an unanswered column carries, and the run's per-tool statuses.
-    Which columns get a record is the write's own `column_keys`."""
+class CellOrigin(NamedTuple):
+    """Where a cell's record came from: who wrote it (an agent or a
+    person) and, for an agent's run, the fill that owns the run (None
+    for an automatic one). Read by the fills poll (a fill's counters
+    and a column's summary come off the records its fill wrote)."""
 
     source: CellSource
     fill_run_id: str | None = None
-    declined_cause: StoredCellState = StoredCellState.NO_EVIDENCE
-    tools: Mapping[str, str] = {}
-
-    @classmethod
-    def of_agent_run(cls, fill_run_id: str | None, run_result: CellRunResult) -> CellTruth:
-        """The truth an agent's run lands under: its own declined cause
-        (NO_EVIDENCE when it recorded none: a run stored before causes
-        were, a give-up with nothing behind it) and its tool statuses,
-        for the fill that owns the run (None for an automatic one)."""
-        return cls(
-            source=CellSource.AGENT,
-            fill_run_id=fill_run_id,
-            declined_cause=StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE),
-            tools=run_result.tools,
-        )
 
 
-def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, StoredCellState]:
+def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
+    """WHY an output the run did not answer is empty: the run's own
+    cause, or NO_EVIDENCE when it recorded none (a run stored before
+    causes were, a give-up with nothing behind it)."""
+    return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
+
+
+def column_states(written: CellWriteResult, *, declined_cause: StoredCellState) -> dict[str, StoredCellState]:
     """One state per bucket of the write result: written or OCCUPIED
     is FILLED (an occupied cell holds a user's value that write-if-
     blank protected; re-running it would only buy a skip, and what the
@@ -79,7 +70,7 @@ def column_states(truth: CellTruth, written: CellWriteResult) -> dict[str, Store
     for mismatch in written.mismatched:
         states[mismatch.key] = StoredCellState.TYPE_MISMATCH
     for key in written.unanswered:
-        states[key] = truth.declined_cause
+        states[key] = declined_cause
     return states
 
 

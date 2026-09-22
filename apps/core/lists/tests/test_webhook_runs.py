@@ -30,7 +30,7 @@ from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
 from lists.services import advance, cell_truth
-from lists.services.cell_truth import CellTruth
+from lists.services.cell_truth import CellOrigin
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fill_processing.landing import LandingContext, land_row
@@ -151,7 +151,7 @@ class _SheetHarness(TestCase):
         )
         claimed = flow.claim(str(task.id))
         assert claimed is not None
-        land_row(ctx, str(self.row.id), run, truth=CellTruth.of_agent_run(None, run), flow=flow, task_id=str(task.id))
+        land_row(ctx, str(self.row.id), run, origin=CellOrigin(CellSource.AGENT), flow=flow, task_id=str(task.id))
 
     def _webhook_runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK, row_id=str(self.row.id)).order_by("id")

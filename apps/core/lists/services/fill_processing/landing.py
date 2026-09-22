@@ -30,7 +30,7 @@ from django.db import transaction
 from openbower_schema.fills import CellRunResult
 
 from ...constants import NodeRunStatus, StoredCellState
-from ..cell_truth import CellTruth
+from ..cell_truth import CellOrigin, declined_cause_of
 from ..lists import ListService
 from ..node_runs import NodeRunFlow
 
@@ -65,14 +65,14 @@ def land_row(
     row_id: str,
     run_result: CellRunResult,
     *,
-    truth: CellTruth,
+    origin: CellOrigin,
     flow: NodeRunFlow,
     task_id: str,
     lists: ListService | None = None,
 ) -> Landed | None:
-    """Write what a run produced onto its row under the truth its
-    caller built, in one transaction, and settle the run DONE through
-    `flow` with the result stored on it.
+    """Write what a run produced onto its row, attributed to the origin
+    its caller names, in one transaction, and settle the run DONE
+    through `flow` with the result stored on it.
     Returns None when the settle missed (the lease was reclaimed):
     nothing was written. Raises the ListService's ListNotFound /
     RowNotFound as they are: a deleted sheet is the caller's story to
@@ -81,7 +81,13 @@ def land_row(
     try:
         with transaction.atomic():
             written = writer.write_cells(
-                ctx.list_id, row_id, dict(run_result.cells), column_keys=ctx.column_keys, truth=truth
+                ctx.list_id,
+                row_id,
+                dict(run_result.cells),
+                column_keys=ctx.column_keys,
+                origin=origin,
+                declined_cause=declined_cause_of(run_result),
+                tools=run_result.tools,
             )
             # The close comes AFTER the sheet write (the lock order the
             # deletes share) and inside its transaction: a reclaimed
@@ -90,4 +96,4 @@ def land_row(
                 raise ClaimLost()
     except ClaimLost:
         return None
-    return Landed(frozenset((*written.written, *written.occupied)), truth.declined_cause)
+    return Landed(frozenset((*written.written, *written.occupied)), declined_cause_of(run_result))

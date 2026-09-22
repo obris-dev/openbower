@@ -12,7 +12,7 @@ from django.test.utils import CaptureQueriesContext
 
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin
 from lists.models import ListRow
-from lists.services.cell_truth import CellTruth
+from lists.services.cell_truth import CellOrigin
 from lists.services.lists import ListNotFound, ListService, RowNotFound
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
@@ -44,7 +44,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "1,200"},
             column_keys=("employees",),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ())
@@ -60,7 +60,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name"},
             column_keys=("name",),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.occupied, ("name",))
         self.assertEqual(result.written, ())
@@ -75,7 +75,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "x" * (CELL_MAX_LENGTH + 8)},
             column_keys=("name",),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.written, ("name",))
         row.refresh_from_db()
@@ -89,7 +89,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "around fifty"},
             column_keys=("employees",),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.written, ())
         self.assertEqual([m.key for m in result.mismatched], ["employees"])
@@ -106,7 +106,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"employees": "", "revenue": "   "},
             column_keys=("employees", "revenue"),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result, ((), (), (), ("employees", "revenue")))
         row.refresh_from_db()
@@ -124,7 +124,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name", "employees": "42", "founded": "next spring", "revenue": ""},
             column_keys=("name", "employees", "founded", "revenue", "domain"),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         buckets = [*result.written, *result.occupied, *(m.key for m in result.mismatched), *result.unanswered]
         self.assertEqual(sorted(buckets), sorted(("name", "employees", "founded", "revenue", "domain")))
@@ -138,7 +138,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"name": "Machine Name", "employees": "42", "founded": "next spring", "domain": ""},
             column_keys=("name", "employees", "founded", "domain"),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.written, ("employees",))
         self.assertEqual(result.occupied, ("name",))
@@ -159,7 +159,7 @@ class WriteIfBlankTests(TestCase):
             str(row.id),
             {"note": "Series B, 2024"},
             column_keys=("note",),
-            truth=CellTruth(source=CellSource.MANUAL),
+            origin=CellOrigin(CellSource.MANUAL),
         )
         self.assertEqual(result.written, ("note",))
         row.refresh_from_db()
@@ -175,7 +175,7 @@ class WriteIfBlankTests(TestCase):
                 "01RW" + "Z" * 22,
                 {"name": "x"},
                 column_keys=("name",),
-                truth=CellTruth(source=CellSource.MANUAL),
+                origin=CellOrigin(CellSource.MANUAL),
             )
         with self.assertRaises(RowNotFound):  # a row outside the list is missing too
             service.write_cells(
@@ -183,7 +183,7 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                truth=CellTruth(source=CellSource.MANUAL),
+                origin=CellOrigin(CellSource.MANUAL),
             )
         with self.assertRaises(ListNotFound):
             service.write_cells(
@@ -191,7 +191,7 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                truth=CellTruth(source=CellSource.MANUAL),
+                origin=CellOrigin(CellSource.MANUAL),
             )
         with self.assertRaises(ListNotFound):  # cross-tenant reads as missing
             _service(account="01AC" + "Z" * 22).write_cells(
@@ -199,7 +199,7 @@ class WriteIfBlankTests(TestCase):
                 str(row.id),
                 {"name": "x"},
                 column_keys=("name",),
-                truth=CellTruth(source=CellSource.MANUAL),
+                origin=CellOrigin(CellSource.MANUAL),
             )
 
 
@@ -353,7 +353,7 @@ class LockGranularityTests(TransactionTestCase):
 
         with CaptureQueriesContext(connection) as captured:
             run = CellRunResult(cells={"employees": "12"})
-            land_row(ctx, str(row.id), run, truth=CellTruth.of_agent_run(None, run), flow=flow, task_id=str(task.id))
+            land_row(ctx, str(row.id), run, origin=CellOrigin(CellSource.AGENT), flow=flow, task_id=str(task.id))
         self.assertEqual(
             order(captured.captured_queries, "update", "insert"),
             ["lists_listrow", "lists_listcellstate", "lists_noderun"],
@@ -375,7 +375,7 @@ class LockGranularityTests(TransactionTestCase):
                 str(row.id),
                 {"employees": "12"},
                 column_keys=("employees",),
-                truth=CellTruth(source=CellSource.MANUAL),
+                origin=CellOrigin(CellSource.MANUAL),
             )
         locked = [q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"].upper()]
         self.assertTrue(locked, "the write took no row lock at all")
