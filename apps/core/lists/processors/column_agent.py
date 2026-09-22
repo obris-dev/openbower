@@ -191,7 +191,7 @@ class AIColumnProcessor(NodeProcessor):
         agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
         return prompt_variables(agent.config().prompt)
 
-    def _prompt_can_act(self, row: ListRow) -> bool:
+    def _agent_can_act(self, row: ListRow) -> bool:
         """At least one input column has a value (a prompt reading no
         column asks the same question everywhere, so every row will do)."""
         return not self.input_keys or has_any_value(row.data, self.input_keys)
@@ -432,7 +432,7 @@ class AIColumnProcessor(NodeProcessor):
 
     def _work_status_fresh(self, row: ListRow) -> _WorkStatus:
         """A new fill: every row the prompt can act on."""
-        return _WorkStatus.NEEDED if self._prompt_can_act(row) else _WorkStatus.BLOCKED
+        return _WorkStatus.NEEDED if self._agent_can_act(row) else _WorkStatus.BLOCKED
 
     def _work_status_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _WorkStatus:
         """A refill: a row with a blank in the scope's columns. A resume
@@ -444,7 +444,7 @@ class AIColumnProcessor(NodeProcessor):
             return _WorkStatus.NONE
         if has_every_value(row.data, self.scope.column_keys):
             return _WorkStatus.NONE
-        return _WorkStatus.NEEDED if self._prompt_can_act(row) else _WorkStatus.BLOCKED
+        return _WorkStatus.NEEDED if self._agent_can_act(row) else _WorkStatus.BLOCKED
 
     def _work_status_pushed(self, row: ListRow) -> _WorkStatus:
         """Rows a push appended: the node runs unless the push filled
