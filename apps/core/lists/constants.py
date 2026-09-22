@@ -240,10 +240,11 @@ FILL_SCAN_CHUNK = 1000
 # of it, list delete purges, the cron sweep pages its deletes, and a
 # re-space rewrites a sheet's ranks under its lock.
 FILL_WRITE_BATCH = 1000
-# Rows per digest: what one flush tick claims for one webhook node
-# (binary). A node with more due rows sends the rest on later ticks,
-# each digest its own delivery.
-WEBHOOK_FLUSH_BATCH = 256
+# Runs per batch: what one flush tick claims for one node with DEFERRED
+# runs due (binary). A node with more due runs is handed the rest on
+# later ticks; for the webhook kind each batch is one digest, its own
+# delivery.
+DEFERRED_FLUSH_BATCH = 256
 
 
 # Stable codes for a fill that DIED, distinct from the admission

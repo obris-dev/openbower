@@ -218,7 +218,7 @@ class FlushDeferredTests(TransactionTestCase):
             self._complete(row)
         self._add_column()
         fake = _FakeSender()
-        with patch("lists.operations.flush_deferred.WEBHOOK_FLUSH_BATCH", 2):
+        with patch("lists.operations.flush_deferred.DEFERRED_FLUSH_BATCH", 2):
             first = self._tick(fake)
             second = self._tick(fake)
         self.assertEqual((first.settled, second.settled), (2, 1))

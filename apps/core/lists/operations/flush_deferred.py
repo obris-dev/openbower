@@ -27,7 +27,7 @@ from django.utils import timezone
 # ask, and its due runs still need a terminal shape their cell word can
 # read. The webhook kind's is the only one today; a second deferring
 # kind branches here on the runs' stored kind, as the reclaim does.
-from ..constants import WEBHOOK_FLUSH_BATCH
+from ..constants import DEFERRED_FLUSH_BATCH
 from ..models import Node
 from ..processors import BatchTally, processor_for
 from ..processors.webhook import COLUMN_REMOVED, fail_claimed
@@ -67,7 +67,7 @@ class FlushDeferredOperation:
             try:
                 # The dispatcher claims (one CAS; two ticks overlapping on
                 # a node split its due rows), the kind executes.
-                claimed = self.flow.claim_due_batch(node_id, now=now, limit=WEBHOOK_FLUSH_BATCH)
+                claimed = self.flow.claim_due_batch(node_id, now=now, limit=DEFERRED_FLUSH_BATCH)
                 if not claimed:
                     continue
                 node = Node.objects.filter(id=node_id).first()
