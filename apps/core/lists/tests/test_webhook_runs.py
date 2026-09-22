@@ -188,7 +188,7 @@ class ProcessorTests(_SheetHarness):
         with self.assertRaises(NotImplementedError):
             self._processor(node_id).process_run(NodeRun(), flow=flow)
         with self.assertRaises(NotImplementedError):
-            processor_for(account_id=ACCOUNT, node=self.first).process_batch(flow=flow, now=datetime.now(UTC))
+            processor_for(account_id=ACCOUNT, node=self.first).process_batch([], flow=flow, now=datetime.now(UTC))
 
     def test_the_base_advances_after_a_landed_run_and_after_each_settled_batch_row(self):
         # The advance is the base's, run after the kind's half on BOTH
@@ -227,7 +227,7 @@ class ProcessorTests(_SheetHarness):
             ),
             patch.object(WebhookProcessor, "_process_batch", return_value=tally),
         ):
-            self.assertIs(self._processor(node_id).process_batch(flow=flow, now=NOW), tally)
+            self.assertIs(self._processor(node_id).process_batch([], flow=flow, now=NOW), tally)
         self.assertEqual(calls, [("L1", ["R1", "R2"]), ("L2", ["R9"])])
 
     def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):

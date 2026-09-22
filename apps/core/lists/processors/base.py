@@ -17,8 +17,8 @@ expensive part and it batches.
 HOW a run executes, in the shape the kind's runs travel: `_process_run`
 for a kind whose runs are claimed one at a time off the topic (the
 consumer hands over the claimed run), `_process_batch` for a kind that
-claims and settles a node's due runs together (the flush hands over the
-node). A kind overrides exactly one; the other keeps its raising
+executes a node's due runs together (the flush claims them and hands
+over the batch). The dispatchers CLAIM; the kinds EXECUTE. A kind overrides exactly one; the other keeps its raising
 default, so a dispatcher holding the wrong shape fails loudly instead of
 silently doing nothing. The dispatchers call the PUBLIC pair,
 `process_run` and `process_batch`, which run the kind's half and then
@@ -146,11 +146,12 @@ class NodeProcessor(ABC):
             advance_rows(account_id=task.account_id, list_id=task.list_id, row_ids=[task.row_id], node_id=task.node_id)
         return outcome
 
-    def process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
-        """The flush's call: the kind's `_process_batch`, then the
-        advance for the rows it settled, one page per list (a node's
-        runs are one sheet's, so that is one page)."""
-        tally = self._process_batch(flow=flow, now=now)
+    def process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
+        """The flush's call: the kind's `_process_batch` over the runs
+        the flush already claimed (PROCESSING, the attempt stamped),
+        then the advance for the rows it settled, one page per list (a
+        node's runs are one sheet's, so that is one page)."""
+        tally = self._process_batch(tasks, flow=flow, now=now)
         by_list: dict[str, list[str]] = {}
         for list_id, row_id in tally.settled_rows:
             by_list.setdefault(list_id, []).append(row_id)
@@ -165,7 +166,9 @@ class NodeProcessor(ABC):
         vanishes mid-landing: the consumer's story to resolve."""
         raise NotImplementedError(f"{self.KIND} runs are not executed one at a time")
 
-    def _process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
-        """Claim this node's due runs and execute them as one unit,
-        settling each by what came back, naming the rows it settled."""
+    def _process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
+        """Execute a batch of this node's runs that the caller already
+        claimed (PROCESSING, the attempt stamped) as one unit, settling
+        each through `flow` by what came back and naming the rows it
+        settled."""
         raise NotImplementedError(f"{self.KIND} runs are not executed as a batch")

@@ -270,6 +270,24 @@ class NodeRunFlow:
             id__in=list(task_ids), status=NodeRunStatus.PROCESSING, leased_by=self.worker_id
         ).update(status=status, result=result, settled_at=now, last_state_change_at=now)
 
+    def release_batch(self, task_ids: Sequence[str]) -> int:
+        """PROCESSING -> DEFERRED for a batch this worker holds, UNTOUCHED
+        otherwise (its window stays, the claim's attempt is handed
+        back), owner CAS: the batch was claimed and the kind cannot act
+        on it right now (a paused column, a disabled destination), so
+        it goes back exactly as it was and the next tick finds it due
+        again. Returns how many were released."""
+        if not task_ids:
+            return 0
+        return NodeRun.objects.filter(
+            id__in=list(task_ids), status=NodeRunStatus.PROCESSING, leased_by=self.worker_id
+        ).update(
+            status=NodeRunStatus.DEFERRED,
+            last_state_change_at=timezone.now(),
+            leased_by="",
+            attempts=models.F("attempts") - 1,
+        )
+
     def park_batch(
         self,
         task_ids: Sequence[str],

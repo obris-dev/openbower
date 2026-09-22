@@ -218,7 +218,7 @@ class FlushDeferredTests(TransactionTestCase):
             self._complete(row)
         self._add_column()
         fake = _FakeSender()
-        with patch("lists.processors.webhook.WEBHOOK_FLUSH_BATCH", 2):
+        with patch("lists.operations.flush_deferred.WEBHOOK_FLUSH_BATCH", 2):
             first = self._tick(fake)
             second = self._tick(fake)
         self.assertEqual((first.settled, second.settled), (2, 1))
@@ -228,7 +228,7 @@ class FlushDeferredTests(TransactionTestCase):
             ([str(row.id) for row in self.rows[:2]], [str(self.rows[2].id)]),
         )
 
-    def test_a_paused_column_and_a_disabled_destination_skip_without_claiming(self):
+    def test_a_paused_column_and_a_disabled_destination_hand_the_batch_back_untouched(self):
         self._complete(self.rows[0])
         node_id = self._add_column()
         fake = _FakeSender()
@@ -244,7 +244,11 @@ class FlushDeferredTests(TransactionTestCase):
         )
         report = self._tick(fake)
         self.assertEqual((report.skipped, fake.calls), (1, []))
-        self.assertEqual(self._runs().get().status, NodeRunStatus.DEFERRED)
+        # Claimed by the flush and handed back by the kind: still due at
+        # its own window, no attempt spent, nobody's.
+        run = self._runs().get()
+        self.assertEqual((run.status, run.attempts, run.leased_by), (NodeRunStatus.DEFERRED, 0, ""))
+        self.assertLessEqual(run.not_before, BOUNDARY)
 
         columns.update(
             str(self.sheet.id),
