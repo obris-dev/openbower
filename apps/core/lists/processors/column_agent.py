@@ -50,7 +50,7 @@ resolved row, closing the run inside its own transaction)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property, partial
@@ -157,12 +157,16 @@ def has_value(data: dict, key: str) -> bool:
     return bool(str(data.get(key, "") or "").strip())
 
 
-def row_is_eligible(data: dict, variables: set[str]) -> bool:
-    """Whether the prompt can ACT on this row: at least one referenced
-    variable renders non-blank. ONE definition for every walk."""
-    if not variables:
-        return True
-    return any(has_value(data, variable) for variable in variables)
+def has_any_value(data: dict, keys: Iterable[str]) -> bool:
+    """Whether a row holds a value under ANY of the keys: over the
+    columns a prompt reads, whether it has something to read."""
+    return any(has_value(data, key) for key in keys)
+
+
+def has_every_value(data: dict, keys: Iterable[str]) -> bool:
+    """Whether a row holds a value under EVERY key: over the columns a
+    node writes, whether there is nothing left to write."""
+    return all(has_value(data, key) for key in keys)
 
 
 class Probe(NamedTuple):
@@ -180,11 +184,17 @@ class AIColumnProcessor(NodeProcessor):
     KIND: ClassVar[str] = COLUMN_AGENT
 
     @cached_property
-    def variables(self) -> set[str]:
-        """The prompt's variables, off the node's agent as it is NOW: a
-        fill reads its agent live, so the judgement does too."""
+    def input_keys(self) -> set[str]:
+        """The columns the prompt READS (its variables), off the node's
+        agent as it is NOW: a fill reads its agent live, so the
+        judgement does too. The columns the node WRITES are the scope's."""
         agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
         return prompt_variables(agent.config().prompt)
+
+    def _prompt_can_act(self, row: ListRow) -> bool:
+        """At least one input column has a value (a prompt reading no
+        column asks the same question everywhere, so every row will do)."""
+        return not self.input_keys or has_any_value(row.data, self.input_keys)
 
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
@@ -422,7 +432,7 @@ class AIColumnProcessor(NodeProcessor):
 
     def _judge_fresh(self, row: ListRow) -> _Verdict:
         """A new fill: every row the prompt can act on."""
-        return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
+        return _Verdict.OWED if self._prompt_can_act(row) else _Verdict.DROPPED
 
     def _judge_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
         """A refill: a row with a blank in the scope's columns. A resume
@@ -432,9 +442,9 @@ class AIColumnProcessor(NodeProcessor):
         a row the scope excluded)."""
         if resumed_owed is not None and str(row.id) not in resumed_owed:
             return _Verdict.DONE
-        if all(has_value(row.data, key) for key in self.scope.column_keys):
+        if has_every_value(row.data, self.scope.column_keys):
             return _Verdict.DONE
-        return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
+        return _Verdict.OWED if self._prompt_can_act(row) else _Verdict.DROPPED
 
     def _judge_pushed(self, row: ListRow) -> _Verdict:
         """Rows a push appended: the node runs unless the push filled
@@ -443,7 +453,7 @@ class AIColumnProcessor(NodeProcessor):
         values, so a run would only buy a skip). A node filling no
         column owes nothing."""
         keys = self.scope.column_keys
-        if not keys or all(has_value(row.data, key) for key in keys):
+        if not keys or has_every_value(row.data, keys):
             return _Verdict.DONE
         return _Verdict.OWED
 
