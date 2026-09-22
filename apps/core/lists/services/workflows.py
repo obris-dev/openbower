@@ -316,11 +316,21 @@ class WorkflowService:
         return config_as(path_nodes[0], WaitUntil)
 
     def nodes_ending(self, path_ids: Sequence[str]) -> list[Node]:
-        """The account's nodes on the given paths (the agent nodes the
-        paths a barrier names end in)."""
+        """The LAST node of each of the given paths (what a barrier
+        naming the path waits on), by rank; a path with no node ends in
+        nothing and drops out."""
         if not path_ids:
             return []
-        return list(Node.objects.filter(account_id=self.account_id, path_id__in=list(path_ids)))
+        last_by_path: dict[str, Node] = {}
+        for node in Node.objects.filter(account_id=self.account_id, path_id__in=list(path_ids)).order_by("rank"):
+            last_by_path[node.path_id] = node
+        return list(last_by_path.values())
+
+    def node_after(self, path_id: str, rank: str) -> Node | None:
+        """The node right after `rank` on a path (the advance's next
+        step), or None at the path's end. Ranks compare in the column's
+        C collation, so the database orders them."""
+        return Node.objects.filter(account_id=self.account_id, path_id=path_id, rank__gt=rank).order_by("rank").first()
 
     def wait_nodes_naming(self, path_id: str) -> QuerySet[Node]:
         """The account's wait nodes whose inbound set names a path: what

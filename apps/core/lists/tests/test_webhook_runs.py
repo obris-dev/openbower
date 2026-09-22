@@ -268,19 +268,15 @@ class ProcessorTests(_SheetHarness):
 
 
 class AdvanceTests(_SheetHarness):
-    def test_the_advance_offers_every_node_behind_the_barrier_and_never_the_barrier(self):
-        # The advance knows no kind: a path headed by a wait naming the
-        # landed node's path holds an agent node and a webhook node, and
-        # BOTH are offered through their own processors (each judges
-        # for itself). The wait is the gate, never a worker: it has no
-        # processor, so offering it would raise. FAILS if the offer
-        # narrows to one kind again, or if the barrier is offered.
+    def _chained_path(self):
+        """A path headed by a wait naming the first agent's path, then an
+        agent node, then a webhook node: the general shape."""
         from lists.nodes.column_agent import ColumnAgent
         from lists.nodes.wait_until import WaitUntil
         from lists.nodes.webhook import Webhook
 
         first_path = self.workflows.get_node(str(self.first.id)).path_id
-        self.workflows.create_path(
+        _, nodes = self.workflows.create_path(
             self.sheet,
             [
                 WaitUntil(inbound_path_ids=[first_path]),
@@ -288,6 +284,10 @@ class AdvanceTests(_SheetHarness):
                 Webhook(destination_id=str(self.destination.id), payload_keys=["company"], interval_seconds=INTERVAL),
             ],
         )
+        return nodes
+
+    def _offers_from(self, node: Node, *, cells: dict[str, str], keys: tuple[str, ...] = ()) -> list[str]:
+        """The kinds the landing offered, through the processors' factory."""
         offered: list[str] = []
 
         def spy(*, account_id, node, scope=None):
@@ -295,8 +295,42 @@ class AdvanceTests(_SheetHarness):
             return processor_for(account_id=account_id, node=node, scope=scope)
 
         with patch("lists.processors.processor_for", side_effect=spy):
-            self._land(self.first, {"answer": "yes", "score": "1"})
-        self.assertEqual(sorted(offered), sorted([ColumnAgent.KIND, WEBHOOK]))
+            self._land(node, cells, keys=keys)
+        return offered
+
+    def test_rule_two_a_cleared_barrier_offers_the_node_right_after_it_only(self):
+        # The first agent is alone on its path, so its landing is the
+        # path's end: the wait naming that path is judged for the row
+        # (complete: every column the inbound path ends in is done), and
+        # the node RIGHT AFTER the wait is offered, not everything
+        # behind it, and never the wait itself (it has no processor, so
+        # offering it would raise). FAILS if the offer widens to the
+        # whole path again, or narrows to one kind.
+        from lists.nodes.column_agent import ColumnAgent
+
+        self._chained_path()
+        self.assertEqual(self._offers_from(self.first, cells={"answer": "yes", "score": "1"}), [ColumnAgent.KIND])
+
+    def test_rule_two_an_uncleared_barrier_offers_nothing(self):
+        # The wait waits on BOTH of the first agent's columns; a landing
+        # that writes truth for one only (the other never attempted)
+        # leaves the row incomplete, so nothing behind the wait is
+        # offered. FAILS if the barrier stops gating.
+        self._chained_path()
+        self.assertEqual(self._offers_from(self.first, cells={"answer": "yes"}, keys=("answer",)), [])
+
+    def test_rule_one_a_landing_mid_path_offers_the_next_node_on_the_path(self):
+        # The chained agent node lands: it is not last on its path, so
+        # the next rank key (the webhook node) is offered, and no wait
+        # is consulted. FAILS if the advance only ever walks through
+        # waits.
+        _wait, chained, _webhook = self._chained_path()
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
+        ]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        self.assertEqual(self._offers_from(chained, cells={"chained": "x"}), [WEBHOOK])
 
     def test_a_page_of_landed_rows_is_one_offer_per_downstream_node(self):
         # Two rows completing in one batch reach the webhook processor
