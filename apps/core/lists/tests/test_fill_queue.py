@@ -8,7 +8,6 @@ read time. Real DB, no mocks (all pure ORM)."""
 from __future__ import annotations
 
 import datetime
-from functools import partial
 from unittest.mock import patch
 
 from django.db import models
@@ -103,7 +102,8 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
             _ctx(fill, task),
             claimed.row_id,
             run,
-            close=partial(flow.settle, claimed.id, status=NodeRunStatus.DONE),
+            flow=flow,
+            task_id=str(claimed.id),
             lists=_SheetThatTakesEverything(),
         )
         is not None
@@ -142,7 +142,8 @@ class TerminalWriteTests(TestCase):
                 _ctx(fill, task),
                 claimed.row_id,
                 CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
-                close=partial(original.settle, claimed.id, status=NodeRunStatus.DONE),
+                flow=original,
+                task_id=str(claimed.id),
                 lists=_SheetThatTakesEverything(),
             )
             is not None

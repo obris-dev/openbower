@@ -92,7 +92,7 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
         # is the run's, not the row's, so nothing is diagnosed on a cell).
         logger.exception("node run %s crashed on attempt %d", task.id, task.attempts)
         if flow.exhausted(task):
-            flow.settle(task.id, {}, status=NodeRunStatus.DONE)
+            flow.settle(task.id, result={}, status=NodeRunStatus.DONE)
             return RunOutcome.EXITED
         flow.park(task.id, backoff_seconds=FILL_RETRY_BACKOFF_SECONDS * task.attempts, result={})
         return RunOutcome.PARKED

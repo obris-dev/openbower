@@ -183,14 +183,11 @@ class NodeRunFlow:
         stamped its attempt (so a crash mid-run still counts)."""
         return task.attempts > NODE_RUN_ATTEMPTS
 
-    def settle(self, task_id: str, result: dict, *, status: NodeRunStatus) -> bool:
+    def settle(self, task_id: str, *, result: dict, status: NodeRunStatus) -> bool:
         """PROCESSING -> a terminal state, CAS on the owner stamp so a
-        reclaimed task's original consumer misses silently. `result` is
-        positional so a `partial(settle, task_id, status=...)` matches
-        landing.py's `close(result)` contract (the one shared by every
-        terminal writer). Returns whether the close landed; landing.py
-        runs this inside its own transaction and rolls the sheet + cell
-        writes back on a miss."""
+        reclaimed task's original consumer misses silently. Returns
+        whether the close landed; the landing runs this inside its own
+        transaction and rolls the sheet + cell writes back on a miss."""
         now = timezone.now()
         return (
             NodeRun.objects.filter(

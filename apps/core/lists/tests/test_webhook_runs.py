@@ -25,7 +25,7 @@ from jobs.services import JobRunner, TickReport
 from lists.constants import CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
-from lists.nodes.registry import WEBHOOK
+from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
@@ -128,13 +128,30 @@ class _SheetHarness(TestCase):
             fill_run_id=None,
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
-        land_row(ctx, str(self.row.id), run, close=lambda result: True)
+        self._land_row(ctx, run, node)
         # The advance is the processors' base's, after the kind's run;
         # the landing itself writes the sheet and the truth only.
         with patch("lists.services.advance.timezone.now", return_value=now):
             advance.advance_rows(
                 account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(node.id)
             )
+
+    def _land_row(self, ctx: LandingContext, run: CellRunResult, node: Node) -> None:
+        """A landing always closes a claimed run: claim a fresh one for
+        the node and row, then land through the real path."""
+        flow = NodeRunFlow(worker_id="test:land")
+        task = NodeRun.objects.create(
+            account_id=ACCOUNT,
+            node_id=str(node.id),
+            kind=COLUMN_AGENT,
+            row_id=str(self.row.id),
+            list_id=str(self.sheet.id),
+            rank=self.row.rank,
+            status=NodeRunStatus.READY,
+        )
+        claimed = flow.claim(str(task.id))
+        assert claimed is not None
+        land_row(ctx, str(self.row.id), run, flow=flow, task_id=str(task.id))
 
     def _webhook_runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK, row_id=str(self.row.id)).order_by("id")
@@ -389,7 +406,7 @@ class AdvanceTests(_SheetHarness):
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
         ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None)
-        land_row(ctx, str(self.row.id), ctx_run, close=lambda result: True)
+        self._land_row(ctx, ctx_run, self.second)
         advance.advance_rows(
             account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)
         )
@@ -416,10 +433,12 @@ class AdvanceTests(_SheetHarness):
         self.assertEqual(second.not_before, next_window(later, INTERVAL))
 
     def test_a_sheet_without_a_webhook_column_pays_no_run_insert(self):
+        # The harness claims one agent run for the landing to close; the
+        # landing and its advance must insert no run of their own.
         with CaptureQueriesContext(connection) as queries:
             self._land(self.first, {"answer": "yes"})
         inserts = [q["sql"] for q in queries.captured_queries if "INSERT INTO" in q["sql"] and "noderun" in q["sql"]]
-        self.assertEqual(inserts, [])
+        self.assertEqual(len(inserts), 1, inserts)
         self.assertEqual(NodeRun.objects.filter(kind=WEBHOOK).count(), 0)
 
     def test_a_wait_whose_paths_no_longer_resolve_enqueues_nothing_and_raises_nothing(self):

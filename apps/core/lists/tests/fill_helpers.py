@@ -171,7 +171,7 @@ def settle(
             ListService(account_id=job.account_id).write_cells(
                 consent.list_id, row_id, dict.fromkeys(answered, FILLED_VALUE)
             )
-        landed = flow.settle(str(task.id), {"tools": tools or {}}, status=NodeRunStatus.DONE)
+        landed = flow.settle(str(task.id), result={"tools": tools or {}}, status=NodeRunStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
         cell_truth.write(
             account_id=job.account_id,

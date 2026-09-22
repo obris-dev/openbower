@@ -53,7 +53,7 @@ import logging
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from enum import StrEnum
-from functools import cached_property, partial
+from functools import cached_property
 from typing import ClassVar, NamedTuple
 
 from pydantic import ValidationError
@@ -139,16 +139,48 @@ class _RunEnded(Exception):
         self.outcome = outcome
 
 
-class _Lane(NamedTuple):
-    """A claimed run's resolved inputs: the config to run, the identity
-    its writes land under (None for a run that owns its input and so
-    lands on itself), the row it runs on, and the fill job it belongs
-    to (None off the fill lane)."""
+class _SheetLane(NamedTuple):
+    """A claimed run on a sheet row: the config to run, the row, the
+    identity its writes land under, and the fill that owns the run
+    (None for an automatic run). It LANDS on the row, and a config
+    that cannot run fails the whole fill when one owns the run (a
+    config-tier fault fails every row identically) or is logged for an
+    automatic run."""
 
     config: AgentConfig
-    ctx: LandingContext | None
     row_data: dict
+    ctx: LandingContext
     fill_run_id: str | None
+
+    def land(self, task: NodeRun, payload: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
+        land_row(self.ctx, task.row_id, payload, flow=flow, task_id=str(task.id))
+        return RunOutcome.LANDED
+
+    def unrunnable(self, task: NodeRun, error: Exception) -> None:
+        if self.fill_run_id is not None:
+            fill_progress.fail(self.fill_run_id, code=FillFailureCode.MODEL_UNRUNNABLE, message=str(error))
+            return
+        logger.warning("autofill: node %s unrunnable (%s); settling task %s", task.node_id, error, task.id)
+
+
+class _PreviewLane(NamedTuple):
+    """A claimed run that owns its input (the builder's Test): the
+    drafted config and the hand-fed row. It lands ON ITSELF (no sheet
+    write, no cell truth, no sheet at all) and so EXITS as far as the
+    workflow is concerned; a config that cannot run is logged."""
+
+    config: AgentConfig
+    row_data: dict
+
+    def land(self, task: NodeRun, payload: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
+        flow.settle(task.id, result=payload.model_dump(), status=NodeRunStatus.DONE)
+        return RunOutcome.EXITED
+
+    def unrunnable(self, task: NodeRun, error: Exception) -> None:
+        logger.warning("preview: node %s unrunnable (%s); settling task %s", task.node_id, error, task.id)
+
+
+_Lane = _SheetLane | _PreviewLane
 
 
 def has_value(data: dict, key: str) -> bool:
@@ -264,33 +296,28 @@ class AIColumnProcessor(NodeProcessor):
             lane = self._lane(task, flow=flow)
         except _RunEnded as ended:
             return ended.outcome
-        close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
         if flow.exhausted(task):
-            return self._land(task, lane, give_up_blank(task), close=close, flow=flow)
+            return lane.land(task, give_up_blank(task), flow=flow)
         try:
             run = run_cell(lane.config, lane.row_data)
         except CONFIG_TIER_ERRORS as e:
             # Config-tier: the agent cannot run at all (no model, a
             # retired tool, which surfaces only here since model_for
             # does not resolve tools). It fails every row identically,
-            # so retrying buys nothing: the fill fails loudly, the
-            # automatic run and the preview settle and move on.
-            if lane.fill_run_id is not None:
-                fill_progress.fail(lane.fill_run_id, code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
-            else:
-                lane_name = "preview" if task.is_preview else "autofill"
-                logger.warning("%s: node %s unrunnable (%s); settling task %s", lane_name, task.node_id, e, task.id)
+            # so retrying buys nothing: the lane tells whoever owns the
+            # run, and the run settles unrun.
+            lane.unrunnable(task, e)
             _settle_unrun(flow, task)
             return RunOutcome.EXITED
         result = to_result(run)
         if _park_if_retriable(flow, task, run, result):
             return RunOutcome.PARKED
-        return self._land(task, lane, result, close=close, flow=flow)
+        return lane.land(task, result, flow=flow)
 
     def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         """Which of the three lanes this run is on, by what the run
         carries (its own input, a fill, or a row alone), and that lane's
-        config, row, and landing context. A builder that settles the run
+        config, row, and how it lands. A builder that settles the run
         instead raises _RunEnded with the outcome."""
         if task.is_preview:
             return self._preview_lane(task, flow=flow)
@@ -309,8 +336,7 @@ class AIColumnProcessor(NodeProcessor):
             logger.warning("preview: run %s carries an unreadable input (%s); settling unrun", task.id, e)
             _settle_unrun(flow, task)
             raise _RunEnded(RunOutcome.EXITED) from e
-        # No landing context: a run that owns its input lands on itself.
-        return _Lane(config=config, ctx=None, row_data=row_data, fill_run_id=None)
+        return _PreviewLane(config=config, row_data=row_data)
 
     def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         from ..jobs.fill import FillJob
@@ -361,7 +387,7 @@ class AIColumnProcessor(NodeProcessor):
             column_keys=tuple(consent.column_keys),
             fill_run_id=str(job.id),
         )
-        return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=str(job.id))
+        return _SheetLane(config=config, row_data=row.data, ctx=ctx, fill_run_id=str(job.id))
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         row = ListRow.objects.filter(id=task.row_id).first()
@@ -400,18 +426,7 @@ class AIColumnProcessor(NodeProcessor):
             column_keys=column_keys,
             fill_run_id=None,
         )
-        return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=None)
-
-    def _land(self, task: NodeRun, lane: _Lane, payload: CellRunResult, *, close, flow: NodeRunFlow) -> RunOutcome:
-        """Write what the run produced. On a sheet row that is LANDED
-        (the workflow may owe the row more); a run that owns its input
-        lands ON ITSELF (no sheet write, no cell truth, no sheet at all)
-        and so EXITS as far as the workflow is concerned."""
-        if lane.ctx is None:
-            flow.settle(task.id, payload.model_dump(), status=NodeRunStatus.DONE)
-            return RunOutcome.EXITED
-        land_row(lane.ctx, task.row_id, payload, close=close)
-        return RunOutcome.LANDED
+        return _SheetLane(config=config, row_data=row.data, ctx=ctx, fill_run_id=None)
 
     # Is work needed for a row? One rule per walk mode. The rule is
     # bound ONCE per page (a resume reads the page's one fact there) and

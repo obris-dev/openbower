@@ -20,16 +20,16 @@ cell states this writes, so nothing is folded back here.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import NamedTuple
 
 from django.db import transaction
 
 from openbower_schema.fills import CellRunResult
 
-from ...constants import CellSource, StoredCellState
+from ...constants import CellSource, NodeRunStatus, StoredCellState
 from .. import cell_truth
 from ..lists import ListService
+from ..node_runs import NodeRunFlow
 
 
 class LandingContext(NamedTuple):
@@ -80,12 +80,14 @@ def land_row(
     row_id: str,
     run: CellRunResult,
     *,
-    close: Callable[[dict], bool],
+    flow: NodeRunFlow,
+    task_id: str,
     lists: ListService | None = None,
 ) -> Landed | None:
     """Write what a run produced onto its row, in one transaction, and
-    close the task through `close(result)` (True when the close
-    landed). Returns None when the close missed: nothing was written.
+    settle the run DONE through `flow` with the result stored on it.
+    Returns None when the settle missed (the lease was reclaimed):
+    nothing was written.
 
     Per COLUMN, because a run answers outputs independently: a column
     the run answered settles FILLED (an OCCUPIED cell counts answered
@@ -118,7 +120,7 @@ def land_row(
             # mid-fill delete, and a blank landing holds no ListRow
             # lock to serialize on), and a reclaimed lease bows out
             # before any ledger write.
-            if not close(run.model_dump()):
+            if not flow.settle(task_id, result=run.model_dump(), status=NodeRunStatus.DONE):
                 raise ClaimLost()
             cell_truth.write(
                 account_id=ctx.account_id,

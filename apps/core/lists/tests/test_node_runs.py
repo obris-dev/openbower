@@ -321,7 +321,7 @@ class ProvisionerTests(AutofillHarness):
         # Age the claim stamp so the settle's re-stamp is unambiguous.
         aged = timezone.now() - timedelta(seconds=300)
         NodeRun.objects.filter(id=task.id).update(last_state_change_at=aged)
-        self.assertTrue(flow.settle(str(task.id), {}, status=NodeRunStatus.DONE))
+        self.assertTrue(flow.settle(str(task.id), result={}, status=NodeRunStatus.DONE))
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.DONE)
         self.assertGreater(task.last_state_change_at, aged)  # settle re-stamped, not left at the aged claim
