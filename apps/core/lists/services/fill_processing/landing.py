@@ -62,17 +62,17 @@ class Landed(NamedTuple):
     declined: StoredCellState
 
 
-def _declined_cause(run: CellRunResult) -> StoredCellState:
+def _declined_cause(run_result: CellRunResult) -> StoredCellState:
     """WHY an output the run did not answer is empty: the run's own
     cause, or NO_EVIDENCE when it recorded none (a run stored before
     causes were, a give-up with nothing behind it)."""
-    return StoredCellState(run.declined_cause or StoredCellState.NO_EVIDENCE)
+    return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
 
 
 def land_row(
     ctx: LandingContext,
     row_id: str,
-    run: CellRunResult,
+    run_result: CellRunResult,
     *,
     flow: NodeRunFlow,
     task_id: str,
@@ -84,22 +84,22 @@ def land_row(
     nothing was written. Raises the ListService's ListNotFound /
     RowNotFound as they are: a deleted sheet is the caller's story to
     resolve."""
-    declined = _declined_cause(run)
+    declined = _declined_cause(run_result)
     truth = CellTruth(
         source=CellSource.FILL,
         column_keys=ctx.column_keys,
         fill_run_id=ctx.fill_run_id,
         declined_cause=declined,
-        tools=run.tools,
+        tools=run_result.tools,
     )
     writer = lists or ListService(account_id=ctx.account_id)
     try:
         with transaction.atomic():
-            written = writer.write_cells(ctx.list_id, row_id, dict(run.cells), truth=truth)
+            written = writer.write_cells(ctx.list_id, row_id, dict(run_result.cells), truth=truth)
             # The close comes AFTER the sheet write (the lock order the
             # deletes share) and inside its transaction: a reclaimed
             # lease's miss rolls the sheet write back with it.
-            if not flow.settle(task_id, result=run.model_dump(), status=NodeRunStatus.DONE):
+            if not flow.settle(task_id, result=run_result.model_dump(), status=NodeRunStatus.DONE):
                 raise ClaimLost()
     except ClaimLost:
         return None

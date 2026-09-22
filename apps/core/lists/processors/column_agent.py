@@ -152,8 +152,8 @@ class _SheetLane(NamedTuple):
     ctx: LandingContext
     fill_run_id: str | None
 
-    def land(self, task: NodeRun, payload: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
-        land_row(self.ctx, task.row_id, payload, flow=flow, task_id=str(task.id))
+    def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
+        land_row(self.ctx, task.row_id, run_result, flow=flow, task_id=str(task.id))
         return RunOutcome.LANDED
 
     def unrunnable(self, task: NodeRun, error: Exception) -> None:
@@ -172,8 +172,8 @@ class _PreviewLane(NamedTuple):
     config: AgentConfig
     row_data: dict
 
-    def land(self, task: NodeRun, payload: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
-        flow.settle(task.id, result=payload.model_dump(), status=NodeRunStatus.DONE)
+    def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
+        flow.settle(task.id, result=run_result.model_dump(), status=NodeRunStatus.DONE)
         return RunOutcome.EXITED
 
     def unrunnable(self, task: NodeRun, error: Exception) -> None:
