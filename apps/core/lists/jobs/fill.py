@@ -86,8 +86,8 @@ class FillJob(JobKind[FillProgress]):
     mode: WalkMode
     # A REMAINING walk: the stopped fill it resumes (its ABANDONED runs
     # bound the offer; "" = the column's whole remainder), and the
-    # columns it judges owed-ness across.
-    owed_by: str = ""
+    # columns it judges across.
+    resumed_fill_id: str = ""
     judged_keys: list[str] = []
     # The consent SET (the newest row id at the click; "" = no bound),
     # how many of its rows the walk may cover in sheet order (the count
@@ -108,7 +108,7 @@ class FillJob(JobKind[FillProgress]):
         return WalkScope(
             mode=self.mode,
             fill_run_id=str(job.id),
-            owed_by=self.owed_by,
+            resumed_fill_id=self.resumed_fill_id,
             column_keys=self.judged_keys,
         )
 

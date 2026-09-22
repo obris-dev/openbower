@@ -105,9 +105,10 @@ class WalkScope(BaseModel):
     mode: WalkMode = WalkMode.BACKFILL
     # The fill job the runs belong to, for FRESH and REMAINING; "" otherwise.
     fill_run_id: str = ""
-    # The stopped fill a REMAINING walk resumes: rows it still owed are
-    # the only ones offered. "" = the column's whole remainder.
-    owed_by: str = ""
+    # The stopped fill a REMAINING walk resumes (Continue): the rows it
+    # still owed, its ABANDONED runs, are the only ones offered. "" =
+    # the column's whole remainder.
+    resumed_fill_id: str = ""
     # The columns a REMAINING walk judges owed-ness across: the one
     # column the user clicked for a widening gesture, the resumed
     # fill's whole set for a Continue. Empty = the fill's own columns.

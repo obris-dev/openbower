@@ -245,7 +245,7 @@ class FillAdmissionService(AdmissionBase):
                 agent_id=str(agent.id),
                 column_keys=column_keys,
                 mode=WalkMode.REMAINING,
-                owed_by=resume_fill_id,
+                resumed_fill_id=resume_fill_id,
                 judged_keys=walked,
                 # The consent SET: an id minted at the click. Ids are
                 # insertion order, so every row that exists now is older
@@ -306,7 +306,7 @@ class FillAdmissionService(AdmissionBase):
     def _probe_scope(fill: FillJob) -> WalkScope:
         """The walk's scope as the probe sees it, before the job exists
         (the probe queues nothing, so it needs no fill id)."""
-        return WalkScope(mode=fill.mode, owed_by=fill.owed_by, column_keys=fill.judged_keys)
+        return WalkScope(mode=fill.mode, resumed_fill_id=fill.resumed_fill_id, column_keys=fill.judged_keys)
 
     @staticmethod
     def _check_budget(config: AgentConfig, *, consented: int) -> None:

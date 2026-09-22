@@ -151,12 +151,18 @@ class _Lane(NamedTuple):
     fill_run_id: str | None
 
 
+def has_value(data: dict, key: str) -> bool:
+    """Whether a row holds a non-blank value under a key: the ONE
+    blank test this module's judgements share."""
+    return bool(str(data.get(key, "") or "").strip())
+
+
 def row_is_eligible(data: dict, variables: set[str]) -> bool:
     """Whether the prompt can ACT on this row: at least one referenced
     variable renders non-blank. ONE definition for every walk."""
     if not variables:
         return True
-    return any(str(data.get(variable, "")).strip() for variable in variables)
+    return any(has_value(data, variable) for variable in variables)
 
 
 class Probe(NamedTuple):
@@ -188,10 +194,10 @@ class AIColumnProcessor(NodeProcessor):
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
-        facts = self._page_facts(rows)
+        resumed_owed = self._resumed_owed_row_ids(rows)
         owed: list[ListRow] = []
         for row in rows:
-            if not self._qualifies(target_list, row, facts):
+            if self._judge(target_list, row, resumed_owed) is not _Verdict.OWED:
                 continue
             owed.append(row)
             if limit and len(owed) == limit:
@@ -237,9 +243,9 @@ class AIColumnProcessor(NodeProcessor):
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
             walked += len(page)
-            facts = self._page_facts(page)
+            resumed_owed = self._resumed_owed_row_ids(page)
             for row in page:
-                verdict = self._judge(target_list, row, facts)
+                verdict = self._judge(target_list, row, resumed_owed)
                 if verdict is _Verdict.OWED:
                     return Probe(found=True, dropped_any=dropped_any)
                 if verdict is _Verdict.DROPPED:
@@ -402,59 +408,77 @@ class AIColumnProcessor(NodeProcessor):
         land_row(lane.ctx, task.row_id, payload, close=close)
         return RunOutcome.LANDED
 
-    # The judgement.
+    # The judgement: does this node owe the row a run now? One rule per
+    # walk mode, dispatched here; each rule reads the row's own data
+    # plus, for a resume, the one page-level fact read once per page.
 
-    def _qualifies(self, target_list: List, row: ListRow, facts: _PageFacts) -> bool:
-        return self._judge(target_list, row, facts) is _Verdict.OWED
-
-    def _judge(self, target_list: List, row: ListRow, facts: _PageFacts) -> _Verdict:
+    def _judge(self, target_list: List, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
         mode = self.scope.mode
-        if mode is WalkMode.PUSHED:
-            keys = columns_for_node(target_list, str(self.node.id))
-            if keys and all((row.data.get(key) or "").strip() for key in keys):
-                return _Verdict.DONE
-            return _Verdict.OWED
+        if mode is WalkMode.FRESH:
+            return self._judge_fresh(row)
         if mode is WalkMode.REMAINING:
-            row_id = str(row.id)
-            # The resume bound goes FIRST: a row the stopped fill never
-            # consented to is not its remaining work, and counting it as
-            # dropped would blame the prompt for a row the scope excluded.
-            if facts.owed is not None and row_id not in facts.owed:
-                return _Verdict.DONE
-            if all(str(row.data.get(key, "") or "").strip() for key in self.judged_keys(target_list)):
-                return _Verdict.DONE
-        if mode in (WalkMode.FRESH, WalkMode.REMAINING):
-            return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
-        # A structural backfill has no meaning for an agent node.
+            return self._judge_remaining(target_list, row, resumed_owed)
+        if mode is WalkMode.PUSHED:
+            return self._judge_pushed(target_list, row)
+        # A structural walk (a webhook column added, its wait set
+        # changed) means nothing to an agent node.
         return _Verdict.DONE
 
-    def _page_facts(self, rows: Sequence[ListRow]) -> _PageFacts:
-        """The one membership set a REMAINING walk asks per page: which
-        of these rows the resumed fill still owed."""
-        if self.scope.mode is not WalkMode.REMAINING or not self.scope.owed_by:
-            return _PageFacts(owed=None)
+    def _judge_fresh(self, row: ListRow) -> _Verdict:
+        """A new fill: every row the prompt can act on."""
+        return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
+
+    def _judge_remaining(self, target_list: List, row: ListRow, resumed_owed: set[str] | None) -> _Verdict:
+        """A refill: a row with a blank in the judged columns. A resume
+        additionally offers only the rows the stopped fill still owed;
+        that bound goes FIRST, so a row the stopped fill never consented
+        to is not counted as dropped (which would blame the prompt for
+        a row the scope excluded)."""
+        if resumed_owed is not None and str(row.id) not in resumed_owed:
+            return _Verdict.DONE
+        if all(has_value(row.data, key) for key in self.judged_keys(target_list)):
+            return _Verdict.DONE
+        return _Verdict.OWED if row_is_eligible(row.data, self.variables) else _Verdict.DROPPED
+
+    def _judge_pushed(self, target_list: List, row: ListRow) -> _Verdict:
+        """Rows a push appended: the node runs unless the push filled
+        every column it owns here (write-if-blank would keep those
+        values, so a run would only buy a skip). A node filling no
+        column here owes nothing."""
+        keys = columns_for_node(target_list, str(self.node.id))
+        if not keys or all(has_value(row.data, key) for key in keys):
+            return _Verdict.DONE
+        return _Verdict.OWED
+
+    def _resumed_owed_row_ids(self, rows: Sequence[ListRow]) -> set[str] | None:
+        """The rows on this page the resumed fill still owed (its
+        ABANDONED runs), read once per page; None when this walk resumes
+        nothing."""
+        if self.scope.mode is not WalkMode.REMAINING or not self.scope.resumed_fill_id:
+            return None
         ids = [str(row.id) for row in rows]
-        owed = {
+        return {
             str(row_id)
             for row_id in NodeRun.objects.filter(
                 account_id=self.account_id,
-                fill_run_id=self.scope.owed_by,
+                fill_run_id=self.scope.resumed_fill_id,
                 status=NodeRunStatus.ABANDONED,
                 row_id__in=ids,
             ).values_list("row_id", flat=True)
         }
-        return _PageFacts(owed=owed)
 
 
 class _Verdict(StrEnum):
+    """Whether this node owes a row a run now."""
+
     OWED = "owed"
+    # Nothing left for this node to do on the row.
     DONE = "done"
-    # An owed row the prompt cannot act on.
+    # The row needs a run the prompt cannot act on (every variable it
+    # references is blank): skipped, and counted, so admission can tell
+    # "the column is finished" from "your prompt reads columns these
+    # rows have not got".
     DROPPED = "dropped"
-
-
-class _PageFacts(NamedTuple):
-    owed: set[str] | None
 
 
 register(AIColumnProcessor)

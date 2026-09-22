@@ -149,13 +149,13 @@ class FreshRuleTests(_Harness):
         fill = self._fill()
         processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
         judged: list[str] = []
-        real = processor._qualifies
+        real = processor._judge
 
-        def counting(target_list, row, facts):
+        def counting(target_list, row, resumed_owed):
             judged.append(row.data.get("company", ""))
-            return real(target_list, row, facts)
+            return real(target_list, row, resumed_owed)
 
-        with patch.object(processor, "_qualifies", side_effect=counting):
+        with patch.object(processor, "_judge", side_effect=counting):
             self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW, limit=2), 2)
         self.assertEqual(self._numbers(self._runs(fill)), [1, 2])
         self.assertEqual(judged, ["acme.com", "example.io"])
@@ -225,7 +225,7 @@ class RemainingRuleTests(_Harness):
                 last_state_change_at=NOW,
             )
         resumed = self._fill()
-        scope = WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(resumed.id), owed_by=str(stopped.id))
+        scope = WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(resumed.id), resumed_fill_id=str(stopped.id))
         processor = self._processor(scope)
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
         self.assertEqual(self._numbers(self._runs(resumed)), [2, 3])
@@ -241,6 +241,18 @@ class PushedRuleTests(_Harness):
             (run.row_id, run.rank, run.fill_run_id, run.status), (str(pushed[0].id), pushed[0].rank, None, "ready")
         )
         self.assertEqual(self._numbers([run]), [6])
+
+    def test_a_node_filling_no_column_here_owes_a_pushed_row_nothing(self):
+        # The node's columns were removed from this sheet: there is
+        # nothing to fill, so the judgement says so instead of queuing a
+        # run the consumer would only settle unrun. FAILS if the no-
+        # column case reads as owed.
+        self.sheet.columns = [column for column in self.sheet.columns if column.kind != "ai"]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
+        processor = self._processor(WalkScope(mode=WalkMode.PUSHED))
+        self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 0)
+        self.assertFalse(self._runs().exists())
 
 
 class FillJobWalkTests(_Harness):
