@@ -197,10 +197,10 @@ class FlushDeferredTests(TransactionTestCase):
         # the window after.
         later = BOUNDARY + timedelta(minutes=3)
         self._complete(self.rows[2], at=later)
-        advance.advance_row(
+        advance.advance_rows(
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
-            row_id=str(self.rows[2].id),
+            row_ids=[str(self.rows[2].id)],
             node_id=_node_of(self.sheet, "country"),
             now=later,
         )

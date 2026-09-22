@@ -132,8 +132,8 @@ class _SheetHarness(TestCase):
         # The advance is the processors' base's, after the kind's run;
         # the landing itself writes the sheet and the truth only.
         with patch("lists.services.advance.timezone.now", return_value=now):
-            advance.advance_row(
-                account_id=ACCOUNT, list_id=str(self.sheet.id), row_id=str(self.row.id), node_id=str(node.id)
+            advance.advance_rows(
+                account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(node.id)
             )
 
     def _webhook_runs(self):
@@ -188,7 +188,7 @@ class ProcessorTests(_SheetHarness):
         calls: list[tuple] = []
         with (
             patch(
-                "lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+                "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
             ),
             patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.DONE),
         ):
@@ -196,23 +196,27 @@ class ProcessorTests(_SheetHarness):
             agent.process_run(preview, flow=flow)
         with (
             patch(
-                "lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+                "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
             ),
             patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.PARKED),
         ):
             agent.process_run(on_row, flow=flow)
         self.assertEqual(
-            calls, [(("account_id", ACCOUNT), ("list_id", "L1"), ("node_id", str(self.first.id)), ("row_id", "R1"))]
+            calls, [(("account_id", ACCOUNT), ("list_id", "L1"), ("node_id", str(self.first.id)), ("row_ids", ["R1"]))]
         )
+        # A batch advances ONE page per list, not one call per row.
         node_id = self._add_webhook_column(["country"])
-        tally = BatchTally(settled=2, settled_rows=[("L1", "R1"), ("L1", "R2")])
+        tally = BatchTally(settled=3, settled_rows=[("L1", "R1"), ("L2", "R9"), ("L1", "R2")])
         calls.clear()
         with (
-            patch("lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(kw["row_id"])),
+            patch(
+                "lists.processors.base.advance_rows",
+                side_effect=lambda **kw: calls.append((kw["list_id"], kw["row_ids"])),
+            ),
             patch.object(WebhookProcessor, "_process_batch", return_value=tally),
         ):
             self.assertIs(self._processor(node_id).process_batch(flow=flow, now=NOW), tally)
-        self.assertEqual(calls, ["R1", "R2"])
+        self.assertEqual(calls, [("L1", ["R1", "R2"]), ("L2", ["R9"])])
 
     def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):
         node_id = self._add_webhook_column(["country", "answer"])
@@ -300,6 +304,42 @@ class AdvanceTests(_SheetHarness):
             self._land(self.first, {"answer": "yes", "score": "1"})
         self.assertEqual(sorted(offered), sorted([ColumnAgent.KIND, WEBHOOK]))
 
+    def test_a_page_of_landed_rows_is_one_offer_per_downstream_node(self):
+        # Two rows completing in one batch reach the webhook processor
+        # as ONE enqueue_runs call carrying both rows, in sheet order,
+        # and both get a run. FAILS if the advance loops per row.
+        self._add_webhook_column(["country"])
+        (second_row,) = self.lists.add_rows(self.sheet, [{"company": "example.io"}])
+        for row in (self.row, second_row):
+            cell_truth.write(
+                account_id=ACCOUNT,
+                list_id=str(self.sheet.id),
+                row_id=str(row.id),
+                fill_run_id=None,
+                states={"country": StoredCellState.FILLED},
+                tools={},
+                source=CellSource.FILL,
+            )
+        offers: list[list[str]] = []
+        real = WebhookProcessor.enqueue_runs
+
+        def spy(processor, target_list, rows, *, now, limit=0):
+            offers.append([str(row.id) for row in rows])
+            return real(processor, target_list, rows, now=now, limit=limit)
+
+        with patch.object(WebhookProcessor, "enqueue_runs", spy):
+            advance.advance_rows(
+                account_id=ACCOUNT,
+                list_id=str(self.sheet.id),
+                row_ids=[str(second_row.id), str(self.row.id)],
+                node_id=str(self.second.id),
+            )
+        self.assertEqual(offers, [[str(self.row.id), str(second_row.id)]])
+        self.assertEqual(
+            set(NodeRun.objects.filter(kind=WEBHOOK).values_list("row_id", flat=True)),
+            {str(self.row.id), str(second_row.id)},
+        )
+
     def test_the_landing_that_completes_the_row_enqueues_one_deferred_run_at_the_window(self):
         webhook_node_id = self._add_webhook_column(["country", "answer"])
         self._land(self.first, {"answer": "yes"})
@@ -322,8 +362,8 @@ class AdvanceTests(_SheetHarness):
         keys = ("country",)
         ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None)
         land_row(ctx, str(self.row.id), ctx_run, close=lambda result: True)
-        advance.advance_row(
-            account_id=ACCOUNT, list_id=str(self.sheet.id), row_id=str(self.row.id), node_id=str(self.second.id)
+        advance.advance_rows(
+            account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)
         )
         self.assertEqual(self._webhook_runs().count(), 0)
 

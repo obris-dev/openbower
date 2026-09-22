@@ -46,7 +46,7 @@ from typing import ClassVar
 from pydantic import BaseModel
 
 from ..models import List, ListRow, Node, NodeRun
-from ..services.advance import advance_row
+from ..services.advance import advance_rows
 from ..services.node_runs import NodeRunFlow
 
 
@@ -134,15 +134,19 @@ class NodeProcessor(ABC):
         re-offering, never by ordering."""
         outcome = self._process_run(task, flow=flow)
         if outcome is RunOutcome.DONE and task.row_id:
-            advance_row(account_id=task.account_id, list_id=task.list_id, row_id=task.row_id, node_id=task.node_id)
+            advance_rows(account_id=task.account_id, list_id=task.list_id, row_ids=[task.row_id], node_id=task.node_id)
         return outcome
 
     def process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
         """The flush's call: the kind's `_process_batch`, then the
-        advance for every row it settled."""
+        advance for the rows it settled, one page per list (a node's
+        runs are one sheet's, so that is one page)."""
         tally = self._process_batch(flow=flow, now=now)
+        by_list: dict[str, list[str]] = {}
         for list_id, row_id in tally.settled_rows:
-            advance_row(account_id=self.account_id, list_id=list_id, row_id=row_id, node_id=str(self.node.id))
+            by_list.setdefault(list_id, []).append(row_id)
+        for list_id, row_ids in by_list.items():
+            advance_rows(account_id=self.account_id, list_id=list_id, row_ids=row_ids, node_id=str(self.node.id))
         return tally
 
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:

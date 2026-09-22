@@ -15,6 +15,7 @@ passed in."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from django.utils import timezone
@@ -23,11 +24,16 @@ from ..models import List, ListRow, Node
 from .workflows import WorkflowService
 
 
-def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now: datetime | None = None) -> int:
-    """Offer the row to every node behind a barrier the landed node's
-    path feeds. Returns the runs enqueued. A node with no path (the
-    preview node) or a path no wait names returns at the first read,
-    so the common landing pays one node read and one indexed query."""
+def advance_rows(
+    *, account_id: str, list_id: str, row_ids: Sequence[str], node_id: str, now: datetime | None = None
+) -> int:
+    """Offer the rows to every node behind a barrier the landed node's
+    path feeds, as ONE page per node (a processor's judgement batches
+    its reads per page, so a settled batch costs each downstream node
+    one offer, not one per row). Returns the runs enqueued. A node
+    with no path (the preview node) or a path no wait names returns at
+    the first read, so the common landing pays one node read and one
+    indexed query."""
     # Function-local: the processors' base calls this after every run,
     # and this reaches back into the processors for each offered node.
     from ..processors import processor_for
@@ -41,13 +47,15 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     if not waits:
         return 0
     target_list = List.objects.filter(id=list_id, account_id=account_id).first()
-    row = ListRow.objects.filter(id=row_id, list_id=list_id).only("id", "rank").first()
-    if target_list is None or row is None:
+    if target_list is None:
+        return 0
+    rows = list(ListRow.objects.filter(id__in=list(row_ids), list_id=list_id).only("id", "rank").order_by("rank", "id"))
+    if not rows:
         return 0
     enqueued = 0
     for wait in waits:
         for node in workflows.nodes_on_path(wait.path_id):
             if str(node.id) == str(wait.id):
                 continue
-            enqueued += processor_for(account_id=account_id, node=node).enqueue_runs(target_list, [row], now=now)
+            enqueued += processor_for(account_id=account_id, node=node).enqueue_runs(target_list, rows, now=now)
     return enqueued

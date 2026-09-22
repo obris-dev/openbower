@@ -182,7 +182,7 @@ def settle(
             tools=tools or {},
             source=CellSource.FILL,
         )
-        advance.advance_row(account_id=job.account_id, list_id=consent.list_id, row_id=row_id, node_id=task.node_id)
+        advance.advance_rows(account_id=job.account_id, list_id=consent.list_id, row_ids=[row_id], node_id=task.node_id)
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:
