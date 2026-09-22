@@ -7,7 +7,7 @@ webhook on its path; this is the ONE place that resolves it to columns
 ask here). The walk scope is irrelevant to this kind: a webhook judges
 every pass the same way.
 
-Its runs execute per NODE, not per run: `process_batch` is one tick's
+Its runs execute per NODE, not per run: `_process_batch` is one tick's
 work for one node. Gate (a paused column or a disabled destination
 skips without claiming), claim the due runs in one CAS (two ticks
 overlapping split a node's rows rather than both sending them),
@@ -71,7 +71,7 @@ def fail_due(flow: NodeRunFlow, node_id: str, *, now: datetime, error: str) -> i
 class WebhookProcessor(NodeProcessor):
     KIND: ClassVar[str] = WEBHOOK
 
-    def process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
+    def _process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
         tally = BatchTally()
         node_id = str(self.node.id)
         webhook = config_as(self.node, Webhook)
@@ -170,6 +170,9 @@ class WebhookProcessor(NodeProcessor):
         if delivery.status == DeliveryStatus.OK:
             result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
             tally.settled += flow.settle_many(ids, result.model_dump(), status=NodeRunStatus.DONE)
+            # A run the reclaim took back mid-flight is re-offered too:
+            # the advance is idempotent, and its row did complete.
+            tally.settled_rows.extend((run.list_id, run.row_id) for run in runs if run.row_id)
             return
         failed = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error)
         if delivery.status != DeliveryStatus.TRANSIENT:

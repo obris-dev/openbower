@@ -248,7 +248,7 @@ class AIColumnProcessor(NodeProcessor):
 
     # The execution.
 
-    def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
+    def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         try:
             lane = self._lane(task, flow=flow)
         except _RunEnded as ended:
@@ -351,7 +351,6 @@ class AIColumnProcessor(NodeProcessor):
             list_id=consent.list_id,
             column_keys=tuple(consent.column_keys),
             fill_run_id=str(job.id),
-            node_id=task.node_id,
         )
         return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=str(job.id))
 
@@ -391,7 +390,6 @@ class AIColumnProcessor(NodeProcessor):
             list_id=str(target_list.id),
             column_keys=column_keys,
             fill_run_id=None,
-            node_id=task.node_id,
         )
         return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=None)
 

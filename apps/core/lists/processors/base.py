@@ -14,13 +14,18 @@ them over, advances its cursor; it knows no kind and no column. The
 judgement is per page, not per row, because a kind's read is the
 expensive part and it batches.
 
-HOW a run executes, in the shape the kind's runs travel: `process_run`
+HOW a run executes, in the shape the kind's runs travel: `_process_run`
 for a kind whose runs are claimed one at a time off the topic (the
-consumer hands over the claimed run), `process_batch` for a kind that
+consumer hands over the claimed run), `_process_batch` for a kind that
 claims and settles a node's due runs together (the flush hands over the
 node). A kind overrides exactly one; the other keeps its raising
 default, so a dispatcher holding the wrong shape fails loudly instead of
-silently doing nothing.
+silently doing nothing. The dispatchers call the PUBLIC pair,
+`process_run` and `process_batch`, which run the kind's half and then
+the one thing every kind owes the workflow after a run reaches DONE on
+a row: the ADVANCE (services/advance.py), which offers the row to every
+node behind a barrier this node's path feeds. A kind never calls it and
+cannot forget it.
 
 A processor is constructed for ONE node of its kind, account-scoped,
 with the WALK SCOPE that says what this pass is for (a fresh fill under
@@ -33,7 +38,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
@@ -41,6 +46,7 @@ from typing import ClassVar
 from pydantic import BaseModel
 
 from ..models import List, ListRow, Node, NodeRun
+from ..services.advance import advance_row
 from ..services.node_runs import NodeRunFlow
 
 
@@ -57,15 +63,17 @@ class RunOutcome(StrEnum):
 
 @dataclass
 class BatchTally:
-    """What `process_batch` did with a node's due runs: runs, not
+    """What `_process_batch` did with a node's due runs: runs, not
     batches (one batch carries many runs). `settled` is the runs that
-    reached DONE; `skipped` counts a NODE the gates turned away without
-    claiming."""
+    reached DONE with their work done, and `settled_rows` those runs'
+    (list id, row id) pairs, for the advance; `skipped` counts a NODE
+    the gates turned away without claiming."""
 
     settled: int = 0
     parked: int = 0
     failed: int = 0
     skipped: int = 0
+    settled_rows: list[tuple[str, str]] = field(default_factory=list)
 
 
 class WalkMode(StrEnum):
@@ -118,13 +126,33 @@ class NodeProcessor(ABC):
         state the kind's lane expects."""
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
+        """The consumer's call: the kind's `_process_run`, then the
+        advance for a run that reached DONE on a row (a run with no row,
+        the preview, advances nothing). The advance runs AFTER the
+        kind's own transaction: it inserts under the open-run key, so a
+        repeat is a no-op, and a crash between the two is closed by
+        re-offering, never by ordering."""
+        outcome = self._process_run(task, flow=flow)
+        if outcome is RunOutcome.DONE and task.row_id:
+            advance_row(account_id=task.account_id, list_id=task.list_id, row_id=task.row_id, node_id=task.node_id)
+        return outcome
+
+    def process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
+        """The flush's call: the kind's `_process_batch`, then the
+        advance for every row it settled."""
+        tally = self._process_batch(flow=flow, now=now)
+        for list_id, row_id in tally.settled_rows:
+            advance_row(account_id=self.account_id, list_id=list_id, row_id=row_id, node_id=str(self.node.id))
+        return tally
+
+    def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """Execute ONE run of this node that the caller already claimed
         (PROCESSING, the attempt stamped) and settle it through `flow`.
         Raises ListNotFound / RowNotFound as they are when the sheet
         vanishes mid-landing: the consumer's story to resolve."""
         raise NotImplementedError(f"{self.KIND} runs are not executed one at a time")
 
-    def process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
+    def _process_batch(self, *, flow: NodeRunFlow, now: datetime) -> BatchTally:
         """Claim this node's due runs and execute them as one unit,
-        settling each by what came back."""
+        settling each by what came back, naming the rows it settled."""
         raise NotImplementedError(f"{self.KIND} runs are not executed as a batch")

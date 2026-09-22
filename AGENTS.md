@@ -127,13 +127,17 @@ auth + data services live in a separate private repo.
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
   target_list, rows, now)` under a typed `WalkScope` for the walkers,
   which page rows and hand them over knowing no kind and no column;
-  `process_run(task, flow)` for a kind whose runs are claimed one at a
-  time off the topic, or `process_batch(flow, now)` for a kind that
+  `_process_run(task, flow)` for a kind whose runs are claimed one at a
+  time off the topic, or `_process_batch(flow, now)` for a kind that
   claims and settles a node's due runs together, for the dispatchers
   (the node-run consumer, the deferred flush), which claim or iterate
   and hand over knowing no kind. A kind overrides exactly one of the
-  two; the other keeps its raising default. The node config classes in
-  lists/nodes stay what a node IS at rest.
+  two; the other keeps its raising default. The dispatchers call the
+  public `process_run` / `process_batch`, which run the kind's half and
+  then the ADVANCE every kind owes the workflow once a run reaches
+  DONE on a row (services/advance.py: the row is offered to every node
+  behind a barrier this node's path feeds), so no kind can forget it.
+  The node config classes in lists/nodes stay what a node IS at rest.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

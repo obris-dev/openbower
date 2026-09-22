@@ -2,7 +2,7 @@
 handing each node to its processor's batch method, which claims the
 node's due runs together and settles them by what it did (the webhook
 kind sends ONE digest of them). Knows no kind: a kind that defers is
-one that overrides process_batch. Global (not account-scoped): a
+one that overrides _process_batch. Global (not account-scoped): a
 trusted process, like the reclaim, scoping every read by the node it
 found.
 

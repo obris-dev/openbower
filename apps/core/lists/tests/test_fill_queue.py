@@ -84,7 +84,6 @@ def _ctx(fill: Job, task: NodeRun) -> LandingContext:
         list_id=fill.target_id,
         column_keys=("answer",),
         fill_run_id=str(fill.id),
-        node_id=task.node_id,
     )
 
 

@@ -20,7 +20,6 @@ from datetime import datetime
 from django.utils import timezone
 
 from ..models import List, ListRow, Node
-from ..processors import processor_for
 from .workflows import WorkflowService
 
 
@@ -29,6 +28,10 @@ def advance_row(*, account_id: str, list_id: str, row_id: str, node_id: str, now
     path feeds. Returns the runs enqueued. A node with no path (the
     preview node) or a path no wait names returns at the first read,
     so the common landing pays one node read and one indexed query."""
+    # Function-local: the processors' base calls this after every run,
+    # and this reaches back into the processors for each offered node.
+    from ..processors import processor_for
+
     now = now or timezone.now()
     landed = Node.objects.filter(id=node_id, account_id=account_id).only("path_id").first()
     if landed is None or not landed.path_id:

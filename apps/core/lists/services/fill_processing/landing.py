@@ -1,15 +1,14 @@
 """Landing a run on its row: the ONE writer of a resolved row.
 
-A row is resolved when four writes land together: the sheet value
+A row is resolved when three writes land together: the sheet value
 (write-if-blank, through ListService), the task's close with the run
-stored on it, the cell truth (one ListCellState per column the fill
-owns, carrying the run's tool statuses), and the fan-in advance (a
-webhook run for every wait node the landing completes the row for).
-They share ONE transaction on purpose: a task whose lease was reclaimed
-mid-run must produce NOTHING, never a value from one attempt wearing a
-diagnosis from another, so a close that misses rolls the value write
-back with it; and a row can never be complete on the sheet with no
-webhook run owed for it.
+stored on it, and the cell truth (one ListCellState per column the
+fill owns, carrying the run's tool statuses). They share ONE
+transaction on purpose: a task whose lease was reclaimed mid-run must
+produce NOTHING, never a value from one attempt wearing a diagnosis
+from another, so a close that misses rolls the value write back with
+it. What the landing unlocks downstream (the workflow advance) is the
+processors' base's, after the run's own transaction.
 
 Two callers land rows, and before this module each restated the
 writes: the consumer's terminal path, and its give-up past the
@@ -29,7 +28,7 @@ from django.db import transaction
 from openbower_schema.fills import CellRunResult
 
 from ...constants import CellSource, StoredCellState
-from .. import advance, cell_truth
+from .. import cell_truth
 from ..lists import ListService
 
 
@@ -38,15 +37,12 @@ class LandingContext(NamedTuple):
     fill-backed caller builds it from its fill job's consent (the
     column set it owns, the job id the cells belong to); the automatic
     path (autofill) builds it from the task plus the agent's resolved
-    column set, with `fill_run_id` NULL (the cell belongs to no run).
-    `node_id` is the task's node on both lanes: the advance asks which
-    wait nodes name its path."""
+    column set, with `fill_run_id` NULL (the cell belongs to no run)."""
 
     account_id: str
     list_id: str
     column_keys: tuple[str, ...]
     fill_run_id: str | None
-    node_id: str
 
 
 class ClaimLost(Exception):
@@ -133,9 +129,6 @@ def land_row(
                 tools=run.tools,
                 source=CellSource.FILL,
             )
-            # The advance INSERTS (it locks no existing row), so it rides
-            # last, after the truth it judges completion from.
-            advance.advance_row(account_id=ctx.account_id, list_id=ctx.list_id, row_id=row_id, node_id=ctx.node_id)
     except ClaimLost:
         return None
     return Landed(frozenset(answered), declined)

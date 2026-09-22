@@ -29,7 +29,7 @@ from lists.nodes.registry import WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
-from lists.services import cell_truth
+from lists.services import advance, cell_truth
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fill_processing.landing import LandingContext, land_row
@@ -126,11 +126,15 @@ class _SheetHarness(TestCase):
             list_id=str(self.sheet.id),
             column_keys=keys,
             fill_run_id=None,
-            node_id=str(node.id),
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
+        land_row(ctx, str(self.row.id), run, close=lambda result: True)
+        # The advance is the processors' base's, after the kind's run;
+        # the landing itself writes the sheet and the truth only.
         with patch("lists.services.advance.timezone.now", return_value=now):
-            land_row(ctx, str(self.row.id), run, close=lambda result: True)
+            advance.advance_row(
+                account_id=ACCOUNT, list_id=str(self.sheet.id), row_id=str(self.row.id), node_id=str(node.id)
+            )
 
     def _webhook_runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK, row_id=str(self.row.id)).order_by("id")
@@ -167,6 +171,48 @@ class ProcessorTests(_SheetHarness):
             self._processor(node_id).process_run(NodeRun(), flow=flow)
         with self.assertRaises(NotImplementedError):
             processor_for(account_id=ACCOUNT, node=self.first).process_batch(flow=flow, now=datetime.now(UTC))
+
+    def test_the_base_advances_after_a_done_run_on_a_row_and_after_each_settled_batch_row(self):
+        # The advance is the base's, run after the kind's half on BOTH
+        # shapes: a DONE run on a row is offered downstream, a run with
+        # no row (the preview) is not, a parked run is not; a batch
+        # advances every (list, row) it settled. FAILS if a kind is
+        # left to call the advance itself, or the public pair stops
+        # wrapping the private one.
+        from lists.processors.base import BatchTally, RunOutcome
+
+        flow = NodeRunFlow(worker_id="test:advance")
+        agent = processor_for(account_id=ACCOUNT, node=self.first)
+        on_row = NodeRun(account_id=ACCOUNT, list_id="L1", row_id="R1", node_id=str(self.first.id))
+        preview = NodeRun(account_id=ACCOUNT, list_id="", row_id=None, node_id=str(self.first.id))
+        calls: list[tuple] = []
+        with (
+            patch(
+                "lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+            ),
+            patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.DONE),
+        ):
+            agent.process_run(on_row, flow=flow)
+            agent.process_run(preview, flow=flow)
+        with (
+            patch(
+                "lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+            ),
+            patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.PARKED),
+        ):
+            agent.process_run(on_row, flow=flow)
+        self.assertEqual(
+            calls, [(("account_id", ACCOUNT), ("list_id", "L1"), ("node_id", str(self.first.id)), ("row_id", "R1"))]
+        )
+        node_id = self._add_webhook_column(["country"])
+        tally = BatchTally(settled=2, settled_rows=[("L1", "R1"), ("L1", "R2")])
+        calls.clear()
+        with (
+            patch("lists.processors.base.advance_row", side_effect=lambda **kw: calls.append(kw["row_id"])),
+            patch.object(WebhookProcessor, "_process_batch", return_value=tally),
+        ):
+            self.assertIs(self._processor(node_id).process_batch(flow=flow, now=NOW), tally)
+        self.assertEqual(calls, ["R1", "R2"])
 
     def test_wait_keys_are_the_barriers_columns_in_sheet_order(self):
         node_id = self._add_webhook_column(["country", "answer"])
@@ -250,7 +296,7 @@ class AdvanceTests(_SheetHarness):
             offered.append(node.kind)
             return processor_for(account_id=account_id, node=node, scope=scope)
 
-        with patch("lists.services.advance.processor_for", side_effect=spy):
+        with patch("lists.processors.processor_for", side_effect=spy):
             self._land(self.first, {"answer": "yes", "score": "1"})
         self.assertEqual(sorted(offered), sorted([ColumnAgent.KIND, WEBHOOK]))
 
@@ -274,8 +320,11 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None, str(self.second.id))
+        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None)
         land_row(ctx, str(self.row.id), ctx_run, close=lambda result: True)
+        advance.advance_row(
+            account_id=ACCOUNT, list_id=str(self.sheet.id), row_id=str(self.row.id), node_id=str(self.second.id)
+        )
         self.assertEqual(self._webhook_runs().count(), 0)
 
     def test_a_second_completion_while_a_run_is_open_inserts_nothing(self):
