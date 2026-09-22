@@ -504,7 +504,7 @@ function WebhookEditor({
                 waitingLine: previewBody === null ? PREVIEW_WAITING_LINE : null,
               }}
               result={sent ? { delivery: sent.delivery, lines: previewLines(fromJson(sent.envelope)) } : null}
-              sample={{ position: sampleRow.position, index: sampleIndex, count: sampleRows.length, onStep: stepRow }}
+              sample={{ index: sampleIndex, count: sampleRows.length, onStep: stepRow }}
               cells={{
                 labels,
                 missing: missingColumns,

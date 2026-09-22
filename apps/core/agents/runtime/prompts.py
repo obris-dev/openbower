@@ -126,5 +126,5 @@ def render_prompt(template: str, row_data: dict) -> str:
     """The prompt for one row: full Django-template semantics over the
     row's values ({{key}}, filters, {% if %}), inside the sandbox
     described above. The web extracts ROOT variables with a mirrored
-    regex to drive the bench inputs and chips."""
+    regex to drive the preview inputs and chips."""
     return _ENGINE.from_string(template).render(Context(row_data, autoescape=False))

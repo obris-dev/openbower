@@ -1,13 +1,23 @@
 import re
 from datetime import datetime
 
-import ulid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from ulid import ULID, StrictMonotonicPolicy, ULIDGenerator
 
 # 26-char Crockford-Base32 (digits + uppercase letters, excluding I, L, O, U).
-# Matches what `ulid.ulid()` produces and what ULIDField stores.
+# Matches what `new_ulid()` produces and what ULIDField stores.
 _ULID_RE = re.compile(r"^[0-9A-HJ-KM-NP-TV-Z]{26}$")
+
+# ONE generator per process, MONOTONIC (python-ulid's strict policy:
+# two ids minted in the same millisecond count up in their random part
+# instead of drawing two random ones, under the generator's own lock),
+# so id order is insertion order even inside a bulk insert. Every
+# keyset-by-id read (a list index by -id, a consent range captured as
+# an id) rests on that; a plain ULID only promises it across
+# milliseconds. Across processes the order is the clock's, which is
+# what "insertion order" can mean between two writers anyway.
+_generator = ULIDGenerator(policy=StrictMonotonicPolicy())
 
 
 def is_valid_ulid(value: str) -> bool:
@@ -21,6 +31,11 @@ def is_valid_ulid(value: str) -> bool:
     return bool(_ULID_RE.fullmatch(value))
 
 
+def new_ulid() -> str:
+    """A fresh id off the process's monotonic generator."""
+    return str(_generator.generate())
+
+
 def min_ulid_at(dt: datetime) -> str:
     """Smallest ULID whose timestamp is `dt` (ms-truncated).
 
@@ -30,7 +45,8 @@ def min_ulid_at(dt: datetime) -> str:
     dt-ms survives this cycle (random bits > all-zeros) and is caught next
     cycle: boundary-safe, never permanently missed.
     """
-    return ulid.encode_time(int(dt.timestamp() * 1000), 10) + "0" * 16
+    milliseconds = int(dt.timestamp() * 1000)
+    return str(ULID.from_bytes(milliseconds.to_bytes(6, "big") + bytes(10)))
 
 
 class ULIDField(models.CharField):
@@ -51,6 +67,6 @@ class ULIDField(models.CharField):
     def pre_save(self, model_instance: models.Model, add: bool) -> str:
         value: str = getattr(model_instance, self.attname)
         if not value:
-            value = str(ulid.ulid())
+            value = new_ulid()
             setattr(model_instance, self.attname, value)
         return value

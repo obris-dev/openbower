@@ -20,7 +20,7 @@ from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH
 from ..models import Node
 from ..nodes import registry
 from ..nodes.base import NodeConfig
-from ..nodes.column_agent import BENCH_IDENTITY, ColumnAgent
+from ..nodes.column_agent import PREVIEW_IDENTITY, ColumnAgent
 from ..nodes.registry import COLUMN_AGENT, all_kinds, parse_config, register, validate_node_kinds
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
@@ -118,11 +118,11 @@ class ConfigSeamTests(SimpleTestCase):
         self.assertEqual(config_of(node), config)
         self.assertEqual(ColumnAgent.model_validate(node.config), config)
 
-    def test_identity_is_the_agent_id_and_the_bench_word_for_the_bench(self):
+    def test_identity_is_the_agent_id_and_the_preview_word_for_the_preview(self):
         self.assertEqual(ColumnAgent(agent_id=AGENT_ID).identity(), AGENT_ID)
         # A real word, not blank: a blank identity sits outside the
-        # get-or-create key, and the bench is found through that key.
-        self.assertEqual(ColumnAgent().identity(), BENCH_IDENTITY)
+        # get-or-create key, and the preview is found through that key.
+        self.assertEqual(ColumnAgent().identity(), PREVIEW_IDENTITY)
 
     def test_the_path_kinds_declare_no_identity(self):
         wait = WaitUntil(inbound_path_ids=["01UP" + "A" * 22])

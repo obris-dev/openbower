@@ -16,6 +16,8 @@ from django.db.models import Q
 from django.test import TestCase
 from django.utils import timezone
 
+from openbower_kernel.ranks import keys_between
+
 from ..constants import NodeRunStatus
 from ..models import NodeRun
 from ..nodes.registry import COLUMN_AGENT
@@ -28,6 +30,7 @@ class ProvisionIndexPlanTests(TestCase):
     def setUp(self) -> None:
         now = timezone.now()
         tasks = []
+        ranks = keys_between(None, None, 1500)
         for i in range(1500):  # autofill firehose across 10 lists
             tasks.append(
                 NodeRun(
@@ -37,11 +40,12 @@ class ProvisionIndexPlanTests(TestCase):
                     node_id="01NODEA" + "0" * 19,
                     row_id=f"01ROWA{i:020d}",
                     list_id=f"01LIST{i % 10:020d}",
-                    position=i,
+                    rank=ranks[i],
                     status=NodeRunStatus.READY,
                     last_state_change_at=now,
                 )
             )
+        ranks = keys_between(None, None, 800)
         for i in range(800):  # one fill-backed fill
             tasks.append(
                 NodeRun(
@@ -51,7 +55,7 @@ class ProvisionIndexPlanTests(TestCase):
                     node_id="01NODEM" + "0" * 19,
                     row_id=f"01ROWM{i:020d}",
                     list_id="01LIST" + "9" * 20,
-                    position=i,
+                    rank=ranks[i],
                     status=NodeRunStatus.READY,
                     last_state_change_at=now,
                 )
@@ -71,7 +75,7 @@ class ProvisionIndexPlanTests(TestCase):
 
     def test_the_autofill_firehose_reads_its_index_in_order_never_sorts(self) -> None:
         plan = self._plan(
-            self._base().filter(fill_run_id__isnull=True, kind=COLUMN_AGENT).order_by("list_id", "position", "id")[:64]
+            self._base().filter(fill_run_id__isnull=True, kind=COLUMN_AGENT).order_by("list_id", "rank", "id")[:64]
         )
         self.assertIn("node_run_autofill_idx", plan)
         self.assertNotIn("Sort", plan)  # the whole point: IS NULL must still stop at the LIMIT
@@ -81,13 +85,13 @@ class ProvisionIndexPlanTests(TestCase):
         plan = self._plan(
             self._base()
             .filter(fill_run_id__isnull=True, kind=COLUMN_AGENT, list_id=one_list)
-            .order_by("list_id", "position", "id")[:64]
+            .order_by("list_id", "rank", "id")[:64]
         )
         self.assertIn("node_run_autofill_idx", plan)
         self.assertIn("list_id", plan)  # list_id is an index condition (a seek), not a post-filter
         self.assertNotIn("Sort", plan)
 
     def test_the_fill_backed_pick_reads_its_index_in_order_never_sorts(self) -> None:
-        plan = self._plan(self._base().filter(fill_run_id=FILL).order_by("position", "id")[:64])
+        plan = self._plan(self._base().filter(fill_run_id=FILL).order_by("rank", "id")[:64])
         self.assertIn("node_run_fill_idx", plan)
         self.assertNotIn("Sort", plan)

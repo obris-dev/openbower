@@ -93,8 +93,8 @@ class AiColumn(ColumnBase):
 
 
 class WebhookColumn(ColumnBase):
-    """A Send webhook column. It IS the webhook node at rank 1 of its
-    own path (the wait node at rank 0 names the paths it waits on); the
+    """A Send webhook column. It IS the second node of its own path
+    (the wait node before it names the paths it waits on); the
     column holds no row data, its cells show delivery state."""
 
     kind: Literal["webhook"] = "webhook"
@@ -206,12 +206,12 @@ WireCellState = Literal[
     "filled",
     "no_evidence",
     # The model spent its request/tool budget without producing an
-    # answer: SETTLED (the same config re-buys the same refusal), unlike
-    # model_error, which is infrastructure and retries.
+    # answer: the model's own verdict, so the sheet shows a quiet word
+    # rather than a warning (every blank re-runs on the next fill).
     "no_answer",
     # An answer arrived but failed provenance verification (its
-    # citations never confirmed it for THIS row): SETTLED, since the
-    # same config re-buys the same unconfirmable answer.
+    # citations never confirmed it for THIS row): the model's own
+    # verdict, a quiet word.
     "unverified",
     "unparseable",
     "type_mismatch",
@@ -219,8 +219,8 @@ WireCellState = Literal[
     "transient",
     # A tool's door did not serve this row. The SHEET keys on the base
     # code only (which tool, and the tool's own code, ride `tools`):
-    # not configured is written at once and re-runs on Continue once
-    # set up; unavailable (rate limited, unreachable, or erroring past
+    # not configured is written at once and re-runs on the next fill
+    # once set up; unavailable (rate limited, unreachable, or erroring past
     # the row's retries) parks first and lands after the attempt cap.
     "tool_not_configured",
     "tool_unavailable",
@@ -251,8 +251,12 @@ WebhookCellState = Literal["waiting", "sent", "failed"]
 
 
 class ListRowWire(BaseModel):
+    """A row in SHEET ORDER: the page's array order is the order, and a
+    row number is whatever the renderer counts. Nothing about order
+    rides the row itself (the server keeps a rank a move rewrites on
+    one row; a client never needs it)."""
+
     id: str
-    position: int = Field(description="1-based dense display/paging order.")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},
@@ -270,7 +274,12 @@ class ListRowWire(BaseModel):
 
 class ListRowsPage(BaseModel):
     items: list[ListRowWire]
-    next_cursor: str | None = Field(default=None, description="The last position when more rows exist.")
+    next_cursor: str | None = Field(
+        default=None,
+        description="An opaque cursor for the next page when more rows exist: hand it back as ?after= "
+        "verbatim (it carries what the server needs to continue; nothing about it is for the client "
+        "to read).",
+    )
 
 
 class ListsPage(BaseModel):

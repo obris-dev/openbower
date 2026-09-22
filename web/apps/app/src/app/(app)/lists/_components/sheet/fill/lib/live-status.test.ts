@@ -15,7 +15,7 @@ function run(status: FillRunWire["status"], id = "01RUN"): FillRunWire {
     confirmed_row_count: 10,
     targeted_at: "2026-01-01T00:00:00Z",
     started_by: "01USER",
-    heartbeat_at: null,
+    heartbeat_at: "2026-01-01T00:00:00Z",
     error: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

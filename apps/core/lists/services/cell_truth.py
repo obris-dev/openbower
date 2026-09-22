@@ -23,12 +23,12 @@ from __future__ import annotations
 from openbower_kernel.batches import iter_id_pages
 
 from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
-from ..models import Fill, ListCellState
+from ..models import ListCellState
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
 # `source` rides the upsert: a fill landing over a hand-written cell
 # re-attributes it, and a hand-written value over a fill's will too.
-_UPSERT_FIELDS = ["state", "fill_run_id", "config_fingerprint", "tools", "source", "updated_at"]
+_UPSERT_FIELDS = ["state", "fill_run_id", "tools", "source", "updated_at"]
 
 
 def write(
@@ -37,7 +37,6 @@ def write(
     list_id: str,
     row_id: str,
     fill_run_id: str | None,
-    config_fingerprint: str,
     states: dict[str, StoredCellState],
     tools: dict[str, str],
     source: CellSource,
@@ -45,8 +44,8 @@ def write(
     """One row's cell states, written inside the terminal transaction
     that also writes the sheet row and closes the task.
 
-    Takes the identity pieces, not a Fill: the fill-backed caller passes
-    its Fill's, and the automatic path (autofill) passes the task's, with
+    Takes the identity pieces: the fill-backed caller passes its fill
+    job's, and the automatic path (autofill) passes the task's, with
     `fill_run_id` NULL (an autofilled cell belongs to no run).
 
     Per COLUMN, because a run answers outputs independently: a run that
@@ -75,7 +74,6 @@ def write(
                 column_key=column_key,
                 state=state,
                 fill_run_id=fill_run_id,
-                config_fingerprint=config_fingerprint,
                 tools=tools,
                 source=source,
             )
@@ -87,10 +85,10 @@ def write(
     )
 
 
-def uniform(fill: Fill, state: StoredCellState) -> dict[str, StoredCellState]:
-    """The same state for every column the fill owns: the shape a run
+def uniform(column_keys: list[str], state: StoredCellState) -> dict[str, StoredCellState]:
+    """The same state for every column a fill owns: the shape a run
     that answered NOTHING produces."""
-    return dict.fromkeys(fill.column_keys, state)
+    return dict.fromkeys(column_keys, state)
 
 
 def _purge_in_pages(**lookup: str) -> None:

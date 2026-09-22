@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 
 from openbower_kernel.models import AccountScopedModel
 
-from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH
+from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH, RANK_MAX_LENGTH
 
 
 class Node(AccountScopedModel):
@@ -20,15 +20,19 @@ class Node(AccountScopedModel):
     path and rank alone (a wait node, a webhook node) declares NO
     identity and stores a blank one, which the identity key ignores.
 
-    `rank` is the node's dense position on its path: a column_agent path
-    holds one node at 0; a webhook column's path holds its wait node at
-    0 and its webhook node at 1. Unique per path, so two nodes can never
-    claim one slot.
+    `rank` is the node's place on its path, a fractional key exactly as
+    a row's (openbower_kernel.ranks): a fresh path's nodes read a0, a1,
+    and so on, and moving one is a key between its two new neighbours,
+    one write, no renumbering and no collision on the unique key. Every
+    node has one, the preview node included (the first key, alone on its
+    non-path): a CharField silently stores "" when a writer forgets it,
+    and the check constraint below makes that a failed insert instead
+    of a node sorted first forever.
 
-    A sheet node points at its workflow and path. The bench node points
-    at neither (workflow_id and path_id blank, exactly as a TEST fill's
+    A sheet node points at its workflow and path. The preview node points
+    at neither (workflow_id and path_id blank, exactly as a preview run's
     list_id is): the account's one sheetless column_agent node, the
-    bookkeeping a test run's node_id points at, outliving every fill: an
+    bookkeeping a preview run's node_id points at, outliving every fill: an
     account-level singleton with no parent, the no-cascades rule's named
     exception, deleted by nothing.
 
@@ -45,7 +49,7 @@ class Node(AccountScopedModel):
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
     config = models.JSONField(_("config"), default=dict)
     identity = models.CharField(_("identity"), max_length=NODE_IDENTITY_MAX_LENGTH, blank=True, default="")
-    rank = models.IntegerField(_("rank"), default=0)
+    rank = models.CharField(_("rank"), max_length=RANK_MAX_LENGTH, db_collation="C")
 
     class Meta:
         verbose_name = _("node")
@@ -56,20 +60,21 @@ class Node(AccountScopedModel):
         indexes = [models.Index(fields=["account_id", "kind"], name="node_account_kind_idx")]
         constraints = [
             # The get-or-create key for kinds that declare an identity: a
-            # sheet node is (account, workflow, kind, identity); the bench
-            # node is (account, "", kind, bench). A blank identity is a
+            # sheet node is (account, workflow, kind, identity); the preview
+            # node is (account, "", kind, preview). A blank identity is a
             # kind that is never looked up this way, and stays out.
             models.UniqueConstraint(
                 fields=["account_id", "workflow_id", "kind", "identity"],
                 condition=~models.Q(identity=""),
                 name="node_identity_uniq",
             ),
-            # One node per slot on a path; the bench node has no path.
+            # One node per slot on a path; the preview node has no path.
             models.UniqueConstraint(
                 fields=["path_id", "rank"],
                 condition=~models.Q(path_id=""),
                 name="node_path_rank_uniq",
             ),
+            models.CheckConstraint(condition=~models.Q(rank=""), name="node_rank_named"),
         ]
 
     def __str__(self) -> str:

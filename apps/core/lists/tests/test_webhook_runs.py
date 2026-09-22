@@ -126,7 +126,6 @@ class _SheetHarness(TestCase):
             list_id=str(self.sheet.id),
             column_keys=keys,
             fill_run_id=None,
-            config_fingerprint="fp",
             node_id=str(node.id),
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
@@ -153,7 +152,7 @@ class ProcessorTests(_SheetHarness):
         # A kind with no processor (the barrier makes no runs of its
         # own): the factory says so loudly rather than walking nothing.
         node = self.workflows.get_node(node_id)
-        barrier = Node.objects.get(path_id=node.path_id, rank=0)
+        barrier = self.workflows.nodes_on_path(node.path_id)[0]
         with self.assertRaises(UnknownProcessor):
             processor_for(account_id=ACCOUNT, node=barrier)
 
@@ -175,11 +174,16 @@ class ProcessorTests(_SheetHarness):
 
     def test_wait_keys_are_empty_when_the_barrier_or_its_paths_are_gone(self):
         node_id = self._add_webhook_column(["answer"])
-        self.sheet.columns = [column for column in self.sheet.columns if column.key not in ("answer", "score")]
+        columns = list(self.sheet.columns)
+        self.sheet.columns = [column for column in columns if column.key not in ("answer", "score")]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
+        # The columns back, the barrier gone: each half empties the wait on its own.
+        self.sheet.columns = columns
+        self.sheet.save(update_fields=["columns", "updated_at"])
         node = self.workflows.get_node(node_id)
-        Node.objects.filter(path_id=node.path_id, rank=0).delete()
+        barrier = self.workflows.nodes_on_path(node.path_id)[0]
+        barrier.delete()
         self.assertEqual(self._processor(node_id).wait_keys(self.sheet), [])
 
     def test_enqueue_runs_births_a_deferred_run_at_the_window_for_a_complete_row_only(self):
@@ -195,11 +199,11 @@ class ProcessorTests(_SheetHarness):
         self.assertEqual(
             (run.status, run.kind, run.node_id, run.row_id), ("deferred", WEBHOOK, node_id, str(self.row.id))
         )
-        self.assertEqual((run.not_before, run.position), (next_window(NOW, INTERVAL), 1))
+        self.assertEqual((run.not_before, run.rank), (next_window(NOW, INTERVAL), self.row.rank))
         # Offered again for the same completion: covered, nothing queued.
         self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
 
-    def test_wait_ahead_of_is_the_paths_rank_zero_and_refuses_a_node_without_one(self):
+    def test_wait_ahead_of_is_the_paths_first_node_and_refuses_a_node_without_one(self):
         node_id = self._add_webhook_column(["country"])
         node = self.workflows.get_node(node_id)
         self.assertEqual(self.workflows.wait_ahead_of(node).inbound_path_ids, [self.second.path_id])
@@ -213,7 +217,6 @@ class ProcessorTests(_SheetHarness):
                 list_id=str(self.sheet.id),
                 row_id=str(row.id),
                 fill_run_id=None,
-                config_fingerprint="",
                 states=states,
                 tools={},
                 source=CellSource.FILL,
@@ -232,7 +235,7 @@ class AdvanceTests(_SheetHarness):
 
         (run,) = list(self._webhook_runs())
         self.assertEqual((run.status, run.kind, run.node_id), (NodeRunStatus.DEFERRED, WEBHOOK, webhook_node_id))
-        self.assertEqual((run.list_id, run.position, run.fill_run_id), (str(self.sheet.id), self.row.position, None))
+        self.assertEqual((run.list_id, run.rank, run.fill_run_id), (str(self.sheet.id), self.row.rank, None))
         self.assertEqual(run.not_before, next_window(NOW, INTERVAL))
         self.assertEqual((run.queued_at, run.last_state_change_at), (NOW, NOW))
 
@@ -241,7 +244,7 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None, "fp", str(self.second.id))
+        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, None, str(self.second.id))
         land_row(ctx, str(self.row.id), ctx_run, close=lambda result: True)
         self.assertEqual(self._webhook_runs().count(), 0)
 
@@ -294,7 +297,7 @@ class AdvanceTests(_SheetHarness):
             origin="manual",
         )
         (row,) = self.lists.add_rows(sheet, [{"company": "example.io"}])
-        with patch("lists.services.fill_admission.base.model_for"):
+        with patch("lists.services.runnable.model_for"):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1
             )
@@ -338,14 +341,13 @@ class _BackfilledSheet(_SheetHarness):
                 list_id=str(self.sheet.id),
                 row_id=str(row.id),
                 fill_run_id=None,
-                config_fingerprint="",
                 states=states,
                 tools={},
                 source=CellSource.FILL,
             )
 
     def _runs(self):
-        return NodeRun.objects.filter(kind=WEBHOOK).order_by("position")
+        return NodeRun.objects.filter(kind=WEBHOOK).order_by("rank", "id")
 
 
 class BackfillTests(_BackfilledSheet):
@@ -369,7 +371,7 @@ class BackfillTests(_BackfilledSheet):
         (job,) = list(Job.objects.all())
         self.assertEqual((job.kind, job.status, job.account_id), ("enqueue_runs", JobStatus.READY, ACCOUNT))
         self.assertEqual(job.payload["list_id"], str(self.sheet.id))
-        self.assertEqual((job.payload["node_id"], job.payload["scope"]["mode"]), (node_id, "backfill"))
+        self.assertEqual(job.payload["node_id"], node_id)
         # The request inserted no run and read no cell state: the walk
         # is the job's.
         self.assertEqual(self._runs().count(), 0)
@@ -379,14 +381,17 @@ class BackfillTests(_BackfilledSheet):
     def test_the_job_enqueues_a_run_for_every_row_already_complete(self):
         node_id = self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
+        self.assertEqual(
+            (job.status, job.progress),
+            (JobStatus.DONE, {"after_id": str(self.third_row.id), "after_rank": self.third_row.rank}),
+        )
         runs = list(self._runs())
         self.assertEqual([r.row_id for r in runs], [str(self.row.id), str(self.second_row.id)])
         for run in runs:
             self.assertEqual(
                 (run.status, run.node_id, run.not_before), (NodeRunStatus.DEFERRED, node_id, next_window(NOW, INTERVAL))
             )
-        self.assertEqual([r.position for r in runs], [1, 2])
+        self.assertEqual([r.rank for r in runs], [self.row.rank, self.second_row.rank])
 
     def test_the_walk_pages_across_slices_and_a_doubled_slice_adds_nothing(self):
         # One row per page: three slices, each idempotent under the
@@ -395,12 +400,15 @@ class BackfillTests(_BackfilledSheet):
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
             self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.status, job.progress), (JobStatus.DONE, {"after_position": 3, "offered": 2}))
+        self.assertEqual(
+            (job.status, job.progress),
+            (JobStatus.DONE, {"after_id": str(self.third_row.id), "after_rank": self.third_row.rank}),
+        )
         self.assertEqual(self._runs().count(), 2)
         kind = EnqueueRuns.model_validate(job.payload)
         with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
-            cursor = kind.run(job, kind.Progress(after_position=0))
-        self.assertEqual(cursor, kind.Progress(after_position=1))
+            cursor = kind.run(job, kind.Progress(after_id=""))
+        self.assertEqual(cursor, kind.Progress(after_id=str(self.row.id), after_rank=self.row.rank))
         self.assertEqual(self._runs().count(), 2)
 
     def test_a_page_re_walked_after_its_runs_were_sent_offers_nothing(self):
@@ -413,11 +421,11 @@ class BackfillTests(_BackfilledSheet):
         self._runs().update(status=NodeRunStatus.DONE)
         (job,) = list(Job.objects.all())
         kind = EnqueueRuns.model_validate(job.payload)
-        kind.run(job, kind.Progress(after_position=0))
+        kind.run(job, kind.Progress(after_id=""))
         self.assertEqual(self._runs().count(), 2)
         # A LATER completion of the same row is new work: one new run.
         self._settle(self.row, {"country": StoredCellState.FILLED}, at=datetime(2026, 9, 19, 15, 30, tzinfo=UTC))
-        kind.run(job, kind.Progress(after_position=0))
+        kind.run(job, kind.Progress(after_id=""))
         fresh = list(self._runs().filter(status=NodeRunStatus.DEFERRED))
         self.assertEqual([r.row_id for r in fresh], [str(self.row.id)])
 

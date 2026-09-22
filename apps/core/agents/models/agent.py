@@ -77,7 +77,7 @@ class Agent(UserScopedModel):
         """The runtime/interchange config this row is custody for,
         TYPED at construction (the contract model is the one shape a
         config ever travels as), and read TOLERANTLY: see
-        agents.coercion, which the fill's frozen snapshot shares.
+        agents.coercion.
 
         The stored fields go in RAW. `provider_retired` stays as this
         custody's own public read, which the admission lane refuses on;

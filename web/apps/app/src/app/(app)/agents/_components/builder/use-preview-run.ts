@@ -3,41 +3,45 @@
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@bower/ui";
 import {
-  fetchFillRun,
-  postFillRunCancel,
-  postTestFill,
-  ROW_LEASE_STALE_SECONDS,
-  TEST_ACTIVE_CODE,
+  fetchRun,
+  isRunOpen,
+  postPreviewRun,
+  NODE_RUN_STALE_SECONDS,
+  postRunCancel,
+  UNKNOWN_RUN_STATUS,
   type AgentConfig,
   type CellRunResult,
-  type FillRunDetail,
+  type RenderableRun,
 } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 
-// Poll cadence (binary). A test run is WORKER-SUPERVISED like any
-// fill: the loop is open-ended (each poll its own short bounded GET;
-// the fill lane guarantees termination through the attempt cap and
+// Poll cadence (binary). A preview run is WORKER-SUPERVISED like any
+// run: the loop is open-ended (each poll its own short bounded GET;
+// the run lane guarantees termination through the attempt cap and
 // the give-up path), blips back off (the error bound below exits
 // before the doubling passes 8_192ms, so no ceiling constant exists
 // to clamp against), and staleness is a WARNING fact judged against
-// the worker's heartbeat, never a failure.
+// the run's latest state change, never a failure.
 const TEST_POLL_INTERVAL_MS = 1_024;
-// Consecutive failed polls before the loop stops calling them blips
-// (mirrors use-fill): past this the run is unreadable from here (a
-// swept id answers 404 forever, a dead server answers nothing), and a
+// Consecutive polls the loop cannot read before it stops calling them
+// blips (mirrors use-fill): a failed request, or a status this bundle
+// has never heard of (an unheard-of TERMINAL member would otherwise
+// read as open forever). Past this the run is unreadable from here (a
+// pruned id answers 404 forever, a dead server answers nothing), and a
 // loop that never exits holds the Test button busy for good. The run,
 // if live, terminates server-side either way.
 const MAX_POLL_ERRORS = 4;
 
-/** The test run's whole lifecycle on the FILL lane: POST the test
- * fill, poll its envelope to terminal, diagnose. A refused start
- * (409: a teammate's test is live; your own is superseded server-side)
- * toasts the server's own detail and stops. A new run (or unmount)
- * supersedes any in-flight loop via the generation counter. Resolves
- * the result, or null after its own toast. `testStale` surfaces the
- * heartbeat-quiet warning while a run is still live. */
-export function useTestFill(): {
+/** The preview run's whole lifecycle: POST the run, poll it to terminal,
+ * diagnose. A refused start (a row past its bounds, a config that
+ * cannot run) toasts the server's own detail and stops; your own
+ * earlier unclaimed run is superseded server-side, never refused. A
+ * new run (or unmount) supersedes any in-flight loop via the
+ * generation counter. Resolves the result, or null after its own
+ * toast. `testStale` surfaces the quiet-run warning while a run is
+ * still open. */
+export function usePreviewRun(): {
   testBusy: boolean;
   testStale: boolean;
   runTest: (config: AgentConfig, row: Record<string, string>) => Promise<CellRunResult | null>;
@@ -47,10 +51,10 @@ export function useTestFill(): {
   const [testStale, setTestStale] = useState(false);
   const generationRef = useRef(0);
   // The run this hook is currently supervising, so unmount can stop
-  // it server-side: without the cancel, an abandoned bench run keeps
-  // spending and hard-refuses every teammate's Test for the row's
-  // whole runtime (the fresh-heartbeat guard cannot tell an abandoned
-  // run from a watched one).
+  // it server-side: a run nobody is watching would otherwise sit in
+  // the queue and, once claimed, spend on an answer nobody reads. The
+  // cancel reaches an unclaimed run only; one a worker already owns
+  // runs to its end and keeps its result.
   const liveRunIdRef = useRef<string | null>(null);
   // Held so unmount can CLEAR it: the generation check already stops
   // the loop writing anything, but a backed-off wait (seconds, at the
@@ -67,24 +71,33 @@ export function useTestFill(): {
       if (liveRunIdRef.current !== null) {
         // Fire-and-forget: the page is going away, and a failed
         // cancel only means the run finishes on its own.
-        void postFillRunCancel(liveRunIdRef.current);
+        void postRunCancel(liveRunIdRef.current);
         liveRunIdRef.current = null;
       }
     };
   }, []);
 
-  function staleness(run: FillRunDetail): boolean {
-    // The wire's one deadness vocabulary: quiet past the lease window
-    // reads as a warning (the run may still be queued behind work),
-    // never as failure; a terminal status always ends the loop first.
-    const last = run.heartbeat_at ?? run.created_at;
-    return Date.now() - Date.parse(last) > ROW_LEASE_STALE_SECONDS * 1_000;
+  function staleness(run: RenderableRun): boolean {
+    // The run's one deadness window off the wire (its heartbeat freezes
+    // for the whole of its execution, so the row-lease window would
+    // flag a legitimately running row): quiet past it reads as a
+    // warning (the run may still be queued behind work), never as
+    // failure; a terminal status always ends the loop first.
+    return Date.now() - Date.parse(run.heartbeat_at) > NODE_RUN_STALE_SECONDS * 1_000;
   }
 
-  async function pollToTerminal(initial: FillRunDetail, generation: number): Promise<CellRunResult | null> {
+  function lostSight(): null {
+    setTestBusy(false);
+    setTestStale(false);
+    // Tier 3 copy: only this page can see that it cannot read the run.
+    toast.error("This page can no longer follow the test run; run it again.", "Lost sight of the test run");
+    return null;
+  }
+
+  async function pollToTerminal(initial: RenderableRun, generation: number): Promise<CellRunResult | null> {
     let run = initial;
     let pollErrors = 0;
-    while (run.status === "pending" || run.status === "running") {
+    while (isRunOpen(run)) {
       if (generationRef.current !== generation) return null;
       setTestStale(staleness(run));
       const wait = TEST_POLL_INTERVAL_MS * 2 ** pollErrors;
@@ -98,7 +111,7 @@ export function useTestFill(): {
       });
       if (sleepRef.current === handle) sleepRef.current = null;
       if (generationRef.current !== generation) return null;
-      const polled = await fetchFillRun(run.id);
+      const polled = await fetchRun(run.id);
       if (generationRef.current !== generation) return null;
       if (polled.status === "unauthenticated") {
         // A dead session is terminal, not a blip: ensureOk routes to
@@ -115,12 +128,17 @@ export function useTestFill(): {
         // failures is no longer a blip, and an unexitable loop wedges
         // the Test button behind a run this page can never read again.
         pollErrors += 1;
-        if (pollErrors >= MAX_POLL_ERRORS) {
-          setTestBusy(false);
-          setTestStale(false);
-          ensureOk(polled, toast, { title: "Lost sight of the test run" });
-          return null;
-        }
+        if (pollErrors >= MAX_POLL_ERRORS) return lostSight();
+        continue;
+      }
+      if (polled.data.status === UNKNOWN_RUN_STATUS) {
+        // A status this bundle cannot name counts like a failed read:
+        // it may be an added open member (keep supervising, backed
+        // off) or an added terminal one (the run is finished and this
+        // page can never tell), and only the bound tells them apart.
+        pollErrors += 1;
+        if (pollErrors >= MAX_POLL_ERRORS) return lostSight();
+        run = polled.data;
         continue;
       }
       pollErrors = 0;
@@ -132,29 +150,21 @@ export function useTestFill(): {
     // lost-sight and login exits above deliberately KEEP the ref (the
     // run may still be live, and unmount should still try to stop it).
     if (liveRunIdRef.current === run.id) liveRunIdRef.current = null;
-    if (run.status === "failed") {
-      toast.error(
-        // Tier 1: the server's error renders verbatim; the no-error
-        // fallback stays plain rather than hedging.
-        run.error ? `The test run failed: ${run.error.message}` : "The test run failed without a reason; run it again.",
-      );
-      return null;
-    }
     if (run.result) {
-      // A stored result renders whatever the terminal status: a
-      // cancel can race the last landing (the task commits before
-      // the fill flips), and a paid diagnosis beats a "stopped"
-      // toast about it.
+      // The one terminal with a result: a claimed run always lands (a
+      // cancel reaches only an unclaimed one), so a paid diagnosis is
+      // never stranded behind a "stopped" toast.
       return run.result;
     }
-    if (run.status === "cancelled") {
-      // Supersession, the lane's ONE reachable cancel cause: a newer
-      // test of yours (another tab), or a teammate's after yours went
-      // stale. A refusal story, not a failure one.
+    if (run.status === "abandoned") {
+      // Stopped before a worker claimed it: superseded by a newer test
+      // of yours (another tab). A refusal story, not a failure one.
       toast.error("The test was stopped before it finished; run it again.");
       return null;
     }
-    toast.error("The test finished without a result; run it again.");
+    // Done with no result: the drafted config could not run at all (a
+    // model or tool that went away between the start and the run).
+    toast.error("The test finished without a result; check the model and tools, then run it again.");
     return null;
   }
 
@@ -165,20 +175,13 @@ export function useTestFill(): {
     // The POST answers immediately with a run to poll: the agentic
     // loop takes seconds to minutes, and holding the request open for
     // it ties up a connection for nothing.
-    const started = await postTestFill(config, row);
+    const started = await postPreviewRun(config, row);
     if (generationRef.current !== generation) {
       // Superseded (or unmounted) DURING the create: the run exists
       // server-side but was never stored in the ref, so nothing else
       // will ever stop it. The local id, never the ref, so a newer
       // run's own id is not touched.
-      if (started.status === "ok") void postFillRunCancel(started.data.id);
-      return null;
-    }
-    if (started.status === "error" && started.code === TEST_ACTIVE_CODE) {
-      // A refusal, not a failure: the server's own copy says whose
-      // run is live and what to do.
-      setTestBusy(false);
-      toast.error(started.message, "Test not started");
+      if (started.status === "ok") void postRunCancel(started.data.id);
       return null;
     }
     if (!ensureOk(started, toast, { title: "Test failed" })) {
@@ -186,7 +189,7 @@ export function useTestFill(): {
       return null;
     }
     // Held for the unmount cancel. A superseding click just
-    // overwrites it: the server cancels the old run on admission.
+    // overwrites it: the server abandons the old run on start.
     liveRunIdRef.current = started.data.id;
     return pollToTerminal(started.data, generation);
   }

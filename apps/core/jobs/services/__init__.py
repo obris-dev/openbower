@@ -1,4 +1,4 @@
-from .enqueue import enqueue
+from .jobs import JobService
 from .runner import JobRunner, TickReport
 
-__all__ = ["JobRunner", "TickReport", "enqueue"]
+__all__ = ["JobRunner", "JobService", "TickReport"]

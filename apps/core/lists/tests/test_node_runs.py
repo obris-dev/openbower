@@ -66,7 +66,7 @@ class AutofillHarness(TransactionTestCase):
             origin="manual",
         )
         self.lists.add_rows(sheet, [{"company": f"seed{n}.com"} for n in range(rows)])
-        with patch("lists.services.fill_admission.base.model_for"):
+        with patch("lists.services.runnable.model_for"):
             fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
                 list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
             )
@@ -421,7 +421,7 @@ def _webhook_run(sheet, row_id: str, *, status: NodeRunStatus, not_before) -> No
         kind=WEBHOOK,
         row_id=row_id,
         list_id=str(sheet.id),
-        position=1,
+        rank="a0",
         status=status,
         not_before=not_before,
         last_state_change_at=timezone.now(),
@@ -449,17 +449,35 @@ class OpenRunKeyTests(AutofillHarness):
         self.assertNotEqual(first.id, second.id)
         self.assertEqual(NodeRun.objects.filter(kind=WEBHOOK, row_id=agent_run.row_id).count(), 2)
 
+    def test_a_run_with_no_rank_is_refused_at_the_insert(self) -> None:
+        # Same shape as the kind: a run with no rank would sort first in
+        # every claim forever, so the insert fails instead. Named, so the
+        # refusal is this constraint's and not a sibling's.
+        with self.assertRaisesMessage(IntegrityError, "node_run_rank_named"):
+            NodeRun.objects.create(
+                account_id=ACCOUNT,
+                fill_run_id=None,
+                node_id="01NODERANKLESS" + "0" * 12,
+                kind=COLUMN_AGENT,
+                row_id="01ROW" + "0" * 21,
+                list_id="01LIST" + "0" * 20,
+                status=NodeRunStatus.READY,
+                last_state_change_at=timezone.now(),
+            )
+
     def test_a_run_with_no_kind_is_refused_at_the_insert(self) -> None:
         # The kind is a lane, and a CharField silently stores "" when a
         # writer forgets it; the check constraint makes that an error at
-        # the insert instead of a run no lane will ever claim.
-        with self.assertRaises(IntegrityError):
+        # the insert instead of a run no lane will ever claim. The rank
+        # is given, so the kind is the ONLY thing missing.
+        with self.assertRaisesMessage(IntegrityError, "node_run_kind_named"):
             NodeRun.objects.create(
                 account_id=ACCOUNT,
                 fill_run_id=None,
                 node_id="01NODEKINDLESS" + "0" * 12,
                 row_id="01ROW" + "0" * 21,
                 list_id="01LIST" + "0" * 20,
+                rank="a0",
                 status=NodeRunStatus.READY,
                 last_state_change_at=timezone.now(),
             )

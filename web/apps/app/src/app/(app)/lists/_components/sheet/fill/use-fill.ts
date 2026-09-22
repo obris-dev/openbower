@@ -12,7 +12,7 @@ import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { livenessRead, type LiveRun } from "./lib/live-status";
 
 // Poll cadence (binary). Open-ended like every worker-supervised
-// poll (the bench's use-test-fill rides the same doctrine): the LOOP
+// poll (the preview's use-preview-run rides the same doctrine): the LOOP
 // has no budget, never that a request stays open. Each poll is its
 // own short bounded GET, and liveness rides the worker's heartbeat on
 // the envelope, not this browser.

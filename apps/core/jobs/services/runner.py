@@ -1,7 +1,7 @@
 """The job runner: one tick claims the jobs that are due and gives each
 slices of work until it is done or the tick's budget is spent, then
-parks or settles it. The ONLY writer of `Job.status`, so every
-transition is findable here.
+parks or settles it. Every transition it makes is findable here; the
+one writer from outside is JobService.Global.stop.
 
 Every transition is a compare-and-set UPDATE on the status, so two
 ticks overlapping (a slow slice past the minute) split the due jobs
@@ -10,8 +10,17 @@ jobs PROCESSING; the next tick's reclaim returns them to READY past the
 stale window, and they resume from their cursor. `attempts` counts
 UNEXPECTED exits and nothing else: a slice that raises (parked with a
 backoff and its cause) and a dead tick (seen by the reclaim). Running
-out of budget is neither. At the cap the job is FAILED with the last
-cause.
+out of budget is neither, and neither is a kind's own wait (a slice
+raising `JobWaiting` parks the job until it asked to be woken). At the
+cap the job is FAILED with the last cause; a slice raising `JobFailed`
+fails it at once with the kind's own code and copy.
+
+The runner is the only writer of a job's status FROM INSIDE (claim,
+park, settle, fail, reclaim); a stop from outside (JobService.Global.stop: a
+user's cancel, a worker failing a fill) flips an open job terminal
+under its own predicate, and every transition here is predicated on
+PROCESSING, so a job stopped while a tick holds it is never resurrected
+by that tick's park or settle.
 
 Safe to miss (a job waits) and safe to double (the CAS). Not
 account-scoped: a trusted process, like the node-run flows."""
@@ -25,6 +34,7 @@ from dataclasses import dataclass
 
 from django.db import DatabaseError, models
 from django.utils import timezone
+from pydantic import ValidationError
 
 from ..constants import (
     JOB_ATTEMPTS,
@@ -32,9 +42,11 @@ from ..constants import (
     JOB_RETRY_BACKOFF_SECONDS,
     JOB_STALE_SECONDS,
     JOB_TICK_BUDGET_SECONDS,
+    JobFailureCode,
     JobStatus,
 )
 from ..kinds import registry
+from ..kinds.base import JobFailed, JobKind, JobWaiting
 from ..models import Job
 
 logger = logging.getLogger(__name__)
@@ -83,6 +95,7 @@ class JobRunner:
         return report
 
     def _work(self, job: Job, *, deadline: float, report: TickReport) -> None:
+        kind = None
         try:
             kind = registry.parse_payload(job.kind, job.payload)
             # Typed at both edges: the stored cursor parses through the
@@ -94,7 +107,7 @@ class JobRunner:
                 if progress is None:
                     report.done += self._settle(job)
                     return
-                job.progress = progress.model_dump()
+                job.progress = progress.model_dump(mode="json")
                 # The cursor is durable after EVERY slice, so a crash
                 # loses one slice at most and a reclaimed job resumes
                 # from where its dead tick actually got to.
@@ -106,6 +119,20 @@ class JobRunner:
         except DatabaseError:
             # The connection is the tick's; nothing here recovers it.
             raise
+        except JobWaiting as e:
+            # Waiting on something outside the job: park until the kind
+            # asked to be woken, the cursor as stored unless it gave a
+            # new one. Not an attempt, and not this tick's problem
+            # anymore.
+            if e.progress is not None:
+                job.progress = e.progress.model_dump(mode="json")
+            wake = timezone.now() + datetime.timedelta(seconds=e.seconds)
+            report.parked += self._park(job, scheduled_at=wake)
+        except JobFailed as e:
+            # The kind's own verdict: terminal on its terms, no attempt.
+            # It tidies what it owns first, as a stop from outside does.
+            self._tidy(job, kind)
+            report.failed += self._fail(job, e.message, code=e.code, attempts=job.attempts)
         except Exception as e:
             # One job's crash (a payload that no longer parses, a bug in
             # its kind) must not stop the jobs behind it: count the
@@ -114,10 +141,29 @@ class JobRunner:
             cause = f"{type(e).__name__}: {e}"[:JOB_ERROR_MAX_LENGTH]
             attempts = job.attempts + 1
             if attempts >= JOB_ATTEMPTS:
-                report.failed += self._fail(job, cause, attempts=attempts)
+                self._tidy(job, kind)
+                report.failed += self._fail(job, cause, code=JobFailureCode.CRASHED, attempts=attempts)
                 return
             backoff = timezone.now() + datetime.timedelta(seconds=JOB_RETRY_BACKOFF_SECONDS)
             report.parked += self._park(job, scheduled_at=backoff, error=cause, attempts=attempts)
+
+    @staticmethod
+    def _tidy(job: Job, kind: JobKind | None) -> None:
+        """The kind's on_stop before a terminal write the runner makes on
+        its own: what the job owns outside its row is swept, as it is
+        when a stop comes from outside. A kind that could not be parsed
+        has no tidy to run; a tidy that raises is logged and the fail
+        stands, since the verdict is not the tidy's to veto."""
+        if kind is None:
+            try:
+                kind = registry.parse_payload(job.kind, job.payload)
+            except (KeyError, ValidationError):
+                logger.warning("jobs: %s cannot be parsed; failing without its tidy", job)
+                return
+        try:
+            kind.on_stop(job)
+        except Exception:
+            logger.exception("jobs: %s on_stop raised; the fail stands", job)
 
     # Transitions: each one UPDATE whose predicate is the status.
 
@@ -142,27 +188,43 @@ class JobRunner:
     def _settle(job: Job) -> int:
         now = timezone.now()
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.DONE, progress=job.progress, error="", settled_at=now, last_state_change_at=now
+            status=JobStatus.DONE,
+            progress=job.progress,
+            error_code="",
+            error="",
+            settled_at=now,
+            last_state_change_at=now,
         )
 
     @staticmethod
-    def _park(job: Job, *, scheduled_at: datetime.datetime, error: str = "", attempts: int | None = None) -> int:
+    def _park(
+        job: Job, *, scheduled_at: datetime.datetime, error: str | None = None, attempts: int | None = None
+    ) -> int:
+        """`error` None leaves the stored cause alone (a budget park or a
+        wait says nothing about failure); a raising slice writes its
+        cause."""
         fields: dict = {
             "status": JobStatus.READY,
             "progress": job.progress,
             "scheduled_at": scheduled_at,
-            "error": error,
             "last_state_change_at": timezone.now(),
         }
+        if error is not None:
+            fields["error"] = error
         if attempts is not None:
             fields["attempts"] = attempts
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(**fields)
 
     @staticmethod
-    def _fail(job: Job, error: str, *, attempts: int) -> int:
+    def _fail(job: Job, error: str, *, attempts: int, code: str = "") -> int:
         now = timezone.now()
         return Job.objects.filter(id=job.id, status=JobStatus.PROCESSING).update(
-            status=JobStatus.FAILED, error=error, attempts=attempts, settled_at=now, last_state_change_at=now
+            status=JobStatus.FAILED,
+            error_code=code,
+            error=error,
+            attempts=attempts,
+            settled_at=now,
+            last_state_change_at=now,
         )
 
     @staticmethod
@@ -174,13 +236,19 @@ class JobRunner:
         tick stops."""
         stale_before = now - datetime.timedelta(seconds=JOB_STALE_SECONDS)
         stale = Job.objects.filter(status=JobStatus.PROCESSING, last_state_change_at__lt=stale_before)
+        exhausted = list(stale.filter(attempts__gte=JOB_ATTEMPTS - 1))
         failed = stale.filter(attempts__gte=JOB_ATTEMPTS - 1).update(
             status=JobStatus.FAILED,
             attempts=models.F("attempts") + 1,
+            error_code=JobFailureCode.EXHAUSTED,
             error=EXHAUSTED,
             settled_at=now,
             last_state_change_at=now,
         )
+        for job in exhausted:
+            # Failed by a dead tick, so no slice tidies: the kind's sweep
+            # runs here, after the flip, idempotent either way.
+            JobRunner._tidy(job, None)
         reclaimed = stale.update(
             status=JobStatus.READY,
             attempts=models.F("attempts") + 1,

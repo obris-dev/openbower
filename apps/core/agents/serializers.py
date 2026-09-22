@@ -68,7 +68,7 @@ def _clean_outputs(outputs: list[dict]) -> list[dict]:
 
 
 class AgentConfigRequest(serializers.Serializer):
-    """The config shape both custodies and the test bench share."""
+    """The config shape both custodies and the test preview share."""
 
     prompt = serializers.CharField(max_length=PROMPT_MAX_LENGTH)
     # Contract-derived on purpose (import-time safe; the registry
