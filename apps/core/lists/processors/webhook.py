@@ -70,9 +70,14 @@ def fail_claimed(flow: NodeRunFlow, tasks: Sequence[NodeRun], *, error: str) -> 
 
 
 class _BatchEnded(Exception):
-    """The lane builder settled or parked the whole batch before it could
-    send (nothing to send for, nothing sendable): the tally is already
-    told, raised as the builder's last act so it hands back one shape."""
+    """Resolution settled or parked the whole batch before it could send
+    (nothing to send for, nothing sendable): raised as its last act,
+    carrying the tally of what it did, so resolution hands back one
+    shape and touches nothing it was handed."""
+
+    def __init__(self, tally: BatchTally) -> None:
+        super().__init__(tally)
+        self.tally = tally
 
 
 class _SendableBatch(NamedTuple):
@@ -92,29 +97,29 @@ class _SendableBatch(NamedTuple):
     rows: dict[str, ListRow]
     records: dict[str, dict[str, tuple[str, datetime]]]
     completed_at: dict[str, datetime]
+    # Runs resolution parked back on the way (their row no longer
+    # complete), for the tally: the batch says what became of the
+    # runs it does not carry.
+    parked: int
 
 
 class WebhookProcessor(NodeProcessor):
     KIND: ClassVar[str] = WEBHOOK
 
     def _process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
-        tally = BatchTally()
         try:
-            batch = self._resolve(tasks, flow=flow, now=now, tally=tally)
-        except _BatchEnded:
-            return tally
-        sent = self._deliver(batch, now=now)
-        self._settle(flow, batch, sent, tally=tally)
+            batch = self._resolve(tasks, flow=flow, now=now)
+        except _BatchEnded as ended:
+            return ended.tally
+        tally = self._settle(flow, batch, self._deliver(batch, now=now))
+        tally.parked += batch.parked
         return tally
 
-    def _resolve(
-        self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime, tally: BatchTally
-    ) -> _SendableBatch:
+    def _resolve(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> _SendableBatch:
         """Resolve what the batch needs or end it: a paused column or a
         disabled destination hands the batch back untouched (its window
         stays, the attempt is handed back, the next tick finds it due
-        again; a skip is a node, on the tally); a gone destination
-        fails it; a gone list
+        again; a skip counts a node); a gone destination fails it; a gone list
         retires it; a barrier resolving to no column parks it (the
         column edit that mends the wait backfills again); a run whose
         row is gone retires, and one whose row is no longer complete
@@ -124,26 +129,22 @@ class WebhookProcessor(NodeProcessor):
         webhook = config_as(self.node, Webhook)
         window = next_window(now, webhook.interval_seconds)
         if not webhook.enabled:
-            tally.skipped += 1
             flow.release_batch(task_ids)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(skipped=1))
         destination = WebhookDestination.objects.filter(id=webhook.destination_id, account_id=self.account_id).first()
         if destination is None:
-            tally.failed += fail_claimed(flow, tasks, error=DESTINATION_REMOVED)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(failed=fail_claimed(flow, tasks, error=DESTINATION_REMOVED)))
         if not destination.enabled:
-            tally.skipped += 1
             flow.release_batch(task_ids)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(skipped=1))
         list_id = tasks[0].list_id
         target_list = List.objects.filter(id=list_id, account_id=self.account_id).first()
         if target_list is None:
             flow.settle_many(task_ids, {}, status=NodeRunStatus.LIST_MISSING)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally())
         wait_keys = self.wait_keys(target_list)
         if not wait_keys:
-            tally.parked += flow.park_batch(task_ids, not_before=window, restore_attempt=True)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(parked=flow.park_batch(task_ids, not_before=window, restore_attempt=True)))
         rows = {
             str(row.id): row for row in ListRow.objects.filter(id__in=[run.row_id for run in tasks], list_id=list_id)
         }
@@ -172,10 +173,9 @@ class WebhookProcessor(NodeProcessor):
                 continue
             sendable.append(run)
             completed_at[run.row_id] = when
-        if incomplete:
-            tally.parked += flow.park_batch(incomplete, not_before=window, restore_attempt=True)
+        parked = flow.park_batch(incomplete, not_before=window, restore_attempt=True) if incomplete else 0
         if not sendable:
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(parked=parked))
         by_key = {column.key: column for column in target_list.columns}
         column_key = next(
             (c.key for c in target_list.columns if isinstance(c, WebhookColumn) and c.node_id == str(self.node.id)), ""
@@ -183,8 +183,7 @@ class WebhookProcessor(NodeProcessor):
         if not column_key:
             # The column is gone from the sheet while its node lingers:
             # nothing to land the outcome on, and nothing to send for.
-            tally.failed += fail_claimed(flow, sendable, error=COLUMN_REMOVED)
-            raise _BatchEnded()
+            raise _BatchEnded(BatchTally(failed=fail_claimed(flow, sendable, error=COLUMN_REMOVED), parked=parked))
         return _SendableBatch(
             destination=destination,
             target_list=target_list,
@@ -196,6 +195,7 @@ class WebhookProcessor(NodeProcessor):
             rows=rows,
             records=records,
             completed_at=completed_at,
+            parked=parked,
         )
 
     def _deliver(self, batch: _SendableBatch, *, now: datetime) -> Sent:
@@ -221,36 +221,38 @@ class WebhookProcessor(NodeProcessor):
         destinations = WebhookDestinationService(account_id=self.account_id, user_id=batch.destination.user_id)
         return destinations.deliver(batch.destination, test=False, data=data)
 
-    def _settle(self, flow: NodeRunFlow, batch: _SendableBatch, sent: Sent, *, tally: BatchTally) -> None:
-        """Land what came back: SENT on every row's cell (the column's
-        record on the ledger, then the runs closed, in the landing's
-        lock order), or parked to the next window on a transient
-        failure until the attempt cap, or FAILED at once on a
-        rejection. A retry in flight records nothing: the open run IS
-        the cell's pending."""
+    def _settle(self, flow: NodeRunFlow, batch: _SendableBatch, sent: Sent) -> BatchTally:
+        """Land what came back and say what happened: SENT on every
+        row's cell (the column's record on the ledger, then the runs
+        closed, in the landing's lock order), or parked to the next
+        window on a transient failure until the attempt cap, or FAILED
+        at once on a rejection. A retry in flight records nothing: the
+        open run IS the cell's pending."""
         delivery = sent.delivery
         runs = batch.sendable
         if delivery.status == DeliveryStatus.OK:
             result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
-            tally.settled += self._land(flow, batch, runs, StoredCellState.SENT, result)
             # A run the reclaim took back mid-flight is re-offered too:
             # the advance is idempotent, and its row did complete.
-            tally.settled_rows.extend((run.list_id, run.row_id) for run in runs if run.row_id)
-            return
+            return BatchTally(
+                settled=self._land(flow, batch, runs, StoredCellState.SENT, result),
+                settled_rows=[(run.list_id, run.row_id) for run in runs if run.row_id],
+            )
         failed = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error)
         if delivery.status != DeliveryStatus.TRANSIENT:
             # Rejected or blocked: a retry buys the same answer.
-            tally.failed += self._land(flow, batch, runs, StoredCellState.FAILED, failed)
-            return
+            return BatchTally(failed=self._land(flow, batch, runs, StoredCellState.FAILED, failed))
         # Transient: the attempt the claim stamped counts; past the cap
         # the run fails, the rest wait for the next window.
         exhausted = [run for run in runs if run.attempts > NODE_RUN_ATTEMPTS]
         retrying = [str(run.id) for run in runs if run.attempts <= NODE_RUN_ATTEMPTS]
-        tally.failed += self._land(flow, batch, exhausted, StoredCellState.FAILED, failed)
         parked = WebhookRunResult(
             outcome=WebhookRunOutcome.RETRYING, delivery_id=str(delivery.id), error=delivery.error
         )
-        tally.parked += flow.park_batch(retrying, not_before=batch.window, result=parked.model_dump())
+        return BatchTally(
+            failed=self._land(flow, batch, exhausted, StoredCellState.FAILED, failed),
+            parked=flow.park_batch(retrying, not_before=batch.window, result=parked.model_dump()),
+        )
 
     def _land(
         self,
