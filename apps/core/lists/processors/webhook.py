@@ -143,10 +143,10 @@ class WebhookProcessor(NodeProcessor):
         if target_list is None:
             flow.settle_many(task_ids, {}, status=NodeRunStatus.LIST_MISSING)
             raise _BatchEnded(BatchTally())
-        column_key = next(
+        own_key = next(
             (c.key for c in target_list.columns if isinstance(c, WebhookColumn) and c.node_id == str(self.node.id)), ""
         )
-        if not column_key:
+        if not own_key:
             # The column is gone from the sheet while its node lingers:
             # nothing to land the outcome on, and nothing to send for.
             raise _BatchEnded(BatchTally(failed=fail_claimed(flow, tasks, error=COLUMN_REMOVED)))
@@ -185,7 +185,7 @@ class WebhookProcessor(NodeProcessor):
         return _SendableBatch(
             destination=destination,
             target_list=target_list,
-            column_key=column_key,
+            column_key=own_key,
             wait_keys=wait_keys,
             payload_keys=[key for key in webhook.payload_keys if key in by_key],
             window=window,
