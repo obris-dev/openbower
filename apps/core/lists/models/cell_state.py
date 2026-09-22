@@ -42,7 +42,7 @@ class ListCellState(AccountScopedModel):
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
-    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.FILL)
+    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.AGENT)
     # The fill run that wrote it: the row drawer's link to that run's
     # NodeRun.result, which holds what the model actually said. NULL on
     # the automatic path (autofill), which has no fill run; the drawer

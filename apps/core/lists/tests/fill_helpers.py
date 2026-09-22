@@ -164,7 +164,7 @@ def settle(
     unanswered = set(causes) if causes is not None else (set(consent.column_keys) if cause is not None else set())
     declined = next(iter(causes.values())) if causes else (cause or StoredCellState.NO_EVIDENCE)
     answered = [key for key in consent.column_keys if key not in unanswered]
-    truth = CellTruth(source=CellSource.FILL, fill_run_id=fill_run_id, declined_cause=declined, tools=tools or {})
+    truth = CellTruth(source=CellSource.AGENT, fill_run_id=fill_run_id, declined_cause=declined, tools=tools or {})
     # land_row's own shape and lock order: the sheet write (values and
     # truth as one), then the settle, one transaction, then the advance.
     with transaction.atomic():

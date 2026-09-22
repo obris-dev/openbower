@@ -215,7 +215,7 @@ class WebhookColumnTests(TestCase):
             fill_run_id=None,
             states={"country": StoredCellState.FILLED},
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
         fake = _FakeSender()
         body = {
@@ -250,7 +250,7 @@ class WebhookColumnTests(TestCase):
             fill_run_id=None,
             states=states,
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
 
     def test_a_column_keyed_like_a_literal_route_still_reaches_its_config(self):

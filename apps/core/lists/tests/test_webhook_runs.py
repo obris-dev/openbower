@@ -280,7 +280,7 @@ class ProcessorTests(_SheetHarness):
                 fill_run_id=None,
                 states=states,
                 tools={},
-                source=CellSource.FILL,
+                source=CellSource.AGENT,
             )
 
 
@@ -363,7 +363,7 @@ class AdvanceTests(_SheetHarness):
                 fill_run_id=None,
                 states={"country": StoredCellState.FILLED},
                 tools={},
-                source=CellSource.FILL,
+                source=CellSource.AGENT,
             )
         offers: list[list[str]] = []
         real = WebhookProcessor.enqueue_runs
@@ -509,7 +509,7 @@ class _BackfilledSheet(_SheetHarness):
                 fill_run_id=None,
                 states=states,
                 tools={},
-                source=CellSource.FILL,
+                source=CellSource.AGENT,
             )
 
     def _runs(self):

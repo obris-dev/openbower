@@ -105,7 +105,7 @@ class FlushDeferredTests(TransactionTestCase):
                 fill_run_id=None,
                 states={"answer": StoredCellState.FILLED, "country": country},
                 tools={},
-                source=CellSource.FILL,
+                source=CellSource.AGENT,
             )
 
     def _add_column(self, *, now: datetime = COMPLETED, wait_keys=("country", "answer")) -> str:

@@ -359,12 +359,13 @@ CELL_SOURCE_MAX_LENGTH = 8
 
 
 class CellSource(StrEnum):
-    """Who wrote a cell's state. A fill lands FILL; a hand-typed value
-    will land MANUAL once the grid can be edited (that writer does not
-    exist yet). Completion is source-agnostic: a filled cell is done
-    whoever filled it."""
+    """Who wrote a cell's state: an AGENT (a fill's run or an automatic
+    one; which fill, if any, is the record's fill_run_id) or a person
+    (MANUAL, once the grid can be edited; that writer does not exist
+    yet). Completion is source-agnostic: a filled cell is done whoever
+    filled it."""
 
-    FILL = "fill"
+    AGENT = "agent"
     MANUAL = "manual"
 
 

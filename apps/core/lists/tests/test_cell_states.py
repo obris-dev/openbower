@@ -31,7 +31,7 @@ class CellStateScopingTests(TestCase):
             fill_run_id=None,
             states={"answer": StoredCellState.FILLED},
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
         self.mine = CellStateService(account_id=self.account_id)
         self.theirs = CellStateService(account_id="01ACCT" + "Z" * 20)
@@ -65,10 +65,10 @@ class CellSourceTests(TestCase):
             fill_run_id=None,
             states={"answer": StoredCellState.FILLED},
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
         record = ListCellState.objects.get(list_id=str(sheet.id), column_key="answer")
-        self.assertEqual(record.source, CellSource.FILL)
+        self.assertEqual(record.source, CellSource.AGENT)
         cell_truth.write(
             **write,
             fill_run_id=None,
@@ -84,7 +84,7 @@ class CellSourceTests(TestCase):
             fill_run_id=None,
             states={"answer": StoredCellState.FILLED},
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
         record.refresh_from_db()
-        self.assertEqual(record.source, CellSource.FILL)
+        self.assertEqual(record.source, CellSource.AGENT)

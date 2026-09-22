@@ -62,7 +62,7 @@ class ColumnWebhookTestTests(TestCase):
             fill_run_id=None,
             states=states,
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.AGENT,
         )
 
     def _post(self, route: str = "lists_columns_webhook_test", **overrides):

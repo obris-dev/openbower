@@ -86,7 +86,7 @@ def land_row(
     resolve."""
     declined = _declined_cause(run_result)
     truth = CellTruth(
-        source=CellSource.FILL, fill_run_id=ctx.fill_run_id, declined_cause=declined, tools=run_result.tools
+        source=CellSource.AGENT, fill_run_id=ctx.fill_run_id, declined_cause=declined, tools=run_result.tools
     )
     writer = lists or ListService(account_id=ctx.account_id)
     try:
