@@ -129,7 +129,7 @@ class _SheetHarness(TestCase):
             node_id=str(node.id),
         )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
-        with patch("lists.services.webhook_runs.timezone.now", return_value=now):
+        with patch("lists.services.advance.timezone.now", return_value=now):
             land_row(ctx, str(self.row.id), run, close=lambda result: True)
 
     def _webhook_runs(self):
@@ -224,6 +224,36 @@ class ProcessorTests(_SheetHarness):
 
 
 class AdvanceTests(_SheetHarness):
+    def test_the_advance_offers_every_node_behind_the_barrier_and_never_the_barrier(self):
+        # The advance knows no kind: a path headed by a wait naming the
+        # landed node's path holds an agent node and a webhook node, and
+        # BOTH are offered through their own processors (each judges
+        # for itself). The wait is the gate, never a worker: it has no
+        # processor, so offering it would raise. FAILS if the offer
+        # narrows to one kind again, or if the barrier is offered.
+        from lists.nodes.column_agent import ColumnAgent
+        from lists.nodes.wait_until import WaitUntil
+        from lists.nodes.webhook import Webhook
+
+        first_path = self.workflows.get_node(str(self.first.id)).path_id
+        self.workflows.create_path(
+            self.sheet,
+            [
+                WaitUntil(inbound_path_ids=[first_path]),
+                ColumnAgent(agent_id="01AGENTCCCCCCCCCCCCCCCCCCC"),
+                Webhook(destination_id=str(self.destination.id), payload_keys=["company"], interval_seconds=INTERVAL),
+            ],
+        )
+        offered: list[str] = []
+
+        def spy(*, account_id, node, scope=None):
+            offered.append(node.kind)
+            return processor_for(account_id=account_id, node=node, scope=scope)
+
+        with patch("lists.services.advance.processor_for", side_effect=spy):
+            self._land(self.first, {"answer": "yes", "score": "1"})
+        self.assertEqual(sorted(offered), sorted([ColumnAgent.KIND, WEBHOOK]))
+
     def test_the_landing_that_completes_the_row_enqueues_one_deferred_run_at_the_window(self):
         webhook_node_id = self._add_webhook_column(["country", "answer"])
         self._land(self.first, {"answer": "yes"})

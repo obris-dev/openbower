@@ -25,7 +25,7 @@ from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.operations.flush_deferred import FlushDeferredOperation
 from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, next_window
-from lists.services import cell_truth, webhook_runs
+from lists.services import advance, cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
@@ -197,7 +197,7 @@ class FlushDeferredTests(TransactionTestCase):
         # the window after.
         later = BOUNDARY + timedelta(minutes=3)
         self._complete(self.rows[2], at=later)
-        webhook_runs.advance_row(
+        advance.advance_row(
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
             row_id=str(self.rows[2].id),

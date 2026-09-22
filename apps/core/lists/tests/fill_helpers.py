@@ -36,7 +36,7 @@ from ..jobs.fill import FillJob
 from ..models import ListRow, Node, NodeRun
 from ..processors import WalkMode
 from ..serializers import fill_run_wire
-from ..services import cell_truth, fill_progress, webhook_runs
+from ..services import advance, cell_truth, fill_progress
 from ..services.fills import page_progress
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
@@ -182,9 +182,7 @@ def settle(
             tools=tools or {},
             source=CellSource.FILL,
         )
-        webhook_runs.advance_row(
-            account_id=job.account_id, list_id=consent.list_id, row_id=row_id, node_id=task.node_id
-        )
+        advance.advance_row(account_id=job.account_id, list_id=consent.list_id, row_id=row_id, node_id=task.node_id)
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:

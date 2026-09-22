@@ -29,7 +29,7 @@ from django.db import transaction
 from openbower_schema.fills import CellRunResult
 
 from ...constants import CellSource, StoredCellState
-from .. import cell_truth, webhook_runs
+from .. import advance, cell_truth
 from ..lists import ListService
 
 
@@ -135,7 +135,7 @@ def land_row(
             )
             # The advance INSERTS (it locks no existing row), so it rides
             # last, after the truth it judges completion from.
-            webhook_runs.advance_row(account_id=ctx.account_id, list_id=ctx.list_id, row_id=row_id, node_id=ctx.node_id)
+            advance.advance_row(account_id=ctx.account_id, list_id=ctx.list_id, row_id=row_id, node_id=ctx.node_id)
     except ClaimLost:
         return None
     return Landed(frozenset(answered), declined)
