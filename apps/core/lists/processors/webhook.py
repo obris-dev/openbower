@@ -97,10 +97,10 @@ class _SendableBatch(NamedTuple):
     rows: dict[str, ListRow]
     records: dict[str, dict[str, tuple[str, datetime]]]
     completed_at: dict[str, datetime]
-    # Runs resolution parked back on the way (their row no longer
-    # complete), for the tally: the batch says what became of the
-    # runs it does not carry.
-    parked: int
+    # The claimed runs whose row is no longer complete (a refill
+    # re-opened a waited-on cell since the advance; the cells are the
+    # truth): resolution decides, the batch method parks them back.
+    incomplete: list[str]
 
 
 class WebhookProcessor(NodeProcessor):
@@ -111,20 +111,21 @@ class WebhookProcessor(NodeProcessor):
             batch = self._resolve(tasks, flow=flow, now=now)
         except _BatchEnded as ended:
             return ended.tally
-        tally = self._settle(flow, batch, self._deliver(batch, now=now))
-        tally.parked += batch.parked
-        return tally
+        held = BatchTally(parked=flow.park_batch(batch.incomplete, not_before=batch.window, restore_attempt=True))
+        if not batch.sendable:
+            return held
+        return held + self._settle(flow, batch, self._deliver(batch, now=now))
 
     def _resolve(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> _SendableBatch:
         """Resolve what the batch needs or end it: a paused column or a
         disabled destination hands the batch back untouched (its window
         stays, the attempt is handed back, the next tick finds it due
-        again; a skip counts a node); a gone destination fails it; a gone list
-        retires it; a barrier resolving to no column parks it (the
-        column edit that mends the wait backfills again); a run whose
-        row is gone retires, and one whose row is no longer complete
-        (a refill re-opened a waited-on cell since the advance; the
-        cells are the truth) is parked back."""
+        again; a skip counts a node); a gone destination, or a column
+        gone from the sheet, fails it; a gone list retires it; a
+        barrier resolving to no column parks it (the column edit that
+        mends the wait backfills again); a run whose row is gone
+        retires. The rest are partitioned, sendable or incomplete, and
+        handed back: this decides, it does not act on them."""
         task_ids = [str(run.id) for run in tasks]
         webhook = config_as(self.node, Webhook)
         window = next_window(now, webhook.interval_seconds)
@@ -142,6 +143,13 @@ class WebhookProcessor(NodeProcessor):
         if target_list is None:
             flow.settle_many(task_ids, {}, status=NodeRunStatus.LIST_MISSING)
             raise _BatchEnded(BatchTally())
+        column_key = next(
+            (c.key for c in target_list.columns if isinstance(c, WebhookColumn) and c.node_id == str(self.node.id)), ""
+        )
+        if not column_key:
+            # The column is gone from the sheet while its node lingers:
+            # nothing to land the outcome on, and nothing to send for.
+            raise _BatchEnded(BatchTally(failed=fail_claimed(flow, tasks, error=COLUMN_REMOVED)))
         wait_keys = self.wait_keys(target_list)
         if not wait_keys:
             raise _BatchEnded(BatchTally(parked=flow.park_batch(task_ids, not_before=window, restore_attempt=True)))
@@ -173,17 +181,7 @@ class WebhookProcessor(NodeProcessor):
                 continue
             sendable.append(run)
             completed_at[run.row_id] = when
-        parked = flow.park_batch(incomplete, not_before=window, restore_attempt=True) if incomplete else 0
-        if not sendable:
-            raise _BatchEnded(BatchTally(parked=parked))
         by_key = {column.key: column for column in target_list.columns}
-        column_key = next(
-            (c.key for c in target_list.columns if isinstance(c, WebhookColumn) and c.node_id == str(self.node.id)), ""
-        )
-        if not column_key:
-            # The column is gone from the sheet while its node lingers:
-            # nothing to land the outcome on, and nothing to send for.
-            raise _BatchEnded(BatchTally(failed=fail_claimed(flow, sendable, error=COLUMN_REMOVED), parked=parked))
         return _SendableBatch(
             destination=destination,
             target_list=target_list,
@@ -195,7 +193,7 @@ class WebhookProcessor(NodeProcessor):
             rows=rows,
             records=records,
             completed_at=completed_at,
-            parked=parked,
+            incomplete=incomplete,
         )
 
     def _deliver(self, batch: _SendableBatch, *, now: datetime) -> Sent:

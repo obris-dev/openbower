@@ -80,6 +80,18 @@ class BatchTally:
     skipped: int = 0
     settled_rows: list[tuple[str, str]] = field(default_factory=list)
 
+    def __add__(self, other: BatchTally) -> BatchTally:
+        """What two steps did, together: a kind's batch is the sum of
+        what each of its steps reports, never one tally threaded
+        through them."""
+        return BatchTally(
+            settled=self.settled + other.settled,
+            parked=self.parked + other.parked,
+            failed=self.failed + other.failed,
+            skipped=self.skipped + other.skipped,
+            settled_rows=[*self.settled_rows, *other.settled_rows],
+        )
+
 
 class WalkMode(StrEnum):
     """What a pass over rows is FOR. The agent kind judges each mode by
