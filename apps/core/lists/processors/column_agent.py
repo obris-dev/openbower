@@ -128,6 +128,17 @@ def _park_if_retriable(flow: NodeRunFlow, task: NodeRun, run, result: CellRunRes
     return False
 
 
+class _RunEnded(Exception):
+    """A lane builder settled the run before it could execute (its
+    subject is gone, its input is unreadable, its fill failed): the
+    outcome for the dispatcher, raised as the builder's last act so a
+    builder hands back one shape."""
+
+    def __init__(self, outcome: RunOutcome) -> None:
+        super().__init__(outcome)
+        self.outcome = outcome
+
+
 class _Lane(NamedTuple):
     """A claimed run's resolved inputs: the config to run, the identity
     its writes land under (None for a run that owns its input and so
@@ -238,9 +249,10 @@ class AIColumnProcessor(NodeProcessor):
     # The execution.
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
-        lane = self._lane(task, flow=flow)
-        if isinstance(lane, RunOutcome):
-            return lane
+        try:
+            lane = self._lane(task, flow=flow)
+        except _RunEnded as ended:
+            return ended.outcome
         close = partial(flow.settle, task.id, status=NodeRunStatus.DONE)
         if flow.exhausted(task):
             self._land(task, lane, give_up_blank(task), close=close, flow=flow)
@@ -266,12 +278,11 @@ class AIColumnProcessor(NodeProcessor):
         self._land(task, lane, result, close=close, flow=flow)
         return RunOutcome.DONE
 
-    def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+    def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         """Which of the three lanes this run is on, by what the run
         carries (its own input, a fill, or a row alone), and that lane's
-        config, row, and landing context; or the outcome that ends the
-        run before it executes (its subject is gone, its input is
-        unreadable)."""
+        config, row, and landing context. A builder that settles the run
+        instead raises _RunEnded with the outcome."""
         if task.is_preview:
             return self._preview_lane(task, flow=flow)
         if task.fill_run_id:
@@ -279,7 +290,7 @@ class AIColumnProcessor(NodeProcessor):
         return self._live_lane(task, flow=flow)
 
     @staticmethod
-    def _preview_lane(task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+    def _preview_lane(task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         try:
             config = AgentConfig(**task.input["config"])
             row_data = task.input["row"]
@@ -288,11 +299,11 @@ class AIColumnProcessor(NodeProcessor):
             # parked to the attempt cap with the builder's button busy.
             logger.warning("preview: run %s carries an unreadable input (%s); settling unrun", task.id, e)
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE) from e
         # No landing context: a run that owns its input lands on itself.
         return _Lane(config=config, ctx=None, row_data=row_data, fill_run_id=None)
 
-    def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+    def _fill_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         from ..jobs.fill import FillJob
 
         job = Job.objects.filter(id=task.fill_run_id, kind=FillJob.KIND).first()
@@ -300,7 +311,7 @@ class AIColumnProcessor(NodeProcessor):
             # The owning fill is gone (its list was deleted, which purges
             # both in one transaction); nothing to run or land.
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE)
         consent = FillJob.model_validate(job.payload)
         try:
             agent = AgentService(account_id=task.account_id).get_for_fill(consent.agent_id)
@@ -311,13 +322,13 @@ class AIColumnProcessor(NodeProcessor):
             # stays never-attempted.
             fill_progress.fail(str(job.id), code=FillFailureCode.AGENT_MISSING, message=AGENT_MISSING_MESSAGE)
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE) from None
         if agent.provider_retired:
             # Acting on a substituted spec would be a guess: the same
             # fact admission refuses under, caught here mid-fill.
             fill_progress.fail(str(job.id), code=FillFailureCode.PROVIDER_RETIRED, message=PROVIDER_RETIRED_MESSAGE)
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE)
         config = agent.config()
         # Claim-time model resolution is AUTHORITATIVE (a stale reclaim
         # hours later re-resolves against the current world).
@@ -326,7 +337,7 @@ class AIColumnProcessor(NodeProcessor):
         except ModelUnavailable as e:
             fill_progress.fail(str(job.id), code=FillFailureCode.MODEL_UNRUNNABLE, message=str(e))
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE) from e
         row = ListRow.objects.filter(id=task.row_id, list_id=consent.list_id).first()
         if row is None:
             if not List.objects.filter(id=consent.list_id).exists():
@@ -334,7 +345,7 @@ class AIColumnProcessor(NodeProcessor):
                 # CANCELLED, never a failure story.
                 fill_progress.cancel(str(job.id))
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
-            return RunOutcome.ROW_MISSING
+            raise _RunEnded(RunOutcome.ROW_MISSING)
         ctx = LandingContext(
             account_id=task.account_id,
             list_id=consent.list_id,
@@ -344,36 +355,36 @@ class AIColumnProcessor(NodeProcessor):
         )
         return _Lane(config=config, ctx=ctx, row_data=row.data, fill_run_id=str(job.id))
 
-    def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane | RunOutcome:
+    def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         row = ListRow.objects.filter(id=task.row_id).first()
         if row is None:
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
-            return RunOutcome.ROW_MISSING
+            raise _RunEnded(RunOutcome.ROW_MISSING)
         target_list = List.objects.filter(id=row.list_id, account_id=task.account_id).first()
         if target_list is None:
             flow.settle(task.id, status=NodeRunStatus.LIST_MISSING, result={})
-            return RunOutcome.LIST_MISSING
+            raise _RunEnded(RunOutcome.LIST_MISSING)
         # The node's column set, resolved live: empty means the node no
         # longer fills any column here (its columns were removed), so
         # there is nothing to run; settle so the run does not linger.
         column_keys = columns_for_node(target_list, task.node_id)
         if not column_keys:
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE)
         try:
             agent = AgentService(account_id=task.account_id).get_for_fill(agent_id_of(self.node))
         except AgentNotFound:
             # An agent delete leaves its columns orphaned on purpose:
             # the allowed shape, so no warning.
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE) from None
         if agent.provider_retired:
             # A retired provider cannot run its stored config; settle
             # rather than burn attempts on a run that will never
             # succeed. The cell stays never-attempted, targetable later.
             logger.warning("autofill: node %s provider retired; settling task %s unrun", task.node_id, task.id)
             _settle_unrun(flow, task)
-            return RunOutcome.DONE
+            raise _RunEnded(RunOutcome.DONE)
         config = agent.config()
         ctx = LandingContext(
             account_id=task.account_id,
