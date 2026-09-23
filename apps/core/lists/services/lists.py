@@ -5,7 +5,7 @@ a missing row, so foreign ids are not an oracle)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
 from django.db import transaction
@@ -318,28 +318,34 @@ class ListService:
         return self.land_rows(ctx, [landing])[landing.row_id]
 
     def land_rows(self, ctx: LandingContext, landings: Sequence[RowLanding]) -> dict[str, CellWriteResult]:
-        """THE cell writer, kind-blind: per row, the writes' values onto
-        the sheet row (write-if-blank, through the column's type, one
-        row lock; a writer names its facts, the landing has the last
-        word) and then one record per write onto the cell ledger for
-        the whole batch, in ONE upsert, so a value and the record that
-        says what it is can never be written apart. The record's state
-        is the write's intent corrected by what the row reported: a
-        value that landed or found the cell occupied is FILLED, one the
-        column's shape refused is TYPE_MISMATCH, and a write with no
-        value records the state it intends (an agent's cause, a send's
-        SENT or FAILED). FILLED is only ever DERIVED from the row: a
-        write that meant a value and landed none records nothing. Runs inside the caller's transaction, which
+        """THE cell writer, kind-blind, in three passes over the batch:
+        PREPARE (the landings merged by row), VALUES (every row with a
+        value to land locked in one statement, write-if-blank through
+        the column's type, one bulk update), STATES (one record per
+        write onto the cell ledger, one upsert), so a value and the
+        record that says what it is can never be written apart and a
+        landing of N rows is three statements whatever N is. The
+        record's state is the write's intent corrected by what the row
+        reported: a value that landed or found the cell occupied is
+        FILLED, one the column's shape refused is TYPE_MISMATCH, and a
+        write with no value records the state it intends (an agent's
+        cause, a send's SENT or FAILED). FILLED is only ever DERIVED
+        from the row: a write that meant a value and landed none
+        records nothing. Runs inside the caller's transaction, which
         closes its runs after, in the deletes' lock order: ListRow,
         ListCellState, NodeRun. Returns each row's verdict by row id."""
         by_row: dict[str, list[CellWrite]] = {}
         for landing in landings:
             by_row.setdefault(landing.row_id, []).extend(landing.writes)
+        values_by_row = {
+            row_id: {write.key: write.value for write in writes if write.value is not None}
+            for row_id, writes in by_row.items()
+        }
+        written_by_row = self._write_values(ctx.list_id, values_by_row)
         verdicts: dict[str, CellWriteResult] = {}
         records: list[CellRecord] = []
         for row_id, writes in by_row.items():
-            values = {write.key: write.value for write in writes if write.value is not None}
-            written = self._write_values(ctx.list_id, row_id, values)
+            written = written_by_row[row_id]
             filled = {*written.written, *written.occupied}
             refused = {mismatch.key for mismatch in written.mismatched}
             unanswered: list[str] = []
@@ -367,15 +373,21 @@ class ListService:
         )
         return verdicts
 
-    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
-        """The value half of a landing: the sheet row alone. A blank
-        value writes nothing, and the row is not even locked when every
-        value is blank."""
-        if not any(value.strip() for value in cells.values()):
-            return CellWriteResult((), (), (), ())
+    def _write_values(self, list_id: str, values_by_row: Mapping[str, dict[str, str]]) -> dict[str, CellWriteResult]:
+        """The value pass of a landing: the sheet rows alone, as one
+        batch. A row with only blank values writes nothing and is not
+        locked; the rows with something to land are locked in ONE
+        statement (by id, so two batches on the same rows take them in
+        the same order) and written back in ONE bulk update."""
+        verdicts = {row_id: CellWriteResult((), (), (), ()) for row_id in values_by_row}
+        pending = {
+            row_id: cells for row_id, cells in values_by_row.items() if any(value.strip() for value in cells.values())
+        }
+        if not pending:
+            return verdicts
         with transaction.atomic():
-            # The hazard this guards is a read-modify-write of ONE
-            # row's data, so the lock is on THAT ROW: without it two
+            # The hazard this guards is a read-modify-write of each
+            # row's data, so the lock is on THOSE ROWS: without it two
             # concurrent fills can both see a cell blank and the later
             # commit clobbers the earlier value. Two fills writing
             # different rows never meet, which is what keeps the
@@ -389,49 +401,62 @@ class ListService:
                 target = List.objects.get(id=list_id, account_id=self.account_id)
             except List.DoesNotExist as e:
                 raise ListNotFound(list_id) from e
-            try:
-                row = ListRow.objects.select_for_update().get(id=row_id, list_id=str(target.id))
-            except ListRow.DoesNotExist as e:
-                raise RowNotFound(row_id) from e
-            types = {column.key: column.type for column in target.columns}
-            # row.data is the row's stored cell values, keyed by column key.
-            # Work on a mutable copy: this call's writes merge in, keys
-            # outside it carry through, and the whole dict is persisted once.
-            row_cells = dict(row.data)
-            # Write-if-blank (a DB-state decision, not a shape one): only a
-            # non-blank cell whose column is currently blank is a candidate
-            # to write, so a user's value is never destroyed. The candidates
-            # run through the shared write-time transform; this writer's
-            # reaction to a mismatch is to FLAG it (TYPE_MISMATCH), never
-            # reject.
-            candidates = {
-                key: value
-                for key, value in cells.items()
-                if value.strip() and not str(row_cells.get(key, "") or "").strip()
+            rows = {
+                str(row.id): row
+                for row in ListRow.objects.select_for_update()
+                .filter(id__in=list(pending), list_id=str(target.id))
+                .order_by("id")
             }
-            stored, mismatches = cells_for_storage(types, candidates, where="write_cells")
-            why_by_key = {mismatch.key: mismatch.why for mismatch in mismatches}
-            written: list[str] = []
-            occupied: list[str] = []
-            mismatched: list[CellMismatch] = []
-            for key, value in cells.items():  # column order for the verdicts
-                if not value.strip():
-                    continue  # unanswered, named above
-                if key not in candidates:
-                    occupied.append(key)
-                elif key in why_by_key:
-                    mismatched.append(CellMismatch(key=key, why=why_by_key[key]))
-                else:
-                    row_cells[key] = stored[key]
-                    written.append(key)
-            if written:
-                # Only the data column writes, targeted by row id; the
-                # merge base was read under the row's own lock, so keys
-                # outside this call's writes carry through current.
-                ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(
-                    data=row_cells, updated_at=timezone.now()
-                )
-        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched), ())
+            missing = [row_id for row_id in pending if row_id not in rows]
+            if missing:
+                raise RowNotFound(missing[0])
+            types = {column.key: column.type for column in target.columns}
+            changed: list[ListRow] = []
+            now = timezone.now()
+            for row_id, cells in pending.items():
+                row = rows[row_id]
+                # row.data is the row's stored cell values, keyed by column
+                # key. Work on a mutable copy: this call's writes merge in,
+                # keys outside it carry through, and the whole dict is
+                # persisted once.
+                row_cells = dict(row.data)
+                # Write-if-blank (a DB-state decision, not a shape one):
+                # only a non-blank cell whose column is currently blank is
+                # a candidate to write, so a user's value is never
+                # destroyed. The candidates run through the shared
+                # write-time transform; this writer's reaction to a
+                # mismatch is to FLAG it (TYPE_MISMATCH), never reject.
+                candidates = {
+                    key: value
+                    for key, value in cells.items()
+                    if value.strip() and not str(row_cells.get(key, "") or "").strip()
+                }
+                stored, mismatches = cells_for_storage(types, candidates, where="land_rows")
+                why_by_key = {mismatch.key: mismatch.why for mismatch in mismatches}
+                written: list[str] = []
+                occupied: list[str] = []
+                mismatched: list[CellMismatch] = []
+                for key, value in cells.items():  # column order for the verdicts
+                    if not value.strip():
+                        continue  # unanswered, the landing's bucket
+                    if key not in candidates:
+                        occupied.append(key)
+                    elif key in why_by_key:
+                        mismatched.append(CellMismatch(key=key, why=why_by_key[key]))
+                    else:
+                        row_cells[key] = stored[key]
+                        written.append(key)
+                if written:
+                    row.data = row_cells
+                    row.updated_at = now
+                    changed.append(row)
+                verdicts[row_id] = CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched), ())
+            if changed:
+                # Only the data column writes; the merge base was read
+                # under the rows' own locks, so keys outside this call's
+                # writes carry through current.
+                ListRow.objects.bulk_update(changed, ["data", "updated_at"])
+        return verdicts
 
     def rows_page(
         self, target: List, *, after: RowCursor | None = None, limit: int, until_id: str = ""

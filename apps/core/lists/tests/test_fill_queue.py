@@ -74,9 +74,11 @@ class _SheetThatTakesEverything(ListService):
     while the truth half stays the real one. The landing's real value
     writer is covered by the worker and view tests."""
 
-    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
-        answered = tuple(key for key, value in cells.items() if value.strip())
-        return CellWriteResult(answered, (), (), ())
+    def _write_values(self, list_id: str, values_by_row) -> dict[str, CellWriteResult]:
+        return {
+            row_id: CellWriteResult(tuple(key for key, value in cells.items() if value.strip()), (), (), ())
+            for row_id, cells in values_by_row.items()
+        }
 
 
 def _ctx(fill: Job) -> LandingContext:

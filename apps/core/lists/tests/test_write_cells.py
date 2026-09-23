@@ -163,19 +163,29 @@ class WriteIfBlankTests(TestCase):
         recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
         self.assertEqual(recorded, {"name": StoredCellState.FILLED, "employees": StoredCellState.NO_EVIDENCE})
 
-    def test_two_landings_on_one_row_merge_under_one_lock(self):
-        # Two nodes landing on the same row in one batch are one row
-        # write: one lock, both values, one ledger upsert. FAILS if the
-        # landing writes per landing instead of per row.
+    def test_a_batch_lands_in_three_statements_whatever_its_size(self):
+        # Two landings on one row merge, and rows across the batch are
+        # locked in ONE statement, written in ONE update, recorded in
+        # ONE upsert. FAILS if the landing locks, writes or records per
+        # row or per landing.
         service = _service()
-        target, (row,) = _sheet(service, [{"name": ""}])
-        landings = [_landing(str(row.id), {"name": "Acme"}), _landing(str(row.id), {"employees": "12"})]
+        target, (first, second) = _sheet(service, [{"name": ""}, {"name": ""}])
+        landings = [
+            _landing(str(first.id), {"name": "Acme"}),
+            _landing(str(first.id), {"employees": "12"}),
+            _landing(str(second.id), {"name": "Example"}),
+        ]
         with CaptureQueriesContext(connection) as captured:
             verdicts = service.land_rows(_ctx(str(target.id)), landings)
-        self.assertEqual(verdicts[str(row.id)].written, ("name", "employees"))
-        locks = [q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"].upper()]
-        upserts = [q["sql"] for q in captured.captured_queries if "INSERT INTO" in q["sql"] and "cellstate" in q["sql"]]
-        self.assertEqual((len(locks), len(upserts)), (1, 1))
+        self.assertEqual(verdicts[str(first.id)].written, ("name", "employees"))
+        self.assertEqual(verdicts[str(second.id)].written, ("name",))
+        sql = [q["sql"] for q in captured.captured_queries]
+        locks = [q for q in sql if "FOR UPDATE" in q.upper()]
+        updates = [q for q in sql if q.upper().startswith("UPDATE") and "lists_listrow" in q]
+        upserts = [q for q in sql if "INSERT INTO" in q and "cellstate" in q]
+        self.assertEqual((len(locks), len(updates), len(upserts)), (1, 1, 1))
+        first.refresh_from_db()
+        self.assertEqual((first.data["name"], first.data["employees"]), ("Acme", "12"))
 
     def test_the_column_kinds_answer_a_typed_value_each_in_their_own_way(self):
         # The cell-shaped change: a plain or AI column lands the value
