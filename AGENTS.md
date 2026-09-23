@@ -138,9 +138,11 @@ auth + data services live in a separate private repo.
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
   other reaction, TRIGGER (rows arrived: every agent node judges them),
-  is called by the doors whose arrival is a request to fill (a push, a
-  person adding rows) and stated as not called at a bulk load (an
-  import, a snapshot), where Fill is the consent to spend.
+  runs for EVERY row that enters a sheet: rows enter through one
+  operation (lists/operations/append_rows.py: the list service's
+  primitive, then the trigger, one transaction), which every door (a
+  push, a person, an import, a snapshot) calls, and a pin holds that
+  nothing else in production calls the primitive.
   The node config classes in lists/nodes stay what a node IS at rest.
 - How a column's CELLS change is the cell layer (lists/cells), and
   every change lands as a `CellWrite` (the state a cell means to

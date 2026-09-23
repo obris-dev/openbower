@@ -37,6 +37,7 @@ from discover.services.index_client import (
 )
 from lists.constants import LABEL_MAX_LENGTH as LIST_LABEL_MAX_LENGTH
 from lists.constants import MAX_LIST_ROWS, ColumnType, ListOrigin
+from lists.operations.append_rows import AppendRowsOperation
 from lists.serializers import list_wire
 from lists.services.lists import ListNotFound, ListService, ListsFull
 from openbower_kernel.domains import normalize_domain
@@ -324,9 +325,9 @@ class LookalikeRunSaveListView(ScopedView):
                     # on that staying true.
                     if normalize_domain(item.company.domain) not in excluded
                 ]
-                # A snapshot is a bulk load, not a request to fill: the
-                # workflow is not triggered for its rows; Fill is the consent.
-                added += len(service.add_rows(target, rows))
+                added += (
+                    AppendRowsOperation(account_id=request.user.account_id, target_list=target, rows=rows).run().added
+                )
                 # The advance guard the client export also carries: a
                 # stuck cursor must not walk forever.
                 if result.next_cursor == cursor:

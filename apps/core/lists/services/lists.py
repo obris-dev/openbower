@@ -249,9 +249,12 @@ class ListService:
         after the sheet's last row; the count ceiling AND the cell clamp
         live here so every entry path (import, snapshot, manual) hits one
         writer's rules (authored values clamp, never reject). Returns the
-        created rows (WITH ids, a ULID assigned before insert): a caller
-        that only wants a count takes len(), and the push path needs the
-        ids to enqueue autofill against them."""
+        created rows (WITH ids, a ULID assigned before insert). The
+        PRIMITIVE: it writes rows and nothing else. Rows enter a sheet
+        through operations/append_rows.py, which calls this and then
+        triggers the workflow in one transaction; in production nothing
+        else calls this (pinned), so no door can add rows the workflow
+        never hears about."""
         if not rows:
             return []
         # Through the shared write-time transform, so a stored value is its

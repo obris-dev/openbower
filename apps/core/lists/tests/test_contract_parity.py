@@ -52,3 +52,26 @@ class WireEnumParityTests(SimpleTestCase):
         self.assertEqual(derived, words)
         with self.assertRaises(ValueError):
             word_of("paused", started=False)
+
+
+class RowDoorPins(SimpleTestCase):
+    def test_rows_enter_a_sheet_through_the_one_append(self):
+        # ListService.add_rows is the primitive (rows and nothing else);
+        # AppendRowsOperation is the door (the primitive, then the
+        # workflow trigger, one transaction). In production the door is
+        # the primitive's ONLY caller, so no path can add rows the
+        # workflow never hears about. Tests seed rows with the primitive
+        # on purpose (a fixture is not a door). FAILS if a new caller
+        # reaches for the primitive.
+        import re
+        from pathlib import Path
+
+        core = Path(__file__).resolve().parents[2]
+        callers = []
+        for path in core.rglob("*.py"):
+            if "/tests/" in str(path) or path.name.startswith("test_"):
+                continue
+            text = path.read_text()
+            if re.search(r"\.add_rows\(", text) and not re.search(r"def add_rows\(", text):
+                callers.append(str(path.relative_to(core)))
+        self.assertEqual(callers, ["lists/operations/append_rows.py"])
