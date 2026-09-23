@@ -293,7 +293,8 @@ class ListService:
 
     def land_row(self, ctx: LandingContext, landing: RowLanding) -> RowVerdict:
         """One row's landing: see land_rows."""
-        return self.land_rows(ctx, [landing])[landing.row_id]
+        verdicts = self.land_rows(ctx, [landing])
+        return verdicts[landing.row_id]
 
     def land_rows(self, ctx: LandingContext, landings: Sequence[RowLanding]) -> dict[str, RowVerdict]:
         """THE cell writer, kind-blind, a pipeline over the batch: the
