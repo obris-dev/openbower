@@ -1,5 +1,5 @@
 // The ONE home for how a typed cell value becomes a link: the sheet
-// and the agent test bench both render through this, so a scheme-less
+// and the agent test preview both render through this, so a scheme-less
 // URL or an email behaves identically in both (two inline copies
 // disagreed once, under a comment claiming they agreed).
 

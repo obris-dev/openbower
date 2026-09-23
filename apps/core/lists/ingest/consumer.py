@@ -19,7 +19,7 @@ from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
-from ..services import autofill
+from ..operations.append_rows import AppendRowsOperation
 from ..services.lists import ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
@@ -57,22 +57,19 @@ class AppendResult(NamedTuple):
 
 
 def _append_rows(event: IngestEvent) -> AppendResult:
-    """The side effect: append the pushed rows to the sheet AND enqueue
-    autofill for them, owning its own terminal-error handling (a deleted
-    or full list is a drop, reported for the caller to log). Only
-    transient failures (a DatabaseError) raise.
-
-    The enqueue rides the caller's transaction (handle_ingest_event's
-    atomic), so rows and their autofill work commit together: a row can
-    never land with no work queued to fill it."""
+    """The side effect: the pushed rows through the one append (rows
+    and their workflow trigger, one transaction), owning its own
+    terminal-error handling (a deleted or full list is a drop, reported
+    for the caller to log). Only transient failures (a DatabaseError)
+    raise. Rides the caller's transaction (handle_ingest_event's
+    atomic), so a redelivery cannot double-apply."""
     lists = ListService(account_id=event.account_id)
     try:
         target = lists.get(event.list_id)
-        created = lists.add_rows(target, event.rows)
+        report = AppendRowsOperation(account_id=event.account_id, target_list=target, rows=event.rows).run()
     except (ListNotFound, ListsFull) as e:
         return AppendResult(applied=False, reason=str(e))
-    autofill.enqueue_rows(account_id=event.account_id, target_list=target, rows=created)
-    return AppendResult(applied=True, added=len(created))
+    return AppendResult(applied=True, added=report.added)
 
 
 def handle_ingest_event(event: IngestEvent) -> str:

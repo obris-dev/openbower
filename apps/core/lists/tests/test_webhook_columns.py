@@ -17,7 +17,9 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
+from jobs.models import Job
 from lists.constants import CellSource, FillErrorCode, StoredCellState, WebhookColumnErrorCode
+from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodePath
 from lists.nodes.wait_until import WaitUntil
 from lists.nodes.webhook import Webhook
@@ -94,6 +96,13 @@ class WebhookColumnTests(TestCase):
     def _config_url(self, key: str = "crm_sync") -> str:
         return reverse("lists_column_webhook_config", kwargs={"id": str(self.sheet.id), "key": key})
 
+    def test_the_backfill_job_names_its_list_as_its_target(self) -> None:
+        # A job a list's delete must find by target, like every job of
+        # a list's.
+        self._add()
+        (job,) = list(Job.objects.filter(kind=EnqueueRuns.KIND))
+        self.assertEqual(job.target_id, str(self.sheet.id))
+
     def test_add_persists_the_column_with_its_path_and_two_nodes(self):
         resp = self._add()
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -103,7 +112,7 @@ class WebhookColumnTests(TestCase):
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] + 2, self.baseline[1] + 1))
         webhook_node = self.workflows.get_node(column.node_id)
         wait_node, same = self.workflows.nodes_on_path(webhook_node.path_id)
-        self.assertEqual((wait_node.rank, same.id), (0, webhook_node.id))
+        self.assertEqual((wait_node.rank, same.id), ("a0", webhook_node.id))
         # Two wait keys of two agents: two inbound paths, in the order given.
         self.assertEqual(config_as(wait_node, WaitUntil).inbound_path_ids, [self.second_path, self.first_path])
         webhook = config_as(webhook_node, Webhook)
@@ -204,10 +213,9 @@ class WebhookColumnTests(TestCase):
             list_id=str(self.sheet.id),
             row_id=str(self.rows[0].id),
             fill_run_id=None,
-            config_fingerprint="",
             states={"country": StoredCellState.FILLED},
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.NODE,
         )
         fake = _FakeSender()
         body = {
@@ -240,10 +248,9 @@ class WebhookColumnTests(TestCase):
             list_id=str(self.sheet.id),
             row_id=row_id,
             fill_run_id=None,
-            config_fingerprint="",
             states=states,
             tools={},
-            source=CellSource.FILL,
+            source=CellSource.NODE,
         )
 
     def test_a_column_keyed_like_a_literal_route_still_reaches_its_config(self):
@@ -293,6 +300,42 @@ class WebhookColumnTests(TestCase):
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.COLUMN_UNKNOWN)
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] - 1, self.baseline[1]))
+
+    def test_a_wait_set_naming_nothing_is_refused_by_the_writer_too(self):
+        # The wire refuses an empty wait set at both doors, so this is
+        # the same rule where the path is actually WRITTEN: a barrier
+        # naming no path heads a path no reaction can reach (an arrival
+        # starts entry heads, and the scan finds a wait by the path it
+        # names), so the column would sit there unable to send with
+        # nothing to say why. FAILS if only the serializer guards it.
+        from lists.services.webhook_columns import WebhookColumnService, WebhookColumnWaitsOnNothing
+
+        service = WebhookColumnService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
+        with self.assertRaises(WebhookColumnWaitsOnNothing):
+            service.add(
+                str(self.sheet.id),
+                label="Empty barrier",
+                destination_id=str(self.destination.id),
+                wait_keys=[],
+                payload_keys=["company"],
+                interval_seconds=3600,
+            )
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
+        self._add()
+        written = (Node.objects.count(), NodePath.objects.count())
+        before = self.client.get(self._config_url()).json()
+        with self.assertRaises(WebhookColumnWaitsOnNothing):
+            service.update(
+                str(self.sheet.id),
+                "crm_sync",
+                destination_id=str(self.destination.id),
+                wait_keys=[],
+                payload_keys=["company"],
+                interval_seconds=3600,
+                enabled=True,
+            )
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), written)
+        self.assertEqual(self.client.get(self._config_url()).json(), before)
 
     def test_a_webhook_column_is_refused_as_a_payload_key(self):
         self._add()

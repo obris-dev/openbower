@@ -43,20 +43,21 @@ class TopicSpec:
 
 LIST_ROWS_INGESTED = TopicSpec(name="list.rows.ingested", consumer_group="ingest-append-worker")
 
-# Node-run work on TWO topics, one per lane, so the automatic firehose
-# and the UI-driven fills cannot starve each other (separate consumer
-# lag, separate scaling). A provisioner publishes a task id; the shared
-# consumer claims and runs it, routing on the task's own fill_run_id.
-# Keyed by row id at produce time.
+# Node-run work on THREE topics, one per lane, so the lanes cannot
+# starve each other (separate consumer lag, separate scaling). A
+# provisioner publishes a task id, keyed by task id; the shared consumer
+# claims and runs it, handing it to its node's processor.
+# The automatic lane: the pushed rows' runs.
 AUTOFILL_RUNS = TopicSpec(name="list.fill.autofill", consumer_group="node-run-worker-autofill")
-# The manual (fill-backed) lane: the provisioner publishes a live NORMAL
-# fill's READY tasks here; its consumer claims, runs, and lands them.
+# The manual (fill-backed) lane: the provisioner publishes a live fill's
+# READY tasks here; its consumer claims, runs, and lands them.
 FILL_RUNS = TopicSpec(name="list.fill.manual", consumer_group="node-run-worker-manual")
-# The TEST (bench) lane, ISOLATED from the manual firehose on purpose: a
-# one-row diagnostic a user is watching must not queue behind a wide
-# manual fill, so it rides its own topic + consumer (the old worker-test
-# lane, on the shared spine). The provisioner routes a fill here by kind.
-TEST_RUNS = TopicSpec(name="list.fill.test", consumer_group="node-run-worker-test")
+# The preview lane, ISOLATED on purpose: a one-row diagnostic a user is
+# watching must never queue behind a wide fill or a pushed-row firehose,
+# so it has its own topic and consumer. The autofill provisioner picks
+# preview runs with the automatic ones (both are unconsented agent runs)
+# and routes them here by NodeRun.is_preview.
+PREVIEW_RUNS = TopicSpec(name="list.fill.preview", consumer_group="node-run-worker-preview")
 
 # What provision_topics walks. A new topic appends an entry.
-TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED, AUTOFILL_RUNS, FILL_RUNS, TEST_RUNS)
+TOPICS: tuple[TopicSpec, ...] = (LIST_ROWS_INGESTED, AUTOFILL_RUNS, FILL_RUNS, PREVIEW_RUNS)

@@ -46,8 +46,10 @@ export function useRows(
     rowsRef.current = rows;
   }, [rows]);
 
-  // Positions are append-only, so a wholesale replacement keeps the
-  // paging coherent. Silent on blips: the fill poll loop owns trouble
+  // The re-read pages from the top in sheet order to at least the
+  // loaded length, so what comes back is the same prefix the gutter
+  // counts and a wholesale replacement keeps the paging coherent.
+  // Silent on blips: the fill poll loop owns trouble
   // surfacing, and a toast every interval would be noise.
   const refreshBusyRef = useRef(false);
   const refreshLoaded = useCallback(async () => {

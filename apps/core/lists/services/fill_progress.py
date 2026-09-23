@@ -1,134 +1,134 @@
-"""Fill progress and lifecycle: what happens to the FILL row as its
-rows resolve. The status machine (complete when no non-terminal task
-remains; cancelled or failed through the ONE terminal transition the
-user's Stop also takes).
+"""A fill's lifecycle, over its JOB row: a fill is a job of kind
+`fill` (lists/jobs/fill.py), and this module is every read and write
+of that row the lists app makes outside the kind's own slices. The
+lifecycle IS the job's: open while READY or PROCESSING (the walk, then
+the poll for its runs), DONE when every run settled, FAILED when a
+worker found the config cannot run, CANCELLED when a user stopped it.
+The wire's five words (the contract's FillStatusWire) derive from that
+plus the runs (`status_of`).
 
 Progress counters are NOT written here: the wire derives them from the
-task rows and cell states at read time (services.fills.derive_counters).
+task rows and cell states at read time (services.fills.page_progress).
 
 Split from the task state machine on purpose: node_runs.py is TASK
 lifecycle (claim, settle, park), this is the fill's. Plain functions,
-because none of this holds state: a fill id in, one UPDATE out. The
-consumer reports here after each settle (try_finish), never through an
-in-memory object.
-
-Not account-scoped: the consumer is a trusted process serving every
+because none of this holds state: a fill id in, a queryset or a word
+out, the writes delegated to JobService.Global. Not
+account-scoped: the consumer is a trusted process serving every
 account's fills, and the user-facing service resolves its fill
-account-scoped before it calls stop_fill.
+account-scoped before it calls cancel.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
-from django.db import transaction
-from django.utils import timezone
+from django.db.models import QuerySet
 
-from ..constants import LIVE_FILL_STATUSES, NON_TERMINAL_NODE_RUN_STATES, FillStatus, NodeRunStatus
-from ..models import Fill, NodeRun
+from jobs.constants import OPEN_JOB_STATES, JobStatus
+from jobs.models import Job
+from jobs.services import JobService
+from openbower_schema.fills import FillError, FillStatusWire
+
+from ..constants import JOB_FAILURE_COPY
+
+# The fill kind's name, restated here rather than imported from the
+# kind module: the kind imports this module for its lifecycle, and the
+# name is the one fact the two share.
+FILL_KIND = "fill"
+
+if TYPE_CHECKING:
+    from ..jobs.fill import FillJob
 
 
-def iter_live_fills(kinds: tuple[str, ...] = ()) -> Iterator[Fill]:
-    """Every live fill, oldest first, LAZILY (single-pass); `kinds`
-    narrows to the named operating modes (empty = all). The manual
+def fill_jobs() -> QuerySet[Job]:
+    """Every fill, any account, any status."""
+    return Job.objects.filter(kind=FILL_KIND)
+
+
+def open_fills() -> QuerySet[Job]:
+    """Every fill still owed work: walking, or polling its runs."""
+    return fill_jobs().filter(status__in=OPEN_JOB_STATES)
+
+
+def iter_open_fills() -> Iterator[Job]:
+    """Every open fill, oldest first, LAZILY (single-pass). The manual
     provisioner iterates these and publishes each fill's READY tasks, so
     per-fill depth is the fairness point (a wide fill cannot flood the
-    bus). Streamed via .iterator() so a growing number of live fills
+    bus). Streamed via .iterator() so a growing number of open fills
     never materializes as one list."""
-    qs = Fill.objects.filter(status__in=LIVE_FILL_STATUSES)
-    if kinds:
-        qs = qs.filter(kind__in=kinds)
-    yield from qs.order_by("id").iterator()
+    yield from open_fills().order_by("id").iterator()
+
+
+def iter_consents(fills: QuerySet[Job]) -> Iterator[tuple[str, FillJob]]:
+    """(fill id, its consent) for each job, TYPED: the one reader of a
+    fill's payload outside the kind's own slices, so a field renamed on
+    the kind fails loudly here rather than degrading to "no keys" at a
+    guard. Lazy, single-pass, like every iter_."""
+    # The kind imports this module for its lifecycle; the edge back is local.
+    from ..jobs.fill import FillJob
+
+    for fill_run_id, payload in fills.values_list("id", "payload"):
+        yield str(fill_run_id), FillJob.model_validate(payload)
+
+
+def open_fill_count(account_id: str) -> int:
+    """The account's fills still open (a preview run is not a fill and
+    never counts): the cap's count."""
+    return open_fills().filter(account_id=account_id).count()
+
+
+def is_open(fill_run_id: str) -> bool:
+    return open_fills().filter(id=fill_run_id).exists()
 
 
 def cancel(fill_run_id: str) -> bool:
-    """The worker's list-gone resolution: a user deletion reads as
-    CANCELLED, never failed (failed is config-tier and carries an
-    error the UI dresses as a failure story). Same transition as the
-    user cancel; a fill already terminal stays put."""
-    return stop_fill(fill_run_id, FillStatus.CANCELLED)
+    """The user's Stop, and the worker's list-gone resolution (a user
+    deletion reads as CANCELLED, never failed: failed is config-tier
+    and carries an error the UI dresses as a failure story). The
+    queued runs are abandoned first (the kind's `on_stop`), then the
+    job flips; a fill already terminal stays put."""
+    return JobService.Global.cancel(fill_run_id)
 
 
 def fail(fill_run_id: str, *, code: str, message: str) -> bool:
     """The breaker path (config-tier: a dead or throttling provider
-    fails the whole fill loudly). From live states only; a cancel
-    that already landed stays cancelled."""
-    return stop_fill(fill_run_id, FillStatus.FAILED, code=code, message=message)
+    fails the whole fill loudly). From open states only; a cancel that
+    already landed stays cancelled."""
+    return JobService.Global.fail(fill_run_id, code=code, message=message)
 
 
-def live_fill_count(account_id: str) -> int:
-    """The account's fills that are still live, EVERY kind: a test run
-    is a fill, so it counts against the same metered cap by
-    construction (the one rule that used to need a cross-app import to
-    enforce)."""
-    return Fill.objects.filter(account_id=account_id, status__in=LIVE_FILL_STATUSES).count()
+def status_of(job: Job, *, started: bool) -> FillStatusWire:
+    """The wire's word for a fill job, derived and never stored (the
+    contract's FillStatusWire is the one definition of the vocabulary):
+    its terminal status as it is, an open one as `running` once a run
+    has been claimed, else `pending`."""
+    return word_of(job.status, started=started)
 
 
-def try_finish(fill_run_id: str) -> bool:
-    """THE completion rule, run by the consumer after each settle
-    (opportunistic empty-check): a fill flips COMPLETE when no
-    NON-TERMINAL task remains (READY, QUEUED, or PROCESSING).
-
-    Monotonic by construction, because nothing creates tasks after
-    admission: the set only ever shrinks, so the check cannot go stale
-    between reading and flipping. A PROCESSING task (a consumer owns it)
-    or a READY one (published or not) is still owed, so a crashed
-    claimant never fakes completion.
-
-    Module level rather than a consumer method because it reads no
-    worker identity: a fill is finished or it is not, whoever is
-    asking."""
-    with transaction.atomic():
-        fill = Fill.objects.select_for_update().filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).first()
-        if fill is None:
-            return False
-        if NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=NON_TERMINAL_NODE_RUN_STATES).exists():
-            return False
-        fill.status = FillStatus.COMPLETE
-        fill.save(update_fields=["status", "updated_at"])
-        return True
+def error_of(status: str, code: str, message: str) -> FillError | None:
+    """A FAILED fill's two-tier why, the one rule on every wire: the
+    fill's own code with the copy it was failed with, or the runner's
+    verdict under house copy (the stored cause is the operator's).
+    Nothing for any other status, whatever the columns hold."""
+    if status != JobStatus.FAILED:
+        return None
+    return FillError(code=code, message=JOB_FAILURE_COPY.get(code, message))
 
 
-def stop_fill(fill_run_id: str, status: FillStatus, *, code: str = "", message: str = "") -> bool:
-    """THE terminal transition, shared by the worker's paths and the
-    user's cancel, so the two cannot order their writes differently.
-
-    The QUEUE IS SWEPT FIRST, then the fill flips. That order is
-    load-bearing: the terminal write path takes NodeRun before Fill,
-    so flipping the fill first would invert it and deadlock. A consumer
-    that claims a task in the window between the two is harmless,
-    because its terminal CAS finds the task abandoned.
-
-    Nothing on the sheet is touched. Every cell this fill would have
-    reached was pending only because a non-terminal task said so, so
-    abandoning the READY/QUEUED tasks is what stops the shimmer, and
-    there is no state to sweep back.
-    """
-    with transaction.atomic():
-        if not Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).exists():
-            return False
-        _abandon_queued(fill_run_id)
-        flipped = Fill.objects.filter(id=fill_run_id, status__in=LIVE_FILL_STATUSES).update(
-            status=status,
-            error_code=code,
-            error_message=message,
-            updated_at=timezone.now(),
-        )
-    return flipped == 1
-
-
-def _abandon_queued(fill_run_id: str) -> None:
-    """Consent granted and not spent, recorded rather than deleted: it
-    is the only honest answer to what a stopped fill still owed, and a
-    later resume reads it instead of reconstructing it.
-
-    Sweeps the READY and QUEUED tasks to ABANDONED, deliberately NOT
-    PROCESSING: a task a consumer already owns runs to its own terminal
-    CAS and LANDS its cell (the settle keys on the task's status, not the
-    fill's), so in-flight spend is sunk cost, cancel granularity is
-    between tasks. Leaving PROCESSING untouched also keeps the
-    queue-before-fill lock order the caller depends on. The transient
-    count is DERIVED now, so nothing is released here."""
-    NodeRun.objects.filter(fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)).update(
-        status=NodeRunStatus.ABANDONED, updated_at=timezone.now()
-    )
+def word_of(status: str, *, started: bool) -> FillStatusWire:
+    """The same derivation off a projected job status (the column
+    summaries read columns, not rows)."""
+    match JobStatus(status):
+        case JobStatus.DONE:
+            return "complete"
+        case JobStatus.FAILED:
+            return "failed"
+        case JobStatus.CANCELLED:
+            return "cancelled"
+        case JobStatus.READY | JobStatus.PROCESSING:
+            return "running" if started else "pending"
+    # Exhaustive over JobStatus on purpose: a member added to the job's
+    # lifecycle must be given a word here, never read as open by default.
+    raise ValueError(f"no fill word for job status {status!r}")

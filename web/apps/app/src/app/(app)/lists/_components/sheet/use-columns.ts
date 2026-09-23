@@ -5,7 +5,6 @@ import { useToast } from "@bower/ui";
 import {
   COLUMN_ORDER_STALE_CODE,
   COLUMN_WAITED_ON_CODE,
-  ROW_COUNT_CHANGED_CODE,
   deleteColumn,
   fetchList,
   postAiColumn,
@@ -203,13 +202,10 @@ export function useColumns(initialDetail: ListSummary): {
     async (payload: AiColumnPayload): Promise<ColumnOutcome> => {
       const res = await postAiColumn(detail.id, payload);
       if (redirectIfUnauthenticated(res)) return LEAVING;
-      if (res.status !== "ok") {
-        if (res.code === ROW_COUNT_CHANGED_CODE && (await reread())) return LEAVING;
-        return { ok: false, error: res.code ?? "", detail: res.message };
-      }
+      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
       return { ok: true };
     },
-    [detail.id, reread],
+    [detail.id],
   );
 
   // A PLAIN column is a name and a type, which is not a drawer's worth

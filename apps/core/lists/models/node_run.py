@@ -5,14 +5,18 @@ from openbower_kernel.models import AccountScopedModel
 
 from ..constants import (
     LEASED_BY_MAX_LENGTH,
+    NODE_KIND_MAX_LENGTH,
     NODE_RUN_STATUS_MAX_LENGTH,
     NON_TERMINAL_NODE_RUN_STATES,
+    RANK_MAX_LENGTH,
     NodeRunStatus,
 )
+from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 
 
 class NodeRun(AccountScopedModel):
-    """One consented agent run, AND the queue itself.
+    """One run of one node for one row, AND the queue itself: the
+    per-row ledger of every node kind.
 
     One task per sheet row, materialized at admission, so the queue is
     simultaneously the work list, the pending signal the sheet renders
@@ -21,13 +25,18 @@ class NodeRun(AccountScopedModel):
     only honest answer to "what did this still owe", which a queue
     holding only what a planner had reached could not give.
 
-    Every task carries its `node_id` from birth: the node it is a run
-    of, fill-backed and automatic alike (a fill-backed task's node is
-    the column_agent node for its Fill's agent on the sheet; a TEST
-    task's is the account's bench node). A task with NO fill run
-    (`fill_run_id` NULL) is the automatic path (autofill): the same
-    queue and the same worker, minus the consent a Fill records,
-    resolving its list and user from its row.
+    Every task carries its `node_id` and the node's `kind` from birth.
+    A column_agent run is an agent run, fill-backed or automatic (a
+    fill-backed task's node is the column_agent node for its fill's
+    agent on the sheet, and `fill_run_id` is the fill JOB's id). A task
+    with NO fill run (`fill_run_id` NULL) is the automatic path:
+    autofill rides the same queue and the same worker, minus the
+    consent a fill job records, resolving its list and user from its
+    row; a webhook run is DEFERRED at birth and claimed
+    by the flush at its window, never by the worker. A PREVIEW run (the
+    agent builder's one-row diagnostic) is an automatic run of the
+    account's preview node that OWNS ITS INPUT (`input`): no row, no
+    sheet, its result lands on itself.
 
     `status` speaks about the WORK and never about the answer; the
     answer is diagnosed per cell on ListCellState. No word appears in
@@ -43,31 +52,52 @@ class NodeRun(AccountScopedModel):
     to write on purpose."""
 
     # NULL on the automatic path (autofill): a task with no fill run has
-    # no Fill to read its list or user off, so it resolves them from its
-    # row. A fill-backed task sets this to its Fill's id.
+    # no fill job to read its list or user off, so it resolves them from
+    # its row. A fill-backed task sets this to its fill job's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    # NULL on a TEST task: a bench row is inline (`fill.row_data[position]`)
-    # and no ListRow exists for it. NULLs are distinct under the
-    # (fill_run_id, row_id) key, so N inline rows never collide, where a
-    # blank string would cap a test fill at one task.
+    # NULL on a preview run: its row rides `input` and no ListRow exists
+    # for it. NULLs are distinct under the open-run key, so an
+    # account's preview runs never collide with each other.
     row_id = models.CharField(_("row id"), max_length=26, null=True, blank=True)
     # The list this task's row lives in, DENORMALIZED from the fill
     # (fill-backed) or the target sheet (autofill), so per-list
     # distribution and account scoping never need a join back to find it.
-    # BLANK for a bench TEST fill, which points at no sheet by
-    # construction, exactly as its Fill.list_id is.
+    # BLANK for a preview run, which points at no sheet by construction.
     list_id = models.CharField(_("list id"), max_length=26, blank=True, default="")
+    # What the run was GIVEN, for a run that owns its input (the preview):
+    # {"row": the hand-fed values, "config": the drafted AgentConfig}.
+    # The row half is bounded at the endpoint by the contract's preview
+    # caps; the config half by AgentConfig's own bounds, whose prompt
+    # ceiling is the transport's. Empty for every run whose row and
+    # config live elsewhere (a sheet row, an agent). `result` beside it
+    # is what the run PRODUCED.
+    input = models.JSONField(_("input"), default=dict)
+    # Who started a run that owns its input (the preview's supersede rule
+    # abandons your own unclaimed runs and nobody else's). NULL for every run a
+    # sheet or a fill produced (a fill's starter is the job's user; an
+    # automatic run has none), the job rule: no user is NULL, never a
+    # sentinel.
+    started_by = models.CharField(_("started by"), max_length=26, null=True, blank=True)
     # The node this task is a run of, set on every lane at birth. A
     # column_agent node runs its agent's whole column set in ONE run (an
     # agent produces all its outputs together), so one task per
     # (row, node) is the grain.
     node_id = models.CharField(_("node id"), max_length=26)
-    # WHERE this task's row lives, by kind. NORMAL: the row's sheet
-    # position, 1-based and snapshot-coherent (positions are
-    # append-only), so claims ordered by it march TOP TO BOTTOM down
-    # the sheet the user is watching. TEST: the 0-based index into the
-    # fill's own row_data list, which the worker reads it back by.
-    position = models.IntegerField(_("position"), default=0)
+    # The node's kind, DENORMALIZED so a lane filters without a join
+    # (the flush claims webhook runs by kind; the reclaim returns a
+    # stale webhook run to DEFERRED and an agent run to READY). No
+    # default: a CharField stores "" when a writer forgets it, and the
+    # check constraint below turns that into a failed insert.
+    kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
+    # WHERE this task's row sits: the row's rank as it was when the run
+    # was queued, so claims ordered by it march TOP TO BOTTOM down the
+    # sheet the user is watching (a move after that reorders nothing
+    # already queued; the next fill reads the new order). A preview run,
+    # which has no sheet, carries the first key as a constant (preview
+    # runs order among themselves by id); every run has one, and the
+    # check constraint below refuses the "" a forgotten writer would
+    # store. The C collation, as the row's.
+    rank = models.CharField(_("rank"), max_length=RANK_MAX_LENGTH, db_collation="C")
     status = models.CharField(_("status"), max_length=NODE_RUN_STATUS_MAX_LENGTH, default=NodeRunStatus.QUEUED)
     # Incremented AT CLAIM, not at completion, so a row that kills its
     # worker thread still exhausts across process restarts. Counting
@@ -122,14 +152,19 @@ class NodeRun(AccountScopedModel):
             # distinct in SQL, so this only binds fill-backed tasks; the
             # automatic path is deduped by its own key below.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
-            # The automatic path's idempotency: one autofill run per row
-            # per node (one run fills that node's whole column set), so
-            # re-enqueueing a row's autofill is a no-op.
+            # The automatic path's idempotency: one OPEN run per (row,
+            # node) (one run fills a node's whole column set), so
+            # re-enqueueing a row's autofill or re-completing a row for
+            # its webhook while a run is pending is a no-op. A settled
+            # run is history: a row that completes again after its
+            # webhook run sent gets a new run.
             models.UniqueConstraint(
                 fields=["row_id", "node_id"],
-                condition=models.Q(fill_run_id__isnull=True),
-                name="node_run_autofill_uniq",
+                condition=models.Q(fill_run_id__isnull=True, status__in=NON_TERMINAL_NODE_RUN_STATES),
+                name="node_run_open_uniq",
             ),
+            models.CheckConstraint(condition=~models.Q(kind=""), name="node_run_kind_named"),
+            models.CheckConstraint(condition=~models.Q(rank=""), name="node_run_rank_named"),
         ]
         indexes = [
             # The provisioner's READY pick, SPLIT by lane: a fill-backed
@@ -138,7 +173,7 @@ class NodeRun(AccountScopedModel):
             # the ordering pathkey an equality does (it sorts the whole
             # READY set instead of stopping at the LIMIT). So each lane
             # gets a partial index holding only its rows. In both, status
-            # leads (one equality opens it); the position/id tail lets the
+            # leads (one equality opens it); the rank/id tail lets the
             # LIMIT stop early; not_before rides the leaf (INCLUDE) so a
             # parked task is rejected without a heap fetch, never a seek
             # key (below the ordering columns it cannot be one).
@@ -146,21 +181,41 @@ class NodeRun(AccountScopedModel):
             # Fill-backed: fill_run_id = :f seeks the fill's tasks. A fill
             # is single-list, so list_id earns no place here.
             models.Index(
-                fields=["status", "fill_run_id", "position", "id"],
+                fields=["status", "fill_run_id", "rank", "id"],
                 include=["not_before"],
                 name="node_run_fill_idx",
                 condition=models.Q(fill_run_id__isnull=False),
             ),
             # Autofill firehose: partial on the null-run rows, so status
-            # leads straight into the (list_id, position, id) order with no
+            # leads straight into the (list_id, rank, id) order with no
             # IS NULL in the key. list_id sits BEFORE the sort columns, so a
             # per-list or set-sharded pick (list_id = ANY(...)) SEEKS its
-            # lists rather than scanning.
+            # lists rather than scanning. `kind` rides the leaf beside
+            # not_before so the pick's lane filter stays index-only.
             models.Index(
-                fields=["status", "list_id", "position", "id"],
-                include=["not_before"],
+                fields=["status", "list_id", "rank", "id"],
+                include=["not_before", "kind"],
                 name="node_run_autofill_idx",
                 condition=models.Q(fill_run_id__isnull=True),
+            ),
+            # A node's due runs: DEFERRED at or before now, in (rank, id)
+            # order (the flush's pick and claim). Partial on DEFERRED, so
+            # it holds only the runs still waiting for a window, whatever
+            # their kind, and shrinks as they are claimed.
+            models.Index(
+                fields=["node_id", "not_before", "rank", "id"],
+                name="node_run_due_idx",
+                condition=models.Q(status=NodeRunStatus.DEFERRED),
+            ),
+            # The NEWEST run per (row, node) for one page of rows (the
+            # webhook kind's owed-ness: a completion newer than its
+            # newest run). The due index leads with the node and would
+            # walk its whole history to answer for a page. Partial on
+            # the kind for the same reason as the due index.
+            models.Index(
+                fields=["row_id", "node_id", "-id"],
+                name="node_run_cell_idx",
+                condition=models.Q(kind=WEBHOOK),
             ),
             # The reclaim scan's access path: find tasks stuck in a
             # non-terminal state too long, oldest first. PARTIAL on the
@@ -171,7 +226,28 @@ class NodeRun(AccountScopedModel):
                 name="node_run_reclaim_idx",
                 condition=models.Q(status__in=NON_TERMINAL_NODE_RUN_STATES),
             ),
+            # The preview runs alone (a run with no fill and no row), by
+            # id: the age prune walks them oldest first and the supersede
+            # scan reads an account's live ones, and neither should cost
+            # the ledger's whole history. Tiny: it holds only previews.
+            models.Index(
+                fields=["id"],
+                name="node_run_preview_idx",
+                condition=models.Q(fill_run_id__isnull=True, row_id__isnull=True),
+            ),
         ]
+
+    @classmethod
+    def preview_lookup(cls) -> dict:
+        """The ONE spelling of what a preview run is, structurally: an
+        agent run with no fill and no row (its row rides `input`). The
+        service's queryset, the provisioner's routing, and the
+        processor's lane all read this or `is_preview`, never a flag."""
+        return {"kind": COLUMN_AGENT, "fill_run_id__isnull": True, "row_id__isnull": True}
+
+    @property
+    def is_preview(self) -> bool:
+        return self.kind == COLUMN_AGENT and self.fill_run_id is None and self.row_id is None
 
     def __str__(self) -> str:
         return f"{self.fill_run_id}/{self.row_id} ({self.status})"

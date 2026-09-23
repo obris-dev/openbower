@@ -208,11 +208,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
   // user clicked: one run can map several columns, so deriving it
   // from the run would refill a sibling. A refusal returns as the
   // server's verbatim detail for the caller's error slot.
-  async function continueFill(columnKey: string, opts: { rows?: number; resumeId?: string } = {}): Promise<string | null> {
+  async function continueFill(columnKey: string, opts: { maxRowCount?: number; resumeId?: string } = {}): Promise<string | null> {
     // An EMPTY resume id is a contract gap (the summary names no
     // run), not a wider ask: refuse rather than widen the spend.
     if (!columnKey || opts.resumeId === "") return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resumeId });
+    const res = await postFillRefill(detail.id, columnKey, { max_row_count: opts.maxRowCount, resumeFill: opts.resumeId });
     if (redirectIfUnauthenticated(res)) return null;
     if (res.status !== "ok") return res.message;
     // The new run and its pending outcomes exist only server-side:
@@ -368,7 +368,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         listId={detail.id}
         listLabel={detail.label}
         columns={detail.columns}
-        sampleRows={rows.map((row) => ({ id: row.id, position: row.position, data: row.data }))}
+        sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">

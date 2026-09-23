@@ -15,7 +15,7 @@ tools writes blank cells with the diagnosis saying so, and the fix is
 picking a more capable model, not a second code path re-searching on a
 guess. A typed AgentConfig (the contract model) drives it, never an
 Agent row: the row is one custody for a config, the column's
-quick-prompt path is the other, and the test bench runs drafts that
+quick-prompt path is the other, and the test preview runs drafts that
 are neither. A tool's trouble is PER TOOL and rides out as data: a
 grounded answer lands whatever another tool reported, and the
 statuses go on the task and the cell for the user to act on."""
@@ -49,7 +49,7 @@ __all__ = ["CellRun", "run_cell"]
 class CellRun(NamedTuple):
     """One row's walk AND its diagnostics, the ONE record the runtime
     hands out: `cells` is what a fill would write ({} = nothing),
-    `evidence` what the model saw (grounding's fence, the bench's
+    `evidence` what the model saw (grounding's fence, the preview's
     disclosure), `tool_calls` each call's outcome (a throttled provider
     must not read as a bad agent), `tools` each toggled tool's final
     status for this run (the task's record, the cell's mark).

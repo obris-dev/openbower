@@ -27,6 +27,7 @@ from ..constants import (
 )
 from ..models import List
 from ..services.lists import ListService
+from .append_rows import AppendRowsOperation
 
 # Type inference threshold: a column is url/number/email only when the
 # vote is decisive; mixed columns stay text (a wrong type renders wrong
@@ -166,7 +167,7 @@ class ImportCsvOperation:
         columns, rows, skipped = parse_csv(self.raw)
         service = ListService(account_id=self.account_id)
         target = service.create(owner_id=self.user_id, label=self.label, columns=columns, origin=ListOrigin.CSV)
-        added = len(service.add_rows(target, rows))
+        added = AppendRowsOperation(account_id=self.account_id, target_list=target, rows=rows).run().added
         target.refresh_from_db()
         logger.info("csv import: list=%s rows=%d skipped=%d", target.id, added, skipped)
         return ImportStats(target=target, rows=added, skipped=skipped)

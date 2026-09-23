@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Button, Drawer, ErrorMessage, FieldError, Input, useToast } from "@bower/ui";
-import {
+import { type AiColumnBody,
   fetchAgent,
   fetchAgentCatalog,
   fetchAgents,
@@ -24,13 +24,10 @@ import { type Attempt, buildChecklist, configMissing, configReady, draftProvider
 import { AgentsTab } from "./agents-tab";
 import { collidingKeys } from "./landing-keys";
 
-export type AiColumnPayload = {
-  config?: AgentConfig;
-  agent_id?: string;
-  confirmed_row_count: number;
-  /** First-N row scope; omitted means every row. */
-  rows?: number;
-};
+/** The add's body IS the wire type: derived, never retyped, so a body
+ * key renamed on the api side fails to compile here (the payload
+ * literal names its keys under a stated return type, see below). */
+export type AiColumnPayload = AiColumnBody;
 
 /** A submission's outcome, declared HERE because this drawer renders
  * the refusal (field-level where it can): `error` is the machine
@@ -300,13 +297,21 @@ function DrawerContent({
   }, [scopeKind, scopeRowsText]);
   const scopedRows = scope === null ? null : effectiveRows(scope, rowCount);
 
-  const payload = useMemo<AiColumnPayload | null>(() => {
+  const payload = useMemo<AiColumnPayload | null>((): AiColumnPayload | null => {
     if (scope === null || scopedRows === null) return null;
-    const rows = scope.kind === "first" ? { rows: scopedRows } : {};
+    // An empty sheet sends no scope: the server refuses it as an empty
+    // fill, a refusal this drawer renders, where a zero count would be
+    // a field-shape 400 it cannot. Written as a named key, never
+    // spread, under a STATED return type: only a fresh literal's own
+    // keys are checked against the wire type (a spread is not, and an
+    // inferred return loses the freshness), so a key renamed on one
+    // side fails here instead of compiling into a body the server
+    // silently drops.
+    const max_row_count = scope.kind === "first" && scopedRows > 0 ? scopedRows : undefined;
     if (tab === "prompt") {
-      return config ? { config, confirmed_row_count: rowCount, ...rows } : null;
+      return config ? { config, confirmed_row_count: rowCount, max_row_count } : null;
     }
-    return agentId ? { agent_id: agentId, confirmed_row_count: rowCount, ...rows } : null;
+    return agentId ? { agent_id: agentId, confirmed_row_count: rowCount, max_row_count } : null;
   }, [tab, config, agentId, rowCount, scope, scopedRows]);
 
   // Which sections a Start fill still needs. The agents tab asks for
@@ -372,9 +377,7 @@ function DrawerContent({
     if (!res.ok) {
       // Tier 1: the server's detail renders VERBATIM. A code whose
       // offending surface is knowable (the outputs) marks it; the
-      // rest keep the footer slot (row_count_changed included: the
-      // parent refreshes its count on that code, so the next attempt
-      // echoes the new truth). Without a detail the client stays
+      // rest keep the footer slot. Without a detail the client stays
       // general: it cannot see why the start failed.
       if (res.error && OUTPUTS_REFUSAL_CODES.has(res.error) && res.detail) {
         setOutputsRefusal(res.detail);

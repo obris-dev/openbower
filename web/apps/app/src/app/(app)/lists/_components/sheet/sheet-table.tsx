@@ -20,6 +20,7 @@ import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
+import { WebhookCellState } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";
 
 /** The tracker row's inputs, one object because they only travel
@@ -38,7 +39,7 @@ export type SheetFills = {
   pollTrouble: boolean;
   rowCount: number;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { rows?: number; resumeId?: string }) => Promise<string | null>;
+  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -216,9 +217,11 @@ export function SheetTable({
         )}
       </thead>
       <tbody className="divide-y divide-hairline">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <tr key={row.id} className="align-top">
-            <td className="px-4 py-2.5 text-right tabular-nums text-faint">{row.position}</td>
+            {/* The row number is counted here: the page's array IS the
+                sheet order, and nothing about order rides the row. */}
+            <td className="px-4 py-2.5 text-right tabular-nums text-faint">{index + 1}</td>
             {columns.map((column) => {
               // A state dresses only AI cells; without one, a value
               // is the plain filled cell and no value is
@@ -238,9 +241,9 @@ export function SheetTable({
                   className={`px-4 py-2.5 ${isNumericColumn(column) ? "text-right tabular-nums" : ""}`}
                 >
                   {kind === "webhook" ? (
-                    // The column holds no value and shows no word yet:
-                    // its per-row state arrives with the flush.
-                    null
+                    // The column holds no value: its cell is its state
+                    // off the same ledger as an AI cell's.
+                    <WebhookCellState entry={row.states?.[column.key]} />
                   ) : state !== undefined ? (
                     // A state cell holds a short word, a dot, or a
                     // shimmer, nothing to truncate, and truncation's

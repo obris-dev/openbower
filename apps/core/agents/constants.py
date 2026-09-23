@@ -146,7 +146,7 @@ def cell_run_worst_case_seconds() -> int:
     search at its clamped worst case. The NORMAL fill worker's compose
     stop_grace_period must clear it (a row that runs to the bound
     still owes its outcome write); the test lane's worker trades that
-    away deliberately, so its short grace kills an in-flight bench
+    away deliberately, so its short grace kills an in-flight preview
     row. Called, like the search bound it composes."""
     return (
         MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS

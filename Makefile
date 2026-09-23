@@ -9,7 +9,7 @@ COMPOSE := docker compose -p $(PROJECT)
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-web sweep prune-webhook-deliveries receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -66,9 +66,9 @@ suite-network:
 # A bound above that chain keeps a container stuck RESTARTING from
 # blocking the target forever, without failing a start that is merely
 # slow.
-up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + cron)
+up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
 	$(COMPOSE) up -d --wait --wait-timeout 900
-	@echo "up: api :8002, app :3003, marketing :3004, fill services + cron (make logs to tail, make stop to stop)"
+	@echo "up: api :8002, app :3003, marketing :3004, fill services + jobs + cron (make logs to tail, make stop to stop)"
 
 # Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
 # REMOVED with no policy to bring it back, and nothing else drains the
@@ -104,8 +104,8 @@ restart: ## Restart all services in place (compose-file edits need make up, whic
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
 
-restart-worker: ## Restart the fill + autofill provisioners and consumers (what a change to their shared code needs; no reloader)
-	$(COMPOSE) restart fill-provisioner fill-consumer test-consumer autofill-provisioner autofill-consumer
+restart-worker: ## Restart the fill + autofill provisioners and consumers and the jobs service (what a change to their shared code needs; no reloader)
+	$(COMPOSE) restart fill-provisioner fill-consumer autofill-provisioner autofill-consumer jobs
 
 restart-cron: ## Restart the cron (a crontab schedule edit needs it; supercronic parses at startup)
 	$(COMPOSE) restart cron
@@ -141,14 +141,17 @@ logs: ## Tail all container logs
 logs-core: ## Tail the api's logs
 	$(COMPOSE) logs -f core
 
-logs-worker: ## Tail the fill provisioner + manual/test consumer logs
-	$(COMPOSE) logs -f fill-provisioner fill-consumer test-consumer
+logs-worker: ## Tail the fill provisioner + manual consumer logs
+	$(COMPOSE) logs -f fill-provisioner fill-consumer
+
+logs-jobs: ## Tail the jobs service's logs (the walks that queue a fill's or a backfill's runs)
+	$(COMPOSE) logs -f jobs
 
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
 	$(COMPOSE) logs -f ingest-worker
 
-logs-autofill: ## Tail the autofill provisioner + consumer logs (publish and run pushed rows' AI columns)
-	$(COMPOSE) logs -f autofill-provisioner autofill-consumer
+logs-autofill: ## Tail the autofill provisioner + consumer logs (publish and run pushed rows' AI columns and the preview)
+	$(COMPOSE) logs -f autofill-provisioner autofill-consumer preview-consumer
 
 logs-cron: ## Tail the maintenance cron's logs
 	$(COMPOSE) logs -f cron
@@ -156,10 +159,14 @@ logs-cron: ## Tail the maintenance cron's logs
 
 logs-web: ## Tail the web dev servers' logs (app + marketing)
 	$(COMPOSE) logs -f web
-sweep: ## Run the test-fill sweep once, in the cron container (proves its environment)
-	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py sweep_test_fills
+prune-preview-runs: ## Run the preview-run prune once, in the cron container (proves its environment)
+	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_preview_runs
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
+flush-deferred: ## Run the deferred flush once, in the cron container (sends every digest that is due)
+	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_deferred
+run-jobs: ## Run one jobs tick by hand, in the jobs container (the service loops on its own)
+	$(COMPOSE) exec jobs uv run --frozen --package openbower-core python apps/core/manage.py run_jobs --once
 
 # A debugging aid outside the stack: a plain container on the stack's
 # network, so it never rides `make up` or a deployment.

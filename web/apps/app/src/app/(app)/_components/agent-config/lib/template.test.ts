@@ -24,7 +24,7 @@ test("insert appends a tight token with the spacing rule", () => {
 });
 
 test("roots are case-sensitive, mirroring Django's context keys", () => {
-  // {{Company}} must surface a bench input named Company; silently
+  // {{Company}} must surface a preview input named Company; silently
   // ignoring it rendered blank server-side with no input to fill.
   assert.deepEqual(promptVariables("{{Company}} vs {{company}}"), ["Company", "company"]);
   assert.equal(usesVariable("{{Company}}", "company"), false);

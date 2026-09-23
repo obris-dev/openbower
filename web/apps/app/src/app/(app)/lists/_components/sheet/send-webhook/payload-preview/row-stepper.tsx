@@ -13,7 +13,7 @@ export function RowStepper({ sample }: { sample: SampleStepper }) {
   // only), so the buttons stay small on screen.
   const stepClass =
     "relative rounded-md p-1 text-faint hover:bg-wash hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-600";
-  const line = rowLine(sample.position, sample.count);
+  const line = rowLine(sample.index + 1, sample.count);
   if (sample.count <= 1) return <span className="shrink-0 text-xs text-muted tabular-nums">{line}</span>;
   return (
     <div className="flex shrink-0 items-center gap-1 text-xs text-muted" role="group" aria-label="Sample row">

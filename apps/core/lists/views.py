@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from functools import cached_property
 
-import ulid
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -19,6 +18,7 @@ from rest_framework.response import Response
 from agents.services import AgentNotFound
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
+from openbower_kernel.fields import new_ulid
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
@@ -49,6 +49,7 @@ from .constants import (
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, List
+from .operations.append_rows import AppendRowsOperation
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .serializers import (
     AiColumnRequest,
@@ -76,7 +77,16 @@ from .serializers import (
 from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
-from .services.lists import FolderNotFound, FolderService, FoldersFull, ListNotFound, ListService, ListsFull
+from .services.lists import (
+    FolderNotFound,
+    FolderService,
+    FoldersFull,
+    InvalidRowCursor,
+    ListNotFound,
+    ListService,
+    ListsFull,
+    RowCursor,
+)
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 from .services.workflows import NodeNotFound
 
@@ -88,14 +98,7 @@ logger = logging.getLogger(__name__)
 # must change, by narrowing the ask or by configuring the deployment).
 # Both ride the sibling envelope ({error: <code>, detail}): the client
 # classifies by CODE and renders the detail verbatim (tier 1).
-_FILL_CONFLICT_CODES = frozenset(
-    {
-        FillErrorCode.FILL_ACTIVE,
-        FillErrorCode.FILLS_FULL,
-        FillErrorCode.ROW_COUNT_CHANGED,
-        FillErrorCode.CONFIG_CHANGED,
-    }
-)
+_FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
 
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
@@ -210,12 +213,14 @@ class ListRowsView(_ScopedView):
     def get(self, request: Request, id: str) -> Response:
         target_list = self._list_or_404(id)
         limit = parse_limit(request, default=DEFAULT_ROWS_PAGE, maximum=MAX_ROWS_PAGE)
-        raw_after = request.query_params.get("after", "0")
-        if not raw_after.isdecimal() or len(raw_after) > 9:
-            raise ValidationError("?after= must be a row position")
-        rows = self.lists.rows_page(target_list, after_position=int(raw_after), limit=limit)
+        after = request.query_params.get("after", "")
+        try:
+            cursor = RowCursor.parse(after) if after else None
+        except InvalidRowCursor as e:
+            raise ValidationError("?after= must be a cursor this sheet handed out") from e
+        rows = self.lists.rows_page(target_list, after=cursor, limit=limit)
         states = self.fills.cell_states_for_rows(target_list, rows)
-        next_cursor = str(rows[-1].position) if len(rows) == limit else None
+        next_cursor = next_cursor_from(rows, limit=limit, cursor=lambda row: RowCursor(str(row.id), row.rank).wire())
         items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
         page = ListRowsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
@@ -225,11 +230,14 @@ class ListRowsView(_ScopedView):
         serializer = RowsAddRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            added = len(self.lists.add_rows(target_list, serializer.validated_data["rows"]))
+            report = AppendRowsOperation(
+                account_id=self.request.user.account_id, target_list=target_list, rows=serializer.validated_data["rows"]
+            ).run()
         except ListsFull as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
+        added = report.added
         target_list.refresh_from_db()
         return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
 
@@ -275,7 +283,7 @@ class ListIngestView(_ScopedView):
         # Carried through the bus so a re-delivery dedupes to one append once
         # the durable backend enforces it (the interim publisher only logs).
         event = IngestEvent(
-            event_id=serializer.validated_data.get("event_id") or str(ulid.ulid()),
+            event_id=serializer.validated_data.get("event_id") or new_ulid(),
             list_id=str(target_list.id),
             account_id=self.request.user.account_id,
             user_id=self.request.user.id,
@@ -355,7 +363,7 @@ class AiColumnView(_ScopedView):
                 config=config,
                 agent_id=data["agent_id"],
                 confirmed_row_count=data["confirmed_row_count"],
-                rows=data["rows"],
+                max_row_count=data["max_row_count"],
             )
         except FillRefused as e:
             status = 409 if e.code in _FILL_CONFLICT_CODES else 400
@@ -539,8 +547,8 @@ class ColumnDetailView(_ScopedView):
 class ColumnRefillView(_ScopedView):
     """POST /v1/lists/{id}/columns/{key}/refill: the one recovery
     primitive, a NEW fill over the column's unanswered rows (the column
-    names everything except the optional `rows` scope, and the service
-    takes a fresh config snapshot). The 201 body is the fill envelope,
+    names everything except the optional `max_row_count` scope, and the
+    fill reads the agent's config live). The 201 body is the fill envelope,
     exactly like the add."""
 
     def post(self, request: Request, id: str, key: str) -> Response:
@@ -550,7 +558,7 @@ class ColumnRefillView(_ScopedView):
             fill = self.fill_admission.refill(
                 list_id=id,
                 column_key=key,
-                rows=serializer.validated_data["rows"],
+                max_row_count=serializer.validated_data["max_row_count"],
                 resume_fill_id=serializer.validated_data["resume_fill"],
                 confirmed_row_count=serializer.validated_data["confirmed_row_count"],
             )
@@ -570,10 +578,8 @@ class ColumnPromptView(_ScopedView):
     """GET and PATCH /v1/lists/{id}/columns/{key}/prompt: the column's
     CURRENT fill config (what a refill would run), and the
     prompt-only edit against it. Surfaces peeking at "what fills this
-    column" read HERE, never a fill's frozen snapshot (the snapshot is
-    what a PAST fill ran; this is what the NEXT one will). Running fills
-    keep their snapshot, so an edit reaches the NEXT fill, and a refill
-    re-targets rows the old prompt settled without an answer."""
+    column" read HERE. A fill reads its agent live, so an edit reaches
+    a running fill's next row, and a refill re-targets every blank."""
 
     def get(self, request: Request, id: str, key: str) -> Response:
         try:
@@ -632,7 +638,7 @@ class FillCancelView(_ScopedView):
             raise NotFound("no fill with that id") from e
         # The route nests under a list; a fill of another sheet must not
         # be addressable through this one's URL.
-        if fill.list_id != str(target_list.id):
+        if fill.target_id != str(target_list.id):
             raise NotFound("no fill with that id")
         return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
 

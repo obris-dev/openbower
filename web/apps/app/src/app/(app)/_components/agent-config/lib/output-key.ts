@@ -4,7 +4,7 @@ import { AGENT_OUTPUT_KEY_MAX_LENGTH, RESERVED_OUTPUT_KEYS, RESERVED_OUTPUT_MARK
  * server derivation (openbower_schema/lists.py derive_column_key,
  * which the CSV importer, the blank-column add, and the output
  * serializer all call). Keys fall back to the slugified label, so the
- * bench can match cells for outputs whose key the user left blank
+ * preview can match cells for outputs whose key the user left blank
  * (the common case before save). Change one side and an output is
  * judged against a different column than the server judges it
  * against: the pair is pinned by vectors in output-key.test.ts and

@@ -7,7 +7,6 @@ from ..constants import (
     CELL_SOURCE_MAX_LENGTH,
     CELL_STATE_MAX_LENGTH,
     COLUMN_KEY_MAX_LENGTH,
-    CONFIG_FINGERPRINT_MAX_LENGTH,
     CellSource,
     StoredCellState,
 )
@@ -35,24 +34,20 @@ class ListCellState(AccountScopedModel):
     a pending cell, which is what lets admission write nothing to the
     sheet and leaves a stopped fill with nothing to sweep.
 
-    `config_fingerprint` is the writing fill's frozen digest: a settled
-    blank holds only while the column's current config still matches
-    it, so editing a prompt re-opens exactly the cells whose refusal
-    that prompt bought."""
+    A settled blank is history, not a gate: a refill targets every
+    blank in its columns, and the user's click is the consent to
+    re-spend on one."""
 
     list_id = models.CharField(_("list id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
-    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.FILL)
+    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.NODE)
     # The fill run that wrote it: the row drawer's link to that run's
     # NodeRun.result, which holds what the model actually said. NULL on
     # the automatic path (autofill), which has no fill run; the drawer
     # follows the writing task by (row, column) instead.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    config_fingerprint = models.CharField(
-        _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
-    )
     # tool -> the status code it reported for the run that wrote
     # this cell, filled or blank alike ("open" for a tool that served).
     # The one place a FILLED cell can say a tool was degraded, and the

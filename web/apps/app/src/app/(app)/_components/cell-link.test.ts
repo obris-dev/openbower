@@ -3,9 +3,9 @@ import { test } from "node:test";
 
 import { cellHref, cellLinkIsExternal } from "./cell-link.ts";
 
-test("one link semantics for sheet and bench", () => {
+test("one link semantics for sheet and preview", () => {
   assert.equal(cellHref("url", "https://acme.com/team"), "https://acme.com/team");
-  // Scheme-less URL cells link (the sheet always did; the bench now agrees).
+  // Scheme-less URL cells link (the sheet always did; the preview now agrees).
   assert.equal(cellHref("url", "acme.com/team"), "https://acme.com/team");
   assert.equal(cellHref("email", "jo@acme.com"), "mailto:jo@acme.com");
   assert.equal(cellHref("text", "acme.com/team"), null);

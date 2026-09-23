@@ -14,8 +14,6 @@ from datetime import datetime
 from django.db import models
 from django.db.models import QuerySet
 
-from openbower_schema.fills import SETTLED_CELL_STATES
-
 from ..constants import StoredCellState
 from ..models import ListCellState
 
@@ -51,6 +49,18 @@ class CellStateService:
             .values_list("column_key", "state", "updated_at")
         )
 
+    def iter_records(
+        self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
+    ) -> Iterator[tuple[str, str, str, datetime]]:
+        """(row id, column key, state, updated at) for a page of rows on
+        some columns, raw: what a processor's per-page judgement groups
+        per row (completion for a webhook)."""
+        yield from (
+            self._scoped(list_id, row_ids=row_ids, column_keys=column_keys).values_list(
+                "row_id", "column_key", "state", "updated_at"
+            )
+        )
+
     def iter_recorded(
         self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
     ) -> Iterator[tuple[str, str, str, dict]]:
@@ -70,19 +80,4 @@ class CellStateService:
             self._scoped(list_id, column_keys=column_keys)
             .values_list("column_key", "state")
             .annotate(n=models.Count("id"))
-        )
-
-    def iter_settled(
-        self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str], fingerprint: str
-    ) -> Iterator[tuple[str, str]]:
-        """(row id, column key) of every cell that is settled: filled by
-        any run, or a settled blank under THIS config (a blank under an
-        older config is retryable, not settled)."""
-        settled = models.Q(state=StoredCellState.FILLED) | models.Q(
-            state__in=SETTLED_CELL_STATES, config_fingerprint=fingerprint
-        )
-        yield from (
-            self._scoped(list_id, row_ids=row_ids, column_keys=column_keys)
-            .filter(settled)
-            .values_list("row_id", "column_key")
         )

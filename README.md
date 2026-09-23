@@ -22,7 +22,7 @@ Run requirements and setup docs land with the phases that need them.
 
 ## Running it (the self-host footprint)
 
-A working deploy is six long-running services plus a one-shot
+A working deploy is the services below plus a one-shot
 migrator, and `docker-compose.yml` carries all of them: `make up` on
 a fresh clone builds the images, seeds `apps/core/.env` from its
 example, and serves. The containers bind-mount the checkout, so edits
@@ -33,9 +33,12 @@ hot-reload without a rebuild.
 | db      | Postgres 16 (host port 5433) | `make local-dbshell` for psql |
 | core-setup | migrations and the cache table, once per start; core, the workers, and the cron wait for it to finish | `make logs` |
 | core    | the Django api on :8002 | `make logs-core` |
-| worker  | `manage.py fill_worker --kinds normal`, the background process that claims fill rows in batches, runs the research agents, and writes cells and outcomes | `make logs-worker` |
-| worker-test | the same binary serving only test-kind fills (the bench's one-row diagnostics), so bench latency never queues behind a wide fill | `make logs-worker` |
-| cron    | supercronic over `apps/core/crontab`: scheduled maintenance, today the hourly purge of test fills older than a day | `make logs-cron` |
+| jobs    | the background jobs loop (`manage.py run_jobs`): a fill's walk over its sheet, the webhook backfill, the rank re-space | `make logs` |
+| fill-provisioner, fill-consumer | the manual fill lane: the provisioner publishes an open fill's queued runs to the bus, the consumer claims each, runs the research agent, and lands the cell | `make logs` |
+| autofill-provisioner, autofill-consumer | the same two roles for automatic runs (a pushed row's AI columns) | `make logs` |
+| preview-consumer | the builder's Test on its own lane: the autofill provisioner routes a preview run here, so a watched one-row diagnostic never waits behind a fill or a pushed-row burst | `make logs-autofill` |
+| ingest-worker | the webhook ingest consumer | `make logs` |
+| cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of preview runs older than a day, the stale-run reclaim, the deferred flush and delivery prune) | `make logs-cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `make logs-web` |
 
 `make stop` halts the stack in place and `make up` resumes it;
@@ -44,14 +47,9 @@ dependencies survive in named volumes, while the Python venv is an
 anonymous volume the next start re-syncs (`make prune-venvs` clears the
 strays). `make reset` removes the named volumes too, which is how you
 get a clean database. The stack needs Docker Compose v2.24 or newer. `make logs` tails
-everything. Compose runs exactly ONE worker PER FILL KIND (a normal
-one and a test one). The worker takes `--once`
-(exit when no fill has claimable work, the suite's smoke). SIGTERM
-or SIGINT lets the NORMAL worker's rows in flight finish before it
-exits, so restarting it is always safe and can take a while (a row
-already talking to a provider is allowed to finish); the test
-worker's short grace kills its bench row instead, costing one metered
-call and one counted attempt on a throwaway diagnostic. `make db-up` starts just the database,
+everything. SIGTERM or SIGINT lets a consumer's rows in flight finish
+before it exits, so restarting one is always safe and can take a while
+(a row already talking to a provider is allowed to finish). `make db-up` starts just the database,
 which is what the host-run test suite needs.
 
 Signing in needs an identity provider, which is a SEPARATE service (the
@@ -92,14 +90,12 @@ carries the full annotated list):
   budgeted: one whose search count would exceed the budget is refused
   before it spends, naming the metered next step.
 
-Run ONE worker process per FILL KIND per deploy, which is what the
-compose file ships. The row-claim design is multi-worker safe, but
-each process enforces a source's declared concurrency ceiling on its
-own, so a second worker of the SAME kind would double the load on
-that source. Each test FILL is one row wide, so in the common case
-(one bench click at a time) the overlap is a single request; but the
-one-live-test rule is per account and advisory, so a source declaring
-a ceiling of N can see up to N extra rows while several accounts
-bench at once;
-multi-worker scale-out ships as an operated story (docs and compose
-profiles) when it lands.
+Run ONE consumer process per LANE per deploy (manual, autofill,
+preview), which is what the compose file ships. The row-claim design is
+multi-worker safe, but each process enforces a source's declared
+concurrency ceiling on its own, so a second consumer of the SAME lane
+would double the load on that source. A preview run is one row wide,
+so the overlap is one request per click in flight; the preview
+consumer runs one at a time, so a source declaring a ceiling of N sees
+at most one extra row from previews whatever the click rate. Multi-worker scale-out ships as an
+operated story (docs and compose profiles) when it lands.

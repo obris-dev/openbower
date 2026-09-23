@@ -1,7 +1,7 @@
 // addListRows: pinned here because no shipped UI posts rows yet; the
 // contract (route, body shape, RowsAdded parse) must not rot silently.
-// postFillRefill: its optional rows scope is pinned because omission
-// vs presence is the contract (no body means all remaining rows).
+// postFillRefill: its optional max_row_count scope is pinned because
+// omission vs presence is the contract (no body means all remaining rows).
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
@@ -21,11 +21,13 @@ import {
   postColumnWebhook,
   postColumnWebhookPreview,
   postColumnWebhookTest,
+  postAiColumn,
   postFillRefill,
   reorderColumns,
   updateColumnWebhook,
   UNKNOWN_COLUMN_KIND,
   COLUMN_LABEL_MAX_LENGTH,
+  renderablePage,
 } from "../src/lists.ts";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
@@ -64,6 +66,7 @@ const RUN_ENVELOPE = {
     filled: 0,
     transient: 0,
   },
+  heartbeat_at: "2026-01-01T00:00:00Z",
   created_at: "2026-01-01T00:00:00Z",
   id: "01CCCCCCCCCCCCCCCCCCCCCCCC",
   list_id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
@@ -72,7 +75,7 @@ const RUN_ENVELOPE = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-test("postFillRefill sends rows only when scoped", async (t) => {
+test("postFillRefill sends max_row_count only when scoped", async (t) => {
   const calls: { url: string; init: RequestInit }[] = [];
   const realFetch = globalThis.fetch;
   t.after(() => {
@@ -86,7 +89,7 @@ test("postFillRefill sends rows only when scoped", async (t) => {
     });
   }) as typeof fetch;
 
-  const scoped = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer", { rows: 32 });
+  const scoped = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer", { max_row_count: 32 });
   assert.equal(scoped.status, "ok");
   const all = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer");
   assert.equal(all.status, "ok");
@@ -94,8 +97,55 @@ test("postFillRefill sends rows only when scoped", async (t) => {
   assert.equal(calls.length, 2);
   assert.ok(calls[0]!.url.endsWith("/columns/answer/refill"));
   assert.equal(calls[0]!.init.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { rows: 32 });
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { max_row_count: 32 });
   assert.equal(calls[1]!.init.body, undefined);
+});
+
+test("postAiColumn sends max_row_count only when scoped, by the exact key", async (t) => {
+  // Same hazard as the refill: DRF drops a body key it does not
+  // declare, so only the exact key can be asserted.
+  const calls: { url: string; init: RequestInit }[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify(RUN_ENVELOPE), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await postAiColumn("01AAAAAAAAAAAAAAAAAAAAAAAA", { agent_id: "01AG", confirmed_row_count: 40, max_row_count: 8 });
+  await postAiColumn("01AAAAAAAAAAAAAAAAAAAAAAAA", { agent_id: "01AG", confirmed_row_count: 40 });
+  assert.ok(calls[0]!.url.endsWith("/columns/ai"));
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), {
+    agent_id: "01AG",
+    confirmed_row_count: 40,
+    max_row_count: 8,
+  });
+  assert.deepEqual(JSON.parse(String(calls[1]!.init.body)), { agent_id: "01AG", confirmed_row_count: 40 });
+});
+
+test("fetchListRows hands the cursor back verbatim", async (t) => {
+  // The cursor is the server's (`rank.id`), opaque to this client:
+  // nothing here reads it, splits it, or rebuilds it from a row.
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ items: [], next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { after: "a0V.01ROWAAAAAAAAAAAAAAAAAAAA", limit: 2 });
+  assert.ok(calls[0]!.endsWith("/rows?after=a0V.01ROWAAAAAAAAAAAAAAAAAAAA&limit=2"), calls[0]);
 });
 
 test("postFillRefill names the resume key the server declares", async (t) => {
@@ -245,14 +295,13 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
     new Response(
       JSON.stringify({
         items: [
-          { id: "01R", position: 1, data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
+          { id: "01R", data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
           {
             id: "01S",
-            position: 2,
             data: { answer: "x" },
             states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
           },
-          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
+          { id: "01T", data: {}, states: { answer: "no_evidence" } },
         ],
         next_cursor: null,
       }),
@@ -482,4 +531,21 @@ test("every column kind shares the base's label bound the client enforces", () =
   // definition of its own, so this is what pins the other members to it.
   assert.equal(WIRE_BOUNDS.AiColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
   assert.equal(WIRE_BOUNDS.WebhookColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
+});
+
+test("a webhook cell's state rides the one states record and an unknown one maps to the client member", () => {
+  const page = renderablePage({
+    items: [
+      { states: { crm_sync: { state: "sent", tools: {} } } },
+      { states: { crm_sync: { state: "pending", tools: {} } } },
+      // The server's next word: the page must still render, and the
+      // cell must claim no more than that something unrecognised happened.
+      { states: { crm_sync: { state: "throttled", tools: {} } } },
+      { states: {} },
+    ],
+  });
+  assert.deepEqual(
+    page.items.map((item) => item.states.crm_sync?.state ?? null),
+    ["sent", "pending", UNKNOWN_CELL_STATE, null],
+  );
 });

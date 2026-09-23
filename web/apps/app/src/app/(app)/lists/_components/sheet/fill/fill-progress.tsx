@@ -81,9 +81,15 @@ export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Prom
     };
   }, [needsFollowup, supportFollowup]);
 
-  const counters = `${count(run.counters.attempted)} of ${count(run.confirmed_row_count)} | ${count(
-    run.counters.filled,
-  )} filled | ${count(run.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
+  // While the walk that queues the run's rows is still going (seconds
+  // after the click) the denominator is the consent, not yet the
+  // target set: the chip says what is happening rather than "0 of N".
+  const counters =
+    run.targeted_at === null && run.counters.attempted === 0
+      ? `queuing ${count(run.confirmed_row_count)} rows`
+      : `${count(run.counters.attempted)} of ${count(run.confirmed_row_count)} | ${count(
+          run.counters.filled,
+        )} filled | ${count(run.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
   const warning = staleWarning(run, now, supportFollowup ?? undefined);
 
   async function stop() {

@@ -99,7 +99,6 @@ class WebhookDigestItem(BaseModel):
         "of it; the same row completing again ships under a new one. Receivers dedup on it and never parse it."
     )
     row_id: str
-    position: int
     completed_at: str | None = Field(
         default=None,
         description="When the last waited-on column settled. Null only on a test send of a row "
@@ -123,7 +122,10 @@ class WebhookDigestData(BaseModel):
     waited_on: list[str] = Field(
         description="The columns whose settling makes a row complete; the keys each item's states report on."
     )
-    items: list[WebhookDigestItem]
+    items: list[WebhookDigestItem] = Field(
+        description="The rows that completed, in the sheet's own order, top to bottom. "
+        "The array is the only order: no item carries a row number."
+    )
 
 
 # A PEP 695 alias for the same reason as ListColumn: one named definition

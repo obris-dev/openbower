@@ -17,7 +17,6 @@ dependencies = [
     "openbower-schema",
     "psycopg>=3.3",
     "python-dotenv>=1.1",
-    "ulid>=1.1",
     "pydantic-ai-slim[anthropic,duckduckgo,openai]>=2.32.0",
     # Reached by PRIVATE paths (the engine class and its exceptions in
     # agents/search.py), which a minor bump can move: an ImportError

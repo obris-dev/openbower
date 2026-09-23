@@ -1,6 +1,6 @@
 """The Send webhook column: what it is on the sheet (a column entry
-pointing at the webhook node at rank 1 of its own path, behind a wait
-node naming the paths it waits on), how it is added, read back, and
+pointing at the webhook node second on its own path, behind the wait
+node that starts it and names the paths it waits on), how it is added, read back, and
 changed, and its Test and Preview sends. The substrate persists the
 nodes it is handed (WorkflowService.create_path); this module knows
 what a webhook column's path looks like. Account-scoped like every
@@ -13,21 +13,25 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
+from jobs.services import JobService
 from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
 from ..constants import WebhookColumnErrorCode
+from ..jobs.enqueue_runs import EnqueueRuns
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
+from ..processors import FillScope
+from ..processors.webhook import WebhookProcessor
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
 from .digest_payload import build_digest_data, build_digest_item, completion_of
 from .lists import ListService, cells_for_storage
-from .webhook_paths import inbound_paths_for, wait_keys_for
-from .workflows import NodeNotFound, WorkflowService, config_as
+from .webhook_paths import inbound_paths_for
+from .workflows import WorkflowService, config_as
 
 
 class WebhookColumnRefused(Exception):
@@ -50,6 +54,13 @@ class WebhookColumnNotAi(WebhookColumnRefused):
 
     def __init__(self, label: str) -> None:
         super().__init__(f"{label} is not an AI column; a webhook waits on AI columns only.")
+
+
+class WebhookColumnWaitsOnNothing(WebhookColumnRefused):
+    code = WebhookColumnErrorCode.WAITS_ON_NOTHING
+
+    def __init__(self) -> None:
+        super().__init__("A Send column waits on at least one AI column; choose what must finish before a row is sent.")
 
 
 class WebhookColumnNotWebhook(WebhookColumnRefused):
@@ -117,6 +128,7 @@ class WebhookColumnService:
             column = WebhookColumn(key=key, label=label, type=DEFAULT_COLUMN_TYPE, node_id=str(nodes[1].id))
             target_list.columns = [*target_list.columns, column]
             target_list.save(update_fields=["columns", "updated_at"])
+            self._enqueue_backfill(target_list, nodes[1])
         return target_list
 
     def config(self, target_list_id: str, key: str) -> WebhookColumnConfigWire:
@@ -136,13 +148,19 @@ class WebhookColumnService:
         enabled: bool,
     ) -> WebhookColumnConfigWire:
         """Both node configs rewritten in one transaction; the path keeps
-        its shape."""
+        its shape. A changed wait SET is a new definition of complete,
+        so a backfill is queued: rows complete under it whose completion
+        is newer than anything already sent gain a run (narrowing
+        re-sends nothing the receiver has; widening re-sends a row once
+        the added column fills). An unchanged set queues nothing (a Save
+        that touched only the cadence must not re-send the sheet)."""
         with transaction.atomic():
             target_list = locked_list(self.account_id, target_list_id)
             webhook_node = self._webhook_node(target_list, key)
             self._validate(
                 target_list, wait_keys=wait_keys, payload_keys=payload_keys, destination_id=destination_id, lock=True
             )
+            before = self.workflows.wait_ahead_of(webhook_node)
             wait = WaitUntil(inbound_path_ids=self._inbound_paths(target_list, wait_keys))
             webhook = Webhook(
                 destination_id=destination_id,
@@ -151,7 +169,22 @@ class WebhookColumnService:
                 enabled=enabled,
             )
             _wait_node, webhook_node = self.workflows.replace_path_nodes(webhook_node.path_id, [wait, webhook])
+            if set(before.inbound_path_ids) != set(wait.inbound_path_ids):
+                self._enqueue_backfill(target_list, webhook_node)
         return self._wire(target_list, webhook_node)
+
+    def _enqueue_backfill(self, target_list: List, webhook_node: Node) -> None:
+        """Every row already complete for the wait set is owed a run, so
+        a column added over a filled sheet sends what is already done
+        instead of only what completes later. The walk is a JOB (one
+        page per slice, the node's processor judging each row), queued
+        in this transaction so it can never see a column that was
+        rolled back."""
+        JobService(account_id=self.account_id).enqueue(
+            EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)),
+            user_id=self.user_id,
+            target_id=str(target_list.id),
+        )
 
     # The sends.
 
@@ -242,7 +275,7 @@ class WebhookColumnService:
         states = {k: state for k, (state, _updated_at) in records.items()}
         item = build_digest_item(
             scope=scope,
-            row=row,
+            row_id=str(row.id),
             cells=stored,
             states=states,
             completed_at=completion_of(records, wait_keys),
@@ -262,11 +295,22 @@ class WebhookColumnService:
         destination_id: str,
         lock: bool,
     ) -> WebhookDestination:
-        """Every body reference resolves: wait keys are AI columns,
+        """Every body reference resolves: the wait set names at least
+        one AI column, the wait keys are AI columns,
         payload keys are columns, the destination is this account's.
         `lock` is the writers' choice: a binding takes the destination's
         row lock for its transaction; a test send or preview, which
         runs in none, only reads it."""
+        if not wait_keys:
+            # A barrier naming no path is reached by nothing: no arrival
+            # starts its path (its head is a wait, not an entry) and no
+            # landing finds it (the scan matches an inbound list that
+            # names the landed path). The column would sit there unable
+            # to send, and nothing downstream would say why, so the
+            # writer refuses the shape rather than storing it. The wire
+            # already refuses it at both doors; this is the same rule
+            # where the path is actually written.
+            raise WebhookColumnWaitsOnNothing()
         by_key = {column.key: column for column in target_list.columns}
         for key in wait_keys:
             column = by_key.get(key)
@@ -315,16 +359,9 @@ class WebhookColumnService:
         return inbound_paths_for(wait_keys, columns=target_list.columns, path_by_node=path_by_node)
 
     def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
-        """The columns a webhook column waits on, in sheet order: its
-        wait node's inbound paths resolved to the columns they fill."""
-        nodes = self.workflows.nodes_on_path(webhook_node.path_id)
-        if not nodes:
-            raise NodeNotFound(webhook_node.path_id)
-        # The wait node is rank 0 whatever else the path holds.
-        wait = config_as(nodes[0], WaitUntil)
-        agent_nodes = Node.objects.filter(account_id=self.account_id, path_id__in=wait.inbound_path_ids)
-        node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
-        return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
+        """The columns a webhook column waits on, in sheet order: the
+        processor's own answer, so the config read and the flush agree."""
+        return WebhookProcessor(account_id=self.account_id, node=webhook_node, scope=FillScope()).wait_keys(target_list)
 
     def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
         webhook = config_as(webhook_node, Webhook)

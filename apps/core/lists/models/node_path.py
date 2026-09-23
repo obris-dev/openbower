@@ -8,10 +8,14 @@ class NodePath(AccountScopedModel):
     """One path under a workflow: the sequential-scheduling unit.
 
     Nodes on one path run one after another; nodes on different paths
-    are independent. Today every node gets its own path, because no
-    dependency exists between runs yet; a join, where paths converge, is
-    deferred, and adding one is a pure add. Deleted with its workflow by
-    ListService.delete; nodes point at it by id."""
+    are independent. Every path STARTS with a marker node saying how it
+    is fed: an entry (by nothing, so an arrival starts it) or a
+    wait_until (by the paths it names, so its barrier does). The marker
+    is what makes "which paths does an arrival start" one indexed read
+    rather than a walk of the workflow's nodes, and nothing here stores
+    it: it is the head node, and the workflow writer keeps it there.
+    Deleted with its workflow by ListService.delete; nodes point at it
+    by id."""
 
     workflow_id = models.CharField(_("workflow id"), max_length=26)
 
