@@ -38,10 +38,11 @@ from ..jobs.fill import FillJob
 from ..models import List, ListRow, Node, NodeRun
 from ..processors import WalkMode
 from ..serializers import fill_run_wire
-from ..services import advance, fill_progress
+from ..services import fill_progress
 from ..services.fills import page_progress
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
+from ..services.workflow_reactions import WorkflowReactions
 from ..services.workflows import agent_id_of
 
 WORKER_ID = "test-seam"
@@ -175,7 +176,9 @@ def settle(
         ListService(account_id=job.account_id).land_row(ctx, RowLanding(row_id, writes))
         landed = flow.settle(str(task.id), result={"tools": tools or {}}, status=NodeRunStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
-    advance.advance_rows(account_id=job.account_id, list_id=consent.list_id, row_ids=[row_id], node_id=task.node_id)
+    WorkflowReactions(account_id=job.account_id).advance(
+        list_id=consent.list_id, row_ids=[row_id], from_node_id=task.node_id
+    )
 
 
 def settle_all(fill_run_id: str, cause: StoredCellState | None = None) -> None:

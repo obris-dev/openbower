@@ -26,12 +26,13 @@ from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.operations.flush_deferred import FlushDeferredOperation
 from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, next_window
-from lists.services import advance, cell_truth
+from lists.services import cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
 from lists.services.webhook_runs import WebhookRunResult
+from lists.services.workflow_reactions import WorkflowReactions
 from lists.services.workflows import WorkflowService
 from openbower_schema.webhooks import WebhookEnvelope
 from webhooks.constants import DeliveryStatus
@@ -198,11 +199,10 @@ class FlushDeferredTests(TransactionTestCase):
         # the window after.
         later = BOUNDARY + timedelta(minutes=3)
         self._complete(self.rows[2], at=later)
-        advance.advance_rows(
-            account_id=ACCOUNT,
+        WorkflowReactions(account_id=ACCOUNT).advance(
             list_id=str(self.sheet.id),
             row_ids=[str(self.rows[2].id)],
-            node_id=_node_of(self.sheet, "country"),
+            from_node_id=_node_of(self.sheet, "country"),
             now=later,
         )
         fake = _FakeSender()

@@ -23,7 +23,7 @@ default, so a dispatcher holding the wrong shape fails loudly instead of
 silently doing nothing. The dispatchers call the PUBLIC pair,
 `process_run` and `process_batch`, which run the kind's half and then
 the one thing every kind owes the workflow after a run reaches DONE on
-a row: the ADVANCE (services/advance.py), which offers the row to every
+a row: the ADVANCE (services/workflow_reactions.py), which moves the workflow one step for it
 node behind a barrier this node's path feeds. A kind never calls it and
 cannot forget it.
 
@@ -47,7 +47,6 @@ from pydantic import BaseModel
 
 from ..cells.writes import CellWrite
 from ..models import List, ListRow, Node, NodeRun
-from ..services.advance import advance_rows
 from ..services.node_runs import NodeRunFlow
 
 
@@ -149,14 +148,14 @@ class NodeProcessor(ABC):
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """The consumer's call: the kind's `_process_run`, then the
-        advance for a run that LANDED on its row (an exited, parked, or
-        retired run advances nothing). The advance runs AFTER the
-        kind's own transaction: it inserts under the open-run key, so a
-        repeat is a no-op, and a crash between the two is closed by
-        re-offering, never by ordering."""
+        workflow advanced for a run that LANDED on its row (an exited,
+        parked, or retired run advances nothing). The advance runs
+        AFTER the kind's own transaction: it inserts under the open-run
+        key, so a repeat is a no-op, and a crash between the two is
+        closed by re-offering, never by ordering."""
         outcome = self._process_run(task, flow=flow)
         if outcome is RunOutcome.LANDED:
-            advance_rows(account_id=task.account_id, list_id=task.list_id, row_ids=[task.row_id], node_id=task.node_id)
+            self._reactions().advance(list_id=task.list_id, row_ids=[task.row_id], from_node_id=task.node_id)
         return outcome
 
     def process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
@@ -169,8 +168,15 @@ class NodeProcessor(ABC):
         for list_id, row_id in tally.settled_rows:
             by_list.setdefault(list_id, []).append(row_id)
         for list_id, row_ids in by_list.items():
-            advance_rows(account_id=self.account_id, list_id=list_id, row_ids=row_ids, node_id=str(self.node.id))
+            self._reactions().advance(list_id=list_id, row_ids=row_ids, from_node_id=str(self.node.id))
         return tally
+
+    def _reactions(self):
+        # Function-local: the reactions import the processors (they
+        # offer rows to them), and this is the one edge back.
+        from ..services.workflow_reactions import WorkflowReactions
+
+        return WorkflowReactions(account_id=self.account_id)
 
     def on_run_landed(self, column_keys: Sequence[str], outcome: object) -> list[CellWrite]:
         """What one of this node's runs does to its cells: one write per

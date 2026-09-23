@@ -19,8 +19,8 @@ from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
-from ..services import autofill
 from ..services.lists import ListNotFound, ListService, ListsFull
+from ..services.workflow_reactions import WorkflowReactions
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
 
@@ -57,13 +57,14 @@ class AppendResult(NamedTuple):
 
 
 def _append_rows(event: IngestEvent) -> AppendResult:
-    """The side effect: append the pushed rows to the sheet AND enqueue
-    autofill for them, owning its own terminal-error handling (a deleted
-    or full list is a drop, reported for the caller to log). Only
-    transient failures (a DatabaseError) raise.
+    """The side effect: append the pushed rows to the sheet AND trigger
+    the workflow for them (a push is a request to fill), owning its own
+    terminal-error handling (a deleted or full list is a drop, reported
+    for the caller to log). Only transient failures (a DatabaseError)
+    raise.
 
-    The enqueue rides the caller's transaction (handle_ingest_event's
-    atomic), so rows and their autofill work commit together: a row can
+    The trigger rides the caller's transaction (handle_ingest_event's
+    atomic), so rows and their work commit together: a pushed row can
     never land with no work queued to fill it."""
     lists = ListService(account_id=event.account_id)
     try:
@@ -71,7 +72,7 @@ def _append_rows(event: IngestEvent) -> AppendResult:
         created = lists.add_rows(target, event.rows)
     except (ListNotFound, ListsFull) as e:
         return AppendResult(applied=False, reason=str(e))
-    autofill.enqueue_rows(account_id=event.account_id, target_list=target, rows=created)
+    WorkflowReactions(account_id=event.account_id).trigger(target, created)
     return AppendResult(applied=True, added=len(created))
 
 

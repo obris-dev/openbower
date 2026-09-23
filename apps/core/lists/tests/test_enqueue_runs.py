@@ -269,15 +269,31 @@ class PushedRuleTests(_Harness):
         processor = self._processor(WalkScope(mode=WalkMode.PUSHED, column_keys=["other"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
 
-    def test_the_autofill_service_hands_each_node_its_own_columns(self):
+    def test_a_person_adding_rows_triggers_the_workflow_for_them(self):
+        # The rows POST is a request to fill, as a push is: the workflow
+        # starts for the new rows in the same transaction, one READY run
+        # per row for the agent node. FAILS if the door stops triggering.
+        from django.urls import reverse
+
+        from common.testing import login_session
+
+        login_session(self.client)
+        url = reverse("lists_rows", kwargs={"id": str(self.sheet.id)})
+        resp = self.client.post(
+            url, {"rows": [{"company": "new.io"}, {"company": "next.io"}]}, content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(self._runs().filter(status=NodeRunStatus.READY, fill_run_id=None).count(), 2)
+
+    def test_the_trigger_hands_each_node_its_own_columns(self):
         # The service reads the sheet ONCE and builds a scope per node
         # carrying that node's keys, so a node the push fully filled
         # gets no run and one it left blank does, through the real
         # entry point. FAILS if the service stops carrying the keys.
-        from lists.services.autofill import enqueue_rows
+        from lists.services.workflow_reactions import WorkflowReactions
 
         pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
-        self.assertEqual(enqueue_rows(account_id=ACCOUNT, target_list=self.sheet, rows=pushed), 1)
+        self.assertEqual(WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, pushed), 1)
         (run,) = list(self._runs())
         self.assertEqual(run.row_id, str(pushed[0].id))
 

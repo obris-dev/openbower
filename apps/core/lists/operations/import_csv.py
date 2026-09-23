@@ -166,6 +166,8 @@ class ImportCsvOperation:
         columns, rows, skipped = parse_csv(self.raw)
         service = ListService(account_id=self.account_id)
         target = service.create(owner_id=self.user_id, label=self.label, columns=columns, origin=ListOrigin.CSV)
+        # A bulk load is not consent to spend: the workflow is not triggered
+        # for imported rows; the Fill button is.
         added = len(service.add_rows(target, rows))
         target.refresh_from_db()
         logger.info("csv import: list=%s rows=%d skipped=%d", target.id, added, skipped)

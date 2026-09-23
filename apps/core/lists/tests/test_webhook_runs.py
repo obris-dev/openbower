@@ -30,13 +30,14 @@ from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
-from lists.services import advance, cell_truth
+from lists.services import cell_truth
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
 from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
+from lists.services.workflow_reactions import WorkflowReactions
 from lists.services.workflows import NodeNotFound, WorkflowService
 from openbower_schema.fills import CellRunResult
 from openbower_schema.lists import ListRowsPage
@@ -125,9 +126,9 @@ class _SheetHarness(TestCase):
         self._land_run(node, keys, run)
         # The advance is the processors' base's, after the kind's run;
         # the landing itself writes the sheet and the truth only.
-        with patch("lists.services.advance.timezone.now", return_value=now):
-            advance.advance_rows(
-                account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(node.id)
+        with patch("lists.services.workflow_reactions.timezone.now", return_value=now):
+            WorkflowReactions(account_id=ACCOUNT).advance(
+                list_id=str(self.sheet.id), row_ids=[str(self.row.id)], from_node_id=str(node.id)
             )
 
     def _land_run(self, node: Node, keys: tuple[str, ...], run: CellRunResult) -> None:
@@ -202,7 +203,8 @@ class ProcessorTests(_SheetHarness):
         preview = NodeRun(account_id=ACCOUNT, list_id="", row_id=None, node_id=str(self.first.id))
         calls: list[tuple] = []
         spy = patch(
-            "lists.processors.base.advance_rows", side_effect=lambda **kw: calls.append(tuple(sorted(kw.items())))
+            "lists.services.workflow_reactions.WorkflowReactions.advance",
+            side_effect=lambda **kw: calls.append(tuple(sorted(kw.items()))),
         )
         with spy, patch.object(AIColumnProcessor, "_process_run", return_value=RunOutcome.LANDED):
             agent.process_run(on_row, flow=flow)
@@ -210,16 +212,14 @@ class ProcessorTests(_SheetHarness):
             with spy, patch.object(AIColumnProcessor, "_process_run", return_value=outcome):
                 agent.process_run(on_row, flow=flow)
                 agent.process_run(preview, flow=flow)
-        self.assertEqual(
-            calls, [(("account_id", ACCOUNT), ("list_id", "L1"), ("node_id", str(self.first.id)), ("row_ids", ["R1"]))]
-        )
+        self.assertEqual(calls, [(("from_node_id", str(self.first.id)), ("list_id", "L1"), ("row_ids", ["R1"]))])
         # A batch advances ONE page per list, not one call per row.
         node_id = self._add_webhook_column(["country"])
         tally = BatchTally(settled=3, settled_rows=[("L1", "R1"), ("L2", "R9"), ("L1", "R2")])
         calls.clear()
         with (
             patch(
-                "lists.processors.base.advance_rows",
+                "lists.services.workflow_reactions.WorkflowReactions.advance",
                 side_effect=lambda **kw: calls.append((kw["list_id"], kw["row_ids"])),
             ),
             patch.object(WebhookProcessor, "_process_batch", return_value=tally),
@@ -309,7 +309,7 @@ class AdvanceTests(_SheetHarness):
             offered.append(node.kind)
             return processor_for(account_id=account_id, node=node, scope=scope)
 
-        with patch("lists.processors.processor_for", side_effect=spy):
+        with patch("lists.services.workflow_reactions.processor_for", side_effect=spy):
             self._land(node, cells, keys=keys)
         return offered
 
@@ -371,11 +371,10 @@ class AdvanceTests(_SheetHarness):
             return real(processor, target_list, rows, now=now, limit=limit)
 
         with patch.object(WebhookProcessor, "enqueue_runs", spy):
-            advance.advance_rows(
-                account_id=ACCOUNT,
+            WorkflowReactions(account_id=ACCOUNT).advance(
                 list_id=str(self.sheet.id),
                 row_ids=[str(second_row.id), str(self.row.id)],
-                node_id=str(self.second.id),
+                from_node_id=str(self.second.id),
             )
         self.assertEqual(offers, [[str(self.row.id), str(second_row.id)]])
         self.assertEqual(
@@ -403,8 +402,8 @@ class AdvanceTests(_SheetHarness):
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
         self._land_run(self.second, ("country",), ctx_run)
-        advance.advance_rows(
-            account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)
+        WorkflowReactions(account_id=ACCOUNT).advance(
+            list_id=str(self.sheet.id), row_ids=[str(self.row.id)], from_node_id=str(self.second.id)
         )
         self.assertEqual(self._webhook_runs().count(), 0)
 

@@ -87,6 +87,7 @@ from .services.lists import (
     RowCursor,
 )
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
+from .services.workflow_reactions import WorkflowReactions
 from .services.workflows import NodeNotFound
 
 logger = logging.getLogger(__name__)
@@ -229,11 +230,17 @@ class ListRowsView(_ScopedView):
         serializer = RowsAddRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            added = len(self.lists.add_rows(target_list, serializer.validated_data["rows"]))
+            with transaction.atomic():
+                created = self.lists.add_rows(target_list, serializer.validated_data["rows"])
+                # A person adding rows is asking for them to be filled, as
+                # a push is: the workflow starts for them, in the same
+                # transaction, so a row never lands with no work queued.
+                WorkflowReactions(account_id=self.request.user.account_id).trigger(target_list, created)
         except ListsFull as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
+        added = len(created)
         target_list.refresh_from_db()
         return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
 

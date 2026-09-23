@@ -31,10 +31,10 @@ from ..ingest.events import IngestEvent
 from ..models import ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 from ..operations.provision import AutofillProvisionOperation
-from ..services import autofill
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
+from ..services.workflow_reactions import WorkflowReactions
 from ..services.workflows import WorkflowService
 from .test_fill_worker import quick_config
 
@@ -178,7 +178,7 @@ class EnqueueTests(AutofillHarness):
             ],
         )
         sheet.refresh_from_db()
-        created = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=[full, partial])
+        created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [full, partial])
         self.assertEqual(created, 1)  # only the partial row's node has work
         self.assertEqual(self._null_run_tasks().filter(row_id=str(partial.id)).count(), 1)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(full.id)).count(), 0)
@@ -217,13 +217,13 @@ class EnqueueTests(AutofillHarness):
         created = self.lists.add_rows(sheet, [{"company": "dupe.com"}])
         sheet.refresh_from_db()
 
-        first = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=created)
+        first = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, created)
         self.assertEqual(first, 1)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
 
         # The partial unique (row_id, node_id) WHERE fill_run_id IS NULL
         # makes a second enqueue a no-op (bulk_create ignore_conflicts).
-        autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=created)
+        WorkflowReactions(account_id=ACCOUNT).trigger(sheet, created)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
 
 

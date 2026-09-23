@@ -324,6 +324,8 @@ class LookalikeRunSaveListView(ScopedView):
                     # on that staying true.
                     if normalize_domain(item.company.domain) not in excluded
                 ]
+                # A snapshot is a bulk load, not a request to fill: the
+                # workflow is not triggered for its rows; Fill is the consent.
                 added += len(service.add_rows(target, rows))
                 # The advance guard the client export also carries: a
                 # stuck cursor must not walk forever.

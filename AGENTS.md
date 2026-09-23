@@ -135,8 +135,12 @@ auth + data services live in a separate private repo.
   two; the other keeps its raising default. The dispatchers call the
   public `process_run` / `process_batch`, which run the kind's half and
   then the ADVANCE every kind owes the workflow once a run reaches
-  DONE on a row (services/advance.py: the row is offered to every node
-  behind a barrier this node's path feeds), so no kind can forget it.
+  DONE on a row (services/workflow_reactions.py: the workflow moves
+  one step for that row), so no kind can forget it. The workflow's
+  other reaction, TRIGGER (rows arrived: every agent node judges them),
+  is called by the doors whose arrival is a request to fill (a push, a
+  person adding rows) and stated as not called at a bulk load (an
+  import, a snapshot), where Fill is the consent to spend.
   The node config classes in lists/nodes stay what a node IS at rest.
 - How a column's CELLS change is the cell layer (lists/cells), and
   every change lands as a `CellWrite` (the state a cell means to
