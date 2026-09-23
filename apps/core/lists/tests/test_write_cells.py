@@ -37,7 +37,8 @@ def _landing(row_id: str, values: dict[str, str], *, column_keys=None, blank_sta
     """A landing of value writes for the values (the editor's shape, no
     blank story), plus, when `column_keys` names more, a write with no
     value carrying `blank_state` for each of the rest (an agent's)."""
-    writes: list[CellWrite] = [TypedWrite(key, value) for key, value in values.items()]
+    # The editor's shape: a blank is no write at all (the kind's rule).
+    writes: list[CellWrite] = [TypedWrite(key, value) for key, value in values.items() if value.strip()]
     for key in column_keys or ():
         if key not in values and blank_state is not None:
             writes.append(AnsweredWrite(key, None, blank_state))
@@ -100,31 +101,35 @@ class WriteIfBlankTests(TestCase):
         row.refresh_from_db()
         self.assertNotIn("employees", row.data)
 
-    def test_blank_values_skip_entirely(self):
-        # A write that meant a value and carried a blank lands nothing
-        # and RECORDS nothing: FILLED is only ever derived from the row.
-        # FAILS if a blank is written, or a FILLED record appears with
-        # no value behind it.
+    def test_a_persons_blank_is_no_write_at_all(self):
+        # A blank never reaches the landing as a typed value: the column
+        # kind returns None for it, and a TypedWrite refuses to be built
+        # from one, so nothing is written and nothing is recorded. FAILS
+        # if either door lets a blank through.
+        from lists.cells.kinds.registry import column_kind_for
         from lists.models import ListCellState
+        from openbower_schema.lists import PlainColumn
 
+        column = PlainColumn(key="employees", label="Employees", type="number")
+        self.assertIsNone(column_kind_for(column).on_value_typed(column, "   "))
+        with self.assertRaises(ValueError):
+            TypedWrite("employees", "")
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         before = dict(ListRow.objects.get(id=row.id).data)
-        result = service.land_row(
-            _ctx(str(target.id), CellSource.MANUAL),
-            _landing(str(row.id), {"employees": "", "revenue": "   "}),
-        )
-        self.assertEqual(result, ((), (), ()))
+        self.assertEqual(service.land_row(_ctx(str(target.id)), RowLanding(str(row.id), [])), ((), (), ()))
         row.refresh_from_db()
         self.assertEqual(row.data, before)
         self.assertFalse(ListCellState.objects.filter(row_id=str(row.id)).exists())
 
     def test_every_write_resolves_to_the_state_the_row_earned_it(self):
         # A value that landed is FILLED, one the type refused is
-        # TYPE_MISMATCH, one an agent had none for records its cause,
-        # and a person's blank records nothing: each write answers for
-        # itself against the row. FAILS if the landing derives a state
-        # the write did not earn, or records a blank with no story.
+        # TYPE_MISMATCH, one an agent had none for records its cause:
+        # each write answers for itself against the row, and every
+        # write records exactly one state. A person's blank never
+        # becomes a write (the kind returns None; the write refuses to
+        # be built). FAILS if the landing derives a state the write did
+        # not earn, or a blank slips in as a typed value.
         from lists.models import ListCellState
 
         service = _service()
@@ -135,7 +140,6 @@ class WriteIfBlankTests(TestCase):
                 TypedWrite("name", "Machine Name"),  # occupied: a person's value stays
                 TypedWrite("employees", "42"),  # lands
                 TypedWrite("founded", "next spring"),  # the date type refuses
-                TypedWrite("revenue", ""),  # a person's blank: nothing
                 AnsweredWrite("domain", None, StoredCellState.NO_EVIDENCE),  # an agent had none
             ],
         )
@@ -150,6 +154,8 @@ class WriteIfBlankTests(TestCase):
                 "domain": StoredCellState.NO_EVIDENCE,
             },
         )
+        with self.assertRaises(ValueError):
+            TypedWrite("revenue", "   ")
 
     def test_a_persons_unanswered_column_leaves_no_record_and_an_agents_carries_its_cause(self):
         # A person has no cause to record: the columns they left blank

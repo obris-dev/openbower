@@ -408,7 +408,7 @@ class ListService:
         return {
             row_id: Landed(
                 verdicts[row_id],
-                tuple(state for write in writes if (state := write.resolve(verdicts[row_id])) is not None),
+                tuple(write.resolve(verdicts[row_id]) for write in writes),
             )
             for row_id, writes in by_row.items()
         }

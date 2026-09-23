@@ -78,7 +78,7 @@ class _SheetThatTakesEverything(ListService):
         landed = {}
         for row_id, writes in by_row.items():
             verdict = RowVerdict(tuple(w.key for w in writes if w.value_to_land() is not None), (), ())
-            landed[row_id] = Landed(verdict, tuple(s for w in writes if (s := w.resolve(verdict)) is not None))
+            landed[row_id] = Landed(verdict, tuple(w.resolve(verdict) for w in writes))
         return landed
 
 

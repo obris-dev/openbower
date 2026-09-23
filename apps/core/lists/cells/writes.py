@@ -3,13 +3,13 @@
 One write per OPERATION on a cell (a person typed, an agent answered,
 a webhook sent), all one base: what the operation has to land, and
 the mapping from what the row made of that to the state it records.
-The mapping is the base's; each operation says only what it records
-when nothing landed. Every write resolves to a StateWrite (or to
-nothing), the one shape the ledger takes, so the landing carries
-writes and never interprets them."""
+Each operation writes its own mapping in full. Every write resolves to
+exactly one StateWrite, the one shape the ledger takes, so the landing
+carries writes and never interprets them."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
@@ -54,13 +54,11 @@ class StateWrite(NamedTuple):
 
 
 @dataclass(frozen=True)
-class CellWrite:
+class CellWrite(ABC):
     """One operation's intent on one cell, BEFORE the row has spoken:
-    what it has to land, and the mapping from what the row made of
-    that to the state it records. The mapping is shared: a value that
-    landed or found the cell occupied is FILLED, one the column's type
-    refused is TYPE_MISMATCH, and what an UNLANDED write records is the
-    one thing each operation says for itself. In memory only: a kind
+    what it has to land, and how what the row made of that becomes the
+    state it records. Each operation writes its own mapping in full,
+    so the whole of it is read in one place. In memory only: a kind
     builds these, the landing persists what they resolve to."""
 
     key: str
@@ -70,36 +68,39 @@ class CellWrite:
         """The value to write where the cell is blank, or None."""
         return None
 
-    def resolve(self, verdict: RowVerdict) -> StateWrite | None:
-        if self.key in verdict.filled:
-            return StateWrite(self.key, StoredCellState.FILLED, self.tools)
-        if self.key in verdict.refused:
-            return StateWrite(self.key, StoredCellState.TYPE_MISMATCH, self.tools)
-        return self.unlanded()
-
-    def unlanded(self) -> StateWrite | None:
-        """What to record when nothing landed: nothing, unless the
-        operation has a story for it."""
-        return None
+    @abstractmethod
+    def resolve(self, verdict: RowVerdict) -> StateWrite:
+        """The state this write records, given what the row reported.
+        Total: every write records exactly one state."""
 
 
 @dataclass(frozen=True)
 class TypedWrite(CellWrite):
-    """A person set a cell: a value (the kind refuses to emit a blank),
-    so it lands or the type refuses it, and an unlanded blank records
-    nothing, the base's answer."""
+    """A person set a cell. The value is never blank (a blank is nothing
+    to write and nothing to record, decided by the column kind before a
+    write exists; here it is refused), so it lands or the type refuses
+    it."""
 
     value: str
 
+    def __post_init__(self) -> None:
+        if not self.value.strip():
+            raise ValueError(f"a typed value for {self.key!r} cannot be blank")
+
     def value_to_land(self) -> str | None:
-        return self.value if self.value.strip() else None
+        return self.value
+
+    def resolve(self, verdict: RowVerdict) -> StateWrite:
+        if self.key in verdict.refused:
+            return StateWrite(self.key, StoredCellState.TYPE_MISMATCH, self.tools)
+        return StateWrite(self.key, StoredCellState.FILLED, self.tools)
 
 
 @dataclass(frozen=True)
 class AnsweredWrite(CellWrite):
     """An agent's run on a column it fills: the answer it had (or none)
-    and the cause to record when nothing lands, with the run's tool
-    statuses on every state it resolves to."""
+    and the cause it records when nothing lands, with the run's tool
+    statuses on whichever state it resolves to."""
 
     value: str | None
     cause: StoredCellState
@@ -107,18 +108,23 @@ class AnsweredWrite(CellWrite):
     def value_to_land(self) -> str | None:
         return self.value if self.value and self.value.strip() else None
 
-    def unlanded(self) -> StateWrite | None:
+    def resolve(self, verdict: RowVerdict) -> StateWrite:
+        if self.key in verdict.filled:
+            return StateWrite(self.key, StoredCellState.FILLED, self.tools)
+        if self.key in verdict.refused:
+            return StateWrite(self.key, StoredCellState.TYPE_MISMATCH, self.tools)
         return StateWrite(self.key, self.cause, self.tools)
 
 
 @dataclass(frozen=True)
 class WebhookWrite(CellWrite):
     """A Send webhook's outcome on its column, which holds no value:
-    nothing to land, and the state (SENT, FAILED) is what it records."""
+    nothing to land, so the row has nothing to say, and the state
+    (SENT, FAILED) is what it records."""
 
     state: StoredCellState
 
-    def unlanded(self) -> StateWrite | None:
+    def resolve(self, verdict: RowVerdict) -> StateWrite:
         return StateWrite(self.key, self.state, self.tools)
 
 
@@ -133,8 +139,7 @@ class RowLanding(NamedTuple):
 
 class Landed(NamedTuple):
     """What the value pass handed back for one row: the row's verdict,
-    and every write resolved to the state it records (a person's blank
-    resolves to nothing and is absent)."""
+    and every write resolved to the state it records."""
 
     verdict: RowVerdict
     states: tuple[StateWrite, ...]
