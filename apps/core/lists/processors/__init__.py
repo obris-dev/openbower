@@ -13,15 +13,15 @@ Each processor module registers itself at its own bottom; the roster
 is ListsConfig.ready()'s walk of this package, the node-kind pattern.
 """
 
-from .base import BatchTally, NodeProcessor, RunOutcome, WalkMode, WalkScope
+from .base import BatchTally, FillMode, FillScope, NodeProcessor, RunOutcome
 from .factory import UnknownProcessor, processor_for
 
 __all__ = [
     "BatchTally",
+    "FillMode",
+    "FillScope",
     "NodeProcessor",
     "RunOutcome",
     "UnknownProcessor",
-    "WalkMode",
-    "WalkScope",
     "processor_for",
 ]

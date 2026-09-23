@@ -19,10 +19,11 @@ stopped fill still owed (its ABANDONED runs, read rather than
 reconstructed). Then the prompt must be able to act on it. Born READY
 under the fill.
 
-PUSHED (rows a push appended): the node runs unless the push filled
-every column it owns (write-if-blank would keep those values, so the
+AUTOFILL (the sheet moved on its own: rows arrived, or a barrier ahead
+of this node cleared): the node runs unless every column it owns
+already holds a value (write-if-blank would keep those values, so the
 run would only buy a skip); if ANY is blank the node runs and
-write-if-blank protects the sent ones. Born READY, no fill.
+write-if-blank protects the ones already there. Born READY, no fill.
 
 Memory is bounded by one page: the owed set is asked per page against
 the ids in hand and dropped when the page is done.
@@ -86,7 +87,7 @@ from ..services.lists import ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.runnable import CONFIG_TIER_ERRORS
 from ..services.workflows import agent_id_of, columns_for_node
-from .base import NodeProcessor, RunOutcome, WalkMode
+from .base import FillMode, NodeProcessor, RunOutcome
 from .factory import register
 
 logger = logging.getLogger(__name__)
@@ -466,13 +467,13 @@ class AIColumnProcessor(NodeProcessor):
 
     def _work_status_for_page(self, rows: Sequence[ListRow]) -> Callable[[ListRow], _WorkStatus]:
         mode = self.scope.mode
-        if mode is WalkMode.FRESH:
+        if mode is FillMode.FRESH:
             return self._work_status_fresh
-        if mode is WalkMode.REMAINING:
+        if mode is FillMode.REMAINING:
             resumed_owed = self._resumed_owed_row_ids(rows)
             return lambda row: self._work_status_remaining(row, resumed_owed)
-        if mode is WalkMode.PUSHED:
-            return self._work_status_pushed
+        if mode is FillMode.AUTOFILL:
+            return self._work_status_autofill
         # A structural walk (a webhook column added, its wait set
         # changed) means nothing to an agent node.
         return lambda row: _WorkStatus.NONE
@@ -493,12 +494,15 @@ class AIColumnProcessor(NodeProcessor):
             return _WorkStatus.NONE
         return _WorkStatus.NEEDED if self._agent_can_act(row) else _WorkStatus.BLOCKED
 
-    def _work_status_pushed(self, row: ListRow) -> _WorkStatus:
-        """Rows a push appended: the node runs unless the push filled
-        every column the scope names (the columns the node fills on the
-        sheet, as the starter read them; write-if-blank would keep those
-        values, so a run would only buy a skip). A node filling no
-        column owes nothing."""
+    def _work_status_autofill(self, row: ListRow) -> _WorkStatus:
+        """The sheet moved on its own: the node runs unless every column
+        the scope names already holds a value (the columns the node
+        fills on the sheet, as the starter read them; write-if-blank
+        would keep those values, so a run would only buy a skip). A node
+        filling no column owes nothing. Unlike the fill modes this asks
+        no question of the prompt: an arrival and a cleared barrier have
+        no dialog to report a dropped row to, so a row the prompt cannot
+        act on gets its run and lands the diagnosis on the cell."""
         keys = self.scope.column_keys
         if not keys or has_every_value(row.data, keys):
             return _WorkStatus.NONE
@@ -508,7 +512,7 @@ class AIColumnProcessor(NodeProcessor):
         """The rows on this page the resumed fill still owed (its
         ABANDONED runs), read once per page; None when this walk resumes
         nothing."""
-        if self.scope.mode is not WalkMode.REMAINING or not self.scope.resumed_fill_id:
+        if self.scope.mode is not FillMode.REMAINING or not self.scope.resumed_fill_id:
             return None
         ids = [str(row.id) for row in rows]
         return {

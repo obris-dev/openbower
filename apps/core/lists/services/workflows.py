@@ -22,12 +22,20 @@ memory and hands them over in rank order; the writer creates the path
 and stores each config at its rank as what the config says it is. What
 a webhook column's path looks like is that column's service's
 knowledge, not this module's.
+
+The ONE invariant this module holds: every path's head is exactly one
+MARKER node saying how the path is fed, an entry (by nothing) or a
+wait_until (by the paths it names). An agent column's path is minted
+[entry, agent]; a path built from configs is refused unless its head is
+a marker; no move displaces a head marker or puts a node ahead of one.
+That is what lets a reader ask which paths an arrival starts with one
+indexed read of the entry markers instead of a walk of the workflow.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from django.db import transaction
 from django.db.models import QuerySet
@@ -39,7 +47,8 @@ from ..constants import RANK_REBALANCE_LENGTH
 from ..models import List, Node, NodePath, Workflow
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import ColumnAgent
-from ..nodes.registry import parse_config
+from ..nodes.entry import Entry
+from ..nodes.registry import ENTRY, HEAD_OF_PATH_MARKERS, parse_config
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 
@@ -60,9 +69,10 @@ class WrongNodeKind(Exception):
 
 
 class PathHeadFixed(Exception):
-    """A path that starts with a barrier keeps it first: the barrier is
-    what its other nodes stand behind, so it is not moved and nothing is
-    moved ahead of it."""
+    """A path keeps the marker it starts with first: the marker is what
+    says the path is entered or waited for, and what its other nodes
+    stand behind, so it is not moved and nothing is moved ahead of
+    it."""
 
 
 def columns_by_node(target_list: List) -> dict[str, list[str]]:
@@ -117,9 +127,12 @@ class WorkflowService:
     def get_or_create_column_agent_node(self, target_list: List, *, agent_id: str) -> Node:
         """The one node for this agent on this sheet: a second column
         from the same agent reuses it, so a run's grain (an agent's whole
-        column set) and the node's agree. One transaction: a node that
-        landed without its path would be found, never repaired, by every
-        later get-or-create."""
+        column set) and the node's agree. The path minted below reads
+        [entry, agent]: nothing feeds it, so it heads with the entry
+        marker and the agent stands behind it. One transaction: a node
+        that landed without its path, or a path without its marker,
+        would be found, never repaired, by every later get-or-create."""
+        entry_rank, agent_rank = keys_between(None, None, 2)
         with transaction.atomic():
             workflow = self.ensure_workflow(target_list)
             config = ColumnAgent(agent_id=agent_id)
@@ -128,11 +141,12 @@ class WorkflowService:
                 workflow_id=str(workflow.id),
                 kind=config.KIND,
                 identity=config.identity(),
-                # The node is alone on the path minted below, at the first key.
-                defaults={"config": config.model_dump(), "rank": first_key()},
+                # Second on the path minted below, behind its marker.
+                defaults={"config": config.model_dump(), "rank": agent_rank},
             )
             if created:
                 path = NodePath.objects.create(account_id=self.account_id, workflow_id=str(workflow.id))
+                self._store(Entry(), rank=entry_rank, workflow_id=str(workflow.id), path_id=str(path.id))
                 node.path_id = str(path.id)
                 node.save(update_fields=["path_id", "updated_at"])
         return node
@@ -160,9 +174,26 @@ class WorkflowService:
 
     def create_path(self, target_list: List, nodes: Sequence[NodeConfig]) -> tuple[NodePath, list[Node]]:
         """A new path on the sheet's workflow holding `nodes` in order,
-        each at a fresh rank key. One transaction, path FIRST: unlike
-        get-or-create there is no identity to race on, so a failed node
-        write rolls the path back with it."""
+        each at a fresh rank key. EXACTLY ONE head marker, at the head:
+        a path says what starts it, one that says nothing is reachable
+        by neither reaction, and one that says it twice is read as two
+        paths whose second head stands behind the first's work. One
+        transaction, path FIRST: unlike get-or-create there is no
+        identity to race on, so a failed node write rolls the path back
+        with it."""
+        head = nodes[0].KIND if nodes else "nothing"
+        if head not in HEAD_OF_PATH_MARKERS:
+            raise WrongNodeKind(
+                f"a path starts with a head marker ({', '.join(sorted(HEAD_OF_PATH_MARKERS))}), not {head!r}"
+            )
+        # The other half of "exactly one": a head marker BEHIND work is
+        # read as a head by everything that looks for one, so the paths
+        # it would start are the ones standing behind it, barrier and
+        # all. Only this set is refused here, so a marker kind that ends
+        # a path stays expressible.
+        behind = sorted({config.KIND for config in nodes[1:] if config.KIND in HEAD_OF_PATH_MARKERS})
+        if behind:
+            raise WrongNodeKind(f"a head marker only ever heads its path, so {behind} cannot stand behind one")
         with transaction.atomic():
             workflow = self.ensure_workflow(target_list)
             path = NodePath.objects.create(account_id=self.account_id, workflow_id=str(workflow.id))
@@ -173,13 +204,19 @@ class WorkflowService:
             ]
         return path, stored
 
-    def move_node(self, path_id: str, node_id: str, *, after_id: str | None) -> Node:
-        """Put the node right after `after_id` (None: first on the path).
+    def move_node(self, path_id: str, node_id: str, *, after_id: str) -> Node:
+        """Put the node right after `after_id`, which every move
+        names: position zero belongs to the path's head marker and no
+        move takes it, so THE TOP OF THE WORK is the marker's own id
+        and "first on the path" is not a destination a caller can ask
+        for. A path that one day heads with work (a branch naming it
+        from its parent's tail) would need that meaning back, and it
+        would mean genuinely first, with no marker to stand behind.
         ONE write, on the moved node: a key between its two new
         neighbours, and none at all when it already sits there. Under
         the path's lock, held for the reads and the one write only, so
         two moves into the same gap cannot compute the same key. A
-        path that starts with a barrier keeps it first (PathHeadFixed):
+        path keeps the marker it starts with first (PathHeadFixed):
         its other nodes stand behind it. A key past
         RANK_REBALANCE_LENGTH (moves into one gap, many times over)
         re-spaces the whole path here and now, in the new order: a
@@ -197,27 +234,22 @@ class WorkflowService:
             if node is None:
                 raise NodeNotFound(node_id)
             others = on_path.exclude(id=node_id)
-            if after_id is None:
-                before_rank = None
-                nxt = others.order_by("rank").only("rank").first()
-            else:
-                before = others.filter(id=after_id).only("rank").first()
-                if before is None:
-                    raise NodeNotFound(after_id)
-                before_rank = before.rank
-                nxt = others.filter(rank__gt=before.rank).order_by("rank").only("rank").first()
+            before = others.filter(id=after_id).only("rank").first()
+            if before is None:
+                raise NodeNotFound(after_id)
+            nxt = others.filter(rank__gt=before.rank).order_by("rank").only("rank").first()
             # Ranks are unique per path, so "already between" is strict.
-            above = before_rank is None or before_rank < node.rank
+            above = before.rank < node.rank
             below = nxt is None or node.rank < nxt.rank
             if above and below:
                 return node
-            # Judged after the no-op: a barrier dropped where it already
-            # sits is nothing, a barrier moved or a node put ahead of it
+            # Judged after the no-op: a marker dropped where it already
+            # sits is nothing, a marker moved or a node put ahead of it
             # is refused.
             head = on_path.order_by("rank").only("id", "kind").first()
-            if head.kind == WaitUntil.KIND and (str(head.id) == node_id or after_id is None):
+            if head.kind in HEAD_OF_PATH_MARKERS and str(head.id) == node_id:
                 raise PathHeadFixed(path_id)
-            key = key_between(before_rank, nxt.rank if nxt is not None else None)
+            key = key_between(before.rank, nxt.rank if nxt is not None else None)
             if len(key) <= RANK_REBALANCE_LENGTH:
                 node.rank = key
                 node.save(update_fields=["rank", "updated_at"])
@@ -226,7 +258,7 @@ class WorkflowService:
             # Ids and ranks only: every node takes a fresh key, but none
             # of them needs its config loaded for that.
             ordered = list(others.order_by("rank").only("id", "rank"))
-            at = 0 if after_id is None else 1 + next(i for i, n in enumerate(ordered) if str(n.id) == after_id)
+            at = 1 + next(i for i, n in enumerate(ordered) if str(n.id) == after_id)
             ordered.insert(at, node)
             self._respace(ordered)
         return node
@@ -318,7 +350,9 @@ class WorkflowService:
     def nodes_ending(self, path_ids: Sequence[str]) -> list[Node]:
         """The LAST node of each of the given paths (what a barrier
         naming the path waits on), by rank; a path with no node ends in
-        nothing and drops out."""
+        nothing and drops out. A path whose only node is its marker
+        ends in the marker, which no column names, so a barrier over it
+        waits on nothing."""
         if not path_ids:
             return []
         last_by_path: dict[str, Node] = {}
@@ -332,11 +366,35 @@ class WorkflowService:
         C collation, so the database orders them."""
         return Node.objects.filter(account_id=self.account_id, path_id=path_id, rank__gt=rank).order_by("rank").first()
 
-    def wait_nodes_naming(self, path_id: str) -> QuerySet[Node]:
-        """The account's wait nodes whose inbound set names a path: what
-        makes an AI column's delete refuse."""
+    def workflow_of(self, list_id: str) -> Workflow | None:
+        """The sheet's workflow, or None for a sheet that never gained a
+        node. A READER: `ensure_workflow` is the one that mints."""
+        return Workflow.objects.filter(account_id=self.account_id, list_id=list_id).first()
+
+    def iter_entry_nodes(self, workflow_id: str) -> Iterator[Node]:
+        """The workflow's ENTRY markers, the heads of the paths nothing
+        feeds: what an arrival starts. LAZY and single-pass (the iter_
+        rule), one range of the (account, workflow, kind) index, so a
+        sheet's entries are read one at a time however many it has."""
+        yield from (
+            Node.objects.filter(account_id=self.account_id, workflow_id=workflow_id, kind=ENTRY)
+            .order_by("id")
+            .iterator()
+        )
+
+    def waits_on(self, workflow_id: str, path_id: str) -> QuerySet[Node]:
+        """The barriers over a path: this WORKFLOW's wait nodes carrying
+        it in their inbound set. Scoped to the workflow because a path
+        is only ever fed from its own sheet, so another sheet's barrier
+        holding the same id is never this path's. What the advance's
+        second rule follows, and what makes an AI column's delete
+        refuse. The index takes (account, workflow, kind) and the JSON
+        condition filters that handful in memory."""
         return Node.objects.filter(
-            account_id=self.account_id, kind=WaitUntil.KIND, config__inbound_path_ids__contains=[path_id]
+            account_id=self.account_id,
+            workflow_id=workflow_id,
+            kind=WaitUntil.KIND,
+            config__inbound_path_ids__contains=[path_id],
         )
 
     def webhook_nodes_for(self, destination_id: str) -> QuerySet[Node]:
@@ -357,7 +415,7 @@ class WorkflowService:
         point at nodes): nodes, then paths, then the workflow, as one
         transaction. No-op for a sheet that never gained a node."""
         with transaction.atomic():
-            workflow = Workflow.objects.filter(account_id=self.account_id, list_id=list_id).first()
+            workflow = self.workflow_of(list_id)
             if workflow is None:
                 return
             workflow_id = str(workflow.id)

@@ -22,7 +22,7 @@ from lists.constants import AGENT_MISSING_MESSAGE, CellSource, FillFailureCode, 
 from lists.jobs.fill import FillJob
 from lists.models import List, NodeRun
 from lists.nodes.registry import COLUMN_AGENT
-from lists.processors import WalkMode, WalkScope, processor_for
+from lists.processors import FillMode, FillScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.services import cell_truth, fill_progress
 from lists.services.lists import ListService
@@ -94,7 +94,7 @@ class _Harness(TestCase):
             **scope,
         )
 
-    def _processor(self, scope: WalkScope) -> AIColumnProcessor:
+    def _processor(self, scope: FillScope) -> AIColumnProcessor:
         processor = processor_for(account_id=ACCOUNT, node=self.node, scope=scope)
         self.assertIsInstance(processor, AIColumnProcessor)
         return processor
@@ -129,7 +129,7 @@ class _Harness(TestCase):
 class FreshRuleTests(_Harness):
     def test_a_fresh_walk_queues_the_rows_the_prompt_can_act_on(self):
         fill = self._fill()
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 4)
         runs = list(self._runs(fill))
         self.assertEqual(self._numbers(runs), [1, 2, 3, 5])
@@ -147,7 +147,7 @@ class FreshRuleTests(_Harness):
         # two queues rows 1 and 2 and judges nothing past row 2: FAILS if
         # the processor judges the page and slices afterwards.
         fill = self._fill()
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         judged: list[str] = []
         real = processor._work_status_fresh
 
@@ -163,21 +163,21 @@ class FreshRuleTests(_Harness):
     def test_a_prompt_with_no_variables_acts_on_every_row(self):
         self._prompt("Say hello")
         fill = self._fill()
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 5)
 
     def test_the_probe_finds_the_first_actionable_row_without_queuing(self):
         fill = self._fill()
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.probe(self.sheet), (True, False))
         self.assertEqual(self._runs(fill).count(), 0)
         self._prompt("Find {{missing}}")
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.probe(self.sheet), (False, True))
         # Within a consent set that holds no row (an id below every row's):
         # nothing found, nothing dropped.
         self._prompt("Find the answer for {{company}}")
-        processor = self._processor(WalkScope(mode=WalkMode.FRESH, fill_run_id=str(fill.id)))
+        processor = self._processor(FillScope(mode=FillMode.FRESH, fill_run_id=str(fill.id)))
         self.assertEqual(processor.probe(self.sheet, until_id="0" * 26), (False, False))
         # Bounded by the count exactly as the walk is: a fill covering
         # one row finds nothing when that row is the one it cannot act on.
@@ -200,7 +200,7 @@ class RemainingRuleTests(_Harness):
         type_cells(self.sheet, str(self.rows[4].id), {"answer": "typed"})
         self.rows = self.lists.rows_page(self.sheet, limit=10)
         processor = self._processor(
-            WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(fill.id), column_keys=["answer"])
+            FillScope(mode=FillMode.REMAINING, fill_run_id=str(fill.id), column_keys=["answer"])
         )
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 2)
         self.assertEqual(self._numbers(self._runs(fill)), [2, 3])
@@ -227,8 +227,8 @@ class RemainingRuleTests(_Harness):
                 last_state_change_at=NOW,
             )
         resumed = self._fill()
-        scope = WalkScope(
-            mode=WalkMode.REMAINING,
+        scope = FillScope(
+            mode=FillMode.REMAINING,
             fill_run_id=str(resumed.id),
             resumed_fill_id=str(stopped.id),
             column_keys=["answer"],
@@ -241,7 +241,7 @@ class RemainingRuleTests(_Harness):
 class PushedRuleTests(_Harness):
     def test_a_node_the_push_fully_filled_gets_no_run_and_the_rank_is_stamped(self):
         pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
-        processor = self._processor(WalkScope(mode=WalkMode.PUSHED, column_keys=["answer"]))
+        processor = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
         (run,) = list(self._runs())
         self.assertEqual(
@@ -255,7 +255,7 @@ class PushedRuleTests(_Harness):
         # instead of queuing a run the consumer would only settle unrun.
         # FAILS if the no-column case reads as owed.
         pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
-        processor = self._processor(WalkScope(mode=WalkMode.PUSHED))
+        processor = self._processor(FillScope(mode=FillMode.AUTOFILL))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 0)
         self.assertFalse(self._runs().exists())
 
@@ -266,7 +266,7 @@ class PushedRuleTests(_Harness):
         # the scope's answer (owed) and the sheet's (done) differ. FAILS
         # if the rule reads the sheet again.
         pushed = self.lists.add_rows(self.sheet, [{"company": "done.io", "answer": "sent"}])
-        processor = self._processor(WalkScope(mode=WalkMode.PUSHED, column_keys=["other"]))
+        processor = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["other"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
 
     def test_a_person_adding_rows_triggers_the_workflow_for_them(self):
@@ -284,6 +284,24 @@ class PushedRuleTests(_Harness):
         )
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(self._runs().filter(status=NodeRunStatus.READY, fill_run_id=None).count(), 2)
+
+    def test_a_sheet_with_no_workflow_starts_nothing_and_mints_none(self):
+        # A sheet that never gained an AI column has no workflow, so an
+        # arrival starts nothing, and the trigger does not mint one to
+        # find that out (a reader, never a writer). FAILS if the trigger
+        # calls ensure_workflow.
+        from lists.models import Workflow
+        from lists.services.workflow_reactions import WorkflowReactions
+
+        plain = self.lists.create(
+            owner_id=USER,
+            label="Plain",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+        )
+        arrived = self.lists.add_rows(plain, [{"company": "new.io"}])
+        self.assertEqual(WorkflowReactions(account_id=ACCOUNT).trigger(plain, arrived), 0)
+        self.assertFalse(Workflow.objects.filter(list_id=str(plain.id)).exists())
 
     def test_the_trigger_hands_each_node_its_own_columns(self):
         # The service reads the sheet ONCE and builds a scope per node

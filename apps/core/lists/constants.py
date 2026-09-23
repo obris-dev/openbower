@@ -207,6 +207,7 @@ class WebhookColumnErrorCode(StrEnum):
     DESTINATION_UNKNOWN = "destination_unknown"
     COLUMN_NOT_WEBHOOK = "column_not_webhook"
     COLUMN_NOT_DATA = "column_not_data"
+    WAITS_ON_NOTHING = "waits_on_nothing"
 
 
 class WebhookRunOutcome(StrEnum):

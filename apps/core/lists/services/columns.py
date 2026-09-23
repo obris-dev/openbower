@@ -315,10 +315,10 @@ class ColumnService:
         that is already gone has no path to be named, so the delete
         lands (the retire step logs that corruption)."""
         try:
-            path_id = workflows.get_node(node_id).path_id
+            node = workflows.get_node(node_id)
         except NodeNotFound:
             return
-        waits = workflows.wait_nodes_naming(path_id)
+        waits = workflows.waits_on(node.workflow_id, node.path_id)
         webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
         labels = [
             column.label

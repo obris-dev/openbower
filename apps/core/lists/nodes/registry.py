@@ -24,9 +24,20 @@ _REGISTRY: dict[str, type[NodeConfig]] = {}
 # because the gate must not import the module it is checking for, or it
 # could never fail.
 COLUMN_AGENT = "column_agent"
+ENTRY = "entry"
 WAIT_UNTIL = "wait_until"
 WEBHOOK = "webhook"
-SERVICE_WRITTEN_KINDS: tuple[str, ...] = (COLUMN_AGENT, WAIT_UNTIL, WEBHOOK)
+SERVICE_WRITTEN_KINDS: tuple[str, ...] = (COLUMN_AGENT, ENTRY, WAIT_UNTIL, WEBHOOK)
+# The kinds that HEAD a path, one of them on every path: entry (fed by
+# nothing) and wait_until (fed by the paths it names). The writer
+# refuses a path that starts with anything else and never displaces
+# one; a reaction skips the head and offers the node behind it. Named
+# here, beside the names, so the writer checks for a marker without
+# importing a kind module. A marker that ENDS a path (a fan-out branch,
+# naming the paths it feeds) belongs to its own set, not this one: the
+# two are asked opposite questions, so a caller that means one must
+# never be handed the other.
+HEAD_OF_PATH_MARKERS: frozenset[str] = frozenset({ENTRY, WAIT_UNTIL})
 
 
 def register(cls: type[NodeConfig]) -> None:

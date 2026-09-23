@@ -301,6 +301,42 @@ class WebhookColumnTests(TestCase):
         self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.COLUMN_UNKNOWN)
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] - 1, self.baseline[1]))
 
+    def test_a_wait_set_naming_nothing_is_refused_by_the_writer_too(self):
+        # The wire refuses an empty wait set at both doors, so this is
+        # the same rule where the path is actually WRITTEN: a barrier
+        # naming no path heads a path no reaction can reach (an arrival
+        # starts entry heads, and the scan finds a wait by the path it
+        # names), so the column would sit there unable to send with
+        # nothing to say why. FAILS if only the serializer guards it.
+        from lists.services.webhook_columns import WebhookColumnService, WebhookColumnWaitsOnNothing
+
+        service = WebhookColumnService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
+        with self.assertRaises(WebhookColumnWaitsOnNothing):
+            service.add(
+                str(self.sheet.id),
+                label="Empty barrier",
+                destination_id=str(self.destination.id),
+                wait_keys=[],
+                payload_keys=["company"],
+                interval_seconds=3600,
+            )
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), self.baseline)
+        self._add()
+        written = (Node.objects.count(), NodePath.objects.count())
+        before = self.client.get(self._config_url()).json()
+        with self.assertRaises(WebhookColumnWaitsOnNothing):
+            service.update(
+                str(self.sheet.id),
+                "crm_sync",
+                destination_id=str(self.destination.id),
+                wait_keys=[],
+                payload_keys=["company"],
+                interval_seconds=3600,
+                enabled=True,
+            )
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), written)
+        self.assertEqual(self.client.get(self._config_url()).json(), before)
+
     def test_a_webhook_column_is_refused_as_a_payload_key(self):
         self._add()
         resp = self._add(label="Second sync", payload_keys=["company", "crm_sync"])

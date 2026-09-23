@@ -54,10 +54,15 @@ class Node(AccountScopedModel):
     class Meta:
         verbose_name = _("node")
         verbose_name_plural = _("nodes")
-        # Every service read of nodes is per account and kind (a wait
-        # node naming a path, the webhook nodes naming a destination);
-        # the JSON condition then filters that handful in memory.
-        indexes = [models.Index(fields=["account_id", "kind"], name="node_account_kind_idx")]
+        # Every service read of nodes is by kind: a SHEET's markers (the
+        # entry heads an arrival starts at, the wait naming a path) are
+        # per workflow, the webhook nodes naming a destination are per
+        # account. Each read takes its own index range and the JSON
+        # condition then filters that handful in memory.
+        indexes = [
+            models.Index(fields=["account_id", "kind"], name="node_account_kind_idx"),
+            models.Index(fields=["account_id", "workflow_id", "kind"], name="node_workflow_kind_idx"),
+        ]
         constraints = [
             # The get-or-create key for kinds that declare an identity: a
             # sheet node is (account, workflow, kind, identity); the preview

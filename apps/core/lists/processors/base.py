@@ -93,47 +93,53 @@ class BatchTally:
         )
 
 
-class WalkMode(StrEnum):
-    """What a pass over rows is FOR. The agent kind judges each mode by
-    a different rule; the webhook kind judges every mode the same way."""
+class FillMode(StrEnum):
+    """What OCCASIONED this pass over rows, never the door it came
+    through: the same occasion reaches a node from more than one caller,
+    and a mode named for a caller is already wrong for the others. The
+    agent kind judges each occasion by its own rule; the webhook kind
+    judges every one of them the same way."""
 
     # A fresh fill: every row the prompt can act on, under a fill job.
     FRESH = "fresh"
     # A refill: the rows still blank in the walked columns, and not
     # already owed by the run being resumed, under a fill job.
     REMAINING = "remaining"
-    # Rows a push appended: the node runs unless the push filled every
-    # column it owns. No fill job.
-    PUSHED = "pushed"
+    # The sheet moved on its own, so the node judges what it is missing:
+    # rows arrived at the sheet, or a barrier ahead of the node cleared.
+    # The node runs unless every column it fills already holds a value.
+    # No fill job, so its runs ride the autofill lane (fill_run_id NULL).
+    AUTOFILL = "autofill"
     # A structural walk over the whole sheet (a webhook column added or
-    # its wait set changed). No fill job.
+    # its wait set changed): a node that just changed, caught up on the
+    # rows that already exist. No fill job.
     BACKFILL = "backfill"
 
 
-class WalkScope(BaseModel):
+class FillScope(BaseModel):
     """The typed context of one pass, carried on the walker's payload
     and handed to the processor at construction."""
 
-    mode: WalkMode = WalkMode.BACKFILL
+    mode: FillMode = FillMode.BACKFILL
     # The fill job the runs belong to, for FRESH and REMAINING; "" otherwise.
     fill_run_id: str = ""
     # The stopped fill a REMAINING walk resumes (Continue): the rows it
     # still owed, its ABANDONED runs, are the only ones offered. "" =
     # the column's whole remainder.
     resumed_fill_id: str = ""
-    # The columns this walk judges across, DECIDED BY THE STARTER and
+    # The columns this pass judges across, DECIDED BY THE STARTER and
     # never read off the sheet by the processor: for a REMAINING walk
     # the one column the user clicked (a widening gesture) or the
-    # resumed fill's whole set (Continue); for a PUSHED walk the
-    # columns the node fills on the sheet, as the autofill service read
-    # them. Empty for the modes that judge by no column.
+    # resumed fill's whole set (Continue); for an AUTOFILL pass the
+    # columns the node fills on the sheet, as the reaction read them.
+    # Empty for the modes that judge by no column.
     column_keys: list[str] = []
 
 
 class NodeProcessor(ABC):
     KIND: ClassVar[str]
 
-    def __init__(self, *, account_id: str, node: Node, scope: WalkScope) -> None:
+    def __init__(self, *, account_id: str, node: Node, scope: FillScope) -> None:
         self.account_id = account_id
         self.node = node
         self.scope = scope

@@ -233,12 +233,12 @@ class WriteIfBlankTests(TestCase):
         # columns.
         from lists.models import Node
         from lists.nodes.registry import COLUMN_AGENT
-        from lists.processors import WalkScope
+        from lists.processors import FillScope
         from lists.processors.column_agent import AIColumnProcessor
         from openbower_schema.fills import CellRunResult
 
         node = Node(id="01ND" + "A" * 22, account_id="01AC" + "A" * 22, kind=COLUMN_AGENT)
-        processor = AIColumnProcessor(account_id="01AC" + "A" * 22, node=node, scope=WalkScope())
+        processor = AIColumnProcessor(account_id="01AC" + "A" * 22, node=node, scope=FillScope())
         result = CellRunResult(
             cells={"answer": "yes", "stray": "x"},
             declined_cause=StoredCellState.NO_EVIDENCE,

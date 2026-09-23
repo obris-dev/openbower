@@ -52,7 +52,7 @@ from jobs.kinds.registry import register
 from jobs.models import Job
 
 from ..constants import AGENT_MISSING_MESSAGE, FILL_POLL_SECONDS, FILL_SCAN_CHUNK, FillFailureCode
-from ..processors import WalkMode, WalkScope, processor_for
+from ..processors import FillMode, FillScope, processor_for
 from ..services import fill_progress
 from ..services.lists import ListNotFound, ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
@@ -83,7 +83,7 @@ class FillJob(JobKind[FillProgress]):
     # The columns this fill owns, frozen at consent (each output's own
     # key is its column key).
     column_keys: list[str]
-    mode: WalkMode
+    mode: FillMode
     # A REMAINING walk: the stopped fill it resumes (its ABANDONED runs
     # bound the offer; "" = the column's whole remainder), and the
     # columns it judges across.
@@ -104,8 +104,8 @@ class FillJob(JobKind[FillProgress]):
         numbers cannot disagree."""
         return min(self.max_row_count, self.covered) if self.max_row_count else self.covered
 
-    def scope(self, job: Job) -> WalkScope:
-        return WalkScope(
+    def scope(self, job: Job) -> FillScope:
+        return FillScope(
             mode=self.mode,
             fill_run_id=str(job.id),
             resumed_fill_id=self.resumed_fill_id,

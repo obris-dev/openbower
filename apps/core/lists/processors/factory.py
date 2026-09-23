@@ -6,7 +6,7 @@ mutation, a collision loud, re-registration idempotent."""
 from __future__ import annotations
 
 from ..models import Node
-from .base import NodeProcessor, WalkScope
+from .base import FillScope, NodeProcessor
 
 _REGISTRY: dict[str, type[NodeProcessor]] = {}
 
@@ -31,14 +31,14 @@ def register(cls: type[NodeProcessor]) -> None:
     _REGISTRY[kind] = cls
 
 
-def processor_for(*, account_id: str, node: Node, scope: WalkScope | None = None) -> NodeProcessor:
+def processor_for(*, account_id: str, node: Node, scope: FillScope | None = None) -> NodeProcessor:
     """The processor for one node, by its kind, for one walk scope (a
     structural pass when none is given)."""
     try:
         cls = _REGISTRY[node.kind]
     except KeyError as e:
         raise UnknownProcessor(node.kind) from e
-    return cls(account_id=account_id, node=node, scope=scope or WalkScope())
+    return cls(account_id=account_id, node=node, scope=scope or FillScope())
 
 
 def registered_kinds() -> list[str]:

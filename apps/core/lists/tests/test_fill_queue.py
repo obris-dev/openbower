@@ -24,7 +24,7 @@ from ..cells.writes import Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT
-from ..processors import WalkScope
+from ..processors import FillScope
 from ..processors.column_agent import AIColumnProcessor
 from ..services import fill_progress
 from ..services.fills import FillNotFound, FillService, page_progress
@@ -102,7 +102,7 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
 
 
 def _land_claimed(fill: Job, claimed: NodeRun, run: CellRunResult, *, flow: NodeRunFlow) -> bool:
-    processor = AIColumnProcessor(account_id=ACCOUNT, node=Node(id=NODE, account_id=ACCOUNT), scope=WalkScope())
+    processor = AIColumnProcessor(account_id=ACCOUNT, node=Node(id=NODE, account_id=ACCOUNT), scope=FillScope())
     writes = processor.on_run_landed(("answer",), run)
     lists = _SheetThatTakesEverything(account_id=ACCOUNT)
     try:

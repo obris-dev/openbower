@@ -36,7 +36,7 @@ from ..cells.writes import AnsweredWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..jobs.fill import FillJob
 from ..models import List, ListRow, Node, NodeRun
-from ..processors import WalkMode
+from ..processors import FillMode
 from ..serializers import fill_run_wire
 from ..services import fill_progress
 from ..services.fills import page_progress
@@ -91,7 +91,7 @@ def open_fill_job(
     column_keys: list[str],
     consented: int,
     covered: int | None = None,
-    mode: WalkMode = WalkMode.FRESH,
+    mode: FillMode = FillMode.FRESH,
     status: JobStatus = JobStatus.READY,
     targeted: bool = True,
     targeted_at: datetime | None = None,

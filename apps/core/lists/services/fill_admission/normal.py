@@ -30,7 +30,7 @@ from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
 from ...jobs.fill import FillJob
 from ...models import List, ListRow
-from ...processors import WalkMode, WalkScope, processor_for
+from ...processors import FillMode, FillScope, processor_for
 from .. import fill_progress
 from ..lists import ListNotFound
 from ..workflows import WorkflowService, agent_id_of, columns_for_node
@@ -123,7 +123,7 @@ class FillAdmissionService(AdmissionBase):
                 node_id=str(node.id),
                 agent_id=str(agent.id),
                 column_keys=column_keys,
-                mode=WalkMode.FRESH,
+                mode=FillMode.FRESH,
                 # The consent SET: an id minted at the click. Ids are
                 # insertion order, so every row that exists now is older
                 # and a row appended after is newer and never walked.
@@ -244,7 +244,7 @@ class FillAdmissionService(AdmissionBase):
                 node_id=str(node.id),
                 agent_id=str(agent.id),
                 column_keys=column_keys,
-                mode=WalkMode.REMAINING,
+                mode=FillMode.REMAINING,
                 resumed_fill_id=resume_fill_id,
                 judged_keys=walked,
                 # The consent SET: an id minted at the click. Ids are
@@ -303,10 +303,10 @@ class FillAdmissionService(AdmissionBase):
         return row_count if max_row_count else min(confirmed_row_count or row_count, row_count)
 
     @staticmethod
-    def _probe_scope(fill: FillJob) -> WalkScope:
+    def _probe_scope(fill: FillJob) -> FillScope:
         """The walk's scope as the probe sees it, before the job exists
         (the probe queues nothing, so it needs no fill id)."""
-        return WalkScope(mode=fill.mode, resumed_fill_id=fill.resumed_fill_id, column_keys=fill.judged_keys)
+        return FillScope(mode=fill.mode, resumed_fill_id=fill.resumed_fill_id, column_keys=fill.judged_keys)
 
     @staticmethod
     def _check_budget(config: AgentConfig, *, consented: int) -> None:

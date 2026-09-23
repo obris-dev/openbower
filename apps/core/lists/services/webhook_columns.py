@@ -24,7 +24,7 @@ from ..jobs.enqueue_runs import EnqueueRuns
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
-from ..processors import WalkScope
+from ..processors import FillScope
 from ..processors.webhook import WebhookProcessor
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
@@ -54,6 +54,13 @@ class WebhookColumnNotAi(WebhookColumnRefused):
 
     def __init__(self, label: str) -> None:
         super().__init__(f"{label} is not an AI column; a webhook waits on AI columns only.")
+
+
+class WebhookColumnWaitsOnNothing(WebhookColumnRefused):
+    code = WebhookColumnErrorCode.WAITS_ON_NOTHING
+
+    def __init__(self) -> None:
+        super().__init__("A Send column waits on at least one AI column; choose what must finish before a row is sent.")
 
 
 class WebhookColumnNotWebhook(WebhookColumnRefused):
@@ -288,11 +295,22 @@ class WebhookColumnService:
         destination_id: str,
         lock: bool,
     ) -> WebhookDestination:
-        """Every body reference resolves: wait keys are AI columns,
+        """Every body reference resolves: the wait set names at least
+        one AI column, the wait keys are AI columns,
         payload keys are columns, the destination is this account's.
         `lock` is the writers' choice: a binding takes the destination's
         row lock for its transaction; a test send or preview, which
         runs in none, only reads it."""
+        if not wait_keys:
+            # A barrier naming no path is reached by nothing: no arrival
+            # starts its path (its head is a wait, not an entry) and no
+            # landing finds it (the scan matches an inbound list that
+            # names the landed path). The column would sit there unable
+            # to send, and nothing downstream would say why, so the
+            # writer refuses the shape rather than storing it. The wire
+            # already refuses it at both doors; this is the same rule
+            # where the path is actually written.
+            raise WebhookColumnWaitsOnNothing()
         by_key = {column.key: column for column in target_list.columns}
         for key in wait_keys:
             column = by_key.get(key)
@@ -343,7 +361,7 @@ class WebhookColumnService:
     def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
         """The columns a webhook column waits on, in sheet order: the
         processor's own answer, so the config read and the flush agree."""
-        return WebhookProcessor(account_id=self.account_id, node=webhook_node, scope=WalkScope()).wait_keys(target_list)
+        return WebhookProcessor(account_id=self.account_id, node=webhook_node, scope=FillScope()).wait_keys(target_list)
 
     def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
         webhook = config_as(webhook_node, Webhook)

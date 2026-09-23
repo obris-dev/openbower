@@ -21,13 +21,14 @@ from ..models import Node
 from ..nodes import registry
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import PREVIEW_IDENTITY, ColumnAgent
+from ..nodes.entry import Entry
 from ..nodes.registry import COLUMN_AGENT, all_kinds, parse_config, register, validate_node_kinds
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from ..services.workflows import config_of
 
 AGENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-BOOT_ROSTER = sorted([COLUMN_AGENT, WaitUntil.KIND, Webhook.KIND])
+BOOT_ROSTER = sorted([COLUMN_AGENT, Entry.KIND, WaitUntil.KIND, Webhook.KIND])
 
 
 def _roster() -> list[str]:
@@ -42,7 +43,7 @@ class RegistrationGuardTests(SimpleTestCase):
         # Each refusal must leave the roster exactly as boot built it.
         self.assertEqual(_roster(), BOOT_ROSTER)
 
-    def test_the_roster_after_boot_is_the_three_kinds(self):
+    def test_the_roster_after_boot_is_the_four_kinds(self):
         self.assertEqual(_roster(), BOOT_ROSTER)
 
     def test_re_registering_the_same_class_is_a_no_op(self):
@@ -87,7 +88,7 @@ class RegistrationGuardTests(SimpleTestCase):
         with patch.dict(registry._REGISTRY, clear=True), self.assertRaisesMessage(ImproperlyConfigured, COLUMN_AGENT):
             validate_node_kinds()
         # One missing kind is enough, whichever it is.
-        for kind in (WaitUntil.KIND, Webhook.KIND):
+        for kind in (Entry.KIND, WaitUntil.KIND, Webhook.KIND):
             with self.subTest(kind=kind):
                 roster = {k: v for k, v in registry._REGISTRY.items() if k != kind}
                 with (
@@ -127,10 +128,16 @@ class ConfigSeamTests(SimpleTestCase):
     def test_the_path_kinds_declare_no_identity(self):
         wait = WaitUntil(inbound_path_ids=["01UP" + "A" * 22])
         webhook = Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"])
-        self.assertEqual((wait.identity(), webhook.identity()), ("", ""))
+        self.assertEqual((Entry().identity(), wait.identity(), webhook.identity()), ("", "", ""))
+
+    def test_the_entry_marker_stores_nothing(self):
+        # A marker addressed by its path and rank: no field to drift
+        # from the structure it marks.
+        self.assertEqual(Entry().model_dump(), {})
 
     def test_the_path_kinds_round_trip_through_the_registry(self):
         for config in (
+            Entry(),
             WaitUntil(inbound_path_ids=["01UP" + "A" * 22]),
             Webhook(destination_id="01DST" + "A" * 21, payload_keys=["company"], interval_seconds=3600),
         ):

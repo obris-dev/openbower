@@ -26,6 +26,7 @@ from lists.cells.writes import LandingContext, RowLanding, WebhookWrite
 from lists.constants import CellSource, NodeRunStatus, StoredCellState
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
+from lists.nodes.entry import Entry
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.processors import UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
@@ -39,6 +40,7 @@ from lists.services.node_runs import NodeRunFlow
 from lists.services.webhook_columns import WebhookColumnService
 from lists.services.workflow_reactions import WorkflowReactions
 from lists.services.workflows import NodeNotFound, WorkflowService
+from openbower_kernel.ranks import key_between
 from openbower_schema.fills import CellRunResult
 from openbower_schema.lists import ListRowsPage
 from webhooks.services import WebhookDestinationService
@@ -169,12 +171,15 @@ class ProcessorTests(_SheetHarness):
         node_id = self._add_webhook_column(["country"])
         self.assertIsInstance(self._processor(node_id), WebhookProcessor)
         self.assertIsInstance(processor_for(account_id=ACCOUNT, node=self.first), AIColumnProcessor)
-        # A kind with no processor (the barrier makes no runs of its
-        # own): the factory says so loudly rather than walking nothing.
+        # A MARKER makes no runs of its own (it heads a path; a reaction
+        # skips it and offers the node behind it), so the factory says so
+        # loudly rather than walking nothing.
         node = self.workflows.get_node(node_id)
         barrier = self.workflows.nodes_on_path(node.path_id)[0]
-        with self.assertRaises(UnknownProcessor):
-            processor_for(account_id=ACCOUNT, node=barrier)
+        entry = Node(account_id=ACCOUNT, kind=Entry.KIND, rank="a0")
+        for marker in (barrier, entry):
+            with self.subTest(kind=marker.kind), self.assertRaises(UnknownProcessor):
+                processor_for(account_id=ACCOUNT, node=marker)
 
     def test_each_kind_executes_in_exactly_one_shape(self):
         # The webhook kind sends per NODE (one digest for many runs), the
@@ -313,6 +318,95 @@ class AdvanceTests(_SheetHarness):
             self._land(node, cells, keys=keys)
         return offered
 
+    def test_an_arrival_starts_the_entry_paths_and_never_a_node_behind_a_wait(self):
+        # The trigger starts at the ENTRY markers. The chained agent sits
+        # behind a wait, so an arrival is not its start: its barrier is,
+        # through the advance. A marker itself is never offered (it has
+        # no processor, so offering it would raise). FAILS if the
+        # trigger goes back to "every agent node with a column".
+        from lists.nodes.column_agent import ColumnAgent
+        from lists.services.workflow_reactions import WorkflowReactions
+
+        _wait, chained, _webhook = self._chained_path()
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
+        ]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        arrived = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
+        offered: list[tuple[str, str]] = []
+
+        def spy(*, account_id, node, scope=None):
+            offered.append((node.kind, str(node.id)))
+            return processor_for(account_id=account_id, node=node, scope=scope)
+
+        with patch("lists.services.workflow_reactions.processor_for", side_effect=spy):
+            WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, arrived)
+        self.assertEqual(
+            sorted(offered), sorted([(ColumnAgent.KIND, str(self.first.id)), (ColumnAgent.KIND, str(self.second.id))])
+        )
+        self.assertEqual(NodeRun.objects.filter(node_id=str(chained.id)).count(), 0)
+
+    def _marker_behind(self, ahead: Node, behind: Node) -> Node:
+        """A marker between two nodes of a path, written past the one
+        writer that refuses the shape: what corruption looks like."""
+        return Node.objects.create(
+            account_id=ACCOUNT,
+            workflow_id=ahead.workflow_id,
+            path_id=ahead.path_id,
+            kind=Entry.KIND,
+            identity="",
+            config={},
+            rank=key_between(ahead.rank, behind.rank),
+        )
+
+    def test_a_marker_where_work_belongs_stops_the_advance_and_says_so(self):
+        # A marker never runs, so a reaction that reaches one has no
+        # rule for it. It stops there (walking past would hand a wait's
+        # rows on without its barrier), logs the path, and leaves the
+        # run that landed settled DONE. FAILS if the marker reaches the
+        # factory, which raises UnknownProcessor into a run that has
+        # already done its job.
+        _wait, chained, webhook = self._chained_path()
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
+        ]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        self._marker_behind(chained, webhook)
+        with self.assertLogs("lists.services.workflow_reactions", level="ERROR") as logs:
+            offered = self._offers_from(chained, cells={"chained": "x"})
+        self.assertEqual(offered, [])
+        self.assertIn(str(chained.path_id), logs.output[0])
+        self.assertEqual(NodeRun.objects.filter(node_id=str(webhook.id)).count(), 0)
+        settled = NodeRun.objects.filter(node_id=str(chained.id)).values_list("status", flat=True)
+        self.assertEqual(list(settled), [NodeRunStatus.DONE])
+
+    def test_a_marker_where_work_belongs_stops_the_trigger_and_says_so(self):
+        # The same rule on the other reaction, which finds its node by
+        # its own route (walking out from an entry marker) and hands it
+        # over with a scope. The corrupt marker is skipped, the agent
+        # behind it is still started, and nothing raises. FAILS if the
+        # refusal moves out of the one hand-over into the advance alone.
+        first = self.workflows.get_node(str(self.first.id))
+        entries = list(self.workflows.iter_entry_nodes(first.workflow_id))
+        head = next(entry for entry in entries if entry.path_id == first.path_id)
+        self._marker_behind(head, first)
+        arrived = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
+        offered: list[str] = []
+
+        def spy(*, account_id, node, scope=None):
+            offered.append(node.kind)
+            return processor_for(account_id=account_id, node=node, scope=scope)
+
+        with (
+            self.assertLogs("lists.services.workflow_reactions", level="ERROR"),
+            patch("lists.services.workflow_reactions.processor_for", side_effect=spy),
+        ):
+            WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, arrived)
+        self.assertNotIn(Entry.KIND, offered)
+        self.assertEqual(NodeRun.objects.filter(node_id=str(self.first.id), row_id=str(arrived[0].id)).count(), 1)
+
     def test_rule_two_a_cleared_barrier_offers_the_node_right_after_it_only(self):
         # The first agent is alone on its path, so its landing is the
         # path's end: the wait naming that path is judged for the row
@@ -346,6 +440,23 @@ class AdvanceTests(_SheetHarness):
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.assertEqual(self._offers_from(chained, cells={"chained": "x"}), [WEBHOOK])
+
+    def test_a_cleared_barrier_starts_the_agent_standing_behind_it(self):
+        # The other half of "an arrival never starts a node behind a
+        # wait": its barrier does, and a run is what that means. An
+        # agent judges by the scope it is handed, so a reaction that
+        # hands it none starts nothing at all and the barrier is a dead
+        # end. FAILS if the hand-over stops deriving the scope.
+        _wait, chained, _webhook = self._chained_path()
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
+        ]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        self._land(self.first, {"answer": "yes", "score": "1"})
+        runs = NodeRun.objects.filter(node_id=str(chained.id), row_id=str(self.row.id))
+        self.assertEqual([run.status for run in runs], [NodeRunStatus.READY])
+        self.assertEqual([run.fill_run_id for run in runs], [None])
 
     def test_a_page_of_landed_rows_is_one_offer_per_downstream_node(self):
         # Two rows completing in one batch reach the webhook processor

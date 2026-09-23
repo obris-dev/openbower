@@ -16,13 +16,18 @@ from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
 from openbower_schema.agents import AgentOutput
+from webhooks.services import WebhookDestinationService
 
 from ..models import Node, NodePath, NodeRun, Workflow
 from ..nodes.base import NodeConfig
-from ..nodes.column_agent import PREVIEW_IDENTITY
+from ..nodes.column_agent import PREVIEW_IDENTITY, ColumnAgent
+from ..nodes.entry import Entry
+from ..nodes.registry import HEAD_OF_PATH_MARKERS
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
+from ..services.columns import ColumnService
 from ..services.fill_admission import NoEligibleRows
+from ..services.webhook_columns import WebhookColumnService
 from ..services.workflows import (
     NodeNotFound,
     PathHeadFixed,
@@ -48,7 +53,13 @@ class NodeGetOrCreateTests(AdmissionTestCase):
         first = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
         second = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
         self.assertEqual(first.id, second.id)
-        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (1, 1, 1))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (2, 1, 1))
+        # The path reads [entry, agent]: nothing feeds it, so its head is
+        # the entry marker and the agent stands behind it.
+        self.assertEqual(
+            [(n.kind, n.rank) for n in self.workflows.nodes_on_path(first.path_id)],
+            [(Entry.KIND, "a0"), (ColumnAgent.KIND, "a1")],
+        )
         workflow = Workflow.objects.get(list_id=str(self.sheet.id))
         path = NodePath.objects.get()
         self.assertEqual(
@@ -70,9 +81,18 @@ class NodeGetOrCreateTests(AdmissionTestCase):
         ):
             self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (0, 0))
-        # And the next call mints the pair cleanly.
+        # The marker write fails after the node and the path: all three
+        # roll back, or a path would head with its agent forever.
+        with (
+            patch("lists.services.workflows.Node.objects.create", side_effect=RuntimeError("boom")),
+            self.assertRaises(RuntimeError),
+        ):
+            self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (0, 0))
+        # And the next call mints the three cleanly.
         node = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id=str(self.agent.id))
         self.assertEqual(node.path_id, str(NodePath.objects.get().id))
+        self.assertEqual([n.kind for n in self.workflows.nodes_on_path(node.path_id)], [Entry.KIND, ColumnAgent.KIND])
 
     def test_the_preview_node_is_one_per_account_with_no_workflow_or_path(self) -> None:
         first = self.workflows.get_or_create_preview_node()
@@ -113,7 +133,7 @@ class AdmissionNodeTests(AdmissionTestCase):
         )
         fill = self.admit(config=config)
         self.sheet.refresh_from_db()
-        node = Node.objects.get()
+        node = Node.objects.get(kind=ColumnAgent.KIND)
         self.assertEqual(columns_by_node(self.sheet), {str(node.id): ["email", "status"]})
         self.assertEqual(columns_for_node(self.sheet, str(node.id)), ("email", "status"))
         self.assertEqual(columns_for_node(self.sheet, "01ND" + "0" * 22), ())
@@ -127,16 +147,17 @@ class AdmissionNodeTests(AdmissionTestCase):
         self.lists.add_rows(self.sheet, [{"company": "third.io"}])
         again = self.admission.refill(list_id=str(self.sheet.id), column_key="answer")
         tick_jobs()
-        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (1, 1))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (2, 1))
         self.assertEqual(
-            {t.node_id for t in NodeRun.objects.filter(fill_run_id=str(again.id))}, {str(Node.objects.get().id)}
+            {t.node_id for t in NodeRun.objects.filter(fill_run_id=str(again.id))},
+            {str(Node.objects.get(kind=ColumnAgent.KIND).id)},
         )
 
     def test_different_agents_on_one_sheet_share_the_workflow_on_separate_paths(self) -> None:
         self.admit()
         self.admit(config=quick_config(outputs=[AgentOutput(key="other", label="Other", type="text")]))
         workflow = Workflow.objects.get()
-        nodes = list(Node.objects.all())
+        nodes = list(Node.objects.filter(kind=ColumnAgent.KIND))
         self.assertEqual(len(nodes), 2)
         self.assertEqual({n.workflow_id for n in nodes}, {str(workflow.id)})
         self.assertEqual(len({n.path_id for n in nodes}), 2)
@@ -178,7 +199,7 @@ class ListDeleteTests(AdmissionTestCase):
         ):
             self.workflows.delete_for_list(str(self.sheet.id))
         # The nodes were deleted first and must come back with the failure.
-        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (1, 1, 1))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (2, 1, 1))
 
     def test_deleting_the_list_removes_its_workflow_and_leaves_the_preview_node(self) -> None:
         self.admit()
@@ -186,6 +207,66 @@ class ListDeleteTests(AdmissionTestCase):
         self.lists.delete(self.sheet)
         self.assertEqual((Workflow.objects.count(), NodePath.objects.count()), (0, 0))
         self.assertEqual(list(Node.objects.values_list("id", flat=True)), [preview.id])
+
+
+class HeadMarkerInvariantTests(AdmissionTestCase):
+    """Every path's head is exactly one MARKER, through every gesture
+    that writes a path: entry when nothing feeds the path, wait_until
+    when the paths it names do. A path headed by neither is reachable
+    by no reaction; one headed by two would be judged twice."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.workflows = WorkflowService(account_id=ACCOUNT)
+        self.columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
+        destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
+        self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
+
+    def _assert_invariant(self, where: str) -> None:
+        paths = NodePath.objects.filter(account_id=ACCOUNT)
+        for path in paths:
+            nodes = self.workflows.nodes_on_path(str(path.id))
+            with self.subTest(where=where, path=str(path.id)):
+                self.assertTrue(nodes, "a path with no node heads with nothing")
+                self.assertIn(nodes[0].kind, HEAD_OF_PATH_MARKERS)
+                self.assertEqual([n.kind in HEAD_OF_PATH_MARKERS for n in nodes].count(True), 1)
+        # And no node of this account points at a path that is gone (the
+        # preview node points at none at all).
+        live = {str(path.id) for path in paths}
+        stranded = [
+            str(node.id)
+            for node in Node.objects.filter(account_id=ACCOUNT)
+            if node.path_id and node.path_id not in live
+        ]
+        self.assertEqual(stranded, [], where)
+
+    def test_every_gesture_leaves_each_path_headed_by_one_marker(self) -> None:
+        self.admit()
+        self._assert_invariant("an agent column")
+        self.sheet.refresh_from_db()
+        self.sheet = self.columns.add(
+            str(self.sheet.id),
+            label="CRM sync",
+            destination_id=str(self.destination.id),
+            wait_keys=["answer"],
+            payload_keys=["company"],
+            interval_seconds=3600,
+        )
+        self._assert_invariant("a webhook column")
+        self.columns.update(
+            str(self.sheet.id),
+            "crm_sync",
+            destination_id=str(self.destination.id),
+            wait_keys=["answer"],
+            payload_keys=["company"],
+            interval_seconds=900,
+            enabled=True,
+        )
+        self._assert_invariant("a webhook column rewritten in place")
+        ColumnService(account_id=ACCOUNT, user_id=USER).delete(str(self.sheet.id), key="crm_sync")
+        self._assert_invariant("the webhook column's delete")
+        self.lists.delete(self.sheet)
+        self.assertEqual((NodePath.objects.count(), Node.objects.count()), (0, 0))
 
 
 class PathTests(AdmissionTestCase):
@@ -205,7 +286,7 @@ class PathTests(AdmissionTestCase):
 
     def test_create_path_stores_the_configs_in_rank_order_on_the_new_path(self) -> None:
         path, nodes = self.workflows.create_path(self.sheet, self._configs())
-        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (3, 2, 1))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (4, 2, 1))
         # The path kinds carry no identity: the slot is the rank.
         self.assertEqual(
             [(n.kind, n.rank, n.path_id, n.identity) for n in nodes],
@@ -217,8 +298,12 @@ class PathTests(AdmissionTestCase):
         self.assertEqual(config_as(nodes[0], WaitUntil).inbound_path_ids, [self.agent_node.path_id])
         self.assertEqual(config_as(nodes[1], Webhook).interval_seconds, 3600)
         self.assertEqual(self.workflows.nodes_on_path(str(path.id)), nodes)
-        # The agent node's path is untouched and still holds its one node.
-        self.assertEqual([n.rank for n in self.workflows.nodes_on_path(self.agent_node.path_id)], ["a0"])
+        # The agent node's path is untouched and still holds its marker
+        # and its node.
+        self.assertEqual(
+            [(n.kind, n.rank) for n in self.workflows.nodes_on_path(self.agent_node.path_id)],
+            [(Entry.KIND, "a0"), (ColumnAgent.KIND, "a1")],
+        )
 
     def test_a_path_may_hold_several_webhook_nodes_and_a_workflow_several_paths(self) -> None:
         # FAILS if a blank identity were still under the identity key:
@@ -249,15 +334,14 @@ class PathTests(AdmissionTestCase):
         stamps = {str(n.id): n.updated_at for n in self.workflows.nodes_on_path(str(path.id))}
         self.workflows.move_node(str(path.id), str(last.id), after_id=str(last.id))
         self.workflows.move_node(str(path.id), str(last.id), after_id=str(first.id))
-        self.workflows.move_node(str(path.id), str(first.id), after_id=None)
         self.assertEqual({str(n.id): n.rank for n in self.workflows.nodes_on_path(str(path.id))}, after)
         self.assertEqual({str(n.id): n.updated_at for n in self.workflows.nodes_on_path(str(path.id))}, stamps)
         with self.assertRaises(NodeNotFound):
             self.workflows.move_node(str(path.id), str(first.id), after_id="01ND" + "0" * 22)
         with self.assertRaises(PathNotFound):
-            WorkflowService(account_id="01AC" + "Z" * 22).move_node(str(path.id), str(first.id), after_id=None)
+            WorkflowService(account_id="01AC" + "Z" * 22).move_node(str(path.id), str(first.id), after_id=str(last.id))
         with self.assertRaises(PathNotFound):
-            self.workflows.move_node("01NP" + "0" * 22, str(first.id), after_id=None)
+            self.workflows.move_node("01NP" + "0" * 22, str(first.id), after_id=str(last.id))
 
     def test_moves_into_one_gap_re_space_the_path_in_place(self) -> None:
         # Two nodes leapfrogging into the same gap deepen the key by about
@@ -299,13 +383,16 @@ class PathTests(AdmissionTestCase):
         second = Webhook(destination_id="01DST" + "B" * 21, payload_keys=["company"])
         path, (barrier, first_hook, second_hook) = self.workflows.create_path(self.sheet, [wait, webhook, second])
         with self.assertRaises(PathHeadFixed):
-            self.workflows.move_node(str(path.id), str(first_hook.id), after_id=None)
-        with self.assertRaises(PathHeadFixed):
             self.workflows.move_node(str(path.id), str(barrier.id), after_id=str(first_hook.id))
         # Behind the barrier the nodes move freely.
         self.workflows.move_node(str(path.id), str(second_hook.id), after_id=str(barrier.id))
         nodes = self.workflows.nodes_on_path(str(path.id))
         self.assertEqual([n.id for n in nodes], [barrier.id, second_hook.id, first_hook.id])
+        # The OTHER marker heads the agent path, and is as fixed: the
+        # guard is the marker set, not one kind.
+        entry, agent = self.workflows.nodes_on_path(self.agent_node.path_id)
+        with self.assertRaises(PathHeadFixed):
+            self.workflows.move_node(self.agent_node.path_id, str(entry.id), after_id=str(agent.id))
 
     def test_every_writer_of_a_paths_nodes_takes_the_paths_lock_first(self) -> None:
         # One lock, one order: the path row FOR UPDATE before any node
@@ -349,18 +436,39 @@ class PathTests(AdmissionTestCase):
                 account_id=ACCOUNT, workflow_id=self.agent_node.workflow_id, path_id=str(path.id), kind="webhook"
             )
 
-    def test_a_re_space_from_a_drop_at_the_top_puts_the_node_first(self) -> None:
-        # A path with no barrier, so the top is open: the re-space's
-        # insertion point at the head is the branch this drives.
-        _wait, webhook = self._configs()
+    def test_a_path_holds_exactly_one_head_marker_and_it_heads_the_path(self) -> None:
+        # A path says what starts it: entry (fed by nothing) or a wait
+        # (fed by the paths it names). One that says nothing is
+        # reachable by neither reaction. One that says it TWICE is worse
+        # than refused work: the marker behind is read as a head by
+        # everything that looks for one, so an arrival would start the
+        # node behind IT, barrier and all. Both shapes are refused and
+        # write nothing. FAILS if either half of the guard goes.
+        wait, webhook = self._configs()
         second = Webhook(destination_id="01DST" + "B" * 21, payload_keys=["company"])
-        path, (first, last) = self.workflows.create_path(self.sheet, [webhook, second])
-        with (
-            patch("lists.services.workflows.RANK_REBALANCE_LENGTH", 1),
-            self.assertLogs("lists.services.workflows", "WARNING"),
-        ):
-            self.workflows.move_node(str(path.id), str(last.id), after_id=None)
-        self.assertEqual([n.id for n in self.workflows.nodes_on_path(str(path.id))], [last.id, first.id])
+        before = (Node.objects.count(), NodePath.objects.count())
+        refused: list[list[NodeConfig]] = [
+            [webhook, second],
+            [],
+            [wait, Entry(), webhook],
+            [Entry(), wait, webhook],
+            [Entry(), webhook, Entry()],
+        ]
+        for nodes in refused:
+            with self.subTest(kinds=[config.KIND for config in nodes]), self.assertRaises(WrongNodeKind):
+                self.workflows.create_path(self.sheet, nodes)
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), before)
+
+    def test_a_path_headed_by_an_entry_is_written(self) -> None:
+        # The accept half, and the OTHER member of the marker set: the
+        # refusals above prove a shape is turned away, not that a
+        # legitimate one still lands. FAILS if the guard narrows to one
+        # marker kind.
+        _wait, webhook = self._configs()
+        path, nodes = self.workflows.create_path(self.sheet, [Entry(), webhook])
+        self.assertEqual([n.kind for n in nodes], [Entry.KIND, Webhook.KIND])
+        self.assertEqual([n.path_id for n in nodes], [str(path.id), str(path.id)])
+        self.assertLess(nodes[0].rank, nodes[1].rank)
 
     def test_a_move_never_crosses_paths(self) -> None:
         path, (barrier, hook) = self.workflows.create_path(self.sheet, self._configs())
@@ -392,7 +500,7 @@ class PathTests(AdmissionTestCase):
             self.assertRaises(RuntimeError),
         ):
             self.workflows.create_path(self.sheet, self._configs())
-        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (1, 1))
+        self.assertEqual((Node.objects.count(), NodePath.objects.count()), (2, 1))
 
     def test_config_as_refuses_the_wrong_kind_and_save_node_refuses_a_foreign_config(self) -> None:
         _, nodes = self.workflows.create_path(self.sheet, self._configs())
@@ -411,13 +519,68 @@ class PathTests(AdmissionTestCase):
 
     def test_the_config_queries_read_the_json_and_are_account_scoped(self) -> None:
         path, _ = self.workflows.create_path(self.sheet, self._configs())
-        naming = self.workflows.wait_nodes_naming(self.agent_node.path_id)
-        self.assertEqual([n.path_id for n in naming], [str(path.id)])
+        workflow_id = self.agent_node.workflow_id
+        over = self.workflows.waits_on(workflow_id, self.agent_node.path_id)
+        self.assertEqual([n.path_id for n in over], [str(path.id)])
         self.workflows.create_path(self.sheet, self._configs())
         self.assertEqual(self.workflows.webhook_nodes_for("01DST" + "A" * 21).count(), 2)
         foreign = WorkflowService(account_id="01ACCT" + "Z" * 20)
         self.assertEqual(foreign.webhook_nodes_for("01DST" + "A" * 21).count(), 0)
-        self.assertEqual(foreign.wait_nodes_naming(self.agent_node.path_id).count(), 0)
+        self.assertEqual(foreign.waits_on(workflow_id, self.agent_node.path_id).count(), 0)
+
+    def test_the_wait_scan_is_this_workflows_and_this_sheets_alone(self) -> None:
+        # A path id is only ever fed from its own sheet, so a barrier on
+        # ANOTHER sheet naming this path (corruption, or a future copy)
+        # is not this path's to follow. FAILS if the scan drops its
+        # workflow filter and goes account-wide again.
+        mine, _ = self.workflows.create_path(self.sheet, self._configs())
+        other_sheet = self.lists.create(
+            owner_id=USER,
+            label="Other",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+        )
+        # The writer is kind-blind about the ids a config carries, so a
+        # wait on another sheet can name this sheet's path.
+        self.workflows.create_path(
+            other_sheet,
+            [
+                WaitUntil(inbound_path_ids=[self.agent_node.path_id]),
+                Webhook(destination_id="01DST" + "C" * 21, payload_keys=["company"]),
+            ],
+        )
+        found = self.workflows.waits_on(self.agent_node.workflow_id, self.agent_node.path_id)
+        self.assertEqual([n.path_id for n in found], [str(mine.id)])
+
+    def test_the_entry_iterate_is_lazy_and_one_read_of_this_workflows_markers(self) -> None:
+        # The trigger walks a sheet's entries one at a time: a generator
+        # that issues nothing until it is pulled, and ONE index range
+        # over (account, workflow, kind) however many entries there are.
+        # FAILS if it returns a list, or loses its workflow filter.
+        import inspect
+
+        second = self.workflows.get_or_create_column_agent_node(self.sheet, agent_id="01AGT" + "Z" * 21)
+        other_sheet = self.lists.create(
+            owner_id=USER,
+            label="Other",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+        )
+        self.workflows.get_or_create_column_agent_node(other_sheet, agent_id="01AGT" + "Y" * 21)
+        workflow_id = self.agent_node.workflow_id
+        with CaptureQueriesContext(connection) as unpulled:
+            entries = self.workflows.iter_entry_nodes(workflow_id)
+            self.assertTrue(inspect.isgenerator(entries))
+        # Nothing is read until the caller pulls: the trigger holds one
+        # marker at a time, never the workflow's.
+        self.assertEqual([q["sql"] for q in unpulled.captured_queries], [])
+        with CaptureQueriesContext(connection) as captured:
+            found = list(entries)
+        self.assertEqual({n.path_id for n in found}, {self.agent_node.path_id, second.path_id})
+        reads = [q["sql"] for q in captured.captured_queries if "lists_node" in q["sql"]]
+        self.assertEqual(len(reads), 1, reads)
+        self.assertIn("workflow_id", reads[0])
+        self.assertIn("'entry'", reads[0])
 
     def test_path_of_column_walks_the_ai_column_to_its_node(self) -> None:
         self.sheet.columns = [
@@ -431,5 +594,5 @@ class PathTests(AdmissionTestCase):
     def test_delete_path_removes_exactly_its_nodes_and_itself(self) -> None:
         path, _ = self.workflows.create_path(self.sheet, self._configs())
         self.workflows.delete_path(str(path.id))
-        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (1, 1, 1))
-        self.assertEqual(Node.objects.get().id, self.agent_node.id)
+        self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (2, 1, 1))
+        self.assertEqual(Node.objects.get(kind=ColumnAgent.KIND).id, self.agent_node.id)

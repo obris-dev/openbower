@@ -125,7 +125,9 @@ auth + data services live in a separate private repo.
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (lists/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
-  target_list, rows, now)` under a typed `WalkScope` for the walkers,
+  target_list, rows, now)` under a typed `FillScope` naming the
+  OCCASION (fresh | remaining | autofill | backfill, never the door it
+  came through) and the columns to judge across, for the walkers,
   which page rows and hand them over knowing no kind and no column;
   `_process_run(task, flow)` for a kind whose runs are claimed one at a
   time off the topic, or `_process_batch(flow, now)` for a kind that
@@ -137,13 +139,23 @@ auth + data services live in a separate private repo.
   then the ADVANCE every kind owes the workflow once a run reaches
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
-  other reaction, TRIGGER (rows arrived: every agent node judges them),
-  runs for EVERY row that enters a sheet: rows enter through one
+  other reaction, TRIGGER (rows arrived: the node behind each ENTRY
+  marker judges them), runs for EVERY row that enters a sheet: rows
+  enter through one
   operation (lists/operations/append_rows.py: the list service's
   primitive, then the trigger, one transaction), which every door (a
   push, a person, an import, a snapshot) calls, and a pin holds that
   nothing else in production calls the primitive.
   The node config classes in lists/nodes stay what a node IS at rest.
+  Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
+  starts with exactly one of them: `entry` (the path is fed by nothing,
+  so an arrival starts it) and `wait_until` (the path is fed by the
+  paths its config names, so its barrier starts it). A marker never
+  runs: it has no processor, and a reaction skips it and offers the node
+  behind it, or stops and says so when it finds one behind work.
+  The workflow service is the one writer holding that invariant, and it
+  is what makes "which paths does an arrival start" one indexed read
+  rather than a walk of the workflow's nodes.
 - How a column's CELLS change is the cell layer (lists/cells), and
   every change lands as a `CellWrite` (the state a cell means to
   record, the value it lands where blank, the tools behind it): a

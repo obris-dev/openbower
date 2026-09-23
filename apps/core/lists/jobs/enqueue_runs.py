@@ -29,7 +29,7 @@ from jobs.kinds.registry import register
 from jobs.models import Job
 
 from ..constants import FILL_SCAN_CHUNK
-from ..processors import WalkScope, processor_for
+from ..processors import FillScope, processor_for
 from ..services.lists import ListNotFound, ListService, RowCursor
 from ..services.workflows import NodeNotFound, WorkflowService
 
@@ -64,7 +64,7 @@ class EnqueueRuns(JobKind[BackfillProgress]):
         page = lists.rows_page(target_list, after=after, limit=FILL_SCAN_CHUNK)
         if not page:
             return None
-        processor = processor_for(account_id=job.account_id, node=node, scope=WalkScope())
+        processor = processor_for(account_id=job.account_id, node=node, scope=FillScope())
         processor.enqueue_runs(target_list, page, now=timezone.now())
         return BackfillProgress(after_id=str(page[-1].id), after_rank=page[-1].rank)
 
