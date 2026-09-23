@@ -75,9 +75,27 @@ class JobRunner:
         self, *, now: datetime.datetime | None = None, budget_seconds: float = JOB_TICK_BUDGET_SECONDS
     ) -> TickReport:
         """Reclaim what a dead tick left, then work the due jobs oldest
-        first until the budget is spent. The budget bounds the TICK, so
-        a long job yields to the next minute rather than starving the
-        jobs behind it."""
+        first until the budget is spent.
+
+        FIRST COME, FIRST SERVED, and it means what it says: the due
+        list is id order, a job parked on the budget is due again at
+        once, and its id is still the oldest, so it is re-claimed ahead
+        of the jobs behind it and runs to completion before they start.
+        The budget is not a fairness device. What it buys is DURABILITY
+        and LIVENESS: the cursor is persisted and the claim released
+        every 32 seconds, so a crash loses one slice rather than a job,
+        a tick stays far under the stale window that would let the
+        reclaim fire under it, and SIGTERM lands between slices.
+
+        The policy holds while a long job's long part YIELDS on its own:
+        a fill spends its walk here and then waits for its runs through
+        JobWaiting, which parks it with a future wake and lets the queue
+        move. A kind that instead held the runner for its whole life
+        would make the wait behind it unbounded, and that is when this
+        becomes round-robin: order the due list by `scheduled_at` so a
+        budget park goes behind whatever has been waiting longer, and
+        reshape `job_ready_idx`, which is (status, id) today precisely
+        to serve this scan."""
         now = now or timezone.now()
         deadline = time.monotonic() + budget_seconds
         report = TickReport(reclaimed=self._reclaim(now))

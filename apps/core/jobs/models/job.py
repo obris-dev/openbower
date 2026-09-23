@@ -8,6 +8,7 @@ from ..constants import (
     JOB_ERROR_MAX_LENGTH,
     JOB_KIND_MAX_LENGTH,
     JOB_STATUS_MAX_LENGTH,
+    OPEN_JOB_STATES,
     JobStatus,
 )
 
@@ -93,6 +94,17 @@ class Job(AccountScopedModel):
                 fields=["status", "last_state_change_at"],
                 name="job_reclaim_idx",
                 condition=models.Q(status=JobStatus.PROCESSING),
+            ),
+            # A kind's OPEN jobs, whatever the account or target, in age
+            # order: the fill provisioner's loop reads this every pass.
+            # Partial on the open states, so the scan is bounded by what
+            # is live rather than by every job the kind has ever run;
+            # the other kind-leading index carries `target_id` second,
+            # which a global read has nothing to seek on.
+            models.Index(
+                fields=["kind", "id"],
+                name="job_open_idx",
+                condition=models.Q(status__in=OPEN_JOB_STATES),
             ),
             # A target's jobs of one kind by status: the sheet's fills
             # page and every "which fills are open on this list" read.
