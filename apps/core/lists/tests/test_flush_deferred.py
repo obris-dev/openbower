@@ -344,6 +344,23 @@ class FlushDeferredTests(TransactionTestCase):
         record = ListCellState.objects.get(row_id=str(self.rows[1].id), column_key="crm_sync")
         self.assertEqual(record.state, StoredCellState.FAILED)
 
+    def test_a_digests_rows_land_on_the_ledger_in_one_statement(self):
+        # However many rows a digest carries, their records are ONE
+        # upsert, then one settle: a landing is two statements, not two
+        # per row. FAILS if the landing records row by row.
+        from lists.models import ListCellState
+
+        for row in self.rows:
+            self._complete(row)
+        self._add_column()
+        with CaptureQueriesContext(connection) as queries:
+            report = self._tick(_FakeSender())
+        self.assertEqual(report.settled, 3)
+        heads = [q["sql"].lower().split(" where ")[0] for q in queries.captured_queries]
+        inserts = [head for head in heads if head.startswith("insert") and "lists_listcellstate" in head]
+        self.assertEqual(len(inserts), 1)
+        self.assertEqual(ListCellState.objects.filter(column_key="crm_sync", state=StoredCellState.SENT).count(), 3)
+
     def test_a_rejected_delivery_fails_the_run_at_once(self):
         self._fails_at_once(REJECTED)
 

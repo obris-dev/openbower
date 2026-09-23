@@ -359,24 +359,22 @@ class ListService:
     def record_states(
         self,
         list_id: str,
-        row_id: str,
-        states: dict[str, StoredCellState],
+        states_by_row: Mapping[str, Mapping[str, StoredCellState]],
         *,
         source: CellSource,
         fill_run_id: str | None,
         tools: Mapping[str, str],
     ) -> None:
         """The ledger alone, for a node whose column holds no value (a
-        Send webhook's: SENT, or FAILED): the same records write_cells
-        writes beside a value, under the same identity, so the rows
-        page, the counts and the barriers read one ledger whatever the
-        column's kind."""
-        cell_truth.write(
+        Send webhook's: SENT, or FAILED), for a BATCH of rows in one
+        upsert: the same records write_cells writes beside a value,
+        under the same identity, so the rows page, the counts and the
+        barriers read one ledger whatever the column's kind."""
+        cell_truth.write_rows(
             account_id=self.account_id,
             list_id=list_id,
-            row_id=row_id,
+            states_by_row=states_by_row,
             fill_run_id=fill_run_id,
-            states=states,
             tools=dict(tools),
             source=source,
         )

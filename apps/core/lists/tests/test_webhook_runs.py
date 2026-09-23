@@ -696,7 +696,11 @@ class CellStateTests(_BackfilledSheet):
         lists = ListService(account_id=ACCOUNT)
         for run, state in ((first, StoredCellState.SENT), (second, StoredCellState.FAILED)):
             lists.record_states(
-                str(self.sheet.id), run.row_id, {"crm_sync": state}, source=CellSource.NODE, fill_run_id=None, tools={}
+                str(self.sheet.id),
+                {run.row_id: {"crm_sync": state}},
+                source=CellSource.NODE,
+                fill_run_id=None,
+                tools={},
             )
             NodeRun.objects.filter(id=run.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(
@@ -714,8 +718,7 @@ class CellStateTests(_BackfilledSheet):
         (first, _second) = list(self._runs())
         ListService(account_id=ACCOUNT).record_states(
             str(self.sheet.id),
-            first.row_id,
-            {"crm_sync": StoredCellState.SENT},
+            {first.row_id: {"crm_sync": StoredCellState.SENT}},
             source=CellSource.NODE,
             fill_run_id=None,
             tools={},

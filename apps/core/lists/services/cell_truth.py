@@ -26,6 +26,7 @@ in depth, not the guard.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from openbower_kernel.batches import iter_id_pages
@@ -106,22 +107,46 @@ def write(
     did not think about attribution should not compile). Every caller
     today is a fill; the grid's edit path will write MANUAL once it
     exists, and completion reads both alike."""
-    if not states:
+    write_rows(
+        account_id=account_id,
+        list_id=list_id,
+        states_by_row={row_id: states},
+        fill_run_id=fill_run_id,
+        tools=tools,
+        source=source,
+    )
+
+
+def write_rows(
+    *,
+    account_id: str,
+    list_id: str,
+    states_by_row: Mapping[str, Mapping[str, StoredCellState]],
+    fill_run_id: str | None,
+    tools: dict[str, str],
+    source: CellSource,
+) -> None:
+    """Many rows' cell states under one identity, ONE upsert: a batch
+    landing (a webhook digest's rows) records every row in a single
+    statement rather than one per row."""
+    records = [
+        ListCellState(
+            account_id=account_id,
+            list_id=list_id,
+            row_id=row_id,
+            column_key=column_key,
+            state=state,
+            fill_run_id=fill_run_id,
+            tools=tools,
+            source=source,
+        )
+        for row_id, states in states_by_row.items()
+        for column_key, state in states.items()
+    ]
+    if not records:
         return
     ListCellState.objects.bulk_create(
-        [
-            ListCellState(
-                account_id=account_id,
-                list_id=list_id,
-                row_id=row_id,
-                column_key=column_key,
-                state=state,
-                fill_run_id=fill_run_id,
-                tools=tools,
-                source=source,
-            )
-            for column_key, state in states.items()
-        ],
+        records,
         update_conflicts=True,
         unique_fields=_UNIQUE_FIELDS,
         update_fields=_UPSERT_FIELDS,

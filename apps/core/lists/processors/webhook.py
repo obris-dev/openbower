@@ -264,23 +264,21 @@ class WebhookProcessor(NodeProcessor):
         result: WebhookRunResult,
     ) -> int:
         """The batch's landing: one cell record per row (this node's
-        column, SENT or FAILED, under the node as writer and no fill),
-        then the runs closed DONE with the result stored, one
-        transaction, ListCellState before NodeRun (the order the
+        column, SENT or FAILED, under the node as writer and no fill) in
+        ONE upsert, then the runs closed DONE with the result stored,
+        one transaction, ListCellState before NodeRun (the order the
         deletes take)."""
         if not runs:
             return 0
         lists = ListService(account_id=self.account_id)
         with transaction.atomic():
-            for run in runs:
-                lists.record_states(
-                    str(batch.target_list.id),
-                    run.row_id,
-                    {batch.column_key: state},
-                    source=CellSource.NODE,
-                    fill_run_id=None,
-                    tools={},
-                )
+            lists.record_states(
+                str(batch.target_list.id),
+                {run.row_id: {batch.column_key: state} for run in runs},
+                source=CellSource.NODE,
+                fill_run_id=None,
+                tools={},
+            )
             return flow.settle_many([str(run.id) for run in runs], result.model_dump(), status=NodeRunStatus.DONE)
 
     def wait_keys(self, target_list: List) -> list[str]:
