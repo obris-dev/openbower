@@ -175,9 +175,9 @@ class NodeProcessor(ABC):
     def on_run_landed(self, column_keys: Sequence[str], outcome: object) -> list[CellWrite]:
         """What one of this node's runs does to its cells: one write per
         column the node fills on the sheet, from the kind's own outcome
-        (the agent's CellRunResult, the webhook's SENT | FAILED). Pure;
-        the landing persists it. A kind whose runs touch no cell (a
-        barrier) keeps the raising default."""
+        (the agent's CellRunResult as value writes, the webhook's SENT |
+        FAILED as a state write). Pure; the landing persists it. A kind
+        whose runs touch no cell (a barrier) keeps the raising default."""
         raise NotImplementedError(f"{self.KIND} runs land on no cell")
 
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:

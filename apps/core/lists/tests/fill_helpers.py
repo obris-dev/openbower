@@ -32,7 +32,7 @@ from jobs.services import JobRunner, JobService
 from openbower_schema.lists import AiColumn
 
 from ..cells.kinds.registry import column_kind_for
-from ..cells.writes import CellWrite, LandingContext, RowLanding
+from ..cells.writes import LandingContext, RowLanding, ValueWrite
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..jobs.fill import FillJob
 from ..models import List, ListRow, Node, NodeRun
@@ -165,9 +165,7 @@ def settle(
     unanswered = set(causes) if causes is not None else (set(consent.column_keys) if cause is not None else set())
     declined = next(iter(causes.values())) if causes else (cause or StoredCellState.NO_EVIDENCE)
     writes = [
-        CellWrite(key, state=declined, tools=tools or {})
-        if key in unanswered
-        else CellWrite(key, state=StoredCellState.FILLED, value=FILLED_VALUE, tools=tools or {})
+        ValueWrite(key, None if key in unanswered else FILLED_VALUE, declined, tools or {})
         for key in consent.column_keys
     ]
     # The processor's landing shape and lock order: the writes through
@@ -252,7 +250,7 @@ def type_cells(target_list: List, row_id: str, values: dict[str, str]) -> None:
         if key not in by_key:
             # A key with no column yet: rows accept arbitrary keys from
             # import and manual entry, so the value lands as a plain one.
-            writes.append(CellWrite(key, state=StoredCellState.FILLED, value=value))
+            writes.append(ValueWrite(key, value))
             continue
         write = column_kind_for(by_key[key]).on_value_typed(by_key[key], value)
         if write is not None:

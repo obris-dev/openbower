@@ -20,7 +20,7 @@ from jobs.models import Job
 from openbower_kernel.ranks import keys_between
 from openbower_schema.fills import CellRunResult
 
-from ..cells.writes import LandingContext, RowLanding
+from ..cells.writes import Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT
@@ -28,7 +28,7 @@ from ..processors import WalkScope
 from ..processors.column_agent import AIColumnProcessor
 from ..services import fill_progress
 from ..services.fills import FillNotFound, FillService, page_progress
-from ..services.lists import CellWriteResult, ListService
+from ..services.lists import ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 from .fill_helpers import fill_status, open_fill_job, tick_fill
 
@@ -74,11 +74,12 @@ class _SheetThatTakesEverything(ListService):
     while the truth half stays the real one. The landing's real value
     writer is covered by the worker and view tests."""
 
-    def _write_values(self, list_id: str, values_by_row) -> dict[str, CellWriteResult]:
-        return {
-            row_id: CellWriteResult(tuple(key for key, value in cells.items() if value.strip()), (), (), ())
-            for row_id, cells in values_by_row.items()
-        }
+    def _write_values(self, list_id: str, by_row) -> dict[str, Landed]:
+        landed = {}
+        for row_id, writes in by_row.items():
+            verdict = RowVerdict(tuple(w.key for w in writes if w.value_to_land() is not None), (), ())
+            landed[row_id] = Landed(verdict, tuple(s for w in writes if (s := w.resolve(verdict)) is not None))
+        return landed
 
 
 def _ctx(fill: Job) -> LandingContext:

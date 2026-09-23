@@ -8,8 +8,7 @@ from typing import ClassVar
 
 from openbower_schema.lists import ListColumn
 
-from ...constants import StoredCellState
-from ..writes import CellWrite
+from ..writes import CellWrite, ValueWrite
 from .base import ColumnKind
 from .registry import register
 
@@ -20,7 +19,7 @@ class AiColumnKind(ColumnKind):
     def on_value_typed(self, column: ListColumn, value: str) -> CellWrite | None:
         if not value.strip():
             return None
-        return CellWrite(column.key, state=StoredCellState.FILLED, value=value)
+        return ValueWrite(column.key, value)
 
 
 register(AiColumnKind)

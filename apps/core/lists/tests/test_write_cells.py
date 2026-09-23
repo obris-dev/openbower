@@ -10,7 +10,7 @@ from django.db import connection
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
-from lists.cells.writes import CellWrite, LandingContext, RowLanding
+from lists.cells.writes import LandingContext, RowLanding, ValueWrite
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin, StoredCellState
 from lists.models import ListRow
 from lists.services.lists import ListNotFound, ListService, RowNotFound
@@ -34,13 +34,13 @@ def _ctx(list_id: str, source=CellSource.MANUAL, fill_run_id: str | None = None)
 
 
 def _landing(row_id: str, values: dict[str, str], *, column_keys=None, blank_state=None) -> RowLanding:
-    """A landing of FILLED writes for the values (the editor's shape),
-    plus, when `column_keys` names more, a write with no value carrying
-    `blank_state` for each of the rest (an agent's shape)."""
-    writes = [CellWrite(key, state=StoredCellState.FILLED, value=value) for key, value in values.items()]
+    """A landing of value writes for the values (the editor's shape, no
+    blank story), plus, when `column_keys` names more, a write with no
+    value carrying `blank_state` for each of the rest (an agent's)."""
+    writes: list[ValueWrite] = [ValueWrite(key, value) for key, value in values.items()]
     for key in column_keys or ():
         if key not in values and blank_state is not None:
-            writes.append(CellWrite(key, state=blank_state))
+            writes.append(ValueWrite(key, None, blank_state))
     return RowLanding(row_id, writes)
 
 
@@ -114,30 +114,42 @@ class WriteIfBlankTests(TestCase):
             _ctx(str(target.id), CellSource.MANUAL),
             _landing(str(row.id), {"employees": "", "revenue": "   "}),
         )
-        self.assertEqual(result, ((), (), (), ("employees", "revenue")))
+        self.assertEqual(result, ((), (), ()))
         row.refresh_from_db()
         self.assertEqual(row.data, before)
         self.assertFalse(ListCellState.objects.filter(row_id=str(row.id)).exists())
 
-    def test_the_four_buckets_partition_the_columns_asked_for(self):
-        # Every column the write is responsible for lands in exactly one
-        # bucket, whether a value arrived for it or not, so the truth
-        # rule maps and never defaults. FAILS if a column goes missing
-        # from the result (an unanswered one most easily) or lands twice.
+    def test_every_write_resolves_to_the_state_the_row_earned_it(self):
+        # A value that landed is FILLED, one the type refused is
+        # TYPE_MISMATCH, one an agent had none for records its cause,
+        # and a person's blank records nothing: each write answers for
+        # itself against the row. FAILS if the landing derives a state
+        # the write did not earn, or records a blank with no story.
+        from lists.models import ListCellState
+
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
-        result = service.land_row(
-            _ctx(str(target.id), CellSource.MANUAL),
-            _landing(
-                str(row.id),
-                {"name": "Machine Name", "employees": "42", "founded": "next spring", "revenue": ""},
-                column_keys=("name", "employees", "founded", "revenue", "domain"),
-                blank_state=StoredCellState.NO_EVIDENCE,
-            ),
+        landing = RowLanding(
+            str(row.id),
+            [
+                ValueWrite("name", "Machine Name"),  # occupied: a person's value stays
+                ValueWrite("employees", "42"),  # lands
+                ValueWrite("founded", "next spring"),  # the date type refuses
+                ValueWrite("revenue", ""),  # a person's blank: nothing
+                ValueWrite("domain", None, StoredCellState.NO_EVIDENCE),  # an agent had none
+            ],
         )
-        buckets = [*result.written, *result.occupied, *(m.key for m in result.mismatched), *result.unanswered]
-        self.assertEqual(sorted(buckets), sorted(("name", "employees", "founded", "revenue", "domain")))
-        self.assertEqual(result.unanswered, ("revenue", "domain"))
+        service.land_row(_ctx(str(target.id), CellSource.NODE), landing)
+        recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(
+            recorded,
+            {
+                "name": StoredCellState.FILLED,
+                "employees": StoredCellState.FILLED,
+                "founded": StoredCellState.TYPE_MISMATCH,
+                "domain": StoredCellState.NO_EVIDENCE,
+            },
+        )
 
     def test_a_persons_unanswered_column_leaves_no_record_and_an_agents_carries_its_cause(self):
         # A person has no cause to record: the columns they left blank
@@ -201,12 +213,8 @@ class WriteIfBlankTests(TestCase):
         plain = PlainColumn(key="name", label="Name", type="text")
         ai = AiColumn(key="answer", label="Answer", type="text", node_id="01ND" + "A" * 22)
         hook = WebhookColumn(key="crm_sync", label="CRM", type="text", node_id="01ND" + "B" * 22)
-        self.assertEqual(
-            column_kind_for(plain).on_value_typed(plain, "Acme"), CellWrite("name", StoredCellState.FILLED, "Acme")
-        )
-        self.assertEqual(
-            column_kind_for(ai).on_value_typed(ai, "yes"), CellWrite("answer", StoredCellState.FILLED, "yes")
-        )
+        self.assertEqual(column_kind_for(plain).on_value_typed(plain, "Acme"), ValueWrite("name", "Acme"))
+        self.assertEqual(column_kind_for(ai).on_value_typed(ai, "yes"), ValueWrite("answer", "yes"))
         self.assertIsNone(column_kind_for(ai).on_value_typed(ai, "   "))
         with self.assertRaises(NotEditable):
             column_kind_for(hook).on_value_typed(hook, "sent")
@@ -233,8 +241,8 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual(
             processor.on_run_landed(("answer", "score"), result),
             [
-                CellWrite("answer", StoredCellState.FILLED, "yes", {"web_search": "open"}),
-                CellWrite("score", StoredCellState.NO_EVIDENCE, None, {"web_search": "open"}),
+                ValueWrite("answer", "yes", StoredCellState.NO_EVIDENCE, {"web_search": "open"}),
+                ValueWrite("score", None, StoredCellState.NO_EVIDENCE, {"web_search": "open"}),
             ],
         )
 

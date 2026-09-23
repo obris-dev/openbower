@@ -25,8 +25,9 @@ class ColumnKind(ABC):
     KIND: ClassVar[str]
 
     def on_value_typed(self, column: ListColumn, value: str) -> CellWrite | None:
-        """A person set this cell. The write to land (FILLED with the
-        value), None for a blank (nothing to write, nothing to record),
-        or NotEditable for a kind that holds no value. The default is
-        the refusal: a kind that accepts typing says so."""
+        """A person set this cell. The value write to land (no blank
+        story: a person's blank is nothing to write and nothing to
+        record, so the kind returns None for one), or NotEditable for
+        a kind that holds no value. The default is the refusal: a kind
+        that accepts typing says so."""
         raise NotEditable(column.key)
