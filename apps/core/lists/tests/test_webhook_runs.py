@@ -22,7 +22,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, TickReport
-from lists.cells.writes import LandingContext, RowLanding, StateWrite
+from lists.cells.writes import LandingContext, RowLanding, WebhookWrite
 from lists.constants import CellSource, NodeRunStatus, StoredCellState
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
@@ -692,7 +692,7 @@ class CellStateTests(_BackfilledSheet):
         for run, state in ((first, StoredCellState.SENT), (second, StoredCellState.FAILED)):
             lists.land_row(
                 LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None),
-                RowLanding(run.row_id, [StateWrite("crm_sync", state)]),
+                RowLanding(run.row_id, [WebhookWrite("crm_sync", state)]),
             )
             NodeRun.objects.filter(id=run.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(
@@ -710,7 +710,7 @@ class CellStateTests(_BackfilledSheet):
         (first, _second) = list(self._runs())
         ListService(account_id=ACCOUNT).land_row(
             LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None),
-            RowLanding(first.row_id, [StateWrite("crm_sync", StoredCellState.SENT)]),
+            RowLanding(first.row_id, [WebhookWrite("crm_sync", StoredCellState.SENT)]),
         )
         NodeRun.objects.filter(id=first.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(self._states()[str(self.row.id)], {"crm_sync": "sent"})

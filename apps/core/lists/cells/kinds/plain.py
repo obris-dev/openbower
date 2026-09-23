@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from openbower_schema.lists import ListColumn
 
-from ..writes import CellWrite, ValueWrite
+from ..writes import CellWrite, TypedWrite
 from .base import ColumnKind
 from .registry import register
 
@@ -17,7 +17,7 @@ class PlainColumnKind(ColumnKind):
     def on_value_typed(self, column: ListColumn, value: str) -> CellWrite | None:
         if not value.strip():
             return None
-        return ValueWrite(column.key, value)
+        return TypedWrite(column.key, value)
 
 
 register(PlainColumnKind)

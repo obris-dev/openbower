@@ -66,7 +66,7 @@ from jobs.models import Job
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
-from ..cells.writes import CellWrite, LandingContext, RowLanding, ValueWrite
+from ..cells.writes import AnsweredWrite, CellWrite, LandingContext, RowLanding
 from ..constants import (
     AGENT_MISSING_MESSAGE,
     FILL_RETRY_BACKOFF_SECONDS,
@@ -326,12 +326,12 @@ class AIColumnProcessor(NodeProcessor):
     # The execution.
 
     def on_run_landed(self, column_keys: Sequence[str], outcome: CellRunResult) -> list[CellWrite]:
-        """One value write per column the node fills: the answer the run
-        had for it (or none) and the run's declined cause for when
+        """One AnsweredWrite per column the node fills: the answer the
+        run had for it (or none) and the run's declined cause for when
         nothing lands. A key the run answered that the node does not
         fill is never written."""
         cause = declined_cause_of(outcome)
-        return [ValueWrite(key, outcome.cells.get(key) or None, cause, outcome.tools) for key in column_keys]
+        return [AnsweredWrite(key, outcome.cells.get(key) or None, cause, tools=outcome.tools) for key in column_keys]
 
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         try:

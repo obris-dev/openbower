@@ -32,7 +32,7 @@ from webhooks.constants import DeliveryStatus
 from webhooks.models import WebhookDestination
 from webhooks.services import Sent, WebhookDestinationService
 
-from ..cells.writes import CellWrite, LandingContext, RowLanding, StateWrite
+from ..cells.writes import CellWrite, LandingContext, RowLanding, WebhookWrite
 from ..constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import WEBHOOK
@@ -260,7 +260,7 @@ class WebhookProcessor(NodeProcessor):
         """The send's outcome on this node's one column: SENT, or FAILED.
         No value; the column holds none."""
         (key,) = column_keys
-        return [StateWrite(key, outcome)]
+        return [WebhookWrite(key, outcome)]
 
     def _land(
         self,
