@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from django.db import connection
+from django.db import connection, transaction
 from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -22,6 +22,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, TickReport
+from lists.cells.writes import CellWrite, LandingContext, RowLanding
 from lists.constants import CellSource, NodeRunStatus, StoredCellState
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun
@@ -32,7 +33,6 @@ from lists.processors.webhook import WebhookProcessor, next_window
 from lists.services import advance, cell_truth
 from lists.services.columns import ColumnService
 from lists.services.fill_admission import FillAdmissionService
-from lists.services.fill_processing.landing import LandingContext, land_row
 from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
@@ -121,15 +121,8 @@ class _SheetHarness(TestCase):
         keys = keys or tuple(
             column.key for column in self.sheet.columns if column.kind == "ai" and column.node_id == str(node.id)
         )
-        ctx = LandingContext(
-            account_id=ACCOUNT,
-            list_id=str(self.sheet.id),
-            column_keys=keys,
-            source=CellSource.NODE,
-            fill_run_id=None,
-        )
         run = CellRunResult(cells=cells, declined_cause=StoredCellState.NO_EVIDENCE)
-        self._land_row(ctx, run, node)
+        self._land_run(node, keys, run)
         # The advance is the processors' base's, after the kind's run;
         # the landing itself writes the sheet and the truth only.
         with patch("lists.services.advance.timezone.now", return_value=now):
@@ -137,9 +130,9 @@ class _SheetHarness(TestCase):
                 account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(node.id)
             )
 
-    def _land_row(self, ctx: LandingContext, run: CellRunResult, node: Node) -> None:
-        """A landing always closes a claimed run: claim a fresh one for
-        the node and row, then land through the real path."""
+    def _land_run(self, node: Node, keys: tuple[str, ...], run: CellRunResult) -> None:
+        """A landing the way the agent processor does it: claim a fresh
+        run for the node and row, the kind's writes, land, settle."""
         flow = NodeRunFlow(worker_id="test:land")
         task = NodeRun.objects.create(
             account_id=ACCOUNT,
@@ -152,7 +145,11 @@ class _SheetHarness(TestCase):
         )
         claimed = flow.claim(str(task.id))
         assert claimed is not None
-        land_row(ctx, str(self.row.id), run, flow=flow, task_id=str(task.id))
+        writes = processor_for(account_id=ACCOUNT, node=node).on_run_landed(keys, run)
+        ctx = LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None)
+        with transaction.atomic():
+            self.lists.land_row(ctx, RowLanding(str(self.row.id), writes))
+            assert flow.settle(str(task.id), result=run.model_dump(), status=NodeRunStatus.DONE)
 
     def _webhook_runs(self):
         return NodeRun.objects.filter(kind=WEBHOOK, row_id=str(self.row.id)).order_by("id")
@@ -405,9 +402,7 @@ class AdvanceTests(_SheetHarness):
         self._add_webhook_column(["country", "answer"])
         self._land(self.first, {"answer": "yes"})
         ctx_run = CellRunResult(cells={}, declined_cause=StoredCellState.TRANSIENT)
-        keys = ("country",)
-        ctx = LandingContext(ACCOUNT, str(self.sheet.id), keys, CellSource.NODE, None)
-        self._land_row(ctx, ctx_run, self.second)
+        self._land_run(self.second, ("country",), ctx_run)
         advance.advance_rows(
             account_id=ACCOUNT, list_id=str(self.sheet.id), row_ids=[str(self.row.id)], node_id=str(self.second.id)
         )
@@ -695,12 +690,9 @@ class CellStateTests(_BackfilledSheet):
         first, second = list(self._runs())
         lists = ListService(account_id=ACCOUNT)
         for run, state in ((first, StoredCellState.SENT), (second, StoredCellState.FAILED)):
-            lists.record_states(
-                str(self.sheet.id),
-                {run.row_id: {"crm_sync": state}},
-                source=CellSource.NODE,
-                fill_run_id=None,
-                tools={},
+            lists.land_row(
+                LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None),
+                RowLanding(run.row_id, [CellWrite("crm_sync", state=state)]),
             )
             NodeRun.objects.filter(id=run.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(
@@ -716,12 +708,9 @@ class CellStateTests(_BackfilledSheet):
     def test_a_re_completion_reads_pending_over_a_sent_record(self):
         self._add_webhook_column(["country", "answer"])
         (first, _second) = list(self._runs())
-        ListService(account_id=ACCOUNT).record_states(
-            str(self.sheet.id),
-            {first.row_id: {"crm_sync": StoredCellState.SENT}},
-            source=CellSource.NODE,
-            fill_run_id=None,
-            tools={},
+        ListService(account_id=ACCOUNT).land_row(
+            LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None),
+            RowLanding(first.row_id, [CellWrite("crm_sync", state=StoredCellState.SENT)]),
         )
         NodeRun.objects.filter(id=first.id).update(status=NodeRunStatus.DONE)
         self.assertEqual(self._states()[str(self.row.id)], {"crm_sync": "sent"})

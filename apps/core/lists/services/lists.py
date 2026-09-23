@@ -5,7 +5,7 @@ a missing row, so foreign ids are not an oracle)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from django.db import transaction
@@ -20,6 +20,7 @@ from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn
 
+from ..cells.writes import CellWrite, LandingContext, RowLanding
 from ..constants import (
     CELL_MAX_LENGTH,
     FILL_WRITE_BATCH,
@@ -27,12 +28,11 @@ from ..constants import (
     MAX_LIST_ROWS,
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
-    CellSource,
     StoredCellState,
 )
 from ..models import Folder, List, ListRow, NodeRun
 from . import cell_truth, fill_progress, webhook_runs
-from .cell_truth import column_states
+from .cell_truth import CellRecord
 from .workflows import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -146,11 +146,12 @@ def cells_for_storage(
 
 
 class CellWriteResult(NamedTuple):
-    """One write_cells call's verdict on EVERY column it was asked to
-    write: each lands in exactly one of these. A value landed
-    (written), a value was already there and write-if-blank kept it
-    (occupied), the column's shape refused the value (mismatched), or
-    no value arrived for the column, missing or blank (unanswered)."""
+    """A landing's verdict on EVERY write it carried for one row: each
+    lands in exactly one of these. A value landed (written), a value
+    was already there and write-if-blank kept it (occupied), the
+    column's shape refused the value (mismatched), or the write
+    carried no value, or a blank one (unanswered: its own state was
+    recorded)."""
 
     written: tuple[str, ...]
     occupied: tuple[str, ...]
@@ -312,83 +313,66 @@ class ListService:
             locked.save(update_fields=["row_count", "updated_at"])
         return created
 
-    def write_cells(
-        self,
-        list_id: str,
-        row_id: str,
-        cells: dict[str, str],
-        *,
-        column_keys: Sequence[str],
-        source: CellSource,
-        fill_run_id: str | None,
-        declined_cause: StoredCellState | None,
-        tools: Mapping[str, str],
-    ) -> CellWriteResult:
-        """THE cell writer: over `column_keys` (the columns this write
-        is responsible for: a fill's consent, a hand-typed edit's own
-        keys), the values in `cells` onto the sheet row and one truth
-        record per column onto the cell ledger, in one transaction, so
-        a value and the record that says what it is can never be
-        written apart. Every column lands in one bucket of the result
-        and each bucket has one state (column_states): an unanswered
-        column's is `declined_cause`, the run's own reason (None for a
-        person's write, which leaves no record there), and every
-        record carries who wrote it (`source`), the fill it belongs to
-        (`fill_run_id`, None off a fill) and the run's `tools`. Every
-        one of those is named at every call: a write that forgot who
-        it was would be a cell nobody can audit. A value for a key outside
-        the columns is ignored. Write-if-blank per key, so
-        a user's cell is never destroyed (rows accept arbitrary keys
-        from import, snapshot, and manual entry, so nothing here is
-        machine-owned by construction). Values clamp at CELL_MAX_LENGTH
-        (authored input clamps, never rejects) and pass the column's
-        shape validator before anything writes."""
-        with transaction.atomic():
-            written = self._write_values(list_id, row_id, cells, column_keys=column_keys)
-            cell_truth.write(
-                account_id=self.account_id,
-                list_id=list_id,
-                row_id=row_id,
-                fill_run_id=fill_run_id,
-                states=column_states(written, declined_cause=declined_cause),
-                tools=dict(tools),
-                source=source,
-            )
-        return written
+    def land_row(self, ctx: LandingContext, landing: RowLanding) -> CellWriteResult:
+        """One row's landing: see land_rows."""
+        return self.land_rows(ctx, [landing])[landing.row_id]
 
-    def record_states(
-        self,
-        list_id: str,
-        states_by_row: Mapping[str, Mapping[str, StoredCellState]],
-        *,
-        source: CellSource,
-        fill_run_id: str | None,
-        tools: Mapping[str, str],
-    ) -> None:
-        """The ledger alone, for a node whose column holds no value (a
-        Send webhook's: SENT, or FAILED), for a BATCH of rows in one
-        upsert: the same records write_cells writes beside a value,
-        under the same identity, so the rows page, the counts and the
-        barriers read one ledger whatever the column's kind."""
-        cell_truth.write_rows(
+    def land_rows(self, ctx: LandingContext, landings: Sequence[RowLanding]) -> dict[str, CellWriteResult]:
+        """THE cell writer, kind-blind: per row, the writes' values onto
+        the sheet row (write-if-blank, through the column's type, one
+        row lock; a writer names its facts, the landing has the last
+        word) and then one record per write onto the cell ledger for
+        the whole batch, in ONE upsert, so a value and the record that
+        says what it is can never be written apart. The record's state
+        is the write's intent corrected by what the row reported: a
+        value that landed or found the cell occupied is FILLED, one the
+        column's shape refused is TYPE_MISMATCH, and a write with no
+        value records the state it intends (an agent's cause, a send's
+        SENT or FAILED). FILLED is only ever DERIVED from the row: a
+        write that meant a value and landed none records nothing. Runs inside the caller's transaction, which
+        closes its runs after, in the deletes' lock order: ListRow,
+        ListCellState, NodeRun. Returns each row's verdict by row id."""
+        by_row: dict[str, list[CellWrite]] = {}
+        for landing in landings:
+            by_row.setdefault(landing.row_id, []).extend(landing.writes)
+        verdicts: dict[str, CellWriteResult] = {}
+        records: list[CellRecord] = []
+        for row_id, writes in by_row.items():
+            values = {write.key: write.value for write in writes if write.value is not None}
+            written = self._write_values(ctx.list_id, row_id, values)
+            filled = {*written.written, *written.occupied}
+            refused = {mismatch.key for mismatch in written.mismatched}
+            unanswered: list[str] = []
+            for write in writes:
+                if write.key in filled:
+                    state = StoredCellState.FILLED
+                elif write.key in refused:
+                    state = StoredCellState.TYPE_MISMATCH
+                else:
+                    unanswered.append(write.key)
+                    if write.state is StoredCellState.FILLED:
+                        # A blank meant as a value: nothing landed, and the
+                        # writer named no state for a blank (a person's), so
+                        # nothing is recorded; the cell stays as it was.
+                        continue
+                    state = write.state
+                records.append(CellRecord(row_id, write.key, state, write.tools))
+            verdicts[row_id] = CellWriteResult(written.written, written.occupied, written.mismatched, tuple(unanswered))
+        cell_truth.write_records(
             account_id=self.account_id,
-            list_id=list_id,
-            states_by_row=states_by_row,
-            fill_run_id=fill_run_id,
-            tools=dict(tools),
-            source=source,
+            list_id=ctx.list_id,
+            records=records,
+            fill_run_id=ctx.fill_run_id,
+            source=ctx.source,
         )
+        return verdicts
 
-    def _write_values(
-        self, list_id: str, row_id: str, cells: dict[str, str], *, column_keys: Sequence[str]
-    ) -> CellWriteResult:
-        """The value half of write_cells: the sheet row alone. A column
-        with no value, or a blank one, is UNANSWERED: it writes nothing
-        and the row is not even locked when every column is."""
-        cells = {key: cells.get(key, "") for key in column_keys}
-        unanswered = tuple(key for key, value in cells.items() if not value.strip())
-        if len(unanswered) == len(cells):
-            return CellWriteResult((), (), (), unanswered)
+    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+        """The value half of a landing: the sheet row alone. A blank
+        value writes nothing, and the row is not even locked when every
+        value is blank."""
+        if not any(value.strip() for value in cells.values()):
+            return CellWriteResult((), (), (), ())
         with transaction.atomic():
             # The hazard this guards is a read-modify-write of ONE
             # row's data, so the lock is on THAT ROW: without it two
@@ -447,7 +431,7 @@ class ListService:
                 ListRow.objects.filter(id=row_id, list_id=str(target.id)).update(
                     data=row_cells, updated_at=timezone.now()
                 )
-        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched), unanswered)
+        return CellWriteResult(tuple(written), tuple(occupied), tuple(mismatched), ())
 
     def rows_page(
         self, target: List, *, after: RowCursor | None = None, limit: int, until_id: str = ""

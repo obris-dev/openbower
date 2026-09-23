@@ -31,7 +31,7 @@ from lists.services.workflows import WorkflowService
 from openbower_kernel.fields import new_ulid
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 
-from .fill_helpers import cursor_of, fill_status, open_fill_job, row_numbers
+from .fill_helpers import cursor_of, fill_status, open_fill_job, row_numbers, type_cells
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 USER = TEST_IDENTITY["id"]
@@ -193,29 +193,11 @@ class RemainingRuleTests(_Harness):
         # infrastructure blank (re-runs); row 5 already holds a value
         # on the sheet. FAILS if a settled blank is skipped again.
         fill = self._fill()
-        self.lists.write_cells(
-            str(self.sheet.id),
-            str(self.rows[0].id),
-            {"answer": "answered"},
-            column_keys=("answer",),
-            source=CellSource.MANUAL,
-            fill_run_id=None,
-            declined_cause=None,
-            tools={},
-        )
+        type_cells(self.sheet, str(self.rows[0].id), {"answer": "answered"})
         self._settle(self.rows[0], StoredCellState.FILLED)
         self._settle(self.rows[1], StoredCellState.NO_EVIDENCE)
         self._settle(self.rows[2], StoredCellState.MODEL_ERROR)
-        self.lists.write_cells(
-            str(self.sheet.id),
-            str(self.rows[4].id),
-            {"answer": "typed"},
-            column_keys=("answer",),
-            source=CellSource.MANUAL,
-            fill_run_id=None,
-            declined_cause=None,
-            tools={},
-        )
+        type_cells(self.sheet, str(self.rows[4].id), {"answer": "typed"})
         self.rows = self.lists.rows_page(self.sheet, limit=10)
         processor = self._processor(
             WalkScope(mode=WalkMode.REMAINING, fill_run_id=str(fill.id), column_keys=["answer"])
@@ -225,16 +207,7 @@ class RemainingRuleTests(_Harness):
         # Row 4 has no company: dropped, and the probe says so once
         # every owed row holds a value.
         for row in (self.rows[1], self.rows[2]):
-            self.lists.write_cells(
-                str(self.sheet.id),
-                str(row.id),
-                {"answer": "now answered"},
-                column_keys=("answer",),
-                source=CellSource.MANUAL,
-                fill_run_id=None,
-                declined_cause=None,
-                tools={},
-            )
+            type_cells(self.sheet, str(row.id), {"answer": "now answered"})
         self.assertEqual(processor.probe(self.sheet), (False, True))
 
     def test_a_resume_offers_only_the_rows_the_stopped_fill_still_owed(self):

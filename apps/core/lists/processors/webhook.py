@@ -32,6 +32,7 @@ from webhooks.constants import DeliveryStatus
 from webhooks.models import WebhookDestination
 from webhooks.services import Sent, WebhookDestinationService
 
+from ..cells.writes import CellWrite, LandingContext, RowLanding
 from ..constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import WEBHOOK
@@ -255,6 +256,12 @@ class WebhookProcessor(NodeProcessor):
             parked=flow.park_batch(retrying, not_before=batch.window, result=parked.model_dump()),
         )
 
+    def on_run_landed(self, column_keys: Sequence[str], outcome: StoredCellState) -> list[CellWrite]:
+        """The send's outcome on this node's one column: SENT, or FAILED.
+        No value; the column holds none."""
+        (key,) = column_keys
+        return [CellWrite(key, state=outcome)]
+
     def _land(
         self,
         flow: NodeRunFlow,
@@ -263,22 +270,19 @@ class WebhookProcessor(NodeProcessor):
         state: StoredCellState,
         result: WebhookRunResult,
     ) -> int:
-        """The batch's landing: one cell record per row (this node's
-        column, SENT or FAILED, under the node as writer and no fill) in
-        ONE upsert, then the runs closed DONE with the result stored,
-        one transaction, ListCellState before NodeRun (the order the
-        deletes take)."""
+        """The batch's landing: the kind's write for every row through
+        the list service's one landing (ONE ledger upsert for the
+        batch), then the runs closed DONE with the result stored, one
+        transaction, ListCellState before NodeRun (the order the deletes
+        take)."""
         if not runs:
             return 0
+        writes = self.on_run_landed([batch.column_key], state)
+        landings = [RowLanding(run.row_id, writes) for run in runs]
+        ctx = LandingContext(list_id=str(batch.target_list.id), source=CellSource.NODE, fill_run_id=None)
         lists = ListService(account_id=self.account_id)
         with transaction.atomic():
-            lists.record_states(
-                str(batch.target_list.id),
-                {run.row_id: {batch.column_key: state} for run in runs},
-                source=CellSource.NODE,
-                fill_run_id=None,
-                tools={},
-            )
+            lists.land_rows(ctx, landings)
             return flow.settle_many([str(run.id) for run in runs], result.model_dump(), status=NodeRunStatus.DONE)
 
     def wait_keys(self, target_list: List) -> list[str]:

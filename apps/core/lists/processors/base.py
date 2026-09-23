@@ -45,6 +45,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
+from ..cells.writes import CellWrite
 from ..models import List, ListRow, Node, NodeRun
 from ..services.advance import advance_rows
 from ..services.node_runs import NodeRunFlow
@@ -170,6 +171,14 @@ class NodeProcessor(ABC):
         for list_id, row_ids in by_list.items():
             advance_rows(account_id=self.account_id, list_id=list_id, row_ids=row_ids, node_id=str(self.node.id))
         return tally
+
+    def on_run_landed(self, column_keys: Sequence[str], outcome: object) -> list[CellWrite]:
+        """What one of this node's runs does to its cells: one write per
+        column the node fills on the sheet, from the kind's own outcome
+        (the agent's CellRunResult, the webhook's SENT | FAILED). Pure;
+        the landing persists it. A kind whose runs touch no cell (a
+        barrier) keeps the raising default."""
+        raise NotImplementedError(f"{self.KIND} runs land on no cell")
 
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """Execute ONE run of this node that the caller already claimed

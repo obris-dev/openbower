@@ -44,8 +44,8 @@ what it carries:
   unrun, a config-tier failure settles the ONE run.
 
 The tail is shared: the exhausted give-up, the runtime call, the
-retriable park, the terminal landing (`land_row`, the one writer of a
-resolved row, closing the run inside its own transaction)."""
+retriable park, the terminal landing (the kind's cell writes through
+the list service's one landing, then the run closed, one transaction)."""
 
 from __future__ import annotations
 
@@ -56,6 +56,7 @@ from enum import StrEnum
 from functools import cached_property
 from typing import ClassVar, NamedTuple
 
+from django.db import transaction
 from pydantic import ValidationError
 
 from agents.providers import ModelUnavailable, model_for
@@ -65,6 +66,7 @@ from jobs.models import Job
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
+from ..cells.writes import CellWrite, LandingContext, RowLanding
 from ..constants import (
     AGENT_MISSING_MESSAGE,
     FILL_RETRY_BACKOFF_SECONDS,
@@ -74,12 +76,12 @@ from ..constants import (
     CellSource,
     FillFailureCode,
     NodeRunStatus,
+    StoredCellState,
 )
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
 from ..services.fill_processing.cell_run import run_cell
-from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.lists import ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.runnable import CONFIG_TIER_ERRORS
@@ -129,6 +131,19 @@ def _park_if_retriable(flow: NodeRunFlow, task: NodeRun, run, result: CellRunRes
     return False
 
 
+def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
+    """WHY an output the run did not answer is empty: the run's own
+    cause, or NO_EVIDENCE when it recorded none (a run stored before
+    causes were, a give-up with nothing behind it)."""
+    return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
+
+
+class _ClaimLost(Exception):
+    """The run's close missed (the lease was reclaimed mid-run): raised
+    inside the landing's transaction so the sheet write staged beside
+    it rolls back, and a reclaimed run produces NOTHING."""
+
+
 class _RunEnded(Exception):
     """A lane builder settled the run before it could execute (its
     subject is gone, its input is unreadable, its fill failed): the
@@ -141,19 +156,35 @@ class _RunEnded(Exception):
 
 
 class _SheetLane(NamedTuple):
-    """A claimed run on a sheet row: the config to run, the row, and
-    where its writes land and as what (an agent's, under the fill that
-    owns the run or none). It LANDS on the row, and a config
-    that cannot run fails the whole fill when one owns the run (a
-    config-tier fault fails every row identically) or is logged for an
-    automatic run."""
+    """A claimed run on a sheet row: the config to run, the row, the
+    columns the node fills here, and where its writes land and as what
+    (an agent's, under the fill that owns the run or none). It LANDS
+    on the row, and a config that cannot run fails the whole fill when
+    one owns the run (a config-tier fault fails every row identically)
+    or is logged for an automatic run."""
 
     config: AgentConfig
     row_data: dict
+    column_keys: tuple[str, ...]
     ctx: LandingContext
 
-    def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
-        land_row(self.ctx, task.row_id, run_result, flow=flow, task_id=str(task.id))
+    def land(
+        self, processor: NodeProcessor, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow
+    ) -> RunOutcome:
+        """The run's landing: the kind's writes onto the row and the
+        ledger through the one landing, then the run closed with its
+        result, one transaction (ListRow, ListCellState, NodeRun). A
+        close that misses rolls the landing back: a reclaimed run
+        produces nothing and EXITS."""
+        writes = processor.on_run_landed(self.column_keys, run_result)
+        lists = ListService(account_id=task.account_id)
+        try:
+            with transaction.atomic():
+                lists.land_row(self.ctx, RowLanding(task.row_id, writes))
+                if not flow.settle(task.id, result=run_result.model_dump(), status=NodeRunStatus.DONE):
+                    raise _ClaimLost()
+        except _ClaimLost:
+            return RunOutcome.EXITED
         return RunOutcome.LANDED
 
     def unrunnable(self, task: NodeRun, error: Exception) -> None:
@@ -173,7 +204,9 @@ class _PreviewLane(NamedTuple):
     config: AgentConfig
     row_data: dict
 
-    def land(self, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow) -> RunOutcome:
+    def land(
+        self, processor: NodeProcessor, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow
+    ) -> RunOutcome:
         flow.settle(task.id, result=run_result.model_dump(), status=NodeRunStatus.DONE)
         return RunOutcome.EXITED
 
@@ -292,13 +325,27 @@ class AIColumnProcessor(NodeProcessor):
 
     # The execution.
 
+    def on_run_landed(self, column_keys: Sequence[str], outcome: CellRunResult) -> list[CellWrite]:
+        """One write per column the node fills: FILLED with the value
+        the run answered, or the run's declined cause with none. A key
+        the run answered that the node does not fill is never written."""
+        cause = declined_cause_of(outcome)
+        writes: list[CellWrite] = []
+        for key in column_keys:
+            value = outcome.cells.get(key)
+            if value:
+                writes.append(CellWrite(key, state=StoredCellState.FILLED, value=value, tools=outcome.tools))
+            else:
+                writes.append(CellWrite(key, state=cause, tools=outcome.tools))
+        return writes
+
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         try:
             lane = self._lane(task, flow=flow)
         except _RunEnded as ended:
             return ended.outcome
         if flow.exhausted(task):
-            return lane.land(task, give_up_blank(task), flow=flow)
+            return lane.land(self, task, give_up_blank(task), flow=flow)
         try:
             run = run_cell(lane.config, lane.row_data)
         except CONFIG_TIER_ERRORS as e:
@@ -313,7 +360,7 @@ class AIColumnProcessor(NodeProcessor):
         result = to_result(run)
         if _park_if_retriable(flow, task, run, result):
             return RunOutcome.PARKED
-        return lane.land(task, result, flow=flow)
+        return lane.land(self, task, result, flow=flow)
 
     def _lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         """Which of the three lanes this run is on, by what the run
@@ -382,14 +429,8 @@ class AIColumnProcessor(NodeProcessor):
                 fill_progress.cancel(str(job.id))
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
             raise _RunEnded(RunOutcome.ROW_MISSING)
-        ctx = LandingContext(
-            account_id=task.account_id,
-            list_id=consent.list_id,
-            column_keys=tuple(consent.column_keys),
-            source=CellSource.NODE,
-            fill_run_id=str(job.id),
-        )
-        return _SheetLane(config=config, row_data=row.data, ctx=ctx)
+        ctx = LandingContext(list_id=consent.list_id, source=CellSource.NODE, fill_run_id=str(job.id))
+        return _SheetLane(config=config, row_data=row.data, column_keys=tuple(consent.column_keys), ctx=ctx)
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         row = ListRow.objects.filter(id=task.row_id).first()
@@ -422,14 +463,8 @@ class AIColumnProcessor(NodeProcessor):
             _settle_unrun(flow, task)
             raise _RunEnded(RunOutcome.EXITED)
         config = agent.config()
-        ctx = LandingContext(
-            account_id=task.account_id,
-            list_id=str(target_list.id),
-            column_keys=column_keys,
-            source=CellSource.NODE,
-            fill_run_id=None,
-        )
-        return _SheetLane(config=config, row_data=row.data, ctx=ctx)
+        ctx = LandingContext(list_id=str(target_list.id), source=CellSource.NODE, fill_run_id=None)
+        return _SheetLane(config=config, row_data=row.data, column_keys=column_keys, ctx=ctx)
 
     # Is work needed for a row? One rule per walk mode. The rule is
     # bound ONCE per page (a resume reads the page's one fact there) and

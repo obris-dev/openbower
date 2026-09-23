@@ -31,9 +31,11 @@ from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.lists import AiColumn
 
+from ..cells.kinds.registry import column_kind_for
+from ..cells.writes import CellWrite, LandingContext, RowLanding
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..jobs.fill import FillJob
-from ..models import ListRow, Node, NodeRun
+from ..models import List, ListRow, Node, NodeRun
 from ..processors import WalkMode
 from ..serializers import fill_run_wire
 from ..services import advance, fill_progress
@@ -162,20 +164,17 @@ def settle(
     # one declined cause, so they all carry the same one.
     unanswered = set(causes) if causes is not None else (set(consent.column_keys) if cause is not None else set())
     declined = next(iter(causes.values())) if causes else (cause or StoredCellState.NO_EVIDENCE)
-    answered = [key for key in consent.column_keys if key not in unanswered]
-    # land_row's own shape and lock order: the sheet write (values and
-    # truth as one), then the settle, one transaction, then the advance.
+    writes = [
+        CellWrite(key, state=declined, tools=tools or {})
+        if key in unanswered
+        else CellWrite(key, state=StoredCellState.FILLED, value=FILLED_VALUE, tools=tools or {})
+        for key in consent.column_keys
+    ]
+    # The processor's landing shape and lock order: the writes through
+    # the one landing, then the settle, one transaction, then the advance.
+    ctx = LandingContext(list_id=consent.list_id, source=CellSource.NODE, fill_run_id=fill_run_id)
     with transaction.atomic():
-        ListService(account_id=job.account_id).write_cells(
-            consent.list_id,
-            row_id,
-            dict.fromkeys(answered, FILLED_VALUE),
-            column_keys=consent.column_keys,
-            source=CellSource.NODE,
-            fill_run_id=fill_run_id,
-            declined_cause=declined,
-            tools=tools or {},
-        )
+        ListService(account_id=job.account_id).land_row(ctx, RowLanding(row_id, writes))
         landed = flow.settle(str(task.id), result={"tools": tools or {}}, status=NodeRunStatus.DONE)
         assert landed, f"seam write missed for {fill_run_id}/{row_id}"
     advance.advance_rows(account_id=job.account_id, list_id=consent.list_id, row_ids=[row_id], node_id=task.node_id)
@@ -241,3 +240,22 @@ def fill_agent_id(column: AiColumn) -> str:
 def row_value(list_id: str, row_id: str, column_key: str) -> str:
     """One cell's value, for assertions that care what landed."""
     return str(ListRow.objects.get(id=row_id, list_id=list_id).data.get(column_key, ""))
+
+
+def type_cells(target_list: List, row_id: str, values: dict[str, str]) -> None:
+    """A person typing values into cells: each column's kind builds the
+    write, the list service lands them under MANUAL (the editor's path)."""
+    fresh = List.objects.get(id=target_list.id)
+    by_key = {column.key: column for column in fresh.columns}
+    writes = []
+    for key, value in values.items():
+        if key not in by_key:
+            # A key with no column yet: rows accept arbitrary keys from
+            # import and manual entry, so the value lands as a plain one.
+            writes.append(CellWrite(key, state=StoredCellState.FILLED, value=value))
+            continue
+        write = column_kind_for(by_key[key]).on_value_typed(by_key[key], value)
+        if write is not None:
+            writes.append(write)
+    ctx = LandingContext(list_id=str(target_list.id), source=CellSource.MANUAL, fill_run_id=None)
+    ListService(account_id=target_list.account_id).land_row(ctx, RowLanding(row_id, writes))

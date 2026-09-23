@@ -20,7 +20,7 @@ from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import FillRunWire
 
-from ..constants import CellSource, StoredCellState
+from ..constants import StoredCellState
 from ..models import ListCellState, NodeRun
 from ..services.fill_admission import FillAdmissionService
 from ..services.lists import ListService
@@ -35,6 +35,7 @@ from .fill_helpers import (
     targeted,
     targeted_numbers,
     targeted_pairs,
+    type_cells,
 )
 
 # Request-shaped config (the serializer derives the output key).
@@ -107,16 +108,7 @@ class RefillTargetTests(RefillTestCase):
         fill = self.admit(confirmed_row_count=4)
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill["id"], str(rows[0].id), None)
-        self.lists.write_cells(
-            str(self.sheet.id),
-            str(rows[2].id),
-            {"answer": "typed by hand"},
-            column_keys=("answer",),
-            source=CellSource.MANUAL,
-            fill_run_id=None,
-            declined_cause=None,
-            tools={},
-        )
+        type_cells(self.sheet, str(rows[2].id), {"answer": "typed by hand"})
         self.cancel(fill["id"])
 
         resp = self.refill()
@@ -151,16 +143,7 @@ class RefillTargetTests(RefillTestCase):
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle_all(fill["id"], None)
         for row in rows:
-            self.lists.write_cells(
-                str(self.sheet.id),
-                str(row.id),
-                {"answer": "done"},
-                column_keys=("answer",),
-                source=CellSource.MANUAL,
-                fill_run_id=None,
-                declined_cause=None,
-                tools={},
-            )
+            type_cells(self.sheet, str(row.id), {"answer": "done"})
         self.cancel(fill["id"])
 
         resp = self.refill()

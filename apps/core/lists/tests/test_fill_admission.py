@@ -23,7 +23,6 @@ from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
-    CellSource,
 )
 from ..jobs.rerank import Rerank
 from ..models import Node, NodeRun
@@ -43,7 +42,7 @@ from ..services.fill_admission import (
 )
 from ..services.fills import FillService
 from ..services.lists import ListService
-from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_numbers
+from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_numbers, type_cells
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -189,16 +188,7 @@ class QuickPathTests(AdmissionTestCase):
         ]
         self.sheet.save(update_fields=["columns"])
         rows = self.lists.rows_page(self.sheet, limit=1)
-        self.lists.write_cells(
-            str(self.sheet.id),
-            str(rows[0].id),
-            {"answer": "taken"},
-            column_keys=("answer",),
-            source=CellSource.MANUAL,
-            fill_run_id=None,
-            declined_cause=None,
-            tools={},
-        )
+        type_cells(self.sheet, str(rows[0].id), {"answer": "taken"})
         with self.assertRaises(ColumnCollision):
             self.admit()
         # Nothing committed: no fill, no ephemeral, no columns change.

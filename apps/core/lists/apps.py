@@ -18,8 +18,13 @@ class ListsConfig(AppConfig):
         # The processors are the same roster shape: one module per
         # kind, registering at its bottom.
         import_submodules("lists.processors")
+        # The column kinds too: how a column's cells change, one module
+        # per kind of column the wire can carry.
+        import_submodules("lists.cells.kinds")
         # The services write one kind by name, so a roster without it
         # refuses HERE, at boot, where the roster is known.
+        from .cells.kinds.registry import validate_column_kinds
         from .nodes.registry import validate_node_kinds
 
         validate_node_kinds()
+        validate_column_kinds()

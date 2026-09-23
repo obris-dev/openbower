@@ -138,6 +138,19 @@ auth + data services live in a separate private repo.
   DONE on a row (services/advance.py: the row is offered to every node
   behind a barrier this node's path feeds), so no kind can forget it.
   The node config classes in lists/nodes stay what a node IS at rest.
+- How a column's CELLS change is the cell layer (lists/cells), and
+  every change lands as a `CellWrite` (the state a cell means to
+  record, the value it lands where blank, the tools behind it): a
+  node kind's run reaction (`NodeProcessor.on_run_landed`, one write
+  per column the node fills) and a column kind's cell reaction
+  (lists/cells/kinds, one module per wire column kind, a registry with
+  a boot gate: a person typed a value, or the kind refuses). Writes
+  are in-memory intents until `ListService.land_row` / `land_rows`
+  persists them, kind-blind: values onto the row write-if-blank
+  through the column's type, then one ledger record per write in ONE
+  upsert, FILLED and TYPE_MISMATCH derived from what the row reported
+  and every other state the write's own. Processors never touch a row
+  or a cell record; the landing never knows a kind.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

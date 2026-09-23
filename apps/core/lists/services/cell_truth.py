@@ -1,9 +1,9 @@
 """The one writer of ListCellState: what a writer made of each cell.
 
-In production only the ListService calls `write`: write_cells inside
-the same transaction as the value write, so the sheet row and its
-truth can never be written apart, and record_states for a column that
-holds no value (a Send webhook's outcome). The purges are the
+In production only the ListService's landing calls this module,
+inside the same transaction as the value write, so a sheet row and its
+truth can never be written apart. The purges are the owners' (a
+list's, a column's). The purges are the
 owners' (a list's, a column's).
 
 A record exists for every cell a fill has RESOLVED, filled ones
@@ -26,48 +26,13 @@ in depth, not the guard.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 from openbower_kernel.batches import iter_id_pages
-from openbower_schema.fills import CellRunResult
 
 from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
 from ..models import ListCellState
-
-if TYPE_CHECKING:
-    from .lists import CellWriteResult
-
-
-def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
-    """WHY an output the run did not answer is empty: the run's own
-    cause, or NO_EVIDENCE when it recorded none (a run stored before
-    causes were, a give-up with nothing behind it)."""
-    return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
-
-
-def column_states(written: CellWriteResult, *, declined_cause: StoredCellState | None) -> dict[str, StoredCellState]:
-    """One state per bucket of the write result: written or OCCUPIED
-    is FILLED (an occupied cell holds a user's value that write-if-
-    blank protected; re-running it would only buy a skip, and what the
-    model said is in the stored run for a human to compare), a value
-    the column's shape refused is TYPE_MISMATCH (its own cause, the
-    user's next step differs), and an UNANSWERED column carries the
-    write's declined cause, which keeps it targetable instead of
-    reading as answered; a write with NO cause (a person's) leaves an
-    unanswered column with no record, which reads as never attempted.
-    Every column the write was asked for is in exactly one bucket, so
-    this maps and never defaults."""
-    states: dict[str, StoredCellState] = {}
-    for key in (*written.written, *written.occupied):
-        states[key] = StoredCellState.FILLED
-    for mismatch in written.mismatched:
-        states[mismatch.key] = StoredCellState.TYPE_MISMATCH
-    if declined_cause is not None:
-        for key in written.unanswered:
-            states[key] = declined_cause
-    return states
-
 
 _UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
 # `source` rides the upsert: a fill landing over a hand-written cell
@@ -107,46 +72,47 @@ def write(
     did not think about attribution should not compile). Every caller
     today is a fill; the grid's edit path will write MANUAL once it
     exists, and completion reads both alike."""
-    write_rows(
+    write_records(
         account_id=account_id,
         list_id=list_id,
-        states_by_row={row_id: states},
+        records=[CellRecord(row_id, column_key, state, tools) for column_key, state in states.items()],
         fill_run_id=fill_run_id,
-        tools=tools,
         source=source,
     )
 
 
-def write_rows(
-    *,
-    account_id: str,
-    list_id: str,
-    states_by_row: Mapping[str, Mapping[str, StoredCellState]],
-    fill_run_id: str | None,
-    tools: dict[str, str],
-    source: CellSource,
+class CellRecord(NamedTuple):
+    """One ledger record to write: a cell and the state and tool
+    statuses it carries (tools vary per row: a run's are the row's)."""
+
+    row_id: str
+    column_key: str
+    state: StoredCellState
+    tools: Mapping[str, str]
+
+
+def write_records(
+    *, account_id: str, list_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
 ) -> None:
-    """Many rows' cell states under one identity, ONE upsert: a batch
-    landing (a webhook digest's rows) records every row in a single
-    statement rather than one per row."""
-    records = [
-        ListCellState(
-            account_id=account_id,
-            list_id=list_id,
-            row_id=row_id,
-            column_key=column_key,
-            state=state,
-            fill_run_id=fill_run_id,
-            tools=tools,
-            source=source,
-        )
-        for row_id, states in states_by_row.items()
-        for column_key, state in states.items()
-    ]
+    """Many cells' states under one identity, ONE upsert: a landing
+    (one row's N columns, or a digest's many rows) records everything
+    in a single statement."""
     if not records:
         return
     ListCellState.objects.bulk_create(
-        records,
+        [
+            ListCellState(
+                account_id=account_id,
+                list_id=list_id,
+                row_id=record.row_id,
+                column_key=record.column_key,
+                state=record.state,
+                fill_run_id=fill_run_id,
+                tools=dict(record.tools),
+                source=source,
+            )
+            for record in records
+        ],
         update_conflicts=True,
         unique_fields=_UNIQUE_FIELDS,
         update_fields=_UPSERT_FIELDS,

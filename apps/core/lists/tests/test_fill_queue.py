@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 from unittest.mock import patch
 
-from django.db import models
+from django.db import models, transaction
 from django.test import TestCase
 from django.utils import timezone
 from pydantic import ValidationError
@@ -20,11 +20,13 @@ from jobs.models import Job
 from openbower_kernel.ranks import keys_between
 from openbower_schema.fills import CellRunResult
 
+from ..cells.writes import LandingContext, RowLanding
 from ..constants import CellSource, NodeRunStatus, StoredCellState
-from ..models import ListCellState, NodeRun
+from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT
+from ..processors import WalkScope
+from ..processors.column_agent import AIColumnProcessor
 from ..services import fill_progress
-from ..services.fill_processing.landing import LandingContext, land_row
 from ..services.fills import FillNotFound, FillService, page_progress
 from ..services.lists import CellWriteResult, ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
@@ -72,25 +74,20 @@ class _SheetThatTakesEverything(ListService):
     while the truth half stays the real one. The landing's real value
     writer is covered by the worker and view tests."""
 
-    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str], *, column_keys) -> CellWriteResult:
-        answered = tuple(key for key in column_keys if cells.get(key, "").strip())
-        return CellWriteResult(answered, (), (), tuple(key for key in column_keys if key not in answered))
+    def _write_values(self, list_id: str, row_id: str, cells: dict[str, str]) -> CellWriteResult:
+        answered = tuple(key for key, value in cells.items() if value.strip())
+        return CellWriteResult(answered, (), (), ())
 
 
-def _ctx(fill: Job, task: NodeRun) -> LandingContext:
-    return LandingContext(
-        account_id=ACCOUNT,
-        list_id=fill.target_id,
-        column_keys=("answer",),
-        source=CellSource.NODE,
-        fill_run_id=str(fill.id),
-    )
+def _ctx(fill: Job) -> LandingContext:
+    return LandingContext(list_id=fill.target_id, source=CellSource.NODE, fill_run_id=str(fill.id))
 
 
 def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> bool:
-    """Claim the task and land a run on its row the way the shared
-    consumer does (NodeRunFlow claim -> land_row -> settle). A FILLED
-    state means a value was written."""
+    """Claim the task and land a run on its row the way the agent
+    processor does (claim -> the kind's writes -> land_row -> settle,
+    one transaction). A FILLED state means a value was written.
+    Returns whether the landing stood (a missed settle rolls it back)."""
     flow = NodeRunFlow(worker_id=worker)
     claimed = flow.claim(str(task.id))
     assert claimed is not None, "claim missed"
@@ -98,17 +95,25 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
         run = CellRunResult(cells={"answer": "x"})
     else:
         run = CellRunResult(declined_cause=state)
-    return (
-        land_row(
-            _ctx(fill, task),
-            claimed.row_id,
-            run,
-            flow=flow,
-            task_id=str(claimed.id),
-            lists=_SheetThatTakesEverything(account_id=ACCOUNT),
-        )
-        is not None
-    )
+    return _land_claimed(fill, claimed, run, flow=flow)
+
+
+def _land_claimed(fill: Job, claimed: NodeRun, run: CellRunResult, *, flow: NodeRunFlow) -> bool:
+    processor = AIColumnProcessor(account_id=ACCOUNT, node=Node(id=NODE, account_id=ACCOUNT), scope=WalkScope())
+    writes = processor.on_run_landed(("answer",), run)
+    lists = _SheetThatTakesEverything(account_id=ACCOUNT)
+    try:
+        with transaction.atomic():
+            lists.land_row(_ctx(fill), RowLanding(claimed.row_id, writes))
+            if not flow.settle(str(claimed.id), result=run.model_dump(), status=NodeRunStatus.DONE):
+                raise _Missed()
+    except _Missed:
+        return False
+    return True
+
+
+class _Missed(Exception):
+    pass
 
 
 class TerminalWriteTests(TestCase):
@@ -139,15 +144,7 @@ class TerminalWriteTests(TestCase):
         self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 1)
         # The original claimant's terminal write now misses.
         self.assertFalse(
-            land_row(
-                _ctx(fill, task),
-                claimed.row_id,
-                CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE),
-                flow=original,
-                task_id=str(claimed.id),
-                lists=_SheetThatTakesEverything(account_id=ACCOUNT),
-            )
-            is not None
+            _land_claimed(fill, claimed, CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE), flow=original)
         )
         self.assertFalse(ListCellState.objects.exists())
 
