@@ -67,7 +67,8 @@ class WorkflowReactions:
             return 0
         now = timezone.now()
         queued = 0
-        for node in self.workflows.nodes_by_id(list(keys_by_node)):
+        agent_node_ids = list(keys_by_node.keys())
+        for node in self.workflows.nodes_by_id(agent_node_ids):
             # The columns the judgement looks at ride the scope: the
             # starter decides them, the processor never reads the sheet
             # for them.
