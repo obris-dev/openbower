@@ -110,9 +110,9 @@ class NodeRun(AccountScopedModel):
     # TRANSIENT count. STORED, because both proxies for it are wrong
     # in opposite directions: `attempts` climbs at CLAIM, so a released
     # lease or a stale reclaim raises it with no park behind it, and
-    # `not_before` is cleared by the next claim, so a task that parked
-    # and then lost its worker reads as never parked. One is a gauge
-    # that goes negative, the other one that never comes back down.
+    # `not_before` is never cleared, so a task that parked once reads
+    # as waiting long after it ran again. One is a gauge that goes
+    # negative, the other one that never comes back down.
     # Set once, never cleared: it means counted, not currently waiting.
     parked = models.BooleanField(_("parked"), default=False)
     # The claiming consumer's id, stamped at claim: the terminal CAS
