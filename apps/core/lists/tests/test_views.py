@@ -66,10 +66,12 @@ class ListsViewsTests(TestCase):
         [column] = resp.json()["columns"]
         self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text"})
 
-    def test_ingest_get_marks_ai_columns_autopopulated(self):
-        # The webhook is self-describing: GET returns every column a producer
-        # can send, with the AI (fill-owned) columns marked autopopulated so a
-        # push can leave them blank for autofill or send a value to pin its own.
+    def test_ingest_get_omits_the_columns_a_producer_cannot_send(self):
+        # The push is self-describing: GET returns the columns a producer
+        # OWNS. A column whose cells are recorded is absent, because its
+        # value and the record of what filled it are written together by
+        # the landing and a push writes rows alone. FAILS if the schema
+        # advertises a column the door would refuse.
         lst = ListService(account_id=TEST_IDENTITY["account_id"]).create(
             owner_id=TEST_IDENTITY["id"],
             label="Push target",
@@ -84,9 +86,8 @@ class ListsViewsTests(TestCase):
         self.assertEqual(
             schema["columns"],
             [
-                {"key": "company", "label": "Company", "type": "url", "autopopulated": False},
-                {"key": "contact", "label": "Contact", "type": "text", "autopopulated": False},
-                {"key": "answer", "label": "Answer", "type": "text", "autopopulated": True},
+                {"key": "company", "label": "Company", "type": "url"},
+                {"key": "contact", "label": "Contact", "type": "text"},
             ],
         )
 

@@ -13,7 +13,7 @@ from jobs.models import Job
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import AiColumn, CellStateWire, IngestColumn, WebhookColumn
+from openbower_schema.lists import CellStateWire, IngestColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -230,15 +230,18 @@ def list_wire(target: List) -> dict[str, Any]:
 
 
 def ingest_schema_wire(target: List) -> dict[str, Any]:
-    """The push schema: every column keyed by what a producer sends, with
-    the AI columns marked autopopulated. A producer provides the hard
-    columns and may leave the AI ones blank for autofill, or send a value
-    to pin its own (write-if-blank keeps it)."""
+    """The push schema: the columns a producer may send, which are the
+    ones whose cells are not RECORDED. A recorded column's value and
+    its truth are written together by the landing, and a push writes
+    rows alone, so it is neither listed here nor accepted below: a
+    producer that sent one would store a value no barrier ever
+    completes for."""
+    from .cells.kinds.registry import column_kind_for
+
     columns = [
-        IngestColumn(key=c.key, label=c.label, type=c.type, autopopulated=isinstance(c, AiColumn))
+        IngestColumn(key=c.key, label=c.label, type=c.type)
         for c in target.columns
-        # A webhook column holds no data: a producer never sends into it.
-        if not isinstance(c, WebhookColumn)
+        if not column_kind_for(c).RECORDS_CELL_STATE
     ]
     return WireIngestSchema(columns=columns).model_dump()
 
@@ -257,15 +260,25 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     shape mismatch: an unknown key or a type mismatch both become a 400. A
     blank value is 'not provided', kept as-is (a producer may leave an AI
     column for autofill). Capped at MAX_INGEST_PROBLEMS."""
+    from .cells.kinds.registry import column_kind_for
     from .services.lists import cells_for_storage
 
-    types = {column.key: column.type for column in target.columns if not isinstance(column, WebhookColumn)}
+    types = {column.key: column.type for column in target.columns if not column_kind_for(column).RECORDS_CELL_STATE}
+    recorded = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):
         storable, mismatches = cells_for_storage(types, row, where="ingest")
         storable_rows.append(storable)
-        problems.extend(f"row {index}: unknown column {key!r}" for key in row if key not in types)
+        # A recorded column EXISTS, so it is refused in its own words
+        # rather than as an unknown key: it is filled through its own
+        # path and takes no pushed value.
+        problems.extend(
+            f"row {index}: column {key!r} is filled for you and takes no pushed value" for key in recorded & row.keys()
+        )
+        problems.extend(
+            f"row {index}: unknown column {key!r}" for key in row if key not in types and key not in recorded
+        )
         problems.extend(f"row {index}: {mismatch}" for mismatch in mismatches)
         if len(problems) >= MAX_INGEST_PROBLEMS:
             return problems[:MAX_INGEST_PROBLEMS], storable_rows

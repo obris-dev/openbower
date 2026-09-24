@@ -20,7 +20,7 @@ from django.db import transaction
 
 from ..models import ProcessedIngestEvent
 from ..operations.append_rows import AppendRowsOperation
-from ..services.lists import ListNotFound, ListService, ListsFull
+from ..services.lists import ColumnNotWritable, ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
 
@@ -67,7 +67,13 @@ def _append_rows(event: IngestEvent) -> AppendResult:
     try:
         target = lists.get(event.list_id)
         report = AppendRowsOperation(account_id=event.account_id, target_list=target, rows=event.rows).run()
-    except (ListNotFound, ListsFull) as e:
+    except (ListNotFound, ListsFull, ColumnNotWritable) as e:
+        # All three are TERMINAL for this event: a deleted or full list,
+        # and a row carrying a column whose cells are recorded (the view
+        # refuses that one at the door, so an event carrying it came
+        # from somewhere that skipped the door and will never become
+        # valid). Dropped and recorded, never retried, or the bus would
+        # redeliver it forever.
         return AppendResult(applied=False, reason=str(e))
     return AppendResult(applied=True, added=report.added)
 

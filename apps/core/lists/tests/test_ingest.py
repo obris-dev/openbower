@@ -239,14 +239,21 @@ class IngestValidationTests(TestCase):
         self.assertIn("unknown column", resp.json()["detail"])
         self.assertEqual(captured, [])  # refused up front, never published
 
-    def test_an_overridden_ai_column_is_validated_too(self):
-        # An AI column a producer overrides is held to its type like any
-        # other, now that the schema surfaces it as pushable.
-        captured: list = []
-        resp = self._push([{"rank": "not-a-number"}], captured)
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("rank", resp.json()["detail"])
-        self.assertEqual(captured, [])  # refused up front, never published
+    def test_a_recorded_column_is_refused_whatever_its_value(self):
+        # A column whose cells are recorded is not pushable at all: its
+        # value and the record of what filled it are written together by
+        # the landing, which a push cannot do. So it is refused in its
+        # OWN words before its type is ever considered, and a perfectly
+        # typed value is refused the same way. FAILS if a recorded
+        # column is merely type-checked (the refusal would then read as
+        # a shape complaint, and a well-typed value would be stored).
+        for value in ("not-a-number", "42"):
+            with self.subTest(value=value):
+                captured: list = []
+                resp = self._push([{"rank": value}], captured)
+                self.assertEqual(resp.status_code, 400)
+                self.assertIn("is filled for you", resp.json()["detail"])
+                self.assertEqual(captured, [])  # refused up front, never published
 
     def test_a_well_typed_push_is_accepted(self):
         captured: list = []

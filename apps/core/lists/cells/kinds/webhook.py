@@ -12,6 +12,8 @@ from .registry import register
 
 class WebhookColumnKind(ColumnKind):
     KIND: ClassVar[str] = "webhook"
+    # SENT or FAILED, written at the send's landing.
+    RECORDS_CELL_STATE: ClassVar[bool] = True
 
 
 register(WebhookColumnKind)

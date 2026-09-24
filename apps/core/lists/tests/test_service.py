@@ -18,6 +18,7 @@ from lists.constants import ListOrigin
 from lists.jobs.rerank import Rerank
 from lists.models import List, ListRow
 from lists.services.lists import (
+    ColumnNotWritable,
     FolderNotFound,
     InvalidRowCursor,
     ListNotFound,
@@ -335,6 +336,56 @@ class CellNormalizeTests(TestCase):
         service.add_rows(target, [{"score": "banana"}])
         row = service.rows_page(target, limit=1)[0]
         self.assertEqual(row.data["score"], "banana")  # tolerated, not rejected
+
+
+class RecordedColumnTests(TestCase):
+    """A column whose cells are RECORDED is written through the landing,
+    which writes the value and its truth in one transaction. add_rows
+    writes rows and nothing else, so it refuses one: a value stored
+    there with no record reads as never attempted forever, and no
+    barrier waiting on that column ever completes for the row."""
+
+    def _sheet(self):
+        return _service().create(
+            owner_id="01US" + "A" * 22,
+            label="Mixed",
+            columns=[
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": "01ND" + "A" * 22},
+                {"key": "crm", "label": "CRM", "type": "text", "kind": "webhook", "node_id": "01ND" + "B" * 22},
+            ],
+            origin=ListOrigin.MANUAL,
+        )
+
+    def test_a_row_carrying_a_recorded_column_is_refused_and_nothing_is_written(self):
+        # Both recorded kinds, and the whole batch: a caller bug is a
+        # door to fix, not a row to salvage, so the good row beside it
+        # lands nothing either. FAILS if the refusal goes, or if it
+        # fires after the rows are written.
+        service = _service()
+        target = self._sheet()
+        for cells in ({"company": "acme.com", "answer": "pinned"}, {"company": "acme.com", "crm": "sent"}):
+            with self.subTest(cells=cells), self.assertRaises(ColumnNotWritable):
+                service.add_rows(target, [{"company": "fine.io"}, cells])
+        self.assertEqual(ListRow.objects.filter(list_id=str(target.id)).count(), 0)
+
+    def test_the_refusal_names_the_column_and_the_row(self):
+        # The message is what an upstream door reads to fix itself.
+        service = _service()
+        target = self._sheet()
+        with self.assertRaisesMessage(ColumnNotWritable, "row 1: ['answer']"):
+            service.add_rows(target, [{"company": "fine.io"}, {"answer": "pinned"}])
+
+    def test_a_key_matching_no_column_is_still_tolerated(self):
+        # The refusal is scoped to RECORDED columns. A key the sheet has
+        # no column for keeps the writer's tolerance (the discover save
+        # writes its own keys into a sheet that need not have them), so
+        # widening the raise stays a separate decision. FAILS if the
+        # refusal swallows the tolerant path.
+        service = _service()
+        target = self._sheet()
+        (row,) = service.add_rows(target, [{"company": "acme.com", "stray": "kept"}])
+        self.assertEqual(row.data["stray"], "kept")
 
 
 class FolderServiceTests(TestCase):

@@ -15,6 +15,9 @@ from .registry import register
 
 class AiColumnKind(ColumnKind):
     KIND: ClassVar[str] = "ai"
+    # What the run made of the cell: the value or the cause it declined
+    # with, and the tools behind either.
+    RECORDS_CELL_STATE: ClassVar[bool] = True
 
     def on_value_typed(self, column: ListColumn, value: str) -> CellWrite | None:
         if not value.strip():

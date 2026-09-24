@@ -248,6 +248,16 @@ class ColumnDeleteTests(TestCase):
         self.node = WorkflowService(account_id=TEST_IDENTITY["account_id"]).get_or_create_column_agent_node(
             self.sheet, agent_id=str(self.agent.id)
         )
+        # The rows carry their values while the columns are still PLAIN:
+        # a recorded column's values never arrive with a row, and the
+        # states below are what a landing would have written with them.
+        self.lists.add_rows(
+            self.sheet,
+            [
+                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
+                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
+            ],
+        )
         self.sheet.columns = [
             self.sheet.columns[0],
             *[
@@ -256,13 +266,6 @@ class ColumnDeleteTests(TestCase):
             ],
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        self.lists.add_rows(
-            self.sheet,
-            [
-                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
-                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
-            ],
-        )
         for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
             for key in ("contact_name", "contact_url"):
                 ListCellState.objects.create(

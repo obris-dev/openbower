@@ -23,6 +23,12 @@ def register(cls: type[ColumnKind]) -> None:
     kind = getattr(cls, "KIND", None)
     if not isinstance(kind, str) or not kind:
         raise ValueError(f"column kind {cls.__name__} must declare the KIND it handles")
+    if not isinstance(getattr(cls, "RECORDS_CELL_STATE", None), bool):
+        raise ValueError(
+            f"column kind {kind!r} must declare RECORDS_CELL_STATE: True when the column's results are "
+            "recorded as ListCellState, which is how automation knows what a cell holds and when it was "
+            "last touched. False when the column holds only a typed value."
+        )
     existing = _REGISTRY.get(kind)
     if existing is not None:
         if type(existing) is cls:
