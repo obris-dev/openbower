@@ -369,12 +369,17 @@ class RecordedColumnTests(TestCase):
                 service.add_rows(target, [{"company": "fine.io"}, cells])
         self.assertEqual(ListRow.objects.filter(list_id=str(target.id)).count(), 0)
 
-    def test_the_refusal_names_the_column_and_the_row(self):
-        # The message is what an upstream door reads to fix itself.
+    def test_the_refusal_names_the_row_and_the_columns_in_the_caller_s_terms(self):
+        # It reaches an API caller as the 400's detail, so it names the
+        # row and the columns and says who fills them, with no word
+        # about ledgers or landings. FAILS if it leaks the internal
+        # reason, or renders the keys as a python list.
         service = _service()
         target = self._sheet()
-        with self.assertRaisesMessage(ColumnNotWritable, "row 1: ['answer']"):
-            service.add_rows(target, [{"company": "fine.io"}, {"answer": "pinned"}])
+        with self.assertRaisesMessage(
+            ColumnNotWritable, "row 1: 'answer', 'crm' cannot arrive with a row; automation fills it"
+        ):
+            service.add_rows(target, [{"company": "fine.io"}, {"answer": "pinned", "crm": "sent"}])
 
     def test_a_key_matching_no_column_is_still_tolerated(self):
         # The refusal is scoped to RECORDED columns. A key the sheet has

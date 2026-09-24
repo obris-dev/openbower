@@ -277,10 +277,8 @@ class ListService:
         for index, data in enumerate(rows):
             refused = sorted(recorded & data.keys())
             if refused:
-                raise ColumnNotWritable(
-                    f"row {index}: {refused} records cell state, so its values are written through the "
-                    "landing and never arrive with a row"
-                )
+                names = ", ".join(repr(key) for key in refused)
+                raise ColumnNotWritable(f"row {index}: {names} cannot arrive with a row; automation fills it")
         types = {column.key: column.type for column in target.columns}
         stored_rows = []
         for data in rows:
