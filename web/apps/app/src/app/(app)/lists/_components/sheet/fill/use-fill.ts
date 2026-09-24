@@ -68,10 +68,9 @@ export function useFill(
       // the sheet already holds; walking them again here would be a
       // second full page-through of the loaded sheet every tick,
       // fetching each row's data only to throw it away and keep
-      // .states. Nothing needs clearing when the last fill goes
-      // terminal either: pending is derived from queued tasks on LIVE
-      // fills, and stopping a fill abandons its tasks before it flips,
-      // so both legs of that derivation go false on their own.
+      // .states. Pending is any open run of the cell's node, whichever
+      // lane queued it, so a cell can read pending with no fill live;
+      // the sheet re-reads those on its own schedule (lib/pending-refresh).
       return read.live ? "ok-live" : "ok-idle";
     },
     [listId],

@@ -37,6 +37,7 @@ import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { SheetTable } from "./sheet-table";
+import { pendingRefreshDelayMs, pendingSignature } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
 
@@ -118,6 +119,32 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     const progressed = prev === null || prev.signature !== runsSignature;
     if ((anyLive && progressed) || (prev !== null && prev.live && !anyLive)) void refreshLoaded();
   }, [runsSignature, anyLive, refreshLoaded]);
+
+  // Pending cells no fill reports (an autofill on arrived rows, a
+  // webhook waiting for its window) re-read on their own schedule,
+  // backing off while the pending set holds still and restarting when
+  // it moves; a live fill's poll already re-reads, so this stands down
+  // while one runs. Stops when nothing reads pending.
+  const pending = pendingSignature(rows);
+  useEffect(() => {
+    if (!pending || anyLive) return;
+    let attempt = 0;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function schedule() {
+      timer = setTimeout(async () => {
+        await refreshLoaded();
+        if (stopped) return;
+        attempt += 1;
+        schedule();
+      }, pendingRefreshDelayMs(attempt));
+    }
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [pending, anyLive, refreshLoaded]);
 
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
