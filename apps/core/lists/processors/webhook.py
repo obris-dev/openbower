@@ -307,7 +307,7 @@ class WebhookProcessor(NodeProcessor):
         node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
         return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
 
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         """A row is owed a run when it is complete for the barrier's
         columns AND that completion is newer than the newest run this
         node already holds for it. The open-run key alone guards only

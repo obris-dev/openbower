@@ -128,7 +128,10 @@ auth + data services live in a separate private repo.
   target_list, rows, now)` under a typed `FillScope` naming the
   OCCASION (fresh | remaining | autofill | backfill, never the door it
   came through) and the columns to judge across, for the walkers,
-  which page rows and hand them over knowing no kind and no column;
+  which page rows and hand them over knowing no kind and no column (a kind
+  implements `_enqueue_runs`; the public call first loads, in one read, the
+  row fields the kind declares in `REQUIRED_ROW_FIELDS` that a caller left
+  out, so no judgement pays a query per row for a field it was not handed);
   `_process_run(task, flow)` for a kind whose runs are claimed one at a
   time off the topic, or `_process_batch(flow, now)` for a kind that
   claims and settles a node's due runs together, for the dispatchers

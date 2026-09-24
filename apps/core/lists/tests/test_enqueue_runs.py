@@ -11,7 +11,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY
@@ -258,6 +260,27 @@ class PushedRuleTests(_Harness):
             (run.row_id, run.rank, run.fill_run_id, run.status), (str(pushed[0].id), pushed[0].rank, None, "ready")
         )
         self.assertEqual(self._numbers([run]), [6])
+
+    def test_rows_handed_over_without_their_fields_are_filled_in_one_read(self):
+        # A caller may hand rows loaded with nothing but their ids. The
+        # kind reads each row's rank (stamped on its run) and its cells
+        # (the blank test), so it loads what is missing for the WHOLE
+        # page in one read, never one row at a time. FAILS if the rank
+        # is dropped from what the kind declares it reads (the runs are
+        # stamped by per-row lazy loads, so the count grows with the
+        # page), or if any required field is left to Django.
+        def enqueue_thin(size: int) -> tuple[int, dict[str, str]]:
+            rows = self.lists.add_rows(self.sheet, [{"company": f"thin{size}-{n}.io"} for n in range(size)])
+            ids = [str(row.id) for row in rows]
+            thin = list(ListRow.objects.filter(id__in=ids).only("id").order_by("rank", "id"))
+            processor = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))
+            with CaptureQueriesContext(connection) as captured:
+                processor.enqueue_runs(self.sheet, thin, now=NOW)
+            stamped = dict(NodeRun.objects.filter(row_id__in=ids).values_list("row_id", "rank"))
+            self.assertEqual(stamped, {str(row.id): row.rank for row in rows})
+            return len(captured.captured_queries), stamped
+
+        self.assertEqual(enqueue_thin(2)[0], enqueue_thin(5)[0])
 
     def test_a_node_filling_no_column_owes_a_pushed_row_nothing(self):
         # A scope naming no column (the node's columns were removed from
