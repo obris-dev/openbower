@@ -264,20 +264,22 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     from .services.lists import cells_for_storage
 
     types = {column.key: column.type for column in target.columns if not column_kind_for(column).RECORDS_CELL_STATE}
-    recorded = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
+    columns_to_record = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):
         storable, mismatches = cells_for_storage(types, row, where="ingest")
         storable_rows.append(storable)
-        # A recorded column EXISTS, so it is refused in its own words
+        # A column whose kind records state EXISTS, so it is refused in its own words
         # rather than as an unknown key: it is filled through its own
         # path and takes no pushed value.
         problems.extend(
-            f"row {index}: column {key!r} is filled for you and takes no pushed value" for key in recorded & row.keys()
+            f"row {index}: column {key!r} is filled for you and takes no pushed value"
+            for key in row
+            if key in columns_to_record
         )
         problems.extend(
-            f"row {index}: unknown column {key!r}" for key in row if key not in types and key not in recorded
+            f"row {index}: unknown column {key!r}" for key in row if key not in types and key not in columns_to_record
         )
         problems.extend(f"row {index}: {mismatch}" for mismatch in mismatches)
         if len(problems) >= MAX_INGEST_PROBLEMS:

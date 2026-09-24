@@ -45,6 +45,25 @@ def _landing(row_id: str, values: dict[str, str], *, column_keys=None, blank_sta
     return RowLanding(row_id, writes)
 
 
+# The same columns under a kind that RECORDS cell state, for the tests
+# whose subject is the ledger rather than the row.
+_RECORDED_COLUMNS = [{**column, "kind": "ai", "node_id": "01ND" + "A" * 22} for column in _COLUMNS]
+
+
+def _recorded_sheet(service: ListService, rows: list[dict[str, str]]):
+    """A sheet whose columns RECORD cell state, with the rows' values
+    seeded past add_rows, which refuses a recorded column: only a
+    landing puts a value in one, and this is the state a landing would
+    have left."""
+    target = service.create(
+        owner_id="01US" + "A" * 22, label="Recorded", columns=_RECORDED_COLUMNS, origin=ListOrigin.CSV
+    )
+    created = service.add_rows(target, [{} for _ in rows])
+    for row, data in zip(created, rows, strict=True):
+        ListRow.objects.filter(id=str(row.id)).update(data=data)
+    return target, service.rows_page(target, limit=len(rows))
+
+
 def _sheet(service: ListService, rows: list[dict[str, str]]):
     target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.CSV)
     service.add_rows(target, rows)
@@ -170,6 +189,25 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual(row.data, before)
         self.assertFalse(ListCellState.objects.filter(row_id=str(row.id)).exists())
 
+    def test_a_column_whose_kind_records_no_state_lands_its_value_alone(self):
+        # The ledger owns the columns whose KIND says it does. Such a
+        # column's value lands like any other and its cell never becomes
+        # a record: the same landing, told apart by the column's own
+        # declaration rather than by the writer or by which kind happens
+        # to answer False today. FAILS if the landing records every key
+        # it is handed, which would put unrecorded cells in a ledger
+        # whose absence means never attempted.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "42"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual(result.written, ("employees",))
+        row.refresh_from_db()
+        self.assertEqual(row.data["employees"], "42")
+        self.assertFalse(ListCellState.objects.filter(list_id=str(target.id)).exists())
+
     def test_every_write_resolves_to_the_state_the_row_earned_it(self):
         # A value that landed is FILLED, one the type refused is
         # TYPE_MISMATCH, one an agent had none for records its cause:
@@ -181,7 +219,7 @@ class WriteIfBlankTests(TestCase):
         from lists.models import ListCellState
 
         service = _service()
-        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme", "employees": ""}])
         landing = RowLanding(
             str(row.id),
             [
@@ -215,7 +253,7 @@ class WriteIfBlankTests(TestCase):
         from lists.models import ListCellState
 
         service = _service()
-        target, (row,) = _sheet(service, [{"name": ""}])
+        target, (row,) = _recorded_sheet(service, [{"name": ""}])
         service.land_row(
             _ctx(str(target.id), CellSource.MANUAL),
             _landing(str(row.id), {"name": "typed"}, column_keys=("name", "employees"), blank_state=None),
@@ -235,7 +273,7 @@ class WriteIfBlankTests(TestCase):
         # ONE upsert. FAILS if the landing locks, writes or records per
         # row or per landing.
         service = _service()
-        target, (first, second) = _sheet(service, [{"name": ""}, {"name": ""}])
+        target, (first, second) = _recorded_sheet(service, [{"name": ""}, {"name": ""}])
         landings = [
             _landing(str(first.id), {"name": "Acme"}),
             _landing(str(first.id), {"employees": "12"}),
@@ -513,8 +551,12 @@ class LockGranularityTests(TransactionTestCase):
         from lists.services.node_runs import NodeRunFlow
 
         lists = ListService(account_id="01AC" + "A" * 22)
-        sheet = lists.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=ListOrigin.MANUAL)
-        lists.add_rows(sheet, [{"name": "acme"}])
+        # Recorded columns, so the landing writes the ledger: a column
+        # whose kind records no state lands its value alone.
+        sheet = lists.create(
+            owner_id="01US" + "A" * 22, label="Sheet", columns=_RECORDED_COLUMNS, origin=ListOrigin.MANUAL
+        )
+        lists.add_rows(sheet, [{}])
         row = ListRow.objects.get(list_id=str(sheet.id))
         flow = NodeRunFlow(worker_id="test:order")
         task = NodeRun.objects.create(
