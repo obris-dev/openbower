@@ -258,12 +258,15 @@ class AIColumnProcessor(NodeProcessor):
         agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
         return prompt_variables(agent.config().prompt)
 
+    # The cells, for the blank test and for whether the prompt can act.
+    REQUIRED_ROW_FIELDS: ClassVar[tuple[str, ...]] = ("data",)
+
     def _agent_can_act(self, row: ListRow) -> bool:
         """At least one input column has a value (a prompt reading no
         column asks the same question everywhere, so every row will do)."""
         return not self.input_keys or has_any_value(row.data, self.input_keys)
 
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         if not rows:
             return 0
         work_status = self._work_status_for_page(rows)

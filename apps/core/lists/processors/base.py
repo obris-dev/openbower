@@ -136,21 +136,67 @@ class FillScope(BaseModel):
     column_keys: list[str] = []
 
 
+# The ListRow fields queuing ANY run reads: a run is stamped with its
+# row's rank so the pickers take runs in sheet order. The base's, not a
+# kind's to repeat or forget. The id is the primary key, which Django
+# never defers, so it is never missing.
+_RUN_ROW_FIELDS: tuple[str, ...] = ("rank",)
+
+
 class NodeProcessor(ABC):
     KIND: ClassVar[str]
+    # The ListRow fields THIS KIND's judgement reads off a row it is
+    # handed, beyond the ones queuing any run reads (the base's own,
+    # below, added for every kind whatever a kind declares).
+    REQUIRED_ROW_FIELDS: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, *, account_id: str, node: Node, scope: FillScope) -> None:
         self.account_id = account_id
         self.node = node
         self.scope = scope
 
-    @abstractmethod
     def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+        """The walkers' call: the page's row_fields() loaded first,
+        in one read, then the kind's `_enqueue_runs`. A caller may hand
+        rows loaded with less than a kind reads (the advance loads ids
+        and ranks only), and a deferred field loads one instance at a
+        time the first time it is touched, so a kind left to Django would
+        pay a query per row without asking for one."""
+        if not rows:
+            return 0
+        rows = self._hydrate_required_fields(rows)
+        return self._enqueue_runs(target_list, rows, now=now, limit=limit)
+
+    @abstractmethod
+    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         """Queue a run for every row among `rows` this node owes one to,
         under the open-run key, and return how many were queued; with
         `limit`, stop at that many, judging no further (0 = every owed
-        row in `rows`). Reads its own inputs for the page; born in the
-        state the kind's lane expects."""
+        row in `rows`). Reads its own inputs for the page beyond the row
+        fields it declares; born in the state the kind's lane expects."""
+
+    @classmethod
+    def _hydrate_required_fields(cls, rows: Sequence[ListRow]) -> Sequence[ListRow]:
+        """The page with every declared field loaded, in ONE read, for
+        the rows a caller handed without them. Assigning a deferred
+        field populates it with no query of its own."""
+        required = cls.row_fields()
+        thin = [row for row in rows if any(name in row.get_deferred_fields() for name in required)]
+        if not thin:
+            return rows
+        ids = [row.id for row in thin]
+        loaded = {values[0]: values[1:] for values in ListRow.objects.filter(id__in=ids).values_list("id", *required)}
+        for row in thin:
+            for name, value in zip(required, loaded[row.id], strict=True):
+                setattr(row, name, value)
+        return rows
+
+    @classmethod
+    def row_fields(cls) -> tuple[str, ...]:
+        """Every field a row handed to this kind must carry: the ones any
+        run reads, then the kind's own, each once."""
+        combined = (*_RUN_ROW_FIELDS, *cls.REQUIRED_ROW_FIELDS)
+        return tuple(dict.fromkeys(combined))
 
     def process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """The consumer's call: the kind's `_process_run`, then the

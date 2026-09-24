@@ -458,6 +458,42 @@ class AdvanceTests(_SheetHarness):
         self.assertEqual([run.status for run in runs], [NodeRunStatus.READY])
         self.assertEqual([run.fill_run_id for run in runs], [None])
 
+    def test_a_cleared_barrier_reads_its_page_of_cells_once_however_many_rows(self):
+        # The advance loads rows by id with only their ids and ranks,
+        # because the webhook it usually reaches never reads a cell. An
+        # agent behind a barrier DOES read every row's cells, and a
+        # deferred field loads one instance at a time, so without the
+        # agent hydrating its own page that is one query per row. The
+        # count must not grow with the page. FAILS if the agent leaves
+        # the cells to Django's lazy load.
+        _wait, chained, _webhook = self._chained_path()
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
+        ]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+
+        def advance_over(size: int) -> int:
+            rows = self.lists.add_rows(self.sheet, [{"company": f"row{size}-{n}.io"} for n in range(size)])
+            for row in rows:
+                cell_truth.write(
+                    account_id=ACCOUNT,
+                    list_id=str(self.sheet.id),
+                    row_id=str(row.id),
+                    fill_run_id=None,
+                    states={"answer": StoredCellState.FILLED, "score": StoredCellState.FILLED},
+                    tools={},
+                    source=CellSource.NODE,
+                )
+            with CaptureQueriesContext(connection) as captured:
+                queued = WorkflowReactions(account_id=ACCOUNT).advance(
+                    list_id=str(self.sheet.id), row_ids=[str(row.id) for row in rows], from_node_id=str(self.first.id)
+                )
+            self.assertEqual(queued, size)
+            return len(captured.captured_queries)
+
+        self.assertEqual(advance_over(2), advance_over(6))
+
     def test_a_page_of_landed_rows_is_one_offer_per_downstream_node(self):
         # Two rows completing in one batch reach the webhook processor
         # as ONE enqueue_runs call carrying both rows, in sheet order,
