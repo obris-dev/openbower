@@ -77,7 +77,7 @@ class CellWrite(ABC):
 @dataclass(frozen=True)
 class TypedWrite(CellWrite):
     """A person set a cell. The value is never blank (a blank is nothing
-    to write and nothing to record, decided by the column kind before a
+    to write and nothing to record, dropped by the writer before a
     write exists; here it is refused), so it lands or the type refuses
     it."""
 
@@ -140,7 +140,7 @@ class RowLanding(NamedTuple):
 class Landed(NamedTuple):
     """What the value pass handed back for one row: the verdict over
     EVERY write, and the ListCellState records to write, which are the
-    writes whose COLUMN KIND records state resolved to the one state
+    writes to WORKFLOW columns resolved to the one state
     each earned. A write the sheet keeps no record for lands its value
     and appears in the verdict alone."""
 

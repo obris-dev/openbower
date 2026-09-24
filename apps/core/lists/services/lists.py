@@ -18,9 +18,8 @@ from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
-from openbower_schema.lists import ListColumn
+from openbower_schema.lists import ListColumn, WorkflowColumn
 
-from ..cells.kinds.registry import column_kind_for
 from ..cells.writes import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
     CELL_MAX_LENGTH,
@@ -273,7 +272,7 @@ class ListService:
         # the fill write path stores. Authored input TOLERATES a mismatch:
         # the mismatches are ignored (the raw value stores), because an
         # import must never fail a whole batch over one bad cell.
-        columns_to_record = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
+        columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
         for index, data in enumerate(rows):
             refused = sorted(key for key in data if key in columns_to_record)
             if refused:
@@ -411,13 +410,11 @@ class ListService:
                     raise RowNotFound(missing[0])
                 types = {column.key: column.type for column in target.columns}
                 live_columns = set(types)
-                # Which columns the LEDGER owns, by their kind's own
-                # declaration: a column whose kind records no state has
-                # its values land like any other and its cells never
-                # become records.
-                columns_to_record = {
-                    column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE
-                }
+                # Which columns the LEDGER owns: the workflow's, since
+                # a node's landing and the barriers and fills that read
+                # it are what a record is for. Any other column's values
+                # land like any other and its cells never become records.
+                columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
                 # A column the sheet no longer has is nothing to write
                 # and nothing to report: not written, not occupied, not
                 # mismatched. Dropped here so the value pass and the
@@ -472,8 +469,8 @@ class ListService:
             verdict = verdicts[row_id]
             # WRITES -> RECORDS, and only these writes make one. A write
             # whose column is GONE would leave a record outliving the
-            # purge that already took that column's; one whose column's
-            # KIND records no state has nothing to record. Both landed
+            # purge that already took that column's; one whose column is
+            # no workflow column has nothing to record. Both landed
             # their value above and say the rest through the verdict.
             writes_to_record = [write for write in writes if write.key in columns_to_record]
             landed[row_id] = Landed(

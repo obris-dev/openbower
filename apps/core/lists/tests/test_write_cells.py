@@ -169,16 +169,12 @@ class WriteIfBlankTests(TestCase):
         self.assertNotIn("employees", row.data)
 
     def test_a_persons_blank_is_no_write_at_all(self):
-        # A blank never reaches the landing as a typed value: the column
-        # kind returns None for it, and a TypedWrite refuses to be built
-        # from one, so nothing is written and nothing is recorded. FAILS
-        # if either door lets a blank through.
-        from lists.cells.kinds.registry import column_kind_for
+        # A blank never reaches the landing as a typed value: a
+        # TypedWrite refuses to be built from one, so nothing is written
+        # and nothing is recorded. FAILS if that door lets a blank
+        # through.
         from lists.models import ListCellState
-        from openbower_schema.lists import PlainColumn
 
-        column = PlainColumn(key="employees", label="Employees", type="number")
-        self.assertIsNone(column_kind_for(column).on_value_typed(column, "   "))
         with self.assertRaises(ValueError):
             TypedWrite("employees", "")
         service = _service()
@@ -189,13 +185,12 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual(row.data, before)
         self.assertFalse(ListCellState.objects.filter(row_id=str(row.id)).exists())
 
-    def test_a_column_whose_kind_records_no_state_lands_its_value_alone(self):
-        # The ledger owns the columns whose KIND says it does. Such a
-        # column's value lands like any other and its cell never becomes
-        # a record: the same landing, told apart by the column's own
-        # declaration rather than by the writer or by which kind happens
-        # to answer False today. FAILS if the landing records every key
-        # it is handed, which would put unrecorded cells in a ledger
+    def test_a_column_no_workflow_fills_lands_its_value_alone(self):
+        # The ledger owns the workflow's columns. Any other column's
+        # value lands like any other and its cell never becomes a
+        # record: the same landing, told apart by the column's type
+        # rather than by the writer. FAILS if the landing records every
+        # key it is handed, which would put unrecorded cells in a ledger
         # whose absence means never attempted.
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
@@ -290,51 +285,6 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual((len(locks), len(updates), len(upserts)), (1, 1, 1))
         first.refresh_from_db()
         self.assertEqual((first.data["name"], first.data["employees"]), ("Acme", "12"))
-
-    def test_the_column_kinds_answer_a_typed_value_each_in_their_own_way(self):
-        # The cell-shaped change: a plain or AI column lands the value
-        # FILLED, a blank is nothing to write, a Send webhook column
-        # refuses (its cell is its node's). The roster covers every kind
-        # the wire can carry. FAILS if a kind is missing or answers
-        # differently.
-        from lists.cells.kinds.base import NotEditable
-        from lists.cells.kinds.registry import column_kind_for, registered_kinds, wire_column_kinds
-        from openbower_schema.lists import AiColumn, PlainColumn, WebhookColumn
-
-        self.assertEqual(set(registered_kinds()), set(wire_column_kinds()))
-        plain = PlainColumn(key="name", label="Name", type="text")
-        ai = AiColumn(key="answer", label="Answer", type="text", node_id="01ND" + "A" * 22)
-        hook = WebhookColumn(key="crm_sync", label="CRM", type="text", node_id="01ND" + "B" * 22)
-        self.assertEqual(column_kind_for(plain).on_value_typed(plain, "Acme"), TypedWrite("name", "Acme"))
-        self.assertEqual(column_kind_for(ai).on_value_typed(ai, "yes"), TypedWrite("answer", "yes"))
-        self.assertIsNone(column_kind_for(ai).on_value_typed(ai, "   "))
-        with self.assertRaises(NotEditable):
-            column_kind_for(hook).on_value_typed(hook, "sent")
-
-    def test_every_kind_declares_whether_its_cells_are_recorded(self):
-        # The fact each door reads to know whether a value may arrive
-        # with a row: a recorded column's value and its truth are
-        # written together by the landing, so a writer of rows alone
-        # cannot carry one. Declared, never defaulted, because the
-        # silent default (a recorded kind assumed unrecorded) is a
-        # value no barrier ever completes for. FAILS if a kind stops
-        # declaring, or if register lets one through without it.
-        from lists.cells.kinds.base import ColumnKind
-        from lists.cells.kinds.registry import column_kind_for, register
-        from openbower_schema.lists import AiColumn, PlainColumn, WebhookColumn
-
-        plain = PlainColumn(key="name", label="Name", type="text")
-        ai = AiColumn(key="answer", label="Answer", type="text", node_id="01ND" + "A" * 22)
-        hook = WebhookColumn(key="crm_sync", label="CRM", type="text", node_id="01ND" + "B" * 22)
-        self.assertEqual(
-            [column_kind_for(column).RECORDS_CELL_STATE for column in (plain, ai, hook)], [False, True, True]
-        )
-
-        class Undeclared(ColumnKind):
-            KIND = "undeclared"
-
-        with self.assertRaisesMessage(ValueError, "must declare RECORDS_CELL_STATE"):
-            register(Undeclared)
 
     def test_the_agent_kind_writes_one_cell_per_column_it_fills(self):
         # The run-shaped change: one write per column the node fills,
@@ -552,7 +502,7 @@ class LockGranularityTests(TransactionTestCase):
 
         lists = ListService(account_id="01AC" + "A" * 22)
         # Recorded columns, so the landing writes the ledger: a column
-        # whose kind records no state lands its value alone.
+        # no workflow fills lands its value alone.
         sheet = lists.create(
             owner_id="01US" + "A" * 22, label="Sheet", columns=_RECORDED_COLUMNS, origin=ListOrigin.MANUAL
         )
