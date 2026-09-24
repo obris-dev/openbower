@@ -248,12 +248,12 @@ class ListIngestView(_ScopedView):
 
     A minted machine key (or a session) pushes rows; we validate them and
     the target list (account-scoped, so a key only reaches its owner's
-    lists), publish the batch to the ingest bus, and return 202. The rows
-    are NOT in the sheet on return: a worker appends them off the bus.
-
-    INTERIM: the current publisher logs and drops (see lists.ingest); the
-    durable backend (outbox, then Kafka) and the append worker are
-    follow-ups. Same auth pair and order as the lists collection.
+    lists), publish the batch to the ingest bus, and return 202 once the
+    broker acked it. The rows are NOT in the sheet on return: the ingest
+    worker appends them off the bus, deduped on `event_id`, and the append
+    starts the sheet's workflow for them. A deployment with no bus
+    configured logs and drops the batch (lists.ingest.publisher). Same
+    auth pair and order as the lists collection.
     """
 
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
@@ -282,8 +282,8 @@ class ListIngestView(_ScopedView):
         if problems:
             return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
         # The caller's idempotency key if they sent one, else a fresh ULID.
-        # Carried through the bus so a re-delivery dedupes to one append once
-        # the durable backend enforces it (the interim publisher only logs).
+        # Carried through the bus, so a retried push or a redelivery dedupes
+        # to one append in the worker's inbox (ProcessedIngestEvent).
         event = IngestEvent(
             event_id=serializer.validated_data.get("event_id") or new_ulid(),
             list_id=str(target_list.id),
