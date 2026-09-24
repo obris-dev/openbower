@@ -17,6 +17,7 @@ runs left PROCESSING return to DEFERRED through the reclaim.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -28,9 +29,9 @@ from django.utils import timezone
 # read. The webhook kind's is the only one today; a second deferring
 # kind branches here on the runs' stored kind, as the reclaim does.
 from ..constants import DEFERRED_FLUSH_BATCH
-from ..models import Node
+from ..models import Node, NodeRun
 from ..processors import BatchTally, processor_for
-from ..processors.webhook import COLUMN_REMOVED, fail_claimed
+from ..processors.webhook import COLUMN_REMOVED, SEND_UNPREPARABLE, fail_claimed
 from ..services.node_runs import NodeRunFlow
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class FlushDeferredOperation:
         # Materialized first: the claims below mutate what the pick reads.
         for node_id in list(self.flow.iter_due_nodes(now=now)):
             report.nodes += 1
+            claimed: list[NodeRun] = []
             try:
                 # The dispatcher claims (one CAS; two ticks overlapping on
                 # a node split its due rows), the kind executes.
@@ -86,6 +88,25 @@ class FlushDeferredOperation:
                 # A crash inside one node (a config that no longer parses,
                 # a bug) must not stop every other account's tick: log the
                 # traceback and move on. Its claimed runs come back
-                # DEFERRED through the reclaim.
+                # DEFERRED through the reclaim, and the ones that have
+                # spent their attempts stop here.
                 logger.exception("flush_deferred: node %s failed; skipping it this tick", node_id)
+                report.failed += self._give_up_spent(claimed)
         return report
+
+    def _give_up_spent(self, claimed: Sequence[NodeRun]) -> int:
+        """Close the claimed runs whose attempts are spent, FAILED.
+
+        Without this a crash has no stop. The runs are left PROCESSING,
+        the reclaim returns a webhook run to DEFERRED with its window
+        untouched, so it is due at once and the next tick claims and
+        crashes it again: a node that raises DETERMINISTICALLY (a config
+        that no longer parses, a cell the digest cannot carry) loops
+        every stale window forever, its rows reading "waiting" the whole
+        time. The kind's own cap lives downstream of the send and never
+        sees a batch that raised on the way there. This is the stop the
+        per-run dispatcher already has, at batch grain."""
+        spent = [run for run in claimed if self.flow.exhausted(run)]
+        if not spent:
+            return 0
+        return fail_claimed(self.flow, spent, error=SEND_UNPREPARABLE)

@@ -25,7 +25,7 @@ from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, Stored
 from lists.models import Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.operations.flush_deferred import FlushDeferredOperation
-from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, next_window
+from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, SEND_UNPREPARABLE, next_window
 from lists.services import cell_truth
 from lists.services.digest_payload import event_id_of
 from lists.services.lists import ListService
@@ -435,6 +435,32 @@ class FlushDeferredTests(TransactionTestCase):
         self.assertEqual(
             (report.failed, run.status, run.result["error"], fake.calls), (1, NodeRunStatus.DONE, COLUMN_REMOVED, [])
         )
+
+    def test_a_node_that_crashes_every_tick_is_given_up_once_its_attempts_are_spent(self):
+        # A crash reaches the tick's own handler, which parks nothing
+        # and settles nothing, so the runs are left PROCESSING and the
+        # reclaim returns them DEFERRED with their window untouched:
+        # due again, claimed again, crashed again, forever, while the
+        # kind's cap sits downstream of the send and never sees them.
+        # Under the cap the batch is still held for the reclaim; at it
+        # the runs stop. FAILS if the crash path stops giving up.
+        self._complete(self.rows[0])
+        self._add_column()
+        fake = _FakeSender()
+        with patch("lists.operations.flush_deferred.processor_for", side_effect=RuntimeError("boom")):
+            held = self._tick(fake)
+            self.assertEqual((held.nodes, held.failed), (1, 0))
+            self.assertEqual(self._runs().get().status, NodeRunStatus.PROCESSING)
+            # The laps the reclaim would spend, without waiting them out.
+            self._runs().update(status=NodeRunStatus.DEFERRED, attempts=NODE_RUN_ATTEMPTS, leased_by="")
+            spent = self._tick(fake)
+        run = self._runs().get()
+        self.assertEqual(
+            (spent.failed, run.status, run.result["outcome"], run.result["error"], fake.calls),
+            (1, NodeRunStatus.DONE, WebhookRunOutcome.FAILED, SEND_UNPREPARABLE, []),
+        )
+        # And the node is gone from the pick: nothing due, no next lap.
+        self.assertEqual(self._tick(fake).nodes, 0)
 
     def test_a_gone_destination_fails_the_runs_without_sending(self):
         self._complete(self.rows[0])

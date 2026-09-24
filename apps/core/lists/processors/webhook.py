@@ -51,6 +51,10 @@ from .factory import register
 # before it sent: terminal, because the fact never changes.
 COLUMN_REMOVED = "The Send webhook column was removed before this row sent."
 DESTINATION_REMOVED = "The destination was removed before this row sent."
+# What a run's result says when preparing the send raised every time it
+# was tried: terminal at the attempt cap, because a crash that repeats
+# on every claim is not waiting for anything.
+SEND_UNPREPARABLE = "This row could not be sent: preparing it failed on every attempt."
 
 
 def next_window(now: datetime, interval_seconds: int) -> datetime:
