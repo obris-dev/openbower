@@ -23,6 +23,15 @@ class NotEditable(Exception):
 
 class ColumnKind(ABC):
     KIND: ClassVar[str]
+    # Whether this kind's results are recorded as ListCellState, which
+    # is how automation knows what a cell holds and when it was last
+    # touched. The value and that record are written TOGETHER by the
+    # landing, so a writer of rows alone cannot carry one. Declared by
+    # every kind, never defaulted: the two defaults fail opposite ways,
+    # and the silent one (a recorded kind assumed unrecorded) stores a
+    # value with no record, which reads as never attempted forever and
+    # completes no barrier.
+    RECORDS_CELL_STATE: ClassVar[bool]
 
     def on_value_typed(self, column: ListColumn, value: str) -> CellWrite | None:
         """A person set this cell. The TypedWrite to land (a blank is

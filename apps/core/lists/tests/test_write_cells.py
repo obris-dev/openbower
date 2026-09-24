@@ -225,6 +225,31 @@ class WriteIfBlankTests(TestCase):
         with self.assertRaises(NotEditable):
             column_kind_for(hook).on_value_typed(hook, "sent")
 
+    def test_every_kind_declares_whether_its_cells_are_recorded(self):
+        # The fact each door reads to know whether a value may arrive
+        # with a row: a recorded column's value and its truth are
+        # written together by the landing, so a writer of rows alone
+        # cannot carry one. Declared, never defaulted, because the
+        # silent default (a recorded kind assumed unrecorded) is a
+        # value no barrier ever completes for. FAILS if a kind stops
+        # declaring, or if register lets one through without it.
+        from lists.cells.kinds.base import ColumnKind
+        from lists.cells.kinds.registry import column_kind_for, register
+        from openbower_schema.lists import AiColumn, PlainColumn, WebhookColumn
+
+        plain = PlainColumn(key="name", label="Name", type="text")
+        ai = AiColumn(key="answer", label="Answer", type="text", node_id="01ND" + "A" * 22)
+        hook = WebhookColumn(key="crm_sync", label="CRM", type="text", node_id="01ND" + "B" * 22)
+        self.assertEqual(
+            [column_kind_for(column).RECORDS_CELL_STATE for column in (plain, ai, hook)], [False, True, True]
+        )
+
+        class Undeclared(ColumnKind):
+            KIND = "undeclared"
+
+        with self.assertRaisesMessage(ValueError, "must declare RECORDS_CELL_STATE"):
+            register(Undeclared)
+
     def test_the_agent_kind_writes_one_cell_per_column_it_fills(self):
         # The run-shaped change: one write per column the node fills,
         # FILLED with the answer or the run's cause without one; a key

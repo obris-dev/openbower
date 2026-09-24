@@ -125,30 +125,24 @@ class EnqueueTests(AutofillHarness):
             self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)
 
-    def test_a_push_that_overrides_an_ai_column_skips_that_node(self) -> None:
-        sheet, node_id, _ = self._ai_sheet()
+    def test_a_push_carrying_a_recorded_column_is_dropped_whole(self) -> None:
+        # A recorded column's value and its truth are written together
+        # by the landing, and a push writes rows alone, so a value for
+        # one never arrives with a row. The view refuses it at the door;
+        # an event that reached the bus anyway is TERMINAL (it will
+        # never become valid), so it is dropped and recorded rather than
+        # redelivered forever. The batch is one unit: the blank row
+        # beside it lands nothing either. FAILS if the push stores the
+        # value, or if the event retries.
+        sheet, _node_id, _ = self._ai_sheet()
         ai_key = next(c.key for c in sheet.columns if isinstance(c, AiColumn))
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
-
-        # One row pins the AI column (an override), one leaves it blank.
         self.assertEqual(
             self._push(sheet, [{"company": "override.com", ai_key: "PINNED"}, {"company": "blank.com"}]),
-            "applied",
+            "dropped",
         )
-
-        tasks = list(self._null_run_tasks())
-        # Only the row that left the AI column blank is owed a fill; the
-        # overridden node gets no task.
-        self.assertEqual(len(tasks), 1)
-        (task,) = tasks
-        blank_row = ListRow.objects.get(list_id=str(sheet.id), data__company="blank.com")
-        self.assertEqual(task.row_id, str(blank_row.id))
-        self.assertEqual(task.node_id, node_id)
-
-        # The pushed value persisted as the producer sent it.
-        override_row = ListRow.objects.get(list_id=str(sheet.id), data__company="override.com")
-        self.assertEqual(override_row.data[ai_key], "PINNED")
-        self.assertEqual(self._new_row_ids(sheet, before), {str(blank_row.id), str(override_row.id)})
+        self.assertEqual(self._new_row_ids(sheet, before), set())
+        self.assertFalse(self._null_run_tasks().exists())
 
     def test_a_multi_column_agent_skips_only_when_every_column_is_filled(self) -> None:
         # One node (an agent) owns TWO columns. A row that fills BOTH is skipped (no
@@ -170,13 +164,13 @@ class EnqueueTests(AutofillHarness):
             {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
         ]
         sheet.save(update_fields=["columns", "updated_at"])
-        full, partial = self.lists.add_rows(
-            sheet,
-            [
-                {"company": "full.co", "a": "0", "b": "y"},  # both of the node's columns filled ("0" counts) -> skip
-                {"company": "partial.co", "a": "x"},  # b blank -> still owes the node
-            ],
-        )
+        full, partial = self.lists.add_rows(sheet, [{"company": "full.co"}, {"company": "partial.co"}])
+        # The values a landing wrote: a recorded column's values never
+        # arrive with a row. Both of the node's columns valued ("0"
+        # counts) skips; b blank still owes the node.
+        for row, cells in ((full, {"a": "0", "b": "y"}), (partial, {"a": "x"})):
+            ListRow.objects.filter(id=str(row.id)).update(data={**row.data, **cells})
+            row.refresh_from_db()
         sheet.refresh_from_db()
         created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [full, partial])
         self.assertEqual(created, 1)  # only the partial row's node has work

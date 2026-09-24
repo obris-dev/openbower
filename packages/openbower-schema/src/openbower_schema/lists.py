@@ -128,9 +128,10 @@ type ListColumn = Annotated[
 
 class IngestColumn(BaseModel):
     """One column of the push schema: the key a row dict keys on and the
-    value's type. `autopopulated` marks the AI columns, left blank they
-    are filled by autofill after append, so a producer knows which
-    columns it owns and which it may leave to the system."""
+    value's type. Only the columns a producer OWNS appear: a column the
+    system fills is written with its own record of what filled it, and
+    a push writes rows alone, so such a column is absent here and its
+    key is refused on append."""
 
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Row data dicts key on this.")
     label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
@@ -139,29 +140,19 @@ class IngestColumn(BaseModel):
         "value does not satisfy it (number, currency, and date carry shape rules), so send values "
         "of this type."
     )
-    # A literal default (not default_factory) so it reaches the JSON
-    # schema and a consumer parsing an older payload without the key reads
-    # a hard column, never refuses it.
-    autopopulated: bool = Field(
-        default=False,
-        description="True on AI columns: left blank, autofill researches and fills this after "
-        "append. A push MAY still send a value to pin its own (write-if-blank keeps it, and "
-        "autofill skips an agent whose columns a row already fills). False on hard columns, which "
-        "a producer provides.",
-    )
 
 
 class IngestSchema(BaseModel):
     """The pushable row shape for POST /v1/lists/{id}/ingest: a row in the
     push is a dict keyed by these columns' keys, each value validated
-    against the column's type on append. Hard columns (autopopulated
-    false) are the data a producer sends; AI columns (autopopulated true)
-    autofill owns, a push may leave them blank or send a value to pin its
-    own. A client builds a push off this without guessing keys."""
+    against the column's type on append. These are the columns a
+    producer owns; the ones the system fills are not here and are
+    refused if sent, because their values arrive with the record of
+    what filled them. A client builds a push off this without guessing
+    keys."""
 
     columns: list[IngestColumn] = Field(
-        default=[],
-        description="Columns of the push schema, in display order; AI columns carry autopopulated true.",
+        default=[], description="Columns of the push schema, in display order; the ones a producer owns."
     )
 
 

@@ -20,6 +20,7 @@ from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn
 
+from ..cells.kinds.registry import column_kind_for
 from ..cells.writes import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
     CELL_MAX_LENGTH,
@@ -51,6 +52,16 @@ class ListNotFound(Exception):
 
 class FolderNotFound(Exception):
     """Missing OR foreign folder (cross-tenant reads as not-found)."""
+
+
+class ColumnNotWritable(Exception):
+    """A row carried a key for a column whose cells are RECORDED: its
+    value and its truth are written together by the landing, and this
+    writer writes rows and nothing else, so the value would land with
+    no record and read as never attempted forever (no barrier ever
+    completes for it, and the row it belongs to never sends). A CALLER
+    bug, not a per-row hazard: authored VALUES clamp here rather than
+    reject, but a key no door may send is a door to fix."""
 
 
 class RowNotFound(Exception):
@@ -262,6 +273,14 @@ class ListService:
         # the fill write path stores. Authored input TOLERATES a mismatch:
         # the mismatches are ignored (the raw value stores), because an
         # import must never fail a whole batch over one bad cell.
+        recorded = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
+        for index, data in enumerate(rows):
+            refused = sorted(recorded & data.keys())
+            if refused:
+                raise ColumnNotWritable(
+                    f"row {index}: {refused} records cell state, so its values are written through the "
+                    "landing and never arrive with a row"
+                )
         types = {column.key: column.type for column in target.columns}
         stored_rows = []
         for data in rows:

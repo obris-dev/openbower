@@ -78,6 +78,7 @@ from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import (
+    ColumnNotWritable,
     FolderNotFound,
     FolderService,
     FoldersFull,
@@ -233,7 +234,7 @@ class ListRowsView(_ScopedView):
             report = AppendRowsOperation(
                 account_id=self.request.user.account_id, target_list=target_list, rows=serializer.validated_data["rows"]
             ).run()
-        except ListsFull as e:
+        except (ListsFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
@@ -258,10 +259,11 @@ class ListIngestView(_ScopedView):
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
 
     def get(self, request: Request, id: str) -> Response:
-        """GET /v1/lists/{id}/ingest: the pushable row schema, every column
-        with its key and type, so a producer can build a push without
-        guessing. AI columns carry autopopulated=true: a producer may leave
-        them for autofill or send a value to pin its own. Same
+        """GET /v1/lists/{id}/ingest: the pushable row schema, the
+        columns a producer OWNS with their keys and types, so a push can
+        be built without guessing. A column the system fills is absent:
+        its value is written with the record of what filled it, which a
+        push cannot carry, so sending its key is refused. Same
         account-scoped auth as the push."""
         return Response(ingest_schema_wire(self._list_or_404(id)))
 

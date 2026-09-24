@@ -20,7 +20,7 @@ from jobs.models import Job
 from jobs.services import JobRunner
 from lists.constants import AGENT_MISSING_MESSAGE, CellSource, FillFailureCode, NodeRunStatus, StoredCellState
 from lists.jobs.fill import FillJob
-from lists.models import List, NodeRun
+from lists.models import List, ListRow, NodeRun
 from lists.nodes.registry import COLUMN_AGENT
 from lists.processors import FillMode, FillScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
@@ -238,9 +238,19 @@ class RemainingRuleTests(_Harness):
         self.assertEqual(self._numbers(self._runs(resumed)), [2, 3])
 
 
+def _already_valued(row, **cells):
+    """The cells a landing wrote before this pass looked: a recorded
+    column's values never arrive with a row, so a test that needs one
+    valued puts it there the way the landing did."""
+    ListRow.objects.filter(id=str(row.id)).update(data={**row.data, **cells})
+    row.refresh_from_db()
+    return row
+
+
 class PushedRuleTests(_Harness):
-    def test_a_node_the_push_fully_filled_gets_no_run_and_the_rank_is_stamped(self):
-        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
+    def test_a_node_whose_columns_are_all_valued_gets_no_run_and_the_rank_is_stamped(self):
+        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io"}])
+        _already_valued(pushed[1], answer="sent")
         processor = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
         (run,) = list(self._runs())
@@ -261,11 +271,12 @@ class PushedRuleTests(_Harness):
 
     def test_the_pushed_rule_judges_the_scopes_columns_never_the_sheets(self):
         # One entry point for the judged columns: the starter puts them
-        # on the scope. Here the scope names a column the push left
-        # blank while the sheet's own column for the node is filled, so
-        # the scope's answer (owed) and the sheet's (done) differ. FAILS
-        # if the rule reads the sheet again.
-        pushed = self.lists.add_rows(self.sheet, [{"company": "done.io", "answer": "sent"}])
+        # on the scope. Here the scope names a column the row left blank
+        # while the sheet's own column for the node is valued, so the
+        # scope's answer (owed) and the sheet's (done) differ. FAILS if
+        # the rule reads the sheet again.
+        pushed = self.lists.add_rows(self.sheet, [{"company": "done.io"}])
+        _already_valued(pushed[0], answer="sent")
         processor = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["other"]))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
 
@@ -304,13 +315,14 @@ class PushedRuleTests(_Harness):
         self.assertFalse(Workflow.objects.filter(list_id=str(plain.id)).exists())
 
     def test_the_trigger_hands_each_node_its_own_columns(self):
-        # The service reads the sheet ONCE and builds a scope per node
-        # carrying that node's keys, so a node the push fully filled
-        # gets no run and one it left blank does, through the real
-        # entry point. FAILS if the service stops carrying the keys.
+        # The service builds a scope per node carrying that node's keys,
+        # so a node whose columns are already valued gets no run and one
+        # left blank does, through the real entry point. FAILS if the
+        # service stops carrying the keys.
         from lists.services.workflow_reactions import WorkflowReactions
 
-        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io", "answer": "sent"}])
+        pushed = self.lists.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io"}])
+        _already_valued(pushed[1], answer="sent")
         self.assertEqual(WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, pushed), 1)
         (run,) = list(self._runs())
         self.assertEqual(run.row_id, str(pushed[0].id))
