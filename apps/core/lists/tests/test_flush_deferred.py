@@ -382,6 +382,49 @@ class FlushDeferredTests(TransactionTestCase):
         self.assertEqual([item.row_id for item in envelope.data.items], [str(self.rows[0].id), str(self.rows[2].id)])
         self.assertEqual(self._runs().get(row_id=gone).status, NodeRunStatus.ROW_MISSING)
 
+    def test_a_row_deleted_during_the_send_retires_alone(self):
+        # The row existed when the batch resolved and is gone by the
+        # time the send lands: the rest of the batch still lands SENT
+        # and the gone row's run retires ROW_MISSING, with no second
+        # send and nothing handed to the advance for it. FAILS if one
+        # gone row voids the whole landing (every run left PROCESSING
+        # for the reclaim, the batch sent again).
+        for row in self.rows:
+            self._complete(row)
+        self._add_column()
+        gone = self.rows[1]
+        fake = _FakeSender()
+        real_send = fake.send
+
+        def send_while_the_row_is_deleted(**kwargs):
+            ListRow.objects.filter(id=gone.id).delete()
+            return real_send(**kwargs)
+
+        fake.send = send_while_the_row_is_deleted
+
+        with patch.object(WorkflowReactions, "advance", autospec=True, return_value=0) as advance:
+            report = self._tick(fake)
+
+        self.assertEqual((report.settled, report.failed), (2, 0))
+        advanced = [row_id for call in advance.call_args_list for row_id in call.kwargs["row_ids"]]
+        self.assertEqual(sorted(advanced), sorted([str(self.rows[0].id), str(self.rows[2].id)]))
+        self.assertEqual(len(fake.calls), 1)
+        by_row = {run.row_id: run.status for run in self._runs()}
+        self.assertEqual(
+            by_row,
+            {
+                str(self.rows[0].id): NodeRunStatus.DONE,
+                str(gone.id): NodeRunStatus.ROW_MISSING,
+                str(self.rows[2].id): NodeRunStatus.DONE,
+            },
+        )
+        sent = ListCellState.objects.filter(column_key="crm_sync", state=StoredCellState.SENT)
+        self.assertEqual(
+            sorted(sent.values_list("row_id", flat=True)), sorted([str(self.rows[0].id), str(self.rows[2].id)])
+        )
+        self.assertEqual(self._tick(fake, now=BOUNDARY + timedelta(seconds=INTERVAL)).nodes, 0)
+        self.assertEqual(len(fake.calls), 1)
+
     def test_a_deleted_list_settles_list_missing(self):
         self._complete(self.rows[0])
         self._add_column()

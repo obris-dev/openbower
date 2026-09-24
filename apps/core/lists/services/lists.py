@@ -311,8 +311,11 @@ class ListService:
         return created
 
     def land_row(self, ctx: LandingContext, landing: RowLanding) -> RowVerdict:
-        """One row's landing: see land_rows."""
+        """One row's landing: see land_rows. Raises RowNotFound for a
+        row that is gone."""
         verdicts = self.land_rows(ctx, [landing])
+        if landing.row_id not in verdicts:
+            raise RowNotFound(landing.row_id)
         return verdicts[landing.row_id]
 
     def land_rows(self, ctx: LandingContext, landings: Sequence[RowLanding]) -> dict[str, RowVerdict]:
@@ -325,7 +328,10 @@ class ListService:
         N is, and a value and the record that says what it is can
         never be written apart. Runs inside the caller's transaction,
         which closes its runs after, in the deletes' lock order:
-        ListRow, ListCellState, NodeRun. Returns each row's verdict."""
+        ListRow, ListCellState, NodeRun. Returns the verdict of each row
+        that still exists: a row deleted since its writes were made has
+        nothing to land and nothing to record, so it has no verdict, and
+        each caller says what that means for its own run."""
         by_row: dict[str, list[CellWrite]] = {}
         for landing in landings:
             by_row.setdefault(landing.row_id, []).extend(landing.writes)
@@ -382,6 +388,7 @@ class ListService:
         pending = {row_id: cells for row_id, cells in to_land.items() if cells}
         live_columns: set[str] = set()
         columns_to_record: set[str] = set()
+        gone: set[str] = set()
         if by_row:
             with transaction.atomic():
                 # The hazard this guards is a read-modify-write of each
@@ -399,15 +406,17 @@ class ListService:
                 }
                 # Read once the rows are held, so the column set is at
                 # least as new as the delete that could have taken one.
-                # Before the missing-row verdict, so a sheet that is
+                # Before the gone rows are set aside, so a sheet that is
                 # gone says so rather than reporting its rows missing.
                 try:
                     target = List.objects.get(id=list_id, account_id=self.account_id)
                 except List.DoesNotExist as e:
                     raise ListNotFound(list_id) from e
-                missing = [row_id for row_id in by_row if row_id not in rows]
-                if missing:
-                    raise RowNotFound(missing[0])
+                # A row deleted while its writes were in flight (a batch
+                # that resolved before the delete) is left out, and the
+                # rest of the batch lands: one gone row must not void
+                # every other row's landing.
+                gone = {row_id for row_id in by_row if row_id not in rows}
                 types = {column.key: column.type for column in target.columns}
                 live_columns = set(types)
                 # Which columns the LEDGER owns: the workflow's, since
@@ -422,6 +431,7 @@ class ListService:
                 pending = {
                     row_id: {key: value for key, value in cells.items() if key in live_columns}
                     for row_id, cells in pending.items()
+                    if row_id not in gone
                 }
                 changed: list[ListRow] = []
                 now = timezone.now()
@@ -466,6 +476,8 @@ class ListService:
                     ListRow.objects.bulk_update(changed, ["data", "updated_at"])
         landed: dict[str, Landed] = {}
         for row_id, writes in by_row.items():
+            if row_id in gone:
+                continue
             verdict = verdicts[row_id]
             # WRITES -> RECORDS, and only these writes make one. A write
             # whose column is GONE would leave a record outliving the
