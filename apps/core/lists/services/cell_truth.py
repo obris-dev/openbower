@@ -91,31 +91,64 @@ class CellRecord(NamedTuple):
     tools: Mapping[str, str]
 
 
+def _rows(
+    *, account_id: str, list_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
+) -> list[ListCellState]:
+    return [
+        ListCellState(
+            account_id=account_id,
+            list_id=list_id,
+            row_id=record.row_id,
+            column_key=record.column_key,
+            state=record.state,
+            fill_run_id=fill_run_id,
+            tools=dict(record.tools),
+            source=source,
+        )
+        for record in records
+    ]
+
+
 def write_records(
     *, account_id: str, list_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
 ) -> None:
     """Many cells' states under one identity, ONE upsert: a landing
     (one row's N columns, or a digest's many rows) records everything
-    in a single statement."""
+    in a single statement. For the cells the landing RESOLVED; one it
+    left alone goes to record_unchanged."""
     if not records:
         return
     ListCellState.objects.bulk_create(
-        [
-            ListCellState(
-                account_id=account_id,
-                list_id=list_id,
-                row_id=record.row_id,
-                column_key=record.column_key,
-                state=record.state,
-                fill_run_id=fill_run_id,
-                tools=dict(record.tools),
-                source=source,
-            )
-            for record in records
-        ],
+        _rows(account_id=account_id, list_id=list_id, records=records, fill_run_id=fill_run_id, source=source),
         update_conflicts=True,
         unique_fields=_UNIQUE_FIELDS,
         update_fields=_UPSERT_FIELDS,
+    )
+
+
+def record_unchanged(
+    *, account_id: str, list_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
+) -> None:
+    """Cells the landing did NOT change: recorded when nothing is
+    there, left exactly as they are when something is.
+
+    A run that found a cell occupied has an opinion about the COLUMN,
+    not about that cell. Its `updated_at` is when the row completed as
+    far as a barrier is concerned, so restamping it sends the row again
+    under a new event id the receiver cannot dedupe; its `source` and
+    `fill_run_id` are what the drawer shows as the answer behind the
+    value, so restamping those credits this run with a value another
+    writer put there.
+
+    The record still lands when the cell has none, because absence
+    means NEVER ATTEMPTED: a column converted from plain, or a value
+    stored before rows stopped carrying recorded columns, would
+    otherwise complete no barrier."""
+    if not records:
+        return
+    ListCellState.objects.bulk_create(
+        _rows(account_id=account_id, list_id=list_id, records=records, fill_run_id=fill_run_id, source=source),
+        ignore_conflicts=True,
     )
 
 

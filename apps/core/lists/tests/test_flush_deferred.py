@@ -22,7 +22,7 @@ from django.test.utils import CaptureQueriesContext
 from common.testing import TEST_IDENTITY
 from jobs.services import JobRunner
 from lists.constants import NODE_RUN_ATTEMPTS, CellSource, NodeRunStatus, StoredCellState, WebhookRunOutcome
-from lists.models import Node, NodeRun
+from lists.models import ListCellState, ListRow, Node, NodeRun
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
 from lists.operations.flush_deferred import FlushDeferredOperation
 from lists.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, SEND_UNPREPARABLE, next_window
@@ -435,6 +435,43 @@ class FlushDeferredTests(TransactionTestCase):
         self.assertEqual(
             (report.failed, run.status, run.result["error"], fake.calls), (1, NodeRunStatus.DONE, COLUMN_REMOVED, [])
         )
+
+    def test_a_second_run_landing_on_a_filled_cell_does_not_re_send_the_row(self):
+        # The row went out once, for the completion it had. A later run
+        # that lands on a column the barrier waits on, and finds that
+        # cell already filled, wrote nothing to it: its record is what
+        # says WHEN the row completed, so restamping it would read as a
+        # newer completion, queue a second run, and deliver the same row
+        # again under a different event id (the id hashes the stamp, so
+        # the receiver cannot dedupe it). FAILS if a cell the landing
+        # left alone is restated.
+        from lists.cells.writes import AnsweredWrite, LandingContext, RowLanding
+
+        row = self.rows[0]
+        self._complete(row)
+        # The VALUE as well as the record: the second run has to find
+        # the cell occupied, which is what makes it write nothing.
+        ListRow.objects.filter(id=str(row.id)).update(data={**row.data, "answer": "the first answer"})
+        row.refresh_from_db()
+        self._add_column()
+        fake = _FakeSender()
+        self._tick(fake)
+        self.assertEqual(len(fake.calls), 1)
+        before = ListCellState.objects.get(list_id=str(self.sheet.id), row_id=str(row.id), column_key="answer")
+
+        # A later fill runs over the row again: the cell is filled, so
+        # the run writes nothing to it (write-if-blank).
+        with patch("django.utils.timezone.now", return_value=COMPLETED + timedelta(hours=2)):
+            self.lists.land_rows(
+                LandingContext(list_id=str(self.sheet.id), source=CellSource.NODE, fill_run_id=None),
+                [RowLanding(str(row.id), [AnsweredWrite("answer", "a different answer", StoredCellState.NO_EVIDENCE)])],
+            )
+        after = ListCellState.objects.get(list_id=str(self.sheet.id), row_id=str(row.id), column_key="answer")
+        self.assertEqual((after.updated_at, after.state), (before.updated_at, before.state))
+
+        # And nothing new is due: the completion did not move.
+        self.assertEqual(self._tick(fake, now=BOUNDARY + timedelta(hours=3)).nodes, 0)
+        self.assertEqual(len(fake.calls), 1)
 
     def test_a_node_that_crashes_every_tick_is_given_up_once_its_attempts_are_spent(self):
         # A crash reaches the tick's own handler, which parks nothing

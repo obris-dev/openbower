@@ -138,11 +138,14 @@ class RowLanding(NamedTuple):
 
 
 class Landed(NamedTuple):
-    """What the value pass handed back for one row: the row's verdict,
-    and every write resolved to the state it records."""
+    """What the value pass handed back for one row: the verdict over
+    EVERY write, and the ListCellState records to write, which are the
+    writes whose COLUMN KIND records state resolved to the one state
+    each earned. A write the sheet keeps no record for lands its value
+    and appears in the verdict alone."""
 
     verdict: RowVerdict
-    states: tuple[StateWrite, ...]
+    cell_states: tuple[StateWrite, ...]
 
 
 class LandingContext(NamedTuple):
