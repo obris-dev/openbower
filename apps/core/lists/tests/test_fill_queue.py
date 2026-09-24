@@ -39,7 +39,7 @@ NODE = "01NODEAAAAAAAAAAAAAAAAAAAA"
 AGENT = "01AGENTAAAAAAAAAAAAAAAAAAA"
 
 
-def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
+def make_run(*, rows: int = 3, list_id: str = LIST, node_id: str = NODE) -> Job:
     """A targeted fill job (its walk done) with its whole consented set
     of tasks, born READY, so a lifecycle test starts from a fill that is
     polling its runs."""
@@ -47,7 +47,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
         account_id=ACCOUNT,
         user_id=USER,
         list_id=list_id,
-        node_id=NODE,
+        node_id=node_id,
         agent_id=AGENT,
         column_keys=["answer"],
         consented=rows,
@@ -57,7 +57,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
         NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
-            node_id=NODE,
+            node_id=node_id,
             kind=COLUMN_AGENT,
             row_id=f"01ROW{n:021d}",
             list_id=list_id,
@@ -279,9 +279,11 @@ class CompletionTests(TestCase):
         # A fill closed with no sweep (a stop that died between its flip
         # and its tidy), an open fill beside it: one judgement, paged one
         # fill id at a time, abandons the closed one's runs only.
+        # Two nodes: one open run per (row, node), so two fills' live
+        # runs share a row only on different nodes.
         closed = make_run(rows=2)
         Job.objects.filter(id=closed.id).update(status=JobStatus.CANCELLED)
-        open_fill = make_run(rows=2)
+        open_fill = make_run(rows=2, node_id="01NODE" + "B" * 20)
         self.assertEqual(NodeRunFlow.abandon_orphans(batch=1), 2)
         self.assertEqual(
             set(NodeRun.objects.filter(fill_run_id=str(closed.id)).values_list("status", flat=True)),
@@ -341,7 +343,9 @@ class RunControlTests(TestCase):
             foreign.cancel(str(fill.id))
 
     def test_page_for_list_keysets_open_runs_only(self) -> None:
-        fills = [make_run(rows=1) for _ in range(3)]
+        # One node each: one open run per (row, node), and a node holds
+        # one open fill at a time anyway.
+        fills = [make_run(rows=1, node_id="01NODE" + letter * 20) for letter in "ABC"]
         cancelled = fills[0]
         FillService(account_id=ACCOUNT).cancel(str(cancelled.id))
         live_newest_first = sorted((str(fill.id) for fill in fills[1:]), reverse=True)

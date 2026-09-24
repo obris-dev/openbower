@@ -147,20 +147,26 @@ class NodeRun(AccountScopedModel):
         verbose_name = _("node run")
         verbose_name_plural = _("node runs")
         constraints = [
-            # The idempotency key: enqueueing the same row twice is a
-            # no-op. Also the row drawer's lookup. NULL fill_run_ids are
-            # distinct in SQL, so this only binds fill-backed tasks; the
-            # automatic path is deduped by its own key below.
+            # A fill's own idempotency, SETTLED runs included: a slice
+            # the runner re-walks after some of its runs finished must
+            # not queue them again, which the open key below no longer
+            # sees once a run is terminal. Also the row drawer's lookup.
+            # NULL fill_run_ids are distinct in SQL, so this binds
+            # fill-backed runs only.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
-            # The automatic path's idempotency: one OPEN run per (row,
-            # node) (one run fills a node's whole column set), so
-            # re-enqueueing a row's autofill or re-completing a row for
-            # its webhook while a run is pending is a no-op. A settled
-            # run is history: a row that completes again after its
-            # webhook run sent gets a new run.
+            # One OPEN run per (row, node), WHICHEVER lane queued it (one
+            # run fills a node's whole column set). A lane judges a row
+            # by its cells, which stay blank until the open run lands,
+            # so no judgement can tell the row is already being worked
+            # on; this is the one place that can, atomically, and the
+            # inserts ignore the conflict. An autofill run in flight
+            # and a Fill over the same row would otherwise both call
+            # the provider for one cell. A settled run is history: a
+            # row that completes again after its webhook sent gets a
+            # new run.
             models.UniqueConstraint(
                 fields=["row_id", "node_id"],
-                condition=models.Q(fill_run_id__isnull=True, status__in=NON_TERMINAL_NODE_RUN_STATES),
+                condition=models.Q(status__in=NON_TERMINAL_NODE_RUN_STATES),
                 name="node_run_open_uniq",
             ),
             models.CheckConstraint(condition=~models.Q(kind=""), name="node_run_kind_named"),
