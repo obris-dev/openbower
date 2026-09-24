@@ -20,7 +20,7 @@ from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
 from openbower_schema.lists import ListColumn, WorkflowColumn
 
-from ..cells.writes import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
+from ..cells import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
     CELL_MAX_LENGTH,
     FILL_WRITE_BATCH,
@@ -320,7 +320,7 @@ class ListService:
         landings merged by row; the value pass, which lands what each
         write has to land and hands every write back RESOLVED to the
         state it records (each shape answers for itself against what
-        the row reported: cells/writes.py); then one ledger upsert of
+        the row reported: cells.py); then one ledger upsert of
         those states. A landing of N rows is three statements whatever
         N is, and a value and the record that says what it is can
         never be written apart. Runs inside the caller's transaction,

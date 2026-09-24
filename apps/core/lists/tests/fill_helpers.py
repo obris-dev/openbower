@@ -31,7 +31,7 @@ from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.lists import AiColumn
 
-from ..cells.writes import AnsweredWrite, LandingContext, RowLanding, TypedWrite
+from ..cells import AnsweredWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..jobs.fill import FillJob
 from ..models import List, ListRow, Node, NodeRun

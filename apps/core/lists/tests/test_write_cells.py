@@ -10,7 +10,7 @@ from django.db import connection
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 
-from lists.cells.writes import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
+from lists.cells import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin, StoredCellState
 from lists.models import ListCellState, ListRow
 from lists.services.lists import ListNotFound, ListService, RowNotFound

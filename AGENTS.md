@@ -159,7 +159,7 @@ auth + data services live in a separate private repo.
   The workflow service is the one writer holding that invariant, and it
   is what makes "which paths does an arrival start" one indexed read
   rather than a walk of the workflow's nodes.
-- How a column's CELLS change is the cell layer (lists/cells), and
+- How a column's CELLS change is the cell layer (lists/cells.py), and
   every change lands as a `CellWrite` (the state a cell means to
   record, the value it lands where blank, the tools behind it): a
   node kind's run reaction (`NodeProcessor.on_run_landed`, one write

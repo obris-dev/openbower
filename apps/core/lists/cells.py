@@ -1,11 +1,21 @@
-"""What a cell wants to become, and what a landing is made of.
+"""The cell layer: what a cell wants to become, and what a landing is
+made of.
 
 One write per OPERATION on a cell (a person typed, an agent answered,
 a webhook sent), all one base: what the operation has to land, and
 the mapping from what the row made of that to the state it records.
 Each operation writes its own mapping in full. Every write resolves to
 exactly one StateWrite, the one shape the ledger takes, so the landing
-carries writes and never interprets them."""
+carries writes and never interprets them.
+
+A node kind's processor emits one write per column it fills
+(`on_run_landed`); a person's typed value is a TypedWrite. A column's
+TYPE (text, number, date) shapes a value at the write and lives in the
+contract's cell_types. Writes are in-memory intents, persisted by
+nothing until the list service's `land_row` / `land_rows` lands the
+values onto the row and the resolved states onto the cell ledger, in
+one lock order. The landing is kind-blind: it dispatches on nothing,
+it writes what it is handed."""
 
 from __future__ import annotations
 
@@ -14,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
-from ..constants import CellSource, StoredCellState
+from .constants import CellSource, StoredCellState
 
 
 class CellMismatch(NamedTuple):

@@ -67,7 +67,7 @@ from jobs.models import Job
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
-from ..cells.writes import AnsweredWrite, CellWrite, LandingContext, RowLanding
+from ..cells import AnsweredWrite, CellWrite, LandingContext, RowLanding
 from ..constants import (
     AGENT_MISSING_MESSAGE,
     FILL_RETRY_BACKOFF_SECONDS,

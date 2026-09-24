@@ -45,7 +45,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from ..cells.writes import CellWrite
+from ..cells import CellWrite
 from ..models import List, ListRow, Node, NodeRun
 from ..services.node_runs import NodeRunFlow
 
