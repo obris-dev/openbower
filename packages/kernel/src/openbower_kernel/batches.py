@@ -9,33 +9,21 @@ from django.db.models import QuerySet
 
 
 def iter_id_pages(queryset: QuerySet, *, batch: int) -> Iterator[list[str]]:
-    """Pages of ids, in ULID order, for a write that CONSUMES each page.
+    """Pages of ids, in ULID order, for a write the caller makes a page
+    at a time: a prune, a purge, a column's values stripped from every
+    row of a sheet.
 
-    Re-queries after every page instead of cursoring: the page is what
-    bounds memory (the ids are never read in full), a consumed page is
-    never seen again, and the loop ends when a query comes back empty.
-    The caller must move every id it is handed out of the queryset
-    before asking for the next page (delete it, or change what the
-    filter matches); a page that comes back starting where the last one
-    did is a caller that did not, and raises rather than spinning."""
-    previous: str | None = None
-    while True:
-        page = [str(pk) for pk in queryset.order_by("id").values_list("id", flat=True)[:batch]]
-        if not page:
-            return
-        if page[0] == previous:
-            raise RuntimeError("iter_id_pages: a page was handed back unconsumed; the caller must remove each page")
-        previous = page[0]
-        yield page
+    KEYSET on the id, so the LOOP owns its progress: the page bounds
+    memory (the ids are never read in full), the cursor advances
+    whatever the caller does with a page, and the walk ends on a page
+    that comes back empty. A caller that deletes its page and one that
+    only rewrites it both terminate, so there is no obligation to get
+    wrong.
 
-
-def iter_id_keyset(queryset: QuerySet, *, batch: int) -> Iterator[list[str]]:
-    """Pages of ids, in ULID order, for a write that LEAVES each page in
-    the queryset: an update that does not change what the filter
-    matches, where the sibling above would hand the same page back and
-    raise. Keyset on the id, so a page is read once, the walk advances
-    whether or not the caller wrote anything, and it ends on a page
-    that comes back empty."""
+    What it does not do is re-see a row that enters the filter BEHIND
+    the cursor, which needs eligibility to be something other than the
+    id. A walk that needs those runs this one again until it yields
+    nothing."""
     after = ""
     while True:
         page = [str(pk) for pk in queryset.filter(id__gt=after).order_by("id").values_list("id", flat=True)[:batch]]

@@ -14,7 +14,7 @@ from django.db.models import Value
 
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
-from openbower_kernel.batches import iter_id_keyset
+from openbower_kernel.batches import iter_id_pages
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
@@ -261,7 +261,7 @@ class ColumnService:
             # to). The blob is storage; the structured record is what
             # answers questions about it.
             rows = ListRow.objects.filter(list_id=str(target_list.id))
-            for ids in iter_id_keyset(rows, batch=FILL_WRITE_BATCH):
+            for ids in iter_id_pages(rows, batch=FILL_WRITE_BATCH):
                 # Locked BY ID first, because an UPDATE takes its locks
                 # in whatever order it scans and Django drops an
                 # ordering from one: a landing locks its rows by id, and
