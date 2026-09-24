@@ -108,6 +108,18 @@ class _SendableBatch(NamedTuple):
     incomplete: list[str]
 
 
+class _LandResult(NamedTuple):
+    """What `_land` did: `count` is how many runs it finished (moved to
+    DONE by its CAS, whichever outcome it recorded on their cells; the
+    caller files them as sent or failed), and `landed` the runs whose row
+    was still there to land on, which is what the advance reads (a run
+    whose row was deleted during the send retires ROW_MISSING and is in
+    neither)."""
+
+    count: int
+    landed: list[NodeRun]
+
+
 class WebhookProcessor(NodeProcessor):
     KIND: ClassVar[str] = WEBHOOK
 
@@ -237,28 +249,31 @@ class WebhookProcessor(NodeProcessor):
         delivery = sent.delivery
         runs = batch.sendable
         if delivery.status == DeliveryStatus.OK:
-            result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
+            sent_result = WebhookRunResult(outcome=WebhookRunOutcome.SENT, delivery_id=str(delivery.id))
             # A run the reclaim took back mid-flight is re-offered too:
             # the advance is idempotent, and its row did complete.
+            result = self._land(flow, batch, runs, StoredCellState.SENT, sent_result)
             return BatchTally(
-                settled=self._land(flow, batch, runs, StoredCellState.SENT, result),
-                settled_rows=[(run.list_id, run.row_id) for run in runs if run.row_id],
+                settled=result.count,
+                settled_rows=[(run.list_id, run.row_id) for run in result.landed if run.row_id],
             )
-        failed = WebhookRunResult(outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error)
+        failed_result = WebhookRunResult(
+            outcome=WebhookRunOutcome.FAILED, delivery_id=str(delivery.id), error=delivery.error
+        )
         if delivery.status != DeliveryStatus.TRANSIENT:
             # Rejected or blocked: a retry buys the same answer.
-            return BatchTally(failed=self._land(flow, batch, runs, StoredCellState.FAILED, failed))
+            result = self._land(flow, batch, runs, StoredCellState.FAILED, failed_result)
+            return BatchTally(failed=result.count)
         # Transient: the attempt the claim stamped counts; past the cap
         # the run fails, the rest wait for the next window.
         exhausted = [run for run in runs if run.attempts > NODE_RUN_ATTEMPTS]
         retrying = [str(run.id) for run in runs if run.attempts <= NODE_RUN_ATTEMPTS]
-        parked = WebhookRunResult(
+        parked_result = WebhookRunResult(
             outcome=WebhookRunOutcome.RETRYING, delivery_id=str(delivery.id), error=delivery.error
         )
-        return BatchTally(
-            failed=self._land(flow, batch, exhausted, StoredCellState.FAILED, failed),
-            parked=flow.park_batch(retrying, not_before=batch.window, result=parked.model_dump()),
-        )
+        result = self._land(flow, batch, exhausted, StoredCellState.FAILED, failed_result)
+        parked = flow.park_batch(retrying, not_before=batch.window, result=parked_result.model_dump())
+        return BatchTally(failed=result.count, parked=parked)
 
     def on_run_landed(self, column_keys: Sequence[str], outcome: StoredCellState) -> list[CellWrite]:
         """The send's outcome on this node's one column: SENT, or FAILED.
@@ -273,21 +288,27 @@ class WebhookProcessor(NodeProcessor):
         runs: Sequence[NodeRun],
         state: StoredCellState,
         result: WebhookRunResult,
-    ) -> int:
+    ) -> _LandResult:
         """The batch's landing: the kind's write for every row through
         the list service's one landing (ONE ledger upsert for the
-        batch), then the runs closed DONE with the result stored, one
-        transaction, ListCellState before NodeRun (the order the deletes
-        take)."""
+        batch), then the runs settled, one transaction, ListCellState
+        before NodeRun (the order the deletes take). A run whose row was
+        deleted during the send has no verdict: it retires ROW_MISSING,
+        as a row gone before the send does, and the rest settle DONE
+        with the result stored."""
         if not runs:
-            return 0
+            return _LandResult(count=0, landed=[])
         writes = self.on_run_landed([batch.column_key], state)
         landings = [RowLanding(run.row_id, writes) for run in runs]
         ctx = LandingContext(list_id=str(batch.target_list.id), source=CellSource.NODE, fill_run_id=None)
         lists = ListService(account_id=self.account_id)
         with transaction.atomic():
-            lists.land_rows(ctx, landings)
-            return flow.settle_many([str(run.id) for run in runs], result.model_dump(), status=NodeRunStatus.DONE)
+            verdicts = lists.land_rows(ctx, landings)
+            landed = [run for run in runs if run.row_id in verdicts]
+            gone = [str(run.id) for run in runs if run.row_id not in verdicts]
+            flow.settle_many(gone, {}, status=NodeRunStatus.ROW_MISSING)
+            count = flow.settle_many([str(run.id) for run in landed], result.model_dump(), status=NodeRunStatus.DONE)
+        return _LandResult(count=count, landed=landed)
 
     def wait_keys(self, target_list: List) -> list[str]:
         """The columns the barrier ahead of this node waits on, in sheet
