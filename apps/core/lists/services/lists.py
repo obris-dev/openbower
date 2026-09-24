@@ -347,18 +347,28 @@ class ListService:
 
     def _write_values(self, list_id: str, by_row: Mapping[str, Sequence[CellWrite]]) -> dict[str, Landed]:
         """The value pass: the sheet rows alone, as one batch, then each
-        write resolved. The rows with something to land are locked in
-        ONE statement (by id, so two batches on the same rows take them
-        in the same order) and written back in ONE bulk update; a row
-        with nothing to land is not locked, and its writes resolve
-        against an empty verdict."""
+        write resolved. EVERY row of the landing is locked in ONE
+        statement (by id, so two batches on the same rows take them in
+        the same order), written back in ONE bulk update, and a row
+        with no value to land is locked all the same: its writes still
+        become ledger records, and the lock is what puts those records
+        behind a column or list purge instead of racing one.
+
+        The sheet is read AFTER the locks, never before: a column
+        DELETE strips its key from every row and purges its records
+        while holding those same locks, so a landing that read the
+        columns first would wake holding a list that still has the
+        deleted column and write its value back, with a record no
+        purge can reach. What a row may hold is decided from the sheet
+        as it is once this call may write to it."""
         to_land = {
             row_id: {write.key: value for write in writes if (value := write.value_to_land()) is not None}
             for row_id, writes in by_row.items()
         }
         verdicts = {row_id: RowVerdict((), (), ()) for row_id in by_row}
         pending = {row_id: cells for row_id, cells in to_land.items() if cells}
-        if pending:
+        live: set[str] = set()
+        if by_row:
             with transaction.atomic():
                 # The hazard this guards is a read-modify-write of each
                 # row's data, so the lock is on THOSE ROWS: without it two
@@ -367,24 +377,33 @@ class ListService:
                 # different rows never meet, which is what keeps the
                 # worker's pool wide at the terminal write.
                 #
-                # The list is read UNLOCKED, for the column types only.
-                # Appending a column cannot change an existing key's type,
-                # and retyping an occupied column does not exist; when it
-                # ships it takes the List lock itself.
+                rows = {
+                    str(row.id): row
+                    for row in ListRow.objects.select_for_update()
+                    .filter(id__in=list(by_row), list_id=list_id)
+                    .order_by("id")
+                }
+                # Read once the rows are held, so the column set is at
+                # least as new as the delete that could have taken one.
+                # Before the missing-row verdict, so a sheet that is
+                # gone says so rather than reporting its rows missing.
                 try:
                     target = List.objects.get(id=list_id, account_id=self.account_id)
                 except List.DoesNotExist as e:
                     raise ListNotFound(list_id) from e
-                rows = {
-                    str(row.id): row
-                    for row in ListRow.objects.select_for_update()
-                    .filter(id__in=list(pending), list_id=str(target.id))
-                    .order_by("id")
-                }
-                missing = [row_id for row_id in pending if row_id not in rows]
+                missing = [row_id for row_id in by_row if row_id not in rows]
                 if missing:
                     raise RowNotFound(missing[0])
                 types = {column.key: column.type for column in target.columns}
+                live = set(types)
+                # A column the sheet no longer has is nothing to write
+                # and nothing to report: not written, not occupied, not
+                # mismatched. Dropped here so the value pass and the
+                # resolve below agree about what this landing touched.
+                pending = {
+                    row_id: {key: value for key, value in cells.items() if key in live}
+                    for row_id, cells in pending.items()
+                }
                 changed: list[ListRow] = []
                 now = timezone.now()
                 for row_id, cells in pending.items():
@@ -426,10 +445,14 @@ class ListService:
                     # under the rows' own locks, so keys outside this call's
                     # writes carry through current.
                     ListRow.objects.bulk_update(changed, ["data", "updated_at"])
+        # A write whose column is GONE lands nothing and records
+        # nothing: its value would be a cell the sheet cannot show, and
+        # its record would outlive the purge that already took that
+        # column's records.
         return {
             row_id: Landed(
                 verdicts[row_id],
-                tuple(write.resolve(verdicts[row_id]) for write in writes),
+                tuple(write.resolve(verdicts[row_id]) for write in writes if write.key in live),
             )
             for row_id, writes in by_row.items()
         }

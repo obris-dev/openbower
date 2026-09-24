@@ -27,3 +27,19 @@ def iter_id_pages(queryset: QuerySet, *, batch: int) -> Iterator[list[str]]:
             raise RuntimeError("iter_id_pages: a page was handed back unconsumed; the caller must remove each page")
         previous = page[0]
         yield page
+
+
+def iter_id_keyset(queryset: QuerySet, *, batch: int) -> Iterator[list[str]]:
+    """Pages of ids, in ULID order, for a write that LEAVES each page in
+    the queryset: an update that does not change what the filter
+    matches, where the sibling above would hand the same page back and
+    raise. Keyset on the id, so a page is read once, the walk advances
+    whether or not the caller wrote anything, and it ends on a page
+    that comes back empty."""
+    after = ""
+    while True:
+        page = [str(pk) for pk in queryset.filter(id__gt=after).order_by("id").values_list("id", flat=True)[:batch]]
+        if not page:
+            return
+        yield page
+        after = page[-1]

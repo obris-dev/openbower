@@ -12,7 +12,7 @@ from django.test.utils import CaptureQueriesContext
 
 from lists.cells.writes import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin, StoredCellState
-from lists.models import ListRow
+from lists.models import ListCellState, ListRow
 from lists.services.lists import ListNotFound, ListService, RowNotFound
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
@@ -64,6 +64,54 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual(result.mismatched, ())
         row.refresh_from_db()
         self.assertEqual(row.data["employees"], "1200")
+
+    def test_a_column_taken_from_the_sheet_mid_landing_lands_nothing(self):
+        # The shape a column DELETE leaves: the key is gone from the
+        # sheet and its records are purged, while a run already
+        # PROCESSING is deliberately left to land (the cancel abandons
+        # READY and QUEUED only). The landing reads the columns AFTER it
+        # holds the rows, so it sees the delete and writes neither the
+        # value nor a record. FAILS if it reads the sheet before the
+        # lock, or writes a key the sheet no longer has: the value comes
+        # back under a key nothing shows, and the record outlives the
+        # purge that already took that column's.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        target.columns = [column for column in target.columns if column.key != "employees"]
+        target.save(update_fields=["columns", "updated_at"])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "1200"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual((result.written, result.occupied, result.mismatched), ((), (), ()))
+        row.refresh_from_db()
+        # The seed left the key blank; the landing added no value to it.
+        self.assertEqual(row.data.get("employees", ""), "")
+        self.assertFalse(ListCellState.objects.filter(list_id=str(target.id), column_key="employees").exists())
+
+    def test_the_rows_are_held_before_the_sheet_is_read_and_a_valueless_landing_holds_them_too(self):
+        # ORDER, not just content: a column delete strips its key from
+        # every row and purges its records while holding those rows, so
+        # a landing that read the columns FIRST would wake holding a
+        # stale sheet. And a landing with no value to land still takes
+        # the locks, because its writes still become records and the
+        # lock is what puts them behind a purge instead of racing one.
+        # FAILS if the sheet is read before the rows are held, or if a
+        # valueless landing skips the lock.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        for values, keys in (({"employees": "12"}, ()), ({}, ("employees",))):
+            with self.subTest(values=values), CaptureQueriesContext(connection) as captured:
+                service.land_row(
+                    _ctx(str(target.id), CellSource.MANUAL),
+                    _landing(str(row.id), values, column_keys=keys, blank_state=StoredCellState.NO_EVIDENCE),
+                )
+            sql = [q["sql"] for q in captured.captured_queries]
+            locked = next((i for i, q in enumerate(sql) if "lists_listrow" in q and "FOR UPDATE" in q), None)
+            read = next((i for i, q in enumerate(sql) if 'FROM "lists_list"' in q), None)
+            self.assertIsNotNone(locked, sql)
+            self.assertIsNotNone(read, sql)
+            self.assertLess(locked, read, sql)
 
     def test_occupied_cell_untouched(self):
         service = _service()
@@ -298,18 +346,24 @@ class WriteIfBlankTests(TestCase):
         self.assertNotIn("founded", row.data)
         self.assertNotIn("domain", row.data)
 
-    def test_key_without_a_column_writes_untouched(self):
-        # No column, no shape rule: the value stores as given, like any
-        # text cell (key matching and mapping happen upstream).
+    def test_a_key_the_sheet_has_no_column_for_lands_nothing(self):
+        # A landing writes a cell and the record of what made it,
+        # together, and a column that is not on the sheet has neither: a
+        # value stored under it shows nowhere and a record for it
+        # outlives every purge. Every landing's keys come from a node's
+        # columns, so in production this IS the deleted-column case.
+        # The tolerance for a key with no column belongs to add_rows,
+        # where authored input arrives and mapping happens upstream.
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.land_row(
             _ctx(str(target.id), CellSource.MANUAL),
             _landing(str(row.id), {"note": "Series B, 2024"}, column_keys=("note",), blank_state=None),
         )
-        self.assertEqual(result.written, ("note",))
+        self.assertEqual((result.written, result.occupied, result.mismatched), ((), (), ()))
         row.refresh_from_db()
-        self.assertEqual(row.data["note"], "Series B, 2024")
+        self.assertNotIn("note", row.data)
+        self.assertFalse(ListCellState.objects.filter(list_id=str(target.id), column_key="note").exists())
 
     def test_unknown_row_and_list_read_as_missing(self):
         service = _service()
