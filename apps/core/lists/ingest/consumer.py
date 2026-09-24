@@ -2,8 +2,9 @@
 worker consumes accepted row-push events, dedupes them against the inbox, and
 appends the rows to the sheet.
 
-Enriching the appended rows (running the sheet's AI columns) is NOT done
-here: that is a reconciler, a separate work stream. The loop lifecycle
+The append goes through AppendRowsOperation, which starts the sheet's
+workflow for the new rows in the same transaction, so a pushed row's AI
+columns fill like any other arrival's. The loop lifecycle
 (subscribe, poll, commit, stop) lives here; the management command owns only
 signals. `handle_ingest_event` is separable and tested without a broker.
 """
