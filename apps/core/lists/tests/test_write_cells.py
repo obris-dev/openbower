@@ -6,6 +6,8 @@ Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_write_cells
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
@@ -13,7 +15,7 @@ from django.test.utils import CaptureQueriesContext
 from lists.cells import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
 from lists.constants import CELL_MAX_LENGTH, CellSource, ColumnType, ListOrigin, StoredCellState
 from lists.models import ListCellState, ListRow
-from lists.services.lists import ListNotFound, ListService, RowNotFound
+from lists.services.lists import CellWrittenTwice, ListNotFound, ListService, RowNotFound
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
 
 _COLUMNS = [
@@ -165,6 +167,31 @@ class WriteIfBlankTests(TestCase):
         self.assertEqual(result.written, ())
         self.assertEqual([m.key for m in result.mismatched], ["employees"])
         self.assertIn("around fifty", result.mismatched[0].why)
+        row.refresh_from_db()
+        self.assertNotIn("employees", row.data)
+
+    def test_a_landing_that_fails_after_its_values_writes_nothing(self):
+        # A value and its record land together or not at all, whether or
+        # not the caller opened a transaction. FAILS if land_rows leans
+        # on the caller's: the value would stay with no record behind it.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        down = patch("lists.services.lists.cell_truth.write_records", side_effect=RuntimeError("ledger down"))
+        with down, self.assertRaises(RuntimeError):
+            service.land_row(_ctx(str(target.id)), _landing(str(row.id), {"employees": "42"}))
+        row.refresh_from_db()
+        self.assertNotIn("employees", row.data)
+
+    def test_two_writes_for_one_cell_in_one_landing_are_refused_by_name(self):
+        # One write per cell per landing: two would be two upserts on one
+        # ledger key in one statement, which Postgres refuses mid-landing.
+        # A caller bug, named before anything is written. FAILS if the
+        # landing lets them through to the upsert.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        twice = [_landing(str(row.id), {"employees": "42"}), _landing(str(row.id), {"employees": "43"})]
+        with self.assertRaisesMessage(CellWrittenTwice, "'employees'"):
+            service.land_rows(_ctx(str(target.id)), twice)
         row.refresh_from_db()
         self.assertNotIn("employees", row.data)
 

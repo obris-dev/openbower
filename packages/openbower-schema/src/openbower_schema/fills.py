@@ -41,6 +41,8 @@ SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
 
 # Per-row retry patience: the initial run plus 3 retries (binary). A
 # wire fact so a client can state the worst-case spend beside a count.
+# A webhook send judges the cap AFTER it delivers, so a row's send is
+# tried once more than a run: 5 deliveries, the first plus 4 retries.
 NODE_RUN_ATTEMPTS = 4
 # The row-lease staleness window: a claimed row's lease is renewed in
 # bulk by the worker's supervising loop, which passes far more often

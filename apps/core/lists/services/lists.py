@@ -67,6 +67,19 @@ class RowNotFound(Exception):
     """Missing row OR one outside the given list (reads as not-found)."""
 
 
+class CellWrittenTwice(Exception):
+    """A landing carried two writes for one cell. The ledger takes one
+    record per cell per statement, so this is refused before anything
+    is written: a CALLER bug (a processor emits one write per column it
+    fills), never a per-row hazard."""
+
+    def __init__(self, row_id: str, keys: Sequence[str]) -> None:
+        names = ", ".join(repr(key) for key in keys)
+        super().__init__(f"row {row_id}: {names} written twice in one landing")
+        self.row_id = row_id
+        self.keys = list(keys)
+
+
 class RowRankTooDeep(Exception):
     """A move would write a rank past the column bound: the gap has been
     split past what a re-space has caught up with. The move must wait
@@ -326,43 +339,55 @@ class ListService:
         the row reported: cells.py); then one ledger upsert of
         those states. A landing of N rows is three statements whatever
         N is, and a value and the record that says what it is can
-        never be written apart. Runs inside the caller's transaction,
-        which closes its runs after, in the deletes' lock order:
-        ListRow, ListCellState, NodeRun. Returns the verdict of each row
+        never be written apart: the whole landing is one transaction of
+        its own (a savepoint inside the caller's, which closes its runs
+        after, in the deletes' lock order: ListRow, ListCellState,
+        NodeRun). One write per cell: two are refused before anything
+        is written (CellWrittenTwice). Returns the verdict of each row
         that still exists: a row deleted since its writes were made has
         nothing to land and nothing to record, so it has no verdict, and
         each caller says what that means for its own run."""
         by_row: dict[str, list[CellWrite]] = {}
         for landing in landings:
             by_row.setdefault(landing.row_id, []).extend(landing.writes)
-        landed = self._write_values(ctx.list_id, by_row)
-        # Split by what this landing DID to the cell. A cell it resolved
-        # (wrote, refused, or settled with a cause) is restated in full;
-        # a cell it found occupied is recorded only if nothing is there,
-        # because its timestamp is what a barrier reads as "when did
-        # this row complete" and its source is who answered.
-        resolved: list[CellRecord] = []
-        untouched: list[CellRecord] = []
-        for row_id, row in landed.items():
-            for state in row.cell_states:
-                record = CellRecord(row_id, state.key, state.state, state.tools)
-                bucket = untouched if state.key in row.verdict.occupied else resolved
-                bucket.append(record)
-        cell_truth.write_records(
-            account_id=self.account_id,
-            list_id=ctx.list_id,
-            records=resolved,
-            fill_run_id=ctx.fill_run_id,
-            source=ctx.source,
-        )
-        cell_truth.record_unchanged(
-            account_id=self.account_id,
-            list_id=ctx.list_id,
-            records=untouched,
-            fill_run_id=ctx.fill_run_id,
-            source=ctx.source,
-        )
-        return {row_id: row.verdict for row_id, row in landed.items()}
+        for row_id, writes in by_row.items():
+            seen: set[str] = set()
+            twice: list[str] = []
+            for write in writes:
+                if write.key in seen and write.key not in twice:
+                    twice.append(write.key)
+                seen.add(write.key)
+            if twice:
+                raise CellWrittenTwice(row_id, twice)
+        with transaction.atomic():
+            landed = self._write_values(ctx.list_id, by_row)
+            # Split by what this landing DID to the cell. A cell it resolved
+            # (wrote, refused, or settled with a cause) is restated in full;
+            # a cell it found occupied is recorded only if nothing is there,
+            # because its timestamp is what a barrier reads as "when did
+            # this row complete" and its source is who answered.
+            resolved: list[CellRecord] = []
+            untouched: list[CellRecord] = []
+            for row_id, row in landed.items():
+                for state in row.cell_states:
+                    record = CellRecord(row_id, state.key, state.state, state.tools)
+                    bucket = untouched if state.key in row.verdict.occupied else resolved
+                    bucket.append(record)
+            cell_truth.write_records(
+                account_id=self.account_id,
+                list_id=ctx.list_id,
+                records=resolved,
+                fill_run_id=ctx.fill_run_id,
+                source=ctx.source,
+            )
+            cell_truth.record_unchanged(
+                account_id=self.account_id,
+                list_id=ctx.list_id,
+                records=untouched,
+                fill_run_id=ctx.fill_run_id,
+                source=ctx.source,
+            )
+            return {row_id: row.verdict for row_id, row in landed.items()}
 
     def _write_values(self, list_id: str, by_row: Mapping[str, Sequence[CellWrite]]) -> dict[str, Landed]:
         """The value pass: the sheet rows alone, as one batch, then each
