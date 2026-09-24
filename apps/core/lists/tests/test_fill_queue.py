@@ -153,6 +153,24 @@ class TerminalWriteTests(TestCase):
         )
         self.assertFalse(ListCellState.objects.exists())
 
+    def test_a_parked_run_is_not_claimed_before_its_backoff_ends(self) -> None:
+        # A second message for a parked run (a duplicate publish, a
+        # redelivery) must not run it inside its backoff: the claim
+        # loses and changes nothing, and the pick publishes the run
+        # again once it is due. FAILS if the claim ignores not_before.
+        fill = make_run(rows=1)
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        flow = NodeRunFlow(worker_id="test:1")
+        flow.claim(str(task.id))
+        self.assertTrue(flow.park(str(task.id), backoff_seconds=60, result={}))
+        self.assertIsNone(flow.claim(str(task.id)))
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.attempts), (NodeRunStatus.READY, 1))
+        due = timezone.now() - datetime.timedelta(seconds=1)
+        NodeRun.objects.filter(id=task.id).update(not_before=due)
+        claimed = flow.claim(str(task.id))
+        self.assertEqual((claimed.status, claimed.attempts), (NodeRunStatus.PROCESSING, 2))
+
     def test_an_answered_column_overwrites_its_earlier_blank(self) -> None:
         fill = make_run(rows=1)
         task = NodeRun.objects.get(fill_run_id=str(fill.id))
@@ -249,6 +267,21 @@ class CompletionTests(TestCase):
         )
         self.assertEqual(by_status, {NodeRunStatus.DONE: 1, NodeRunStatus.ABANDONED: 2})
         self.assertEqual(ListCellState.objects.count(), 1)
+
+    def test_a_stop_stamps_each_abandoned_run_with_the_change(self) -> None:
+        # last_state_change_at is the cursor every reader of a run's
+        # movement reads (the fill heartbeat, the reclaim), and an
+        # abandon is a transition like any other. FAILS if the stop
+        # moves the status without the cursor.
+        fill = make_run(rows=2)
+        long_ago = timezone.now() - datetime.timedelta(hours=1)
+        NodeRun.objects.filter(fill_run_id=str(fill.id)).update(last_state_change_at=long_ago)
+        before = timezone.now()
+        self.assertTrue(fill_progress.cancel(str(fill.id)))
+        runs = NodeRun.objects.filter(fill_run_id=str(fill.id))
+        for status, stamp in runs.values_list("status", "last_state_change_at"):
+            self.assertEqual(status, NodeRunStatus.ABANDONED)
+            self.assertGreaterEqual(stamp, before)
 
     def test_a_stop_while_a_tick_holds_the_job_stands(self) -> None:
         # The runner's park is predicated on PROCESSING: a cancel that

@@ -44,6 +44,13 @@ from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 PROCESSING_STALE_SECONDS = NODE_RUN_STALE_SECONDS
 
 
+def _due(now: datetime.datetime) -> models.Q:
+    """A run whose backoff has passed, or that never parked: the one
+    spelling the picks and the claim share, so a run is never published
+    by one rule and claimed by another."""
+    return models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
+
+
 class NodeRunFlow:
     """State transitions for one worker/consumer (its id stamps the
     PROCESSING claim, so only the owner settles what it claimed)."""
@@ -64,8 +71,7 @@ class NodeRunFlow:
         beside the status gate (a webhook run is never READY, but the
         pick that defines the agent lane says so itself)."""
         now = timezone.now()
-        due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
-        qs = NodeRun.objects.filter(due, status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
+        qs = NodeRun.objects.filter(_due(now), status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
         yield from qs.defer("result").order_by("list_id", "rank", "id")[:limit].iterator()
 
     @staticmethod
@@ -78,9 +84,8 @@ class NodeRunFlow:
         it. `node_run_fill_idx` (fill_run_id equality, then rank)
         serves it so the LIMIT stops early. Streamed via .iterator()."""
         now = timezone.now()
-        due = models.Q(not_before__isnull=True) | models.Q(not_before__lte=now)
         yield from (
-            NodeRun.objects.filter(due, fill_run_id=fill_run_id, status=NodeRunStatus.READY)
+            NodeRun.objects.filter(_due(now), fill_run_id=fill_run_id, status=NodeRunStatus.READY)
             .defer("result")
             .order_by("rank", "id")[:limit]
             .iterator()
@@ -125,7 +130,7 @@ class NodeRunFlow:
         abandoned."""
         return NodeRun.objects.filter(
             fill_run_id=fill_run_id, status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED)
-        ).update(status=NodeRunStatus.ABANDONED, updated_at=timezone.now())
+        ).update(status=NodeRunStatus.ABANDONED, last_state_change_at=timezone.now())
 
     @staticmethod
     def mark_queued(task: NodeRun) -> bool:
@@ -159,11 +164,15 @@ class NodeRunFlow:
         crash between publish and mark) still runs. Stamps the owner
         (`leased_by`) so only this consumer settles it, and increments
         `attempts` HERE so a task that kills its consumer still exhausts.
+        Only a DUE task: a parked task's second message (a duplicate
+        publish, a redelivery) that arrives inside its backoff loses, and
+        the pick publishes the task again once `not_before` passes.
         Returns the claimed task, or None when the CAS lost (a duplicate
-        delivery, or another consumer / the reclaim scan got there first) and
-        the message should be dropped."""
+        delivery, a task not yet due, or another consumer / the reclaim
+        scan got there first) and the message should be dropped."""
         now = timezone.now()
         claimed = NodeRun.objects.filter(
+            _due(now),
             id=task_id,
             status__in=(NodeRunStatus.READY, NodeRunStatus.QUEUED),
         ).update(
