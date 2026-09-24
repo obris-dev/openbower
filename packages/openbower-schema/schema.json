@@ -287,7 +287,7 @@
           "type": "string"
         },
         "node_id": {
-          "description": "The node that fills this column (an agent bound to this sheet).",
+          "description": "The workflow node that fills this column.",
           "title": "Node Id",
           "type": "string"
         },
@@ -1514,7 +1514,7 @@
           "type": "string"
         },
         "node_id": {
-          "description": "The webhook node this column is; its config and the wait node's hang off the path.",
+          "description": "The workflow node that fills this column.",
           "title": "Node Id",
           "type": "string"
         },

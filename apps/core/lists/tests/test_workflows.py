@@ -140,6 +140,23 @@ class AdmissionNodeTests(AdmissionTestCase):
         self.assertEqual({t.node_id for t in NodeRun.objects.filter(fill_run_id=str(fill.id))}, {str(node.id)})
         self.assertEqual(agent_id_of(node), consent_of(str(fill.id)).agent_id)
 
+    def test_every_workflow_column_maps_to_its_node_whatever_the_kind(self) -> None:
+        self.admit()
+        destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
+        destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
+        webhook_columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
+        sheet = webhook_columns.add(
+            str(self.sheet.id),
+            label="CRM sync",
+            destination_id=str(destination.id),
+            wait_keys=["answer"],
+            payload_keys=["company"],
+            interval_seconds=3600,
+        )
+        agent = Node.objects.get(kind=ColumnAgent.KIND)
+        webhook = Node.objects.get(kind=Webhook.KIND)
+        self.assertEqual(columns_by_node(sheet), {str(agent.id): ["answer"], str(webhook.id): ["crm_sync"]})
+
     def test_a_refill_reuses_the_column_s_node(self) -> None:
         fill = self.admit()
         settle_all(str(fill.id))
