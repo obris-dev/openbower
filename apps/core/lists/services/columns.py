@@ -14,10 +14,11 @@ from django.db.models import Value
 
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
+from openbower_kernel.batches import iter_id_pages
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
-from ..constants import MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode
+from ..constants import FILL_WRITE_BATCH, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode
 from ..models import List, ListRow
 from ..nodes.webhook import Webhook
 from . import cell_truth, fill_progress, webhook_runs
@@ -245,15 +246,31 @@ class ColumnService:
                 self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
             columns = [column for column in target_list.columns if column.key != key]
 
-            # ONE UPDATE over the sheet's rows, so an O(rows) write
-            # dissolves inside the transaction rather than stranding
-            # data invisibly. It touches rows that never held the key
-            # too, and that is accepted: narrowing it means asking the
-            # blob what it contains, and NOTHING in this codebase
-            # queries row data (ListCellState exists so counting
-            # filled cells never has to). The blob is storage; the
-            # structured record is what answers questions about it.
-            ListRow.objects.filter(list_id=str(target_list.id)).update(data=_JsonbWithoutKey("data", Value(key)))
+            # The sheet's rows, BY ASCENDING ID, which is the order a
+            # landing locks its own rows in: one statement over the
+            # whole sheet locks in scan order, which after a move is
+            # rank order, and two writers taking the same rows in
+            # opposite orders is a deadlock Postgres resolves by
+            # killing one of them. Paging also bounds a statement whose
+            # size is the sheet's.
+            #
+            # It touches rows that never held the key too, and that is
+            # accepted: narrowing it means asking the blob what it
+            # contains, and NOTHING in this codebase queries row data
+            # (ListCellState exists so counting filled cells never has
+            # to). The blob is storage; the structured record is what
+            # answers questions about it.
+            rows = ListRow.objects.filter(list_id=str(target_list.id))
+            for ids in iter_id_pages(rows, batch=FILL_WRITE_BATCH):
+                # Locked BY ID first, because an UPDATE takes its locks
+                # in whatever order it scans and Django drops an
+                # ordering from one: a landing locks its rows by id, and
+                # two writers taking the same rows in opposite orders is
+                # a deadlock Postgres settles by killing one.
+                held = list(
+                    ListRow.objects.filter(id__in=ids).select_for_update().order_by("id").values_list("id", flat=True)
+                )
+                ListRow.objects.filter(id__in=held).update(data=_JsonbWithoutKey("data", Value(key)))
 
             # The column's truth goes BEFORE any run is touched: a landing
             # takes ListRow, then ListCellState, then NodeRun, and the
