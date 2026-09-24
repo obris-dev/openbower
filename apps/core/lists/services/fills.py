@@ -168,11 +168,13 @@ class FillService:
         diagnosed and an open one has re-queued is being worked on
         now, and that is what the user should see.
         """
-        ai_keys = {column.key for column in target_list.columns if isinstance(column, AiColumn)}
-        webhook_key_by_node = {
-            column.node_id: column.key for column in target_list.columns if isinstance(column, WebhookColumn)
+        ai_keys_by_node = columns_by_node(target_list)
+        webhook_keys_by_node = {
+            column.node_id: [column.key] for column in target_list.columns if isinstance(column, WebhookColumn)
         }
-        keys = ai_keys | set(webhook_key_by_node.values())
+        # A node is one kind, so the two maps never share a node id.
+        keys_by_node = {**ai_keys_by_node, **webhook_keys_by_node}
+        keys = [key for node_keys in keys_by_node.values() for key in node_keys]
         if not keys or not rows:
             return {}
         row_ids = [str(r.id) for r in rows]
@@ -186,12 +188,6 @@ class FillService:
             states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
         # ONE read for every node column: the node that fills each cell,
         # whatever its kind, and its open runs over this page's rows.
-        keys_by_node: dict[str, list[str]] = {
-            node_id: [key for key in node_keys if key in ai_keys]
-            for node_id, node_keys in columns_by_node(target_list).items()
-        }
-        for node_id, key in webhook_key_by_node.items():
-            keys_by_node.setdefault(node_id, []).append(key)
         open_runs = NodeRun.objects.filter(
             account_id=self.account_id,
             node_id__in=list(keys_by_node),
