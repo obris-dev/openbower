@@ -20,13 +20,21 @@ from common.testing import TEST_IDENTITY
 from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner
-from lists.constants import AGENT_MISSING_MESSAGE, CellSource, FillFailureCode, NodeRunStatus, StoredCellState
+from lists.constants import (
+    AGENT_MISSING_MESSAGE,
+    NON_TERMINAL_NODE_RUN_STATES,
+    CellSource,
+    FillFailureCode,
+    NodeRunStatus,
+    StoredCellState,
+)
 from lists.jobs.fill import FillJob
 from lists.models import List, ListRow, NodeRun
 from lists.nodes.registry import COLUMN_AGENT
 from lists.processors import FillMode, FillScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.services import cell_truth, fill_progress
+from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.workflows import WorkflowService
@@ -140,7 +148,8 @@ class FreshRuleTests(_Harness):
             (first.status, first.kind, first.fill_run_id), (NodeRunStatus.READY, COLUMN_AGENT, str(fill.id))
         )
         self.assertEqual((first.list_id, first.last_state_change_at), (str(self.sheet.id), NOW))
-        # Offered again: the open-run key on (fill, row) makes it a no-op.
+        # Offered again: the fill's row key makes it a no-op, and the
+        # return still counts the rows offered.
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 4)
         self.assertEqual(self._runs(fill).count(), 4)
 
@@ -260,6 +269,36 @@ class PushedRuleTests(_Harness):
             (run.row_id, run.rank, run.fill_run_id, run.status), (str(pushed[0].id), pushed[0].rank, None, "ready")
         )
         self.assertEqual(self._numbers([run]), [6])
+
+    def test_a_row_with_an_open_run_gets_no_second_one_from_another_lane(self):
+        # A fill judges a row by its CELLS, which stay blank until the
+        # open run lands, so it cannot tell a row is already being worked
+        # on. The database can: one OPEN run per (row, node), whichever
+        # lane queued it. Without that, an autofill run in flight and a
+        # Fill over the same row both call the provider for one cell.
+        # FAILS if the open-run key binds one lane only.
+        row = self.rows[0]
+        autofill = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))
+        autofill.enqueue_runs(self.sheet, [row], now=NOW)
+        fill = self._fill()
+        filling = self._processor(FillScope(mode=FillMode.REMAINING, fill_run_id=str(fill.id), column_keys=["answer"]))
+        filling.enqueue_runs(self.sheet, [row], now=NOW)
+        open_runs = self._runs().filter(row_id=str(row.id), status__in=NON_TERMINAL_NODE_RUN_STATES)
+        self.assertEqual([run.fill_run_id for run in open_runs], [None])
+
+    def test_a_cell_reads_pending_while_any_run_of_its_node_is_open(self):
+        # Pending is one rule for every node column: an open run of the
+        # node that fills the cell, whichever lane queued it. An autofill
+        # run (a pushed row's) shimmers the same as a fill's, or a row
+        # the open-run key kept out of a Fill looks untouched while its
+        # cell is being worked on. FAILS if an AI cell's pending is read
+        # off open fills alone.
+
+        row = self.rows[0]
+        autofill = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))
+        autofill.enqueue_runs(self.sheet, [row], now=NOW)
+        states = FillService(account_id=ACCOUNT).cell_states_for_rows(self.sheet, [row])
+        self.assertEqual(states[str(row.id)]["answer"].state, "pending")
 
     def test_rows_handed_over_without_their_fields_are_filled_in_one_read(self):
         # A caller may hand rows loaded with nothing but their ids. The

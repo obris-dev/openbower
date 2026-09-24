@@ -13,7 +13,7 @@ from jobs.models import Job
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import CellStateWire, IngestColumn
+from openbower_schema.lists import CellStateWire, IngestColumn, WorkflowColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
 from openbower_schema.lists import ListRowWire as WireListRow
@@ -231,17 +231,15 @@ def list_wire(target: List) -> dict[str, Any]:
 
 def ingest_schema_wire(target: List) -> dict[str, Any]:
     """The push schema: the columns a producer may send, which are the
-    ones whose cells are not RECORDED. A recorded column's value and
-    its truth are written together by the landing, and a push writes
+    ones no workflow fills. A workflow column's value and its recorded
+    truth are written together by the landing, and a push writes
     rows alone, so it is neither listed here nor accepted below: a
     producer that sent one would store a value no barrier ever
     completes for."""
-    from .cells.kinds.registry import column_kind_for
-
     columns = [
-        IngestColumn(key=c.key, label=c.label, type=c.type)
-        for c in target.columns
-        if not column_kind_for(c).RECORDS_CELL_STATE
+        IngestColumn(key=column.key, label=column.label, type=column.type)
+        for column in target.columns
+        if not isinstance(column, WorkflowColumn)
     ]
     return WireIngestSchema(columns=columns).model_dump()
 
@@ -258,19 +256,19 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     "1,234" is published and stored as "1234", a 70k-char cell clamped once
     here, not at full size on the bus). This is the push's reaction to a
     shape mismatch: an unknown key or a type mismatch both become a 400. A
-    blank value is 'not provided', kept as-is (a producer may leave an AI
-    column for autofill). Capped at MAX_INGEST_PROBLEMS."""
-    from .cells.kinds.registry import column_kind_for
+    blank value is 'not provided', kept as-is; a workflow column's key is
+    refused whatever its value, so a producer leaves one out entirely.
+    Capped at MAX_INGEST_PROBLEMS."""
     from .services.lists import cells_for_storage
 
-    types = {column.key: column.type for column in target.columns if not column_kind_for(column).RECORDS_CELL_STATE}
-    columns_to_record = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
+    types = {column.key: column.type for column in target.columns if not isinstance(column, WorkflowColumn)}
+    columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
     for index, row in enumerate(rows):
         storable, mismatches = cells_for_storage(types, row, where="ingest")
         storable_rows.append(storable)
-        # A column whose kind records state EXISTS, so it is refused in its own words
+        # A workflow column EXISTS, so it is refused in its own words
         # rather than as an unknown key: it is filled through its own
         # path and takes no pushed value.
         problems.extend(

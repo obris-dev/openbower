@@ -11,7 +11,9 @@ column whose fill never lands, leaving the sheet carrying a column
 nothing will ever fill. The walk itself (one page per slice, the agent
 processor judging each row) is the fill job's first slices, worked
 within seconds by the jobs container, so a 50,000 row consent costs
-the request nothing but a probe for its first row. A fill runs the
+the request only the probe: a scan that stops at the first row owed
+work, which reads the whole consent only when no row is (a refill of a
+column that is done, or a prompt no row can feed). A fill runs the
 agent's CURRENT config, so an edit reaches its next row; admission
 still resolves and probes the config once, so a broken config refuses
 at the click. Account-scoped like every lists service."""
@@ -90,8 +92,9 @@ class FillAdmissionService(AdmissionBase):
         the columns write. The node and workflow get-or-create is the
         transaction's first write on a key a concurrent admission can
         collide on, and Postgres holds the uncommitted unique-index entry
-        until commit; with no walk inside the transaction that hold is
-        milliseconds. The agent resolve and the model probe run before
+        until commit. The row probe inside the transaction stops at its
+        first hit, so that hold is short when the sheet has work; only a
+        sheet where every row is blocked is scanned to the end first. The agent resolve and the model probe run before
         the transaction: the probe is an HTTP call (a cold roster probe
         measured 1.9s healthy), and nothing that slow belongs inside a
         transaction at all."""
@@ -177,7 +180,10 @@ class FillAdmissionService(AdmissionBase):
         List lock comes last, over the claim alone; the locked pass
         re-runs the guards, and that re-judgement is the one that counts.
         The agent resolve and the model probe run before the transaction
-        entirely: network IO must not hold any of it."""
+        entirely: network IO must not hold any of it. The row probe runs
+        inside it and reads the whole consent when the column is done
+        (the RefillEmpty answer); a refill writes nothing before it, so
+        that scan holds nothing another request waits on."""
         peek = self._list_or_raise(list_id)
         column = require_fill_column(peek, column_key)
         # A missing NODE raises as the corruption it is (nodes die only

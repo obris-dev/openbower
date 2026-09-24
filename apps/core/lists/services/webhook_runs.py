@@ -12,8 +12,8 @@ The wait node is a barrier, not a ledger: when every column it waits
 on is done for a row, the only effect is a run for each webhook node
 behind it. Completion is re-read from the cells at claim time, so an
 open run always sends the row's LATEST completion, and the open-run key
-(one open automatic run per (row, node)) makes a re-completion while
-one is pending a no-op.
+(one open run per (row, node)) makes a re-completion while one is
+pending a no-op.
 
 Trusted-process module like node_runs.py: account ids are passed in.
 """

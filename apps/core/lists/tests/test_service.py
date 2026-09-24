@@ -358,7 +358,7 @@ class RecordedColumnTests(TestCase):
         )
 
     def test_a_row_carrying_a_recorded_column_is_refused_and_nothing_is_written(self):
-        # Both recorded kinds, and the whole batch: a caller bug is a
+        # Both workflow column kinds, and the whole batch: a caller bug is a
         # door to fix, not a row to salvage, so the good row beside it
         # lands nothing either. FAILS if the refusal goes, or if it
         # fires after the rows are written.

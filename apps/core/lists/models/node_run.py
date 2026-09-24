@@ -110,9 +110,9 @@ class NodeRun(AccountScopedModel):
     # TRANSIENT count. STORED, because both proxies for it are wrong
     # in opposite directions: `attempts` climbs at CLAIM, so a released
     # lease or a stale reclaim raises it with no park behind it, and
-    # `not_before` is cleared by the next claim, so a task that parked
-    # and then lost its worker reads as never parked. One is a gauge
-    # that goes negative, the other one that never comes back down.
+    # `not_before` is never cleared, so a task that parked once reads
+    # as waiting long after it ran again. One is a gauge that goes
+    # negative, the other one that never comes back down.
     # Set once, never cleared: it means counted, not currently waiting.
     parked = models.BooleanField(_("parked"), default=False)
     # The claiming consumer's id, stamped at claim: the terminal CAS
@@ -147,20 +147,33 @@ class NodeRun(AccountScopedModel):
         verbose_name = _("node run")
         verbose_name_plural = _("node runs")
         constraints = [
-            # The idempotency key: enqueueing the same row twice is a
-            # no-op. Also the row drawer's lookup. NULL fill_run_ids are
-            # distinct in SQL, so this only binds fill-backed tasks; the
-            # automatic path is deduped by its own key below.
+            # A fill's own idempotency, SETTLED runs included: a slice
+            # the runner re-walks after some of its runs finished must
+            # not queue them again, which the open key below no longer
+            # sees once a run is terminal. Also the row drawer's lookup.
+            # NULL fill_run_ids are distinct in SQL, so this binds
+            # fill-backed runs only.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
-            # The automatic path's idempotency: one OPEN run per (row,
-            # node) (one run fills a node's whole column set), so
-            # re-enqueueing a row's autofill or re-completing a row for
-            # its webhook while a run is pending is a no-op. A settled
-            # run is history: a row that completes again after its
-            # webhook run sent gets a new run.
+            # One OPEN run per (row, node), WHICHEVER lane queued it, so
+            # an autofill run in flight and a Fill over the same row
+            # never both call the provider for one cell. The agent
+            # kind judges a row by its cells, which stay blank until the
+            # open run lands, so this is where the conflict is decided,
+            # atomically: the inserts ignore it and the losing lane
+            # queues nothing for that row. The accepted tradeoff is that
+            # the winner is trusted to do the loser's work. A stopped
+            # fill's run that parks or goes stale holds the row until
+            # the reclaim abandons it, and a refill in that window skips
+            # the row, leaving it for the next refill. A column a refill
+            # adds while an autofill run is in flight is not in that
+            # run's claimed set. A Fill holding a row swallows a later
+            # autofill offer, which the Fill's Stop then abandons (no
+            # path offers one today: autofill reaches only rows that
+            # just arrived). A settled run is history: a row that
+            # completes again after its webhook sent gets a new run.
             models.UniqueConstraint(
                 fields=["row_id", "node_id"],
-                condition=models.Q(fill_run_id__isnull=True, status__in=NON_TERMINAL_NODE_RUN_STATES),
+                condition=models.Q(status__in=NON_TERMINAL_NODE_RUN_STATES),
                 name="node_run_open_uniq",
             ),
             models.CheckConstraint(condition=~models.Q(kind=""), name="node_run_kind_named"),

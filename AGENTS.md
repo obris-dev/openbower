@@ -53,7 +53,7 @@ auth + data services live in a separate private repo.
   COUNT (at most that many walked, in sheet order); a row moved out
   from under a walk is the next refill's, exactly like a row appended
   after the click, and one moved the other way is offered twice and
-  dropped by the open-run key. A rank is only ever compared, never
+  dropped by the fill's row key. A rank is only ever compared, never
   interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
   `rerank` job re-spaces the sheet. Rank columns carry the C collation
   (byte order is the scheme's order).
@@ -159,19 +159,20 @@ auth + data services live in a separate private repo.
   The workflow service is the one writer holding that invariant, and it
   is what makes "which paths does an arrival start" one indexed read
   rather than a walk of the workflow's nodes.
-- How a column's CELLS change is the cell layer (lists/cells), and
+- How a column's CELLS change is the cell layer (lists/cells.py), and
   every change lands as a `CellWrite` (the state a cell means to
   record, the value it lands where blank, the tools behind it): a
   node kind's run reaction (`NodeProcessor.on_run_landed`, one write
-  per column the node fills) and a column kind's cell reaction
-  (lists/cells/kinds, one module per wire column kind, a registry with
-  a boot gate: a person typed a value, or the kind refuses). Writes
+  per column the node fills); a person's typed value is a `TypedWrite`
+  (the grid is read-only today, so cell editing designs its own rules
+  per column when it arrives). Only a workflow column's cells are
+  recorded (`WorkflowColumn`), so rows alone never carry one. Writes
   are in-memory intents until `ListService.land_row` / `land_rows`
   persists them, kind-blind: values onto the row write-if-blank
   through the column's type, then one ledger record per write in ONE
   upsert, FILLED and TYPE_MISMATCH derived from what the row reported
   and every other state the write's own. Processors never touch a row
-  or a cell record; the landing never knows a kind.
+  or a cell record; the landing never branches on a node kind.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

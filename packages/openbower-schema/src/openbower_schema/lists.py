@@ -76,14 +76,25 @@ class PlainColumn(ColumnBase):
     kind: Literal["plain"] = "plain"
 
 
-class AiColumn(ColumnBase):
+class WorkflowColumn(ColumnBase):
+    """A column kind backed by the sheet's workflow: a node on one of
+    its paths fills the cells, and arriving rows (an import, a push)
+    never carry one, since its value and its record land together. Never a
+    column on its own, like ColumnBase: the kinds below are the
+    members. `node_id` is declared HERE and nowhere else, so a kind
+    gets a node only by extending this, and a reader asks
+    isinstance(column, WorkflowColumn) rather than listing kinds."""
+
+    node_id: str = Field(description="The workflow node whose runs write this column's cells.")
+
+
+class AiColumn(WorkflowColumn):
     """A column an agent fills. The column binds to the NODE that fills
     it; the agent, and its ephemeral-vs-roster custody, hangs off the
     node, so editing what fills a column goes through the column,
     never this id."""
 
     kind: Literal["ai"] = "ai"
-    node_id: str = Field(description="The node that fills this column (an agent bound to this sheet).")
     current_fill_id: str = Field(
         default="",
         description="The fill run that speaks for this column, stored here when it opens and "
@@ -92,17 +103,14 @@ class AiColumn(ColumnBase):
     )
 
 
-class WebhookColumn(ColumnBase):
+class WebhookColumn(WorkflowColumn):
     """A Send webhook column. It IS the second node of its own path
     (the wait node before it names the paths it waits on); the
     column holds no row data, its cells show delivery state."""
 
+    # The inherited `type` rides on every kind so the base projection
+    # holds; a webhook column's is never read.
     kind: Literal["webhook"] = "webhook"
-    # `type` rides on every kind so the base projection holds; a
-    # webhook column\'s is never read.
-    node_id: str = Field(
-        description="The webhook node this column is; its config and the wait node's hang off the path."
-    )
 
 
 # A column is exactly ONE of these by construction: the union is

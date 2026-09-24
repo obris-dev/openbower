@@ -20,7 +20,7 @@ from jobs.models import Job
 from openbower_kernel.ranks import keys_between
 from openbower_schema.fills import CellRunResult
 
-from ..cells.writes import Landed, LandingContext, RowLanding, RowVerdict
+from ..cells import Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT
@@ -36,10 +36,12 @@ ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
 LIST = "01LISTAAAAAAAAAAAAAAAAAAAA"
 NODE = "01NODEAAAAAAAAAAAAAAAAAAAA"
+NODE_B = "01NODEBBBBBBBBBBBBBBBBBBBB"
+NODE_C = "01NODECCCCCCCCCCCCCCCCCCCC"
 AGENT = "01AGENTAAAAAAAAAAAAAAAAAAA"
 
 
-def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
+def make_run(*, rows: int = 3, list_id: str = LIST, node_id: str = NODE) -> Job:
     """A targeted fill job (its walk done) with its whole consented set
     of tasks, born READY, so a lifecycle test starts from a fill that is
     polling its runs."""
@@ -47,7 +49,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
         account_id=ACCOUNT,
         user_id=USER,
         list_id=list_id,
-        node_id=NODE,
+        node_id=node_id,
         agent_id=AGENT,
         column_keys=["answer"],
         consented=rows,
@@ -57,7 +59,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST) -> Job:
         NodeRun.objects.create(
             account_id=ACCOUNT,
             fill_run_id=str(fill.id),
-            node_id=NODE,
+            node_id=node_id,
             kind=COLUMN_AGENT,
             row_id=f"01ROW{n:021d}",
             list_id=list_id,
@@ -150,6 +152,24 @@ class TerminalWriteTests(TestCase):
             _land_claimed(fill, claimed, CellRunResult(declined_cause=StoredCellState.NO_EVIDENCE), flow=original)
         )
         self.assertFalse(ListCellState.objects.exists())
+
+    def test_a_parked_run_is_not_claimed_before_its_backoff_ends(self) -> None:
+        # A second message for a parked run (a duplicate publish, a
+        # redelivery) must not run it inside its backoff: the claim
+        # loses and changes nothing, and the pick publishes the run
+        # again once it is due. FAILS if the claim ignores not_before.
+        fill = make_run(rows=1)
+        task = NodeRun.objects.get(fill_run_id=str(fill.id))
+        flow = NodeRunFlow(worker_id="test:1")
+        flow.claim(str(task.id))
+        self.assertTrue(flow.park(str(task.id), backoff_seconds=60, result={}))
+        self.assertIsNone(flow.claim(str(task.id)))
+        task.refresh_from_db()
+        self.assertEqual((task.status, task.attempts), (NodeRunStatus.READY, 1))
+        due = timezone.now() - datetime.timedelta(seconds=1)
+        NodeRun.objects.filter(id=task.id).update(not_before=due)
+        claimed = flow.claim(str(task.id))
+        self.assertEqual((claimed.status, claimed.attempts), (NodeRunStatus.PROCESSING, 2))
 
     def test_an_answered_column_overwrites_its_earlier_blank(self) -> None:
         fill = make_run(rows=1)
@@ -248,6 +268,21 @@ class CompletionTests(TestCase):
         self.assertEqual(by_status, {NodeRunStatus.DONE: 1, NodeRunStatus.ABANDONED: 2})
         self.assertEqual(ListCellState.objects.count(), 1)
 
+    def test_a_stop_stamps_each_abandoned_run_with_the_change(self) -> None:
+        # last_state_change_at is the cursor every reader of a run's
+        # movement reads (the fill heartbeat, the reclaim), and an
+        # abandon is a transition like any other. FAILS if the stop
+        # moves the status without the cursor.
+        fill = make_run(rows=2)
+        long_ago = timezone.now() - datetime.timedelta(hours=1)
+        NodeRun.objects.filter(fill_run_id=str(fill.id)).update(last_state_change_at=long_ago)
+        before = timezone.now()
+        self.assertTrue(fill_progress.cancel(str(fill.id)))
+        runs = NodeRun.objects.filter(fill_run_id=str(fill.id))
+        for status, stamp in runs.values_list("status", "last_state_change_at"):
+            self.assertEqual(status, NodeRunStatus.ABANDONED)
+            self.assertGreaterEqual(stamp, before)
+
     def test_a_stop_while_a_tick_holds_the_job_stands(self) -> None:
         # The runner's park is predicated on PROCESSING: a cancel that
         # lands while a tick is mid-poll (one run still open, so the
@@ -279,9 +314,11 @@ class CompletionTests(TestCase):
         # A fill closed with no sweep (a stop that died between its flip
         # and its tidy), an open fill beside it: one judgement, paged one
         # fill id at a time, abandons the closed one's runs only.
+        # Two nodes: one open run per (row, node), so two fills' live
+        # runs share a row only on different nodes.
         closed = make_run(rows=2)
         Job.objects.filter(id=closed.id).update(status=JobStatus.CANCELLED)
-        open_fill = make_run(rows=2)
+        open_fill = make_run(rows=2, node_id=NODE_B)
         self.assertEqual(NodeRunFlow.abandon_orphans(batch=1), 2)
         self.assertEqual(
             set(NodeRun.objects.filter(fill_run_id=str(closed.id)).values_list("status", flat=True)),
@@ -341,7 +378,10 @@ class RunControlTests(TestCase):
             foreign.cancel(str(fill.id))
 
     def test_page_for_list_keysets_open_runs_only(self) -> None:
-        fills = [make_run(rows=1) for _ in range(3)]
+        # One node each: one open run per (row, node), and admission
+        # refuses a second open fill on a column (SameColumnFillActive),
+        # which these fills, built directly, would otherwise skip.
+        fills = [make_run(rows=1, node_id=node_id) for node_id in (NODE, NODE_B, NODE_C)]
         cancelled = fills[0]
         FillService(account_id=ACCOUNT).cancel(str(cancelled.id))
         live_newest_first = sorted((str(fill.id) for fill in fills[1:]), reverse=True)

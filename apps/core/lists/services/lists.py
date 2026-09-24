@@ -18,10 +18,9 @@ from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
-from openbower_schema.lists import ListColumn
+from openbower_schema.lists import ListColumn, WorkflowColumn
 
-from ..cells.kinds.registry import column_kind_for
-from ..cells.writes import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
+from ..cells import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
     CELL_MAX_LENGTH,
     FILL_WRITE_BATCH,
@@ -66,6 +65,19 @@ class ColumnNotWritable(Exception):
 
 class RowNotFound(Exception):
     """Missing row OR one outside the given list (reads as not-found)."""
+
+
+class CellWrittenTwice(Exception):
+    """A landing carried two writes for one cell. The ledger takes one
+    record per cell per statement, so this is refused before anything
+    is written: a CALLER bug (a processor emits one write per column it
+    fills), never a per-row hazard."""
+
+    def __init__(self, row_id: str, keys: Sequence[str]) -> None:
+        names = ", ".join(repr(key) for key in keys)
+        super().__init__(f"row {row_id}: {names} written twice in one landing")
+        self.row_id = row_id
+        self.keys = list(keys)
 
 
 class RowRankTooDeep(Exception):
@@ -273,7 +285,7 @@ class ListService:
         # the fill write path stores. Authored input TOLERATES a mismatch:
         # the mismatches are ignored (the raw value stores), because an
         # import must never fail a whole batch over one bad cell.
-        columns_to_record = {column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE}
+        columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
         for index, data in enumerate(rows):
             refused = sorted(key for key in data if key in columns_to_record)
             if refused:
@@ -312,8 +324,11 @@ class ListService:
         return created
 
     def land_row(self, ctx: LandingContext, landing: RowLanding) -> RowVerdict:
-        """One row's landing: see land_rows."""
+        """One row's landing: see land_rows. Raises RowNotFound for a
+        row that is gone."""
         verdicts = self.land_rows(ctx, [landing])
+        if landing.row_id not in verdicts:
+            raise RowNotFound(landing.row_id)
         return verdicts[landing.row_id]
 
     def land_rows(self, ctx: LandingContext, landings: Sequence[RowLanding]) -> dict[str, RowVerdict]:
@@ -321,43 +336,58 @@ class ListService:
         landings merged by row; the value pass, which lands what each
         write has to land and hands every write back RESOLVED to the
         state it records (each shape answers for itself against what
-        the row reported: cells/writes.py); then one ledger upsert of
+        the row reported: cells.py); then one ledger upsert of
         those states. A landing of N rows is three statements whatever
         N is, and a value and the record that says what it is can
-        never be written apart. Runs inside the caller's transaction,
-        which closes its runs after, in the deletes' lock order:
-        ListRow, ListCellState, NodeRun. Returns each row's verdict."""
+        never be written apart: the whole landing is one transaction of
+        its own (a savepoint inside the caller's, which closes its runs
+        after, in the deletes' lock order: ListRow, ListCellState,
+        NodeRun). One write per cell: two are refused before anything
+        is written (CellWrittenTwice). Returns the verdict of each row
+        that still exists: a row deleted since its writes were made has
+        nothing to land and nothing to record, so it has no verdict, and
+        each caller says what that means for its own run."""
         by_row: dict[str, list[CellWrite]] = {}
         for landing in landings:
             by_row.setdefault(landing.row_id, []).extend(landing.writes)
-        landed = self._write_values(ctx.list_id, by_row)
-        # Split by what this landing DID to the cell. A cell it resolved
-        # (wrote, refused, or settled with a cause) is restated in full;
-        # a cell it found occupied is recorded only if nothing is there,
-        # because its timestamp is what a barrier reads as "when did
-        # this row complete" and its source is who answered.
-        resolved: list[CellRecord] = []
-        untouched: list[CellRecord] = []
-        for row_id, row in landed.items():
-            for state in row.cell_states:
-                record = CellRecord(row_id, state.key, state.state, state.tools)
-                bucket = untouched if state.key in row.verdict.occupied else resolved
-                bucket.append(record)
-        cell_truth.write_records(
-            account_id=self.account_id,
-            list_id=ctx.list_id,
-            records=resolved,
-            fill_run_id=ctx.fill_run_id,
-            source=ctx.source,
-        )
-        cell_truth.record_unchanged(
-            account_id=self.account_id,
-            list_id=ctx.list_id,
-            records=untouched,
-            fill_run_id=ctx.fill_run_id,
-            source=ctx.source,
-        )
-        return {row_id: row.verdict for row_id, row in landed.items()}
+        for row_id, writes in by_row.items():
+            seen: set[str] = set()
+            twice: list[str] = []
+            for write in writes:
+                if write.key in seen and write.key not in twice:
+                    twice.append(write.key)
+                seen.add(write.key)
+            if twice:
+                raise CellWrittenTwice(row_id, twice)
+        with transaction.atomic():
+            landed = self._write_values(ctx.list_id, by_row)
+            # Split by what this landing DID to the cell. A cell it resolved
+            # (wrote, refused, or settled with a cause) is restated in full;
+            # a cell it found occupied is recorded only if nothing is there,
+            # because its timestamp is what a barrier reads as "when did
+            # this row complete" and its source is who answered.
+            resolved: list[CellRecord] = []
+            untouched: list[CellRecord] = []
+            for row_id, row in landed.items():
+                for state in row.cell_states:
+                    record = CellRecord(row_id, state.key, state.state, state.tools)
+                    bucket = untouched if state.key in row.verdict.occupied else resolved
+                    bucket.append(record)
+            cell_truth.write_records(
+                account_id=self.account_id,
+                list_id=ctx.list_id,
+                records=resolved,
+                fill_run_id=ctx.fill_run_id,
+                source=ctx.source,
+            )
+            cell_truth.record_unchanged(
+                account_id=self.account_id,
+                list_id=ctx.list_id,
+                records=untouched,
+                fill_run_id=ctx.fill_run_id,
+                source=ctx.source,
+            )
+            return {row_id: row.verdict for row_id, row in landed.items()}
 
     def _write_values(self, list_id: str, by_row: Mapping[str, Sequence[CellWrite]]) -> dict[str, Landed]:
         """The value pass: the sheet rows alone, as one batch, then each
@@ -383,6 +413,7 @@ class ListService:
         pending = {row_id: cells for row_id, cells in to_land.items() if cells}
         live_columns: set[str] = set()
         columns_to_record: set[str] = set()
+        gone: set[str] = set()
         if by_row:
             with transaction.atomic():
                 # The hazard this guards is a read-modify-write of each
@@ -400,24 +431,24 @@ class ListService:
                 }
                 # Read once the rows are held, so the column set is at
                 # least as new as the delete that could have taken one.
-                # Before the missing-row verdict, so a sheet that is
+                # Before the gone rows are set aside, so a sheet that is
                 # gone says so rather than reporting its rows missing.
                 try:
                     target = List.objects.get(id=list_id, account_id=self.account_id)
                 except List.DoesNotExist as e:
                     raise ListNotFound(list_id) from e
-                missing = [row_id for row_id in by_row if row_id not in rows]
-                if missing:
-                    raise RowNotFound(missing[0])
+                # A row deleted while its writes were in flight (a batch
+                # that resolved before the delete) is left out, and the
+                # rest of the batch lands: one gone row must not void
+                # every other row's landing.
+                gone = {row_id for row_id in by_row if row_id not in rows}
                 types = {column.key: column.type for column in target.columns}
                 live_columns = set(types)
-                # Which columns the LEDGER owns, by their kind's own
-                # declaration: a column whose kind records no state has
-                # its values land like any other and its cells never
-                # become records.
-                columns_to_record = {
-                    column.key for column in target.columns if column_kind_for(column).RECORDS_CELL_STATE
-                }
+                # Which columns the LEDGER owns: the workflow's, since
+                # a node's landing and the barriers and fills that read
+                # it are what a record is for. Any other column's values
+                # land like any other and its cells never become records.
+                columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
                 # A column the sheet no longer has is nothing to write
                 # and nothing to report: not written, not occupied, not
                 # mismatched. Dropped here so the value pass and the
@@ -425,6 +456,7 @@ class ListService:
                 pending = {
                     row_id: {key: value for key, value in cells.items() if key in live_columns}
                     for row_id, cells in pending.items()
+                    if row_id not in gone
                 }
                 changed: list[ListRow] = []
                 now = timezone.now()
@@ -469,11 +501,13 @@ class ListService:
                     ListRow.objects.bulk_update(changed, ["data", "updated_at"])
         landed: dict[str, Landed] = {}
         for row_id, writes in by_row.items():
+            if row_id in gone:
+                continue
             verdict = verdicts[row_id]
             # WRITES -> RECORDS, and only these writes make one. A write
             # whose column is GONE would leave a record outliving the
-            # purge that already took that column's; one whose column's
-            # KIND records no state has nothing to record. Both landed
+            # purge that already took that column's; one whose column is
+            # no workflow column has nothing to record. Both landed
             # their value above and say the rest through the verdict.
             writes_to_record = [write for write in writes if write.key in columns_to_record]
             landed[row_id] = Landed(

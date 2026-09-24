@@ -66,9 +66,9 @@ class WorkflowReactions:
 
     def trigger(self, target_list: List, rows: Sequence[ListRow]) -> int:
         """Rows arrived: start the workflow for them, at the node behind
-        each entry marker. Returns the runs queued (an already-queued
-        (row, node) is a no-op under the open-run key, so a redelivery
-        under-counts; callers ignore it). Rides the caller's
+        each entry marker. Returns the rows offered (a (row, node) with
+        an open run already is a no-op under the open-run key but still
+        counts). Rides the caller's
         transaction, so rows and their work commit together or not at
         all."""
         if not rows:

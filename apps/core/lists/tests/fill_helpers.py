@@ -31,8 +31,7 @@ from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.lists import AiColumn
 
-from ..cells.kinds.registry import column_kind_for
-from ..cells.writes import AnsweredWrite, LandingContext, RowLanding, TypedWrite
+from ..cells import AnsweredWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
 from ..jobs.fill import FillJob
 from ..models import List, ListRow, Node, NodeRun
@@ -244,19 +243,8 @@ def row_value(list_id: str, row_id: str, column_key: str) -> str:
 
 
 def type_cells(target_list: List, row_id: str, values: dict[str, str]) -> None:
-    """A person typing values into cells: each column's kind builds the
-    write, the list service lands them under MANUAL (the editor's path)."""
-    fresh = List.objects.get(id=target_list.id)
-    by_key = {column.key: column for column in fresh.columns}
-    writes = []
-    for key, value in values.items():
-        if key not in by_key:
-            # A key with no column yet: rows accept arbitrary keys from
-            # import and manual entry, so the value lands as a plain one.
-            writes.append(TypedWrite(key, value))
-            continue
-        write = column_kind_for(by_key[key]).on_value_typed(by_key[key], value)
-        if write is not None:
-            writes.append(write)
+    """A person typing values into cells, landed under MANUAL; a blank
+    is nothing to write."""
+    writes = [TypedWrite(key, value) for key, value in values.items() if value.strip()]
     ctx = LandingContext(list_id=str(target_list.id), source=CellSource.MANUAL, fill_run_id=None)
     ListService(account_id=target_list.account_id).land_row(ctx, RowLanding(row_id, writes))

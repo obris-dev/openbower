@@ -41,7 +41,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 
 from openbower_kernel.ranks import first_key, key_between, keys_between, respace_keys
-from openbower_schema.lists import AiColumn
+from openbower_schema.lists import WorkflowColumn
 
 from ..constants import RANK_REBALANCE_LENGTH
 from ..models import List, Node, NodePath, Workflow
@@ -77,11 +77,11 @@ class PathHeadFixed(Exception):
 
 def columns_by_node(target_list: List) -> dict[str, list[str]]:
     """Each node the sheet's columns bind to, mapped to the keys it
-    fills, in column order (a node can own several: a multi-output
-    agent is one node)."""
+    fills, in column order, whatever the node's kind (a node can own
+    several: a multi-output agent is one node)."""
     mapping: dict[str, list[str]] = {}
     for column in target_list.columns:
-        if isinstance(column, AiColumn):
+        if isinstance(column, WorkflowColumn):
             mapping.setdefault(column.node_id, []).append(column.key)
     return mapping
 
@@ -401,14 +401,6 @@ class WorkflowService:
         """The account's webhook nodes sending to a destination: what
         makes its delete refuse, and its usage count."""
         return Node.objects.filter(account_id=self.account_id, kind=Webhook.KIND, config__destination_id=destination_id)
-
-    def path_of_column(self, target_list: List, key: str) -> str:
-        """The path an AI column's node sits on, the id a wait node
-        names; raises NodeNotFound for a column with no node."""
-        for column in target_list.columns:
-            if column.key == key and isinstance(column, AiColumn):
-                return self.get_node(column.node_id).path_id
-        raise NodeNotFound(key)
 
     def delete_for_list(self, list_id: str) -> None:
         """Called from ListService.delete AFTER the runs are purged (they

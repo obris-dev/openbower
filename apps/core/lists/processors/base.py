@@ -9,7 +9,8 @@ needs (its own reads, batched as it sees fit: cell records over columns
 for a webhook barrier or a refill, nothing at all for a fresh fill),
 decides which rows are owed a run, inserts those runs under the open-run
 key so a row offered twice is a no-op whichever walker offered it, and
-reports how many it queued. The walker pages the rows in scope, hands
+reports how many rows it offered (a row another run already holds
+counts, though nothing new was inserted for it). The walker pages the rows in scope, hands
 them over, advances its cursor; it knows no kind and no column. The
 judgement is per page, not per row, because a kind's read is the
 expensive part and it batches.
@@ -45,7 +46,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from ..cells.writes import CellWrite
+from ..cells import CellWrite
 from ..models import List, ListRow, Node, NodeRun
 from ..services.node_runs import NodeRunFlow
 
@@ -170,8 +171,9 @@ class NodeProcessor(ABC):
     @abstractmethod
     def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
         """Queue a run for every row among `rows` this node owes one to,
-        under the open-run key, and return how many were queued; with
-        `limit`, stop at that many, judging no further (0 = every owed
+        under the open-run key, and return how many rows were owed one
+        (a row an open run already holds counts); with `limit`, stop at
+        that many, judging no further (0 = every owed
         row in `rows`). Reads its own inputs for the page beyond the row
         fields it declares; born in the state the kind's lane expects."""
 
