@@ -89,8 +89,9 @@ class ListColumnsFieldTests(TestCase):
             {"kind": "ai", "key": "answer", "label": "Answer", "type": "text"},
             {"key": "company", "label": "Company", "type": "text"},
             {"kind": "formula", "key": "company", "label": "Company", "type": "text"},
-            # The base alone is not a column: no kind to store.
+            # The bases alone are not columns: no kind to store.
             ColumnBase(key="company", label="Company", type="text"),
+            WorkflowColumn(key="answer", label="Answer", type="text", node_id=NODE_ID),
         ):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 sheet.columns = [bad]

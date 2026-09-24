@@ -599,15 +599,6 @@ class PathTests(AdmissionTestCase):
         self.assertIn("workflow_id", reads[0])
         self.assertIn("'entry'", reads[0])
 
-    def test_path_of_column_walks_the_ai_column_to_its_node(self) -> None:
-        self.sheet.columns = [
-            *self.sheet.columns,
-            {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(self.agent_node.id)},
-        ]
-        self.assertEqual(self.workflows.path_of_column(self.sheet, "answer"), self.agent_node.path_id)
-        with self.assertRaises(NodeNotFound):
-            self.workflows.path_of_column(self.sheet, "company")
-
     def test_delete_path_removes_exactly_its_nodes_and_itself(self) -> None:
         path, _ = self.workflows.create_path(self.sheet, self._configs())
         self.workflows.delete_path(str(path.id))

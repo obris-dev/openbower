@@ -243,8 +243,8 @@ def row_value(list_id: str, row_id: str, column_key: str) -> str:
 
 
 def type_cells(target_list: List, row_id: str, values: dict[str, str]) -> None:
-    """A person typing values into cells, landed under MANUAL (the
-    editor's path); a blank is nothing to write."""
+    """A person typing values into cells, landed under MANUAL; a blank
+    is nothing to write."""
     writes = [TypedWrite(key, value) for key, value in values.items() if value.strip()]
     ctx = LandingContext(list_id=str(target_list.id), source=CellSource.MANUAL, fill_run_id=None)
     ListService(account_id=target_list.account_id).land_row(ctx, RowLanding(row_id, writes))

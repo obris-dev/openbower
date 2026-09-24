@@ -34,6 +34,7 @@ from lists.nodes.registry import COLUMN_AGENT
 from lists.processors import FillMode, FillScope, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.services import cell_truth, fill_progress
+from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
 from lists.services.workflows import WorkflowService
@@ -147,7 +148,8 @@ class FreshRuleTests(_Harness):
             (first.status, first.kind, first.fill_run_id), (NodeRunStatus.READY, COLUMN_AGENT, str(fill.id))
         )
         self.assertEqual((first.list_id, first.last_state_change_at), (str(self.sheet.id), NOW))
-        # Offered again: the open-run key on (fill, row) makes it a no-op.
+        # Offered again: the fill's row key makes it a no-op, and the
+        # return still counts the rows offered.
         self.assertEqual(processor.enqueue_runs(self.sheet, self.rows, now=NOW), 4)
         self.assertEqual(self._runs(fill).count(), 4)
 
@@ -291,7 +293,6 @@ class PushedRuleTests(_Harness):
         # the open-run key kept out of a Fill looks untouched while its
         # cell is being worked on. FAILS if an AI cell's pending is read
         # off open fills alone.
-        from lists.services.fills import FillService
 
         row = self.rows[0]
         autofill = self._processor(FillScope(mode=FillMode.AUTOFILL, column_keys=["answer"]))

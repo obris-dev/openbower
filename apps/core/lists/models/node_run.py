@@ -154,16 +154,23 @@ class NodeRun(AccountScopedModel):
             # NULL fill_run_ids are distinct in SQL, so this binds
             # fill-backed runs only.
             models.UniqueConstraint(fields=["fill_run_id", "row_id"], name="node_run_fill_row_uniq"),
-            # One OPEN run per (row, node), WHICHEVER lane queued it (one
-            # run fills a node's whole column set). A lane judges a row
-            # by its cells, which stay blank until the open run lands,
-            # so no judgement can tell the row is already being worked
-            # on; this is the one place that can, atomically, and the
-            # inserts ignore the conflict. An autofill run in flight
-            # and a Fill over the same row would otherwise both call
-            # the provider for one cell. A settled run is history: a
-            # row that completes again after its webhook sent gets a
-            # new run.
+            # One OPEN run per (row, node), WHICHEVER lane queued it, so
+            # an autofill run in flight and a Fill over the same row
+            # never both call the provider for one cell. The agent
+            # kind judges a row by its cells, which stay blank until the
+            # open run lands, so this is where the conflict is decided,
+            # atomically: the inserts ignore it and the losing lane
+            # queues nothing for that row. The accepted tradeoff is that
+            # the winner is trusted to do the loser's work. A stopped
+            # fill's run that parks or goes stale holds the row until
+            # the reclaim abandons it, and a refill in that window skips
+            # the row, leaving it for the next refill. A column a refill
+            # adds while an autofill run is in flight is not in that
+            # run's claimed set. A Fill holding a row swallows a later
+            # autofill offer, which the Fill's Stop then abandons (no
+            # path offers one today: autofill reaches only rows that
+            # just arrived). A settled run is history: a row that
+            # completes again after its webhook sent gets a new run.
             models.UniqueConstraint(
                 fields=["row_id", "node_id"],
                 condition=models.Q(status__in=NON_TERMINAL_NODE_RUN_STATES),

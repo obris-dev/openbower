@@ -78,13 +78,14 @@ class PlainColumn(ColumnBase):
 
 class WorkflowColumn(ColumnBase):
     """A column kind backed by the sheet's workflow: a node on one of
-    its paths fills the cells, never a person or an import. Never a
+    its paths fills the cells, and arriving rows (an import, a push)
+    never carry one, since its value and its record land together. Never a
     column on its own, like ColumnBase: the kinds below are the
     members. `node_id` is declared HERE and nowhere else, so a kind
     gets a node only by extending this, and a reader asks
     isinstance(column, WorkflowColumn) rather than listing kinds."""
 
-    node_id: str = Field(description="The workflow node that fills this column.")
+    node_id: str = Field(description="The workflow node whose runs write this column's cells.")
 
 
 class AiColumn(WorkflowColumn):
@@ -107,8 +108,8 @@ class WebhookColumn(WorkflowColumn):
     (the wait node before it names the paths it waits on); the
     column holds no row data, its cells show delivery state."""
 
-    # `type` rides on every kind so the base projection holds; a
-    # webhook column's is never read.
+    # The inherited `type` rides on every kind so the base projection
+    # holds; a webhook column's is never read.
     kind: Literal["webhook"] = "webhook"
 
 

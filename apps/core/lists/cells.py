@@ -14,8 +14,9 @@ TYPE (text, number, date) shapes a value at the write and lives in the
 contract's cell_types. Writes are in-memory intents, persisted by
 nothing until the list service's `land_row` / `land_rows` lands the
 values onto the row and the resolved states onto the cell ledger, in
-one lock order. The landing is kind-blind: it dispatches on nothing,
-it writes what it is handed."""
+one lock order. The landing never branches on a node kind: it asks
+only whether a column is a workflow column (whose cells it records),
+and writes what it is handed."""
 
 from __future__ import annotations
 
@@ -87,8 +88,8 @@ class CellWrite(ABC):
 @dataclass(frozen=True)
 class TypedWrite(CellWrite):
     """A person set a cell. The value is never blank (a blank is nothing
-    to write and nothing to record, dropped by the writer before a
-    write exists; here it is refused), so it lands or the type refuses
+    to write and nothing to record, so a caller drops it before building
+    a write; here it is refused), so it lands or the type refuses
     it."""
 
     value: str

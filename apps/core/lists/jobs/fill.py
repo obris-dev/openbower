@@ -8,8 +8,9 @@ user sees the fill march down), over the consent set (`until_id`: the
 rows that existed at the click; a row appended after is newer and is
 never walked) and at most `covered` rows of it, offered
 to the agent kind's processor, which judges each row by the walk's
-mode and inserts under the open-run key so a re-walked slice is a
-no-op. A scoped fill (`max_row_count`) tells the processor what is still owed and it stops there, judging no further than
+mode and inserts under the fill's row key so a re-walked slice is a
+no-op (and under the open-run key, so a row another lane holds is
+left to it). A scoped fill (`max_row_count`) tells the processor what is still owed and it stops there, judging no further than
 what is still owed. When the range is walked (or the scope met) the
 target set
 is WHOLE: the denominator settles to the runs actually queued (a count
@@ -25,14 +26,15 @@ own park and settle miss on a job stopped meanwhile.
 
 No list lock anywhere: the columns array is never written here, and
 the one guarantee that matters (a row offered once however many
-walkers offer it) is the open-run key on the processor's insert. The
+walkers offer it) is the processor's insert: the fill's row key within
+this fill, the open-run key across lanes. The
 cursor names the last row walked (its id, and the rank it had), and
 the one thing that rewrites ranks, a re-space, waits for the list's
 open fills, so that rank is the truth between two slices; a row moved
 from below the cursor to above it during the seconds a walk takes is
 not walked and waits for the next refill, exactly like a row appended
 after the click, and one moved the other way is offered twice and
-dropped by the open-run key. A fill stopped mid-walk stops the walk,
+dropped by the fill's row key. A fill stopped mid-walk stops the walk,
 and a slice that lands runs after the stop's sweep leaves them for
 the reclaim's orphan judgement, which abandons them by fill id. A fill whose list is gone exits: the
 list's delete purges the job, and a job the delete missed finds no
@@ -64,8 +66,10 @@ class FillProgress(BaseModel):
     # pages after it in sheet order.
     after_id: str = ""
     after_rank: str = ""
-    # Rows walked so far, for the consent's count; runs queued so far,
-    # for a scoped fill's max_row_count.
+    # Rows walked so far, for the consent's count; rows offered so far,
+    # for a scoped fill's max_row_count. A row another lane's open run
+    # holds is offered but gets no run of this fill: it is being filled
+    # all the same, so it spends the scope.
     walked: int = 0
     offered: int = 0
     # When the target set became whole, and the denominator it settled

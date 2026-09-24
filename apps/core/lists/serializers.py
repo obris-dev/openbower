@@ -256,8 +256,9 @@ def validate_ingest_rows(target: List, rows: list[dict[str, str]]) -> tuple[list
     "1,234" is published and stored as "1234", a 70k-char cell clamped once
     here, not at full size on the bus). This is the push's reaction to a
     shape mismatch: an unknown key or a type mismatch both become a 400. A
-    blank value is 'not provided', kept as-is (a producer may leave an AI
-    column for autofill). Capped at MAX_INGEST_PROBLEMS."""
+    blank value is 'not provided', kept as-is; a workflow column's key is
+    refused whatever its value, so a producer leaves one out entirely.
+    Capped at MAX_INGEST_PROBLEMS."""
     from .services.lists import cells_for_storage
 
     types = {column.key: column.type for column in target.columns if not isinstance(column, WorkflowColumn)}

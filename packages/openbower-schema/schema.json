@@ -287,7 +287,7 @@
           "type": "string"
         },
         "node_id": {
-          "description": "The workflow node that fills this column.",
+          "description": "The workflow node whose runs write this column's cells.",
           "title": "Node Id",
           "type": "string"
         },
@@ -1514,7 +1514,7 @@
           "type": "string"
         },
         "node_id": {
-          "description": "The workflow node that fills this column.",
+          "description": "The workflow node whose runs write this column's cells.",
           "title": "Node Id",
           "type": "string"
         },

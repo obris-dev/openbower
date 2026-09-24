@@ -157,12 +157,12 @@ class FillService:
         PENDING is DERIVED, one rule for every node column: an open run
         of the node that fills the cell, for its row, WHICHEVER lane
         queued it (a fill's, a pushed row's autofill, a cleared
-        barrier's, a send owed or being retried). One open run per
-        (row, node) is what the run table holds, so this reads what is
-        actually being worked on; a rule that looked at open fills
-        alone left a row being autofilled looking untouched. Nothing is
-        written to the sheet at admission and nothing needs sweeping at
-        a stop.
+        barrier's, a send owed or being retried). The open-run key keeps
+        a row that one lane holds out of every other lane, so a rule
+        read off open fills alone would miss it. A stopped fill's run
+        left READY reads pending until the reclaim abandons it. Nothing
+        is written to the sheet at admission and nothing needs sweeping
+        at a stop.
 
         Pending is applied SECOND on purpose: a cell an earlier run
         diagnosed and an open one has re-queued is being worked on

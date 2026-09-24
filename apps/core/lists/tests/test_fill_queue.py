@@ -36,6 +36,8 @@ ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
 LIST = "01LISTAAAAAAAAAAAAAAAAAAAA"
 NODE = "01NODEAAAAAAAAAAAAAAAAAAAA"
+NODE_B = "01NODEBBBBBBBBBBBBBBBBBBBB"
+NODE_C = "01NODECCCCCCCCCCCCCCCCCCCC"
 AGENT = "01AGENTAAAAAAAAAAAAAAAAAAA"
 
 
@@ -283,7 +285,7 @@ class CompletionTests(TestCase):
         # runs share a row only on different nodes.
         closed = make_run(rows=2)
         Job.objects.filter(id=closed.id).update(status=JobStatus.CANCELLED)
-        open_fill = make_run(rows=2, node_id="01NODE" + "B" * 20)
+        open_fill = make_run(rows=2, node_id=NODE_B)
         self.assertEqual(NodeRunFlow.abandon_orphans(batch=1), 2)
         self.assertEqual(
             set(NodeRun.objects.filter(fill_run_id=str(closed.id)).values_list("status", flat=True)),
@@ -343,9 +345,10 @@ class RunControlTests(TestCase):
             foreign.cancel(str(fill.id))
 
     def test_page_for_list_keysets_open_runs_only(self) -> None:
-        # One node each: one open run per (row, node), and a node holds
-        # one open fill at a time anyway.
-        fills = [make_run(rows=1, node_id="01NODE" + letter * 20) for letter in "ABC"]
+        # One node each: one open run per (row, node), and admission
+        # refuses a second open fill on a column (SameColumnFillActive),
+        # which these fills, built directly, would otherwise skip.
+        fills = [make_run(rows=1, node_id=node_id) for node_id in (NODE, NODE_B, NODE_C)]
         cancelled = fills[0]
         FillService(account_id=ACCOUNT).cancel(str(cancelled.id))
         live_newest_first = sorted((str(fill.id) for fill in fills[1:]), reverse=True)

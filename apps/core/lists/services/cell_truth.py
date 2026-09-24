@@ -3,12 +3,11 @@
 In production only the ListService's landing calls this module,
 inside the same transaction as the value write, so a sheet row and its
 truth can never be written apart. The purges are the owners' (a
-list's, a column's). The purges are the
-owners' (a list's, a column's).
+list's, a column's).
 
 A record exists for every cell a fill has RESOLVED, filled ones
-included. There is nothing to write at admission (a queued NodeRun on
-a live fill is what makes a cell read pending) and nothing to sweep
+included. There is nothing to write at admission (an open run of the
+cell's node is what makes a cell read pending) and nothing to sweep
 when a fill stops (nothing was written for the rows it never reached).
 Not writing a pending state is what makes a stop need no sweep: a
 sweep would have to reconstruct each cell's previous truth from other

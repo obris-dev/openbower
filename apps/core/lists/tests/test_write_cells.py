@@ -170,26 +170,17 @@ class WriteIfBlankTests(TestCase):
 
     def test_a_persons_blank_is_no_write_at_all(self):
         # A blank never reaches the landing as a typed value: a
-        # TypedWrite refuses to be built from one, so nothing is written
-        # and nothing is recorded. FAILS if that door lets a blank
-        # through.
-        from lists.models import ListCellState
-
-        with self.assertRaises(ValueError):
-            TypedWrite("employees", "")
-        service = _service()
-        target, (row,) = _sheet(service, [{"name": "Acme"}])
-        before = dict(ListRow.objects.get(id=row.id).data)
-        self.assertEqual(service.land_row(_ctx(str(target.id)), RowLanding(str(row.id), [])), ((), (), ()))
-        row.refresh_from_db()
-        self.assertEqual(row.data, before)
-        self.assertFalse(ListCellState.objects.filter(row_id=str(row.id)).exists())
+        # TypedWrite refuses to be built from one, empty or whitespace.
+        # FAILS if that door lets a blank through.
+        for blank in ("", "   "):
+            with self.subTest(blank=blank), self.assertRaises(ValueError):
+                TypedWrite("employees", blank)
 
     def test_a_column_no_workflow_fills_lands_its_value_alone(self):
         # The ledger owns the workflow's columns. Any other column's
         # value lands like any other and its cell never becomes a
-        # record: the same landing, told apart by the column's type
-        # rather than by the writer. FAILS if the landing records every
+        # record: the same landing, told apart by whether the column is
+        # a workflow column rather than by the writer. FAILS if the landing records every
         # key it is handed, which would put unrecorded cells in a ledger
         # whose absence means never attempted.
         service = _service()
@@ -208,8 +199,8 @@ class WriteIfBlankTests(TestCase):
         # TYPE_MISMATCH, one an agent had none for records its cause:
         # each write answers for itself against the row, and every
         # write records exactly one state. A person's blank never
-        # becomes a write (the kind returns None; the write refuses to
-        # be built). FAILS if the landing derives a state the write did
+        # becomes a write (a TypedWrite refuses to be built from one).
+        # FAILS if the landing derives a state the write did
         # not earn, or a blank slips in as a typed value.
         from lists.models import ListCellState
 
