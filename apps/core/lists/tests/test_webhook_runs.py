@@ -22,7 +22,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, TickReport
-from lists.cells.writes import LandingContext, RowLanding, WebhookWrite
+from lists.cells import LandingContext, RowLanding, WebhookWrite
 from lists.constants import CellSource, NodeRunStatus, StoredCellState
 from lists.jobs.enqueue_runs import EnqueueRuns
 from lists.models import Node, NodeRun

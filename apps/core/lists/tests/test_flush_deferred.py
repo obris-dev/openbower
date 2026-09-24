@@ -445,7 +445,7 @@ class FlushDeferredTests(TransactionTestCase):
         # again under a different event id (the id hashes the stamp, so
         # the receiver cannot dedupe it). FAILS if a cell the landing
         # left alone is restated.
-        from lists.cells.writes import AnsweredWrite, LandingContext, RowLanding
+        from lists.cells import AnsweredWrite, LandingContext, RowLanding
 
         row = self.rows[0]
         self._complete(row)
