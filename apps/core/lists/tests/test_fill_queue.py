@@ -20,7 +20,7 @@ from jobs.models import Job
 from openbower_kernel.ranks import keys_between
 from openbower_schema.fills import CellRunResult
 
-from ..cells.writes import Landed, LandingContext, RowLanding, RowVerdict
+from ..cells import Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT

@@ -20,6 +20,8 @@ from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
 from lists.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, ListOrigin
+from lists.models import List
+from lists.serializers import ingest_schema_wire
 from lists.services.lists import ListService
 
 _CORE_AUD = "openbower-core"
@@ -254,6 +256,12 @@ class IngestValidationTests(TestCase):
                 self.assertEqual(resp.status_code, 400)
                 self.assertIn("is filled for you", resp.json()["detail"])
                 self.assertEqual(captured, [])  # refused up front, never published
+
+    def test_the_push_schema_lists_only_the_columns_no_workflow_fills(self):
+        # The schema a producer reads agrees with the refusal above: a
+        # workflow column is absent, not listed and then refused.
+        schema = ingest_schema_wire(List.objects.get(id=self.list_id))
+        self.assertEqual([column["key"] for column in schema["columns"]], ["domain", "score"])
 
     def test_a_well_typed_push_is_accepted(self):
         captured: list = []

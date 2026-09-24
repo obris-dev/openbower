@@ -8,12 +8,13 @@ Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_fields
 from __future__ import annotations
 
 import json
+from typing import get_args
 
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from pydantic import ValidationError
 
-from openbower_schema.lists import AiColumn, ColumnBase, PlainColumn, WebhookColumn
+from openbower_schema.lists import AiColumn, ColumnBase, ListColumn, PlainColumn, WebhookColumn, WorkflowColumn
 
 from ..fields import ListColumnsField
 from ..models import List
@@ -124,3 +125,18 @@ class ListColumnsFieldTests(TestCase):
         self.assertIsInstance(field, ListColumnsField)
         _name, path, _args, _kwargs = field.deconstruct()
         self.assertEqual(path, "django.db.models.JSONField")
+
+
+class WorkflowColumnTests(SimpleTestCase):
+    def test_a_column_kind_bound_to_a_node_is_a_workflow_column(self) -> None:
+        # Both directions: a kind that declares its own node_id instead
+        # of extending the base would slip past every reader that asks
+        # isinstance(column, WorkflowColumn).
+        union, _ = get_args(ListColumn.__value__)
+        members = get_args(union)
+        self.assertEqual(
+            [member for member in members if issubclass(member, WorkflowColumn)], [AiColumn, WebhookColumn]
+        )
+        for member in members:
+            with self.subTest(member=member.__name__):
+                self.assertEqual("node_id" in member.model_fields, issubclass(member, WorkflowColumn))

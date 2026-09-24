@@ -17,7 +17,7 @@ from agents.constants import ToolStatus
 from jobs.constants import OPEN_JOB_STATES
 from jobs.models import Job
 from openbower_schema.fills import ColumnFillSummary, FillCounters
-from openbower_schema.lists import AiColumn, CellStateWire, WebhookColumn
+from openbower_schema.lists import AiColumn, CellStateWire
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
 from ..models import List, ListCellState, ListRow, NodeRun
@@ -168,12 +168,7 @@ class FillService:
         diagnosed and an open one has re-queued is being worked on
         now, and that is what the user should see.
         """
-        ai_keys_by_node = columns_by_node(target_list)
-        webhook_keys_by_node = {
-            column.node_id: [column.key] for column in target_list.columns if isinstance(column, WebhookColumn)
-        }
-        # A node is one kind, so the two maps never share a node id.
-        keys_by_node = {**ai_keys_by_node, **webhook_keys_by_node}
+        keys_by_node = columns_by_node(target_list)
         keys = [key for node_keys in keys_by_node.values() for key in node_keys]
         if not keys or not rows:
             return {}
