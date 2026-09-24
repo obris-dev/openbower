@@ -264,8 +264,10 @@ class WebhookProcessor(NodeProcessor):
             # Rejected or blocked: a retry buys the same answer.
             result = self._land(flow, batch, runs, StoredCellState.FAILED, failed_result)
             return BatchTally(failed=result.count)
-        # Transient: the attempt the claim stamped counts; past the cap
-        # the run fails, the rest wait for the next window.
+        # Transient: the attempt the claim stamped counts, and the cap is
+        # judged AFTER the delivery, so a row's send is tried
+        # NODE_RUN_ATTEMPTS + 1 times (5: the first plus 4 retries).
+        # Past the cap the run fails; the rest wait for the next window.
         exhausted = [run for run in runs if run.attempts > NODE_RUN_ATTEMPTS]
         retrying = [str(run.id) for run in runs if run.attempts <= NODE_RUN_ATTEMPTS]
         parked_result = WebhookRunResult(
