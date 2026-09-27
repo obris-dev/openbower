@@ -37,7 +37,7 @@ import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { SheetTable } from "./sheet-table";
-import { pendingRefreshDelayMs, pendingSignature } from "./lib/pending-refresh";
+import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
 
@@ -125,16 +125,23 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   // backing off while the pending set holds still and restarting when
   // it moves; a live fill's poll already re-reads, so this stands down
   // while one runs. Stops when nothing reads pending.
+  // A read that keeps failing is surfaced the way the fill poll's is
+  // (one line, the cells holding still), never swallowed: a cell would
+  // otherwise shimmer with no sign the page has lost the server.
   const pending = pendingSignature(rows);
+  const [pendingTrouble, setPendingTrouble] = useState(false);
   useEffect(() => {
     if (!pending || anyLive) return;
     let attempt = 0;
+    let failures = 0;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     function schedule() {
       timer = setTimeout(async () => {
-        await refreshLoaded();
+        const read = await refreshLoaded();
         if (stopped) return;
+        failures = read ? 0 : failures + 1;
+        setPendingTrouble(readsAreTroubled(failures));
         attempt += 1;
         schedule();
       }, pendingRefreshDelayMs(attempt));
@@ -145,6 +152,10 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
       if (timer !== null) clearTimeout(timer);
     };
   }, [pending, anyLive, refreshLoaded]);
+  // The page's ONE trouble fact, whichever loop saw it. The re-read
+  // loop's trouble counts only while that loop runs (a pending cell,
+  // no live fill): its last word is stale the moment it stands down.
+  const pollTrouble = fill.pollTrouble || (pendingTrouble && Boolean(pending) && !anyLive);
 
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
@@ -414,7 +425,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
             listId: detail.id,
             runs: fill.runs,
             summaries: fill.summaries,
-            pollTrouble: fill.pollTrouble,
+            pollTrouble,
             rowCount: detail.row_count,
             entryActionIds: detail.entry_action_ids,
             onStop: fill.stop,
@@ -450,7 +461,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
           <FillsGlance summaries={fill.summaries} liveRunIds={fill.runs.map((run) => run.id)} />
-          {fill.pollTrouble && (
+          {pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is
             // the PAGE's trouble, so it renders once, under the band

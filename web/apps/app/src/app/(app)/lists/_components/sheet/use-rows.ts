@@ -32,7 +32,7 @@ export function useRows(
   hasMore: boolean;
   loadingMore: boolean;
   loadMore: () => Promise<void>;
-  refreshLoaded: () => Promise<void>;
+  refreshLoaded: () => Promise<boolean>;
   scrollRef: RefObject<HTMLDivElement | null>;
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
@@ -49,11 +49,13 @@ export function useRows(
   // The re-read pages from the top in sheet order to at least the
   // loaded length, so what comes back is the same prefix the gutter
   // counts and a wholesale replacement keeps the paging coherent.
-  // Silent on blips: the fill poll loop owns trouble
-  // surfacing, and a toast every interval would be noise.
+  // No toast on a blip (one every interval would be noise); the
+  // caller's loop counts consecutive failures and surfaces trouble.
+  // Answers whether the rows were re-read: a skipped call (one already
+  // in flight) counts as a read, since that one will land.
   const refreshBusyRef = useRef(false);
-  const refreshLoaded = useCallback(async () => {
-    if (refreshBusyRef.current) return;
+  const refreshLoaded = useCallback(async (): Promise<boolean> => {
+    if (refreshBusyRef.current) return true;
     refreshBusyRef.current = true;
     try {
       const target = Math.max(rowsRef.current.length, 1);
@@ -62,8 +64,8 @@ export function useRows(
       let cursor: string | null = null;
       for (;;) {
         const res = await fetchListRows(listId, { after, limit: ROWS_PAGE_LIMIT });
-        if (redirectIfUnauthenticated(res)) return;
-        if (res.status !== "ok") return;
+        if (redirectIfUnauthenticated(res)) return true;
+        if (res.status !== "ok") return false;
         items.push(...res.data.items);
         cursor = res.data.next_cursor;
         if (!cursor || items.length >= target) break;
@@ -71,6 +73,7 @@ export function useRows(
       }
       setRows(items);
       setNextCursor(cursor);
+      return true;
     } finally {
       refreshBusyRef.current = false;
     }
