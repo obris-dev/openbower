@@ -376,7 +376,7 @@ class _Cursor(BaseModel):
 class RegistryTests(SimpleTestCase):
     def test_the_lists_kinds_are_on_the_roster_at_boot(self):
         kinds = [cls.KIND for cls in all_kinds()]
-        self.assertIn("enqueue_runs", kinds)
+        self.assertIn("column_backfill", kinds)
         self.assertIn("fill", kinds)
 
     def test_a_kind_without_run_is_refused(self):

@@ -24,10 +24,13 @@ import { type Attempt, buildChecklist, configMissing, configReady, draftProvider
 import { AgentsTab } from "./agents-tab";
 import { collidingKeys } from "./landing-keys";
 
-/** The add's body IS the wire type: derived, never retyped, so a body
- * key renamed on the api side fails to compile here (the payload
- * literal names its keys under a stated return type, see below). */
-export type AiColumnPayload = AiColumnBody;
+/** What the drawer hands the sheet: the column create's body, which IS
+ * the wire type (derived, never retyped, so a body key renamed on the
+ * api side fails to compile here: the literal names its keys under a
+ * stated type, see below), and the fill that follows it: its scope
+ * (omitted means every row), or none at all on a sheet with no rows,
+ * where the column is the whole gesture and arrivals fill it. */
+export type AiColumnSubmission = { body: AiColumnBody; fill: { maxRowCount?: number } | null };
 
 /** A submission's outcome, declared HERE because this drawer renders
  * the refusal (field-level where it can): `error` is the machine
@@ -83,14 +86,14 @@ function tablistNav<K extends string>(order: readonly K[], current: K, select: (
  * are the columns (each output's key and label name what its cells
  * land under, so no column-name field renders), and its prompt
  * variables are THIS sheet's columns. Presentational: the parent owns
- * `open`, the POST behind onSubmit, and every after-effect of a start
+ * `open`, the create and the fill behind onSubmit, and every after-effect of a start
  * (closing, refreshing counts). */
 export function UseAiDrawer(props: {
   open: boolean;
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
-  onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  onSubmit: (submission: AiColumnSubmission) => Promise<ColumnOutcome>;
 }) {
   // Mounted fresh per open: state resets with the gesture, autoFocus
   // lands on a fresh mount, and no fetch runs while the drawer is
@@ -127,7 +130,7 @@ function DrawerContent({
   onClose: () => void;
   rowCount: number;
   columns: ListColumn[];
-  onSubmit: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  onSubmit: (submission: AiColumnSubmission) => Promise<ColumnOutcome>;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("prompt");
@@ -257,7 +260,7 @@ function DrawerContent({
   // PRE-warnings only, and only for a fill: the outputs' own keys
   // matched against the current columns. The client cannot see
   // sheet-wide emptiness from its paged rows, so it never claims
-  // occupied or empty; the server decides at admission. The plain
+  // occupied or empty; the server decides at the create. The plain
   // kinds carry no warning (their one refusal, a duplicate key,
   // arrives verbatim from the server).
   const collisions = useMemo(() => {
@@ -287,7 +290,7 @@ function DrawerContent({
   }
 
   // The effective scope: min(N, rowCount) client-side for display and
-  // consent; the server admits the true eligible count and the
+  // consent; the server owns the true eligible count and the
   // response is truth. An unparseable N (the input can be emptied)
   // nulls the scope, which keeps the submit disabled.
   const scope = useMemo<ScopeChoice | null>(() => {
@@ -297,21 +300,25 @@ function DrawerContent({
   }, [scopeKind, scopeRowsText]);
   const scopedRows = scope === null ? null : effectiveRows(scope, rowCount);
 
-  const payload = useMemo<AiColumnPayload | null>((): AiColumnPayload | null => {
+  const submission = useMemo<AiColumnSubmission | null>((): AiColumnSubmission | null => {
     if (scope === null || scopedRows === null) return null;
-    // An empty sheet sends no scope: the server refuses it as an empty
-    // fill, a refusal this drawer renders, where a zero count would be
-    // a field-shape 400 it cannot. Written as a named key, never
-    // spread, under a STATED return type: only a fresh literal's own
-    // keys are checked against the wire type (a spread is not, and an
-    // inferred return loses the freshness), so a key renamed on one
-    // side fails here instead of compiling into a body the server
-    // silently drops.
-    const max_row_count = scope.kind === "first" && scopedRows > 0 ? scopedRows : undefined;
+    // A sheet with no rows asks for no fill: the column is the gesture,
+    // and rows that arrive fill it. Otherwise the fill's scope. The body
+    // is written as a named key, never spread, under a STATED type:
+    // only a fresh literal's own keys are checked against the wire type
+    // (a spread is not, and an inferred type loses the freshness), so a
+    // key renamed on one side fails here instead of compiling into a
+    // body the server silently drops.
+    const maxRowCount = scope.kind === "first" && scopedRows > 0 ? scopedRows : undefined;
+    const fill = rowCount === 0 ? null : { maxRowCount };
     if (tab === "prompt") {
-      return config ? { config, confirmed_row_count: rowCount, max_row_count } : null;
+      if (!config) return null;
+      const body: AiColumnBody = { config };
+      return { body, fill };
     }
-    return agentId ? { agent_id: agentId, confirmed_row_count: rowCount, max_row_count } : null;
+    if (!agentId) return null;
+    const body: AiColumnBody = { agent_id: agentId };
+    return { body, fill };
   }, [tab, config, agentId, rowCount, scope, scopedRows]);
 
   // Which sections a Start fill still needs. The agents tab asks for
@@ -327,7 +334,7 @@ function DrawerContent({
   // The row scope is a FOOTER control, not one of the config
   // sections, so its gap is diagnosed at the field (tier a) rather
   // than through the checklist. It blocks the submit exactly as the
-  // sections do: payload is null while it cannot be parsed.
+  // sections do: submission is null while it cannot be parsed.
   const scopeMissing = scopeKind === "first" && scope === null;
   const problems = {
     // `scope` reads like its siblings on purpose: nothing shows before
@@ -355,7 +362,7 @@ function DrawerContent({
   // per-field mark below was unreachable: two outputs deriving one
   // key showed a dead button and no reason.
   function blockOn(): boolean {
-    const blocked = !payload;
+    const blocked = !submission;
     if (blocked) {
       setAttempted("fill");
       // Sections first: they are the ask itself. The scope is the last
@@ -367,12 +374,12 @@ function DrawerContent({
   }
 
   async function submit() {
-    if (blockOn() || !payload || submitting) return;
+    if (blockOn() || !submission || submitting) return;
     setAttempted(null);
     setSubmitting(true);
     setServerError(null);
     setOutputsRefusal(null);
-    const res = await onSubmit(payload);
+    const res = await onSubmit(submission);
     setSubmitting(false);
     if (!res.ok) {
       // Tier 1: the server's detail renders VERBATIM. A code whose
@@ -393,8 +400,9 @@ function DrawerContent({
         {/* The row scope, chosen BEFORE the spend: the counts
             below and the submit label both follow the effective
             scope, so what the button names is what the footer
-            priced. */}
-        <fieldset>
+            priced. Absent on a sheet with no rows, where nothing is
+            spent. */}
+        <fieldset hidden={rowCount === 0}>
           <legend className="sr-only">Rows to fill</legend>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-foreground">
             <div className="flex items-center gap-1.5">
@@ -449,8 +457,14 @@ function DrawerContent({
             primitive disables itself while loading. */}
         <Button type="submit" form={FORM_ID} fullWidth loading={submitting}>
           {/* No count while the scope is unresolved: falling back to
-              the sheet total named a number this click would not run. */}
-          {scopedRows === null ? "Start fill" : `Start fill | ${scopedRows.toLocaleString("en-US")} rows`}
+              the sheet total named a number this click would not run.
+              On a sheet with no rows the click adds the column and
+              starts nothing, and says so. */}
+          {rowCount === 0
+            ? "Add column"
+            : scopedRows === null
+              ? "Start fill"
+              : `Start fill | ${scopedRows.toLocaleString("en-US")} rows`}
         </Button>
       </>
     );

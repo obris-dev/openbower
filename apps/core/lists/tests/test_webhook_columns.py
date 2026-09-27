@@ -19,7 +19,7 @@ from django.urls import reverse
 from common.testing import TEST_IDENTITY, login_session
 from jobs.models import Job
 from lists.constants import CellSource, FillErrorCode, StoredCellState, WebhookColumnErrorCode
-from lists.jobs.enqueue_runs import EnqueueRuns
+from lists.jobs.column_backfill import ColumnBackfillJob
 from lists.models import Node, NodePath
 from lists.nodes.wait_until import WaitUntil
 from lists.nodes.webhook import Webhook
@@ -100,7 +100,7 @@ class WebhookColumnTests(TestCase):
         # A job a list's delete must find by target, like every job of
         # a list's.
         self._add()
-        (job,) = list(Job.objects.filter(kind=EnqueueRuns.KIND))
+        (job,) = list(Job.objects.filter(kind=ColumnBackfillJob.KIND))
         self.assertEqual(job.target_id, str(self.sheet.id))
 
     def test_add_persists_the_column_with_its_path_and_two_nodes(self):

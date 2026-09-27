@@ -26,6 +26,7 @@ from .serializers import (
 )
 from .services import (
     AgentNotFound,
+    AgentOutputsInUse,
     AgentService,
     AgentsFull,
 )
@@ -96,7 +97,11 @@ class AgentDetailView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         config = AgentConfig(**data["config"]) if data.get("config") else None
-        return Response(agent_wire(self.agents.update(agent, label=data.get("label"), config=config)))
+        try:
+            updated = self.agents.update(agent, label=data.get("label"), config=config)
+        except AgentOutputsInUse as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
+        return Response(agent_wire(updated))
 
     def delete(self, request: Request, id: str) -> Response:
         self.agents.delete(self._agent_or_404(id))

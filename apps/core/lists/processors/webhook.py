@@ -6,8 +6,9 @@ webhook on its path; this is the ONE place that resolves it to columns
 (the flush, the backfill, the advance, and the column's config read all
 ask here). What a send made of each row lands on the cell ledger like
 any other column's outcome (SENT, FAILED), so the rows page, the
-counts and a barrier behind this column read one ledger. The walk scope is irrelevant to this kind: a webhook judges
-every pass the same way.
+counts and a barrier behind this column read one ledger. The walk
+scope is irrelevant to this kind: a webhook judges every pass the same
+way.
 
 Its runs execute per NODE, not per run: `_process_batch` is one tick's
 work for one node, over the due runs the flush claimed. The same three
@@ -44,7 +45,7 @@ from ..services.node_runs import NodeRunFlow
 from ..services.webhook_paths import wait_keys_for
 from ..services.webhook_runs import WebhookRunResult
 from ..services.workflows import NodeNotFound, WorkflowService, config_as
-from .base import BatchTally, NodeProcessor
+from .base import BatchTally, FillScope, NodeProcessor
 from .factory import register
 
 # What a run's result says when its column or destination is gone
@@ -102,9 +103,9 @@ class _SendableBatch(NamedTuple):
     rows: dict[str, ListRow]
     records: dict[str, dict[str, tuple[str, datetime]]]
     completed_at: dict[str, datetime]
-    # The claimed runs whose row is no longer complete (a refill
-    # re-opened a waited-on cell since the advance; the cells are the
-    # truth): resolution decides, the batch method parks them back.
+    # The claimed runs whose row is no longer complete (the wait set
+    # gained a column since the advance; the cells are the truth):
+    # resolution decides, the batch method parks them back.
     incomplete: list[str]
 
 
@@ -330,8 +331,11 @@ class WebhookProcessor(NodeProcessor):
         node_by_path = {node.path_id: str(node.id) for node in agent_nodes}
         return wait_keys_for(wait.inbound_path_ids, columns=target_list.columns, node_by_path=node_by_path)
 
-    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
-        """A row is owed a run when it is complete for the barrier's
+    def _enqueue_runs(
+        self, target_list: List, rows: Sequence[ListRow], *, scope: FillScope, now: datetime, limit: int = 0
+    ) -> int:
+        """`scope` is unread: a webhook judges every occasion by its
+        barrier. A row is owed a run when it is complete for the barrier's
         columns AND that completion is newer than the newest run this
         node already holds for it. The open-run key alone guards only
         OPEN runs; without the second test a walker re-offering a page

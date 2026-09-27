@@ -280,6 +280,72 @@ class WriteIfBlankTests(TestCase):
         recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
         self.assertEqual(recorded, {"name": StoredCellState.FILLED, "employees": StoredCellState.NO_EVIDENCE})
 
+    def _record(self, row_id: str, key: str) -> tuple:
+        return ListCellState.objects.values_list("state", "updated_at", "source", "fill_run_id").get(
+            row_id=row_id, column_key=key
+        )
+
+    def _answered_once(self, service: ListService, target, row_id: str, key: str, value: str) -> None:
+        """The cell's first answer, landed by a first fill: its value and
+        a FILLED record."""
+        answer = AnsweredWrite(key, value, StoredCellState.NO_EVIDENCE)
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "A" * 22), RowLanding(row_id, [answer]))
+
+    def test_an_unanswered_column_over_a_filled_cell_keeps_its_record(self):
+        # A later run with no answer for a column that already holds one
+        # found the cell occupied, the same as an answer write-if-blank
+        # refused: its record still says FILLED, when, and by whom. FAILS
+        # if a valueless write is judged only by its missing value (the
+        # record rewritten to the run's cause while the value stays).
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        later = AnsweredWrite("employees", None, StoredCellState.NO_EVIDENCE)
+        verdict = service.land_row(
+            _ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, [later])
+        )
+        self.assertEqual(verdict.occupied, ("employees",))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(before[0], StoredCellState.FILLED)
+
+    def test_a_run_answering_one_column_leaves_its_filled_sibling_alone(self):
+        # A multi-output node re-runs for its blank column: that column
+        # takes the new answer, and the sibling it did not answer again
+        # keeps the record of the answer it already had. FAILS if the
+        # sibling is restated under the run's cause.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        writes = [
+            AnsweredWrite("employees", None, StoredCellState.NO_EVIDENCE),
+            AnsweredWrite("domain", "acme.com", StoredCellState.NO_EVIDENCE),
+        ]
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, writes))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(self._record(row_id, "domain")[0], StoredCellState.FILLED)
+
+    def test_a_run_with_no_answers_records_its_cause_only_where_the_cell_is_blank(self):
+        # An exhausted run carries no cells at all: every column gets a
+        # valueless write. The blank column records the run's cause; the
+        # one holding a value keeps its record. FAILS if a landing with
+        # no value to write skips judging occupancy.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        writes = [
+            AnsweredWrite("employees", None, StoredCellState.MODEL_ERROR),
+            AnsweredWrite("domain", None, StoredCellState.MODEL_ERROR),
+        ]
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, writes))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(self._record(row_id, "domain")[0], StoredCellState.MODEL_ERROR)
+
     def test_a_batch_lands_in_three_statements_whatever_its_size(self):
         # Two landings on one row merge, and rows across the batch are
         # locked in ONE statement, written in ONE update, recorded in
@@ -312,12 +378,11 @@ class WriteIfBlankTests(TestCase):
         # columns.
         from lists.models import Node
         from lists.nodes.registry import COLUMN_AGENT
-        from lists.processors import FillScope
         from lists.processors.column_agent import AIColumnProcessor
         from openbower_schema.fills import CellRunResult
 
         node = Node(id="01ND" + "A" * 22, account_id="01AC" + "A" * 22, kind=COLUMN_AGENT)
-        processor = AIColumnProcessor(account_id="01AC" + "A" * 22, node=node, scope=FillScope())
+        processor = AIColumnProcessor(account_id="01AC" + "A" * 22, node=node)
         result = CellRunResult(
             cells={"answer": "yes", "stray": "x"},
             declined_cause=StoredCellState.NO_EVIDENCE,

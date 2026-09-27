@@ -51,7 +51,7 @@ auth + data services live in a separate private repo.
   no page needs a lookup). A fill's consent
   is a SET (the rows that existed at the click, an id bound) and a
   COUNT (at most that many walked, in sheet order); a row moved out
-  from under a walk is the next refill's, exactly like a row appended
+  from under a walk is the next fill's, exactly like a row appended
   after the click, and one moved the other way is offered twice and
   dropped by the fill's row key. A rank is only ever compared, never
   interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
@@ -121,14 +121,27 @@ auth + data services live in a separate private repo.
   `fill` (lists/jobs/fill.py): the consent is its payload, the walk
   its first slices, the wait for its runs the rest; `fill_run_id` on a
   run or a cell is the job's id, and a fill reads its agent's config
-  LIVE (no snapshot, no fingerprint; a refill targets every blank).
+  LIVE (no snapshot, no fingerprint). An agent's columns are ONE unit
+  (one run answers them together), and on every occasion an agent owes
+  a row only if none of its columns has a cell record: a row attempted
+  once, whatever came of it, is re-asked only by the user's own
+  gesture. (A webhook owes a row once its barrier completes after its
+  newest run; a failed cell never completes, so a barrier over it stays
+  shut for that row until the user re-asks it.) A stopped or failed
+  fill is simply over: a new fill (Fill all remaining, Fill next N) runs
+  the rows it never reached, since those are the ones never attempted.
+  An AI column autofills every row that arrives from its create on,
+  whether or not a fill ran or was refused. An agent's output set is
+  fixed while its columns are on a sheet (the agent save refuses a
+  change), so a fill never adds a column: the create makes them all.
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (lists/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
-  target_list, rows, now)` under a typed `FillScope` naming the
-  OCCASION (fresh | remaining | autofill | backfill, never the door it
-  came through) and the columns to judge across, for the walkers,
-  which page rows and hand them over knowing no kind and no column (a kind
+  target_list, rows, scope, now)`, the scope a typed `FillScope`
+  naming the OCCASION (manual | autofill | backfill, never the door it
+  came through) as the judging call's own argument (a processor is the
+  node; an executor never carries an occasion), for the walkers, which
+  page rows and hand them over knowing no kind and no column (a kind
   implements `_enqueue_runs`; the public call first loads, in one read, the
   row fields the kind declares in `REQUIRED_ROW_FIELDS` that a caller left
   out, so no judgement pays a query per row for a field it was not handed);
@@ -142,8 +155,7 @@ auth + data services live in a separate private repo.
   then the ADVANCE every kind owes the workflow once a run reaches
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
-  other reaction, TRIGGER (rows arrived: the node behind each ENTRY
-  marker judges them), runs for EVERY row that enters a sheet: rows
+  other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet: rows
   enter through one
   operation (lists/operations/append_rows.py: the list service's
   primitive, then the trigger, one transaction), which every door (a
@@ -158,7 +170,13 @@ auth + data services live in a separate private repo.
   behind it, or stops and says so when it finds one behind work.
   The workflow service is the one writer holding that invariant, and it
   is what makes "which paths does an arrival start" one indexed read
-  rather than a walk of the workflow's nodes.
+  rather than a walk of the workflow's nodes. A path's HEAD is its
+  marker and nothing else; every other node is an ACTION, and the
+  action right behind an entry marker is an ENTRY ACTION: what an
+  arrival starts, and the only place a user's fill starts (the sheet's
+  `ListDetail.entry_action_ids`). A column downstream of a barrier is
+  reached by the workflow and refuses a fill of its own
+  (`fill_column_downstream`).
 - How a column's CELLS change is the cell layer (lists/cells.py), and
   every change lands as a `CellWrite` (the state a cell means to
   record, the value it lands where blank, the tools behind it): a

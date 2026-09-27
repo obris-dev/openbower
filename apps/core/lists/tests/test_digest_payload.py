@@ -44,9 +44,9 @@ class CompletionTests(SimpleTestCase):
         self.assertIsNone(completion_of({"a": (FILLED, T1)}, ["a", "b"]))
         self.assertIsNone(completion_of({}, ["a"]))
 
-    def test_incomplete_while_any_waited_column_ended_in_a_retryable_failure(self):
-        # A timeout or a missing tool is not an answer and not a reason:
-        # the refill re-runs it, so the row is not complete yet.
+    def test_incomplete_while_any_waited_column_ended_in_a_failure(self):
+        # A timeout, a missing tool, or a model error is not an answer
+        # and not a reason, so the row never completes for the barrier.
         for state in (StoredCellState.TRANSIENT, StoredCellState.MODEL_ERROR, StoredCellState.TOOL_UNAVAILABLE):
             with self.subTest(state=state):
                 self.assertIsNone(completion_of({"a": (FILLED, T1), "b": (state, T2)}, ["a", "b"]))

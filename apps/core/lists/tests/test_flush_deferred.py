@@ -122,7 +122,7 @@ class FlushDeferredTests(TransactionTestCase):
             payload_keys=["company", "country"],
             interval_seconds=INTERVAL,
         )
-        with patch("lists.jobs.enqueue_runs.timezone.now", return_value=now):
+        with patch("lists.jobs.column_backfill.timezone.now", return_value=now):
             JobRunner(worker_id="jobs-test:1").tick()
         return next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
 
@@ -438,7 +438,9 @@ class FlushDeferredTests(TransactionTestCase):
     def test_a_row_no_longer_complete_at_claim_waits_with_its_attempt_handed_back(self):
         self._complete(self.rows[0])
         self._add_column()
-        # A refill re-opened the waited-on cell after the advance.
+        # The waited-on cell's record is no longer complete at claim
+        # (written directly: no fill re-asks an attempted row, but the
+        # flush re-checks the cells, the truth, regardless).
         self._complete(self.rows[0], country=StoredCellState.TRANSIENT)
         fake = _FakeSender()
 

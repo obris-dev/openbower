@@ -1,29 +1,25 @@
 """The agent kind's processor: which rows a column_agent node owes a
-run (three rules, one per walk mode) and how one of its runs executes,
+run (one question, asked on every occasion) and how one of its runs executes,
 in ONE place.
 
-WHICH ROWS NEED WORK.
+WHICH ROWS NEED WORK. One question for every occasion, asked of the
+cell record: has any column the pass judges been attempted on the row?
+A cell the landing has resolved once, whether it filled, came back as
+the model's verdict, or failed on infrastructure, is attempted, and the
+node owes that row nothing until the user asks again (re-asking is an
+explicit gesture, never a side effect of filling). The record is the
+one source: not the row's values, not the run history.
 
-FRESH (a new fill): a row the prompt can act on, meaning at least one
-variable it references renders non-blank (a prompt with no variables
-asks the same question everywhere, so every row qualifies). Born READY
-under the fill.
-
-REMAINING (a refill): judged across the walked column set, a row is
-done only when EVERY column already holds a value (a user's or a prior
-fill's, which write-if-blank would refuse); every blank re-runs,
-settled or not (the click is the consent to re-spend on a settled
-blank, and a fill reads its agent live, so an edited prompt applies
-without detection). A resume additionally offers only the rows the
-stopped fill still owed (its ABANDONED runs, read rather than
-reconstructed). Then the prompt must be able to act on it. Born READY
-under the fill.
+MANUAL (a user's fill, from either door): an unattempted row the prompt can act
+on, meaning at least one variable it references renders non-blank (a
+prompt with no variables asks the same question everywhere). A row the
+prompt cannot act on is a counted skip, so admission can say why a
+fill found nothing. Born READY under the fill.
 
 AUTOFILL (the sheet moved on its own: rows arrived, or a barrier ahead
-of this node cleared): the node runs unless every column it owns
-already holds a value (write-if-blank would keep those values, so the
-run would only buy a skip); if ANY is blank the node runs and
-write-if-blank protects the ones already there. Born READY, no fill.
+of this node cleared): every unattempted row. There is no dialog to
+report a dropped row to, so the run lands its diagnosis on the cell.
+Born READY, no fill.
 
 Memory is bounded by one page: the owed set is asked per page against
 the ids in hand and dropped when the page is done.
@@ -82,12 +78,13 @@ from ..constants import (
 from ..models import List, ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT
 from ..services import fill_progress
+from ..services.cell_states import CellStateService
 from ..services.fill_processing.cell_run import run_cell
 from ..services.lists import ListService, RowCursor
 from ..services.node_runs import NodeRunFlow
 from ..services.runnable import CONFIG_TIER_ERRORS
-from ..services.workflows import agent_id_of, columns_for_node
-from .base import FillMode, NodeProcessor, RunOutcome
+from ..services.workflows import agent_id_of, columns_for_node, written_columns
+from .base import FillMode, FillModeUnsupported, FillScope, NodeFillsNoColumn, NodeProcessor, RunOutcome
 from .factory import register
 
 logger = logging.getLogger(__name__)
@@ -230,12 +227,6 @@ def has_any_value(data: dict, keys: Iterable[str]) -> bool:
     return any(has_value(data, key) for key in keys)
 
 
-def has_every_value(data: dict, keys: Iterable[str]) -> bool:
-    """Whether a row holds a value under EVERY key: over the columns a
-    node writes, whether there is nothing left to write."""
-    return all(has_value(data, key) for key in keys)
-
-
 class Probe(NamedTuple):
     """What a scan for the FIRST qualifying row found: whether one
     exists, and whether any row was dropped because the prompt could
@@ -254,11 +245,12 @@ class AIColumnProcessor(NodeProcessor):
     def input_keys(self) -> set[str]:
         """The columns the prompt READS (its variables), off the node's
         agent as it is NOW: a fill reads its agent live, so the
-        judgement does too. The columns the node WRITES are the scope's."""
+        judgement does too. The columns the node WRITES are its own on
+        the sheet (columns_for_node)."""
         agent = AgentService(account_id=self.account_id).get_for_fill(agent_id_of(self.node))
         return prompt_variables(agent.config().prompt)
 
-    # The cells, for the blank test and for whether the prompt can act.
+    # The cells, for whether the prompt can act.
     REQUIRED_ROW_FIELDS: ClassVar[tuple[str, ...]] = ("data",)
 
     def _agent_can_act(self, row: ListRow) -> bool:
@@ -266,10 +258,12 @@ class AIColumnProcessor(NodeProcessor):
         column asks the same question everywhere, so every row will do)."""
         return not self.input_keys or has_any_value(row.data, self.input_keys)
 
-    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+    def _enqueue_runs(
+        self, target_list: List, rows: Sequence[ListRow], *, scope: FillScope, now: datetime, limit: int = 0
+    ) -> int:
         if not rows:
             return 0
-        work_status = self._work_status_for_page(rows)
+        work_status = self._work_status_for_page(target_list, rows, scope)
         owed: list[ListRow] = []
         for row in rows:
             if work_status(row) is not _WorkStatus.NEEDED:
@@ -280,7 +274,7 @@ class AIColumnProcessor(NodeProcessor):
                 break
         if not owed:
             return 0
-        fill_run_id = self.scope.fill_run_id or None
+        fill_run_id = scope.fill_run_id or None
         runs = [
             NodeRun(
                 account_id=self.account_id,
@@ -298,7 +292,7 @@ class AIColumnProcessor(NodeProcessor):
         NodeRun.objects.bulk_create(runs, ignore_conflicts=True)
         return len(runs)
 
-    def probe(self, target_list: List, *, until_id: str = "", covered: int = 0) -> Probe:
+    def probe(self, target_list: List, *, scope: FillScope, until_id: str = "", covered: int = 0) -> Probe:
         """Scan for the FIRST row this walk would queue, in sheet order
         within the consent (the set, `until_id`, and the count,
         `covered`; "" and 0 mean unbounded), without queuing anything:
@@ -318,7 +312,7 @@ class AIColumnProcessor(NodeProcessor):
             if not page:
                 return Probe(found=False, dropped_any=dropped_any)
             walked += len(page)
-            work_status = self._work_status_for_page(page)
+            work_status = self._work_status_for_page(target_list, page, scope)
             for row in page:
                 status = work_status(row)
                 if status is _WorkStatus.NEEDED:
@@ -439,13 +433,6 @@ class AIColumnProcessor(NodeProcessor):
         if target_list is None:
             flow.settle(task.id, status=NodeRunStatus.LIST_MISSING, result={})
             raise _RunEnded(RunOutcome.LIST_MISSING)
-        # The node's column set, resolved live: empty means the node no
-        # longer fills any column here (its columns were removed), so
-        # there is nothing to run; settle so the run does not linger.
-        column_keys = columns_for_node(target_list, task.node_id)
-        if not column_keys:
-            _settle_unrun(flow, task)
-            raise _RunEnded(RunOutcome.EXITED)
         try:
             agent = AgentService(account_id=task.account_id).get_for_fill(agent_id_of(self.node))
         except AgentNotFound:
@@ -461,72 +448,64 @@ class AIColumnProcessor(NodeProcessor):
             _settle_unrun(flow, task)
             raise _RunEnded(RunOutcome.EXITED)
         config = agent.config()
+        # The columns the run writes, resolved live as every lane reads
+        # them: empty means the node fills no column here (its columns
+        # were removed), so there is nothing to run; settle so the run
+        # does not linger.
+        column_keys = written_columns(target_list, task.node_id, config)
+        if not column_keys:
+            _settle_unrun(flow, task)
+            raise _RunEnded(RunOutcome.EXITED)
         ctx = LandingContext(list_id=str(target_list.id), source=CellSource.NODE, fill_run_id=None)
         return _SheetLane(config=config, row_data=row.data, column_keys=column_keys, ctx=ctx)
 
-    # Is work needed for a row? One rule per walk mode. The rule is
-    # bound ONCE per page (a resume reads the page's one fact there) and
-    # then asked per row with the row alone.
+    # Is work needed for a row? One question for every occasion, bound
+    # ONCE per page (the page's attempted rows are read there) and then
+    # asked per row with the row alone.
 
-    def _work_status_for_page(self, rows: Sequence[ListRow]) -> Callable[[ListRow], _WorkStatus]:
-        mode = self.scope.mode
-        if mode is FillMode.FRESH:
-            return self._work_status_fresh
-        if mode is FillMode.REMAINING:
-            resumed_owed = self._resumed_owed_row_ids(rows)
-            return lambda row: self._work_status_remaining(row, resumed_owed)
-        if mode is FillMode.AUTOFILL:
-            return self._work_status_autofill
-        # A structural walk (a webhook column added, its wait set
-        # changed) means nothing to an agent node.
-        return lambda row: _WorkStatus.NONE
+    def _work_status_for_page(
+        self, target_list: List, rows: Sequence[ListRow], scope: FillScope
+    ) -> Callable[[ListRow], _WorkStatus]:
+        """Every occasion asks ONE question of the cell record: has any
+        column this node fills been attempted on the row? The node's
+        columns are one unit (one run answers them together), so a row
+        attempted in any of them is attempted in all. A row the
+        landing has resolved once (filled, a model's verdict, or an
+        infrastructure failure) is owed nothing until the user asks
+        again, so the record, not the row's values or the run history,
+        is what decides. One read per page. A fill then asks whether the
+        prompt can act on the row; an arrival has no dialog to report a
+        dropped row to, so it runs and lands the diagnosis on the
+        cell."""
+        # Exhaustive on purpose: a mode this kind has no rule for (a
+        # backfill, or one added later) raises rather than being judged
+        # as a user's fill.
+        match scope.mode:
+            case FillMode.AUTOFILL:
+                attempted = self._attempted_on_page(target_list, rows)
+                return lambda row: _WorkStatus.NONE if str(row.id) in attempted else _WorkStatus.NEEDED
+            case FillMode.MANUAL:
+                attempted = self._attempted_on_page(target_list, rows)
+                return lambda row: self._fill_work_status(row, attempted)
+            case _:
+                raise FillModeUnsupported(kind=self.node.kind, mode=scope.mode)
 
-    def _work_status_fresh(self, row: ListRow) -> _WorkStatus:
-        """A new fill: every row the prompt can act on."""
+    def _attempted_on_page(self, target_list: List, rows: Sequence[ListRow]) -> set[str]:
+        """The page's rows with a record in any of the node's columns on
+        the sheet: ONE read."""
+        keys = columns_for_node(target_list, str(self.node.id))
+        if not keys:
+            raise NodeFillsNoColumn(kind=self.node.kind)
+        cells = CellStateService(account_id=self.account_id)
+        page_ids = [str(row.id) for row in rows]
+        return cells.attempted_row_ids(str(target_list.id), row_ids=page_ids, column_keys=keys)
+
+    def _fill_work_status(self, row: ListRow, attempted: set[str]) -> _WorkStatus:
+        """A fill's judgement of one row: nothing if it was attempted,
+        else work when the prompt can act on it, else a counted skip."""
+        if str(row.id) in attempted:
+            return _WorkStatus.NONE
         return _WorkStatus.NEEDED if self._agent_can_act(row) else _WorkStatus.BLOCKED
-
-    def _work_status_remaining(self, row: ListRow, resumed_owed: set[str] | None) -> _WorkStatus:
-        """A refill: a row with a blank in the scope's columns. A resume
-        additionally offers only the rows the stopped fill still owed;
-        that bound goes FIRST, so a row the stopped fill never consented
-        to is not counted as dropped (which would blame the prompt for
-        a row the scope excluded)."""
-        if resumed_owed is not None and str(row.id) not in resumed_owed:
-            return _WorkStatus.NONE
-        if has_every_value(row.data, self.scope.column_keys):
-            return _WorkStatus.NONE
-        return _WorkStatus.NEEDED if self._agent_can_act(row) else _WorkStatus.BLOCKED
-
-    def _work_status_autofill(self, row: ListRow) -> _WorkStatus:
-        """The sheet moved on its own: the node runs unless every column
-        the scope names already holds a value (the columns the node
-        fills on the sheet, as the starter read them; write-if-blank
-        would keep those values, so a run would only buy a skip). A node
-        filling no column owes nothing. Unlike the fill modes this asks
-        no question of the prompt: an arrival and a cleared barrier have
-        no dialog to report a dropped row to, so a row the prompt cannot
-        act on gets its run and lands the diagnosis on the cell."""
-        keys = self.scope.column_keys
-        if not keys or has_every_value(row.data, keys):
-            return _WorkStatus.NONE
-        return _WorkStatus.NEEDED
-
-    def _resumed_owed_row_ids(self, rows: Sequence[ListRow]) -> set[str] | None:
-        """The rows on this page the resumed fill still owed (its
-        ABANDONED runs), read once per page; None when this walk resumes
-        nothing."""
-        if self.scope.mode is not FillMode.REMAINING or not self.scope.resumed_fill_id:
-            return None
-        ids = [str(row.id) for row in rows]
-        return {
-            str(row_id)
-            for row_id in NodeRun.objects.filter(
-                account_id=self.account_id,
-                fill_run_id=self.scope.resumed_fill_id,
-                status=NodeRunStatus.ABANDONED,
-                row_id__in=ids,
-            ).values_list("row_id", flat=True)
-        }
 
 
 class _WorkStatus(StrEnum):

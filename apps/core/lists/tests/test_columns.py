@@ -338,7 +338,7 @@ class ColumnDeleteTests(TestCase):
             node_id=str(self.node.id),
             agent_id=str(self.agent.id),
             column_keys=["contact_name", "contact_url"],
-            consented=2,
+            target_row_count=2,
         )
         other = open_fill_job(
             account_id=TEST_IDENTITY["account_id"],
@@ -347,7 +347,7 @@ class ColumnDeleteTests(TestCase):
             node_id=str(self.node.id),
             agent_id=str(self.agent.id),
             column_keys=["other"],
-            consented=2,
+            target_row_count=2,
         )
         self.client.delete(self.url("contact_name"))
         fill.refresh_from_db()
@@ -384,7 +384,7 @@ class ColumnDeleteTests(TestCase):
         resp = self.client.patch(self.url("nope"), {"label": "X"}, content_type="application/json")
         self.assertEqual(resp.status_code, 404)
 
-    def test_refilling_an_ORPHANED_column_answers_in_the_users_terms(self) -> None:
+    def test_filling_an_ORPHANED_column_answers_in_the_users_terms(self) -> None:
         # Deleting an agent leaves its columns orphaned ON PURPOSE, so
         # this is a normal state, not an internal error: it must not
         # 404 about an agent id the user never saw.
@@ -393,12 +393,7 @@ class ColumnDeleteTests(TestCase):
         Agent.objects.filter(id=self.agent.id).delete()
         admission = FillAdmissionService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
         with self.assertRaises(ColumnAgentMissing) as caught:
-            admission.refill(
-                list_id=str(self.sheet.id),
-                column_key="contact_name",
-                resume_fill_id="",
-                confirmed_row_count=2,
-            )
+            admission.fill_column(list_id=str(self.sheet.id), column_key="contact_name")
         self.assertIn("deleted", str(caught.exception))
         self.assertEqual(caught.exception.code, "column_agent_missing")
 

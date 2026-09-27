@@ -7,7 +7,7 @@ import { columnProgress, currentRunFor, trackerCell, type TrackerRun } from "./f
 function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun & { id: string } {
   return {
     id: "01RUN",
-    confirmed_row_count: 100,
+    target_row_count: 100,
     counters: { filled: 0, attempted: 0 },
     ...overrides,
   };
@@ -41,19 +41,19 @@ test("a column with nothing left says so, rather than showing a zero", () => {
 });
 
 test("a live run speaks its filled count and its PROCESSED percent", () => {
-  // Percent means processed (attempted over confirmed), not
+  // Percent means processed (attempted over targeted), not
   // productive: 312 of 2343 rows run is 13%, whatever filled says.
-  const cell = trackerCell(run({ confirmed_row_count: 2343, counters: { filled: 164, attempted: 312 } }), "running");
+  const cell = trackerCell(run({ target_row_count: 2343, counters: { filled: 164, attempted: 312 } }), "running");
   assert.deepEqual(cell, { kind: "live", text: "164 filled | 13% run", fraction: 312 / 2343 });
 });
 
 test("counts localize and the fraction (and its percent) clamp to one", () => {
-  const cell = trackerCell(run({ confirmed_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }), "running");
+  const cell = trackerCell(run({ target_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }), "running");
   assert.deepEqual(cell, { kind: "live", text: "1,499 filled | 100% run", fraction: 1 });
 });
 
-test("a zero confirmed count divides to nothing, never NaN", () => {
-  const cell = trackerCell(run({ confirmed_row_count: 0, counters: { filled: 0, attempted: 0 } }), "pending");
+test("a zero target count divides to nothing, never NaN", () => {
+  const cell = trackerCell(run({ target_row_count: 0, counters: { filled: 0, attempted: 0 } }), "pending");
   assert.deepEqual(cell, { kind: "live", text: "0 filled | 0% run", fraction: 0 });
 });
 

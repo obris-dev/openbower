@@ -52,7 +52,7 @@ class CellStateParityTests(SimpleTestCase):
         # cause typed here that no state carries would silently make
         # that state re-runnable. It is typed WireCellState so a typo
         # fails type check; this pins the STORAGE side, which is what
-        # the refill targeting query compares against.
+        # the fill targeting query compares against.
         stored = {member.value for member in StoredCellState}
         wire = set(get_args(WireCellState))
         for cause in SETTLED_CELL_STATES:

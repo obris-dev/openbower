@@ -1,20 +1,23 @@
 """The workflow substrate's ONE writer: the workflow a sheet's nodes
 hang off, the path each node sits on, and the node itself, created on
-demand by admission and removed only with the list.
+demand by the AI column create and removed only with the list.
 
 Every multi-step write here is its OWN transaction (a savepoint when a
-caller such as admission or the list delete already holds one), so a
-node never lands without its path and a workflow never loses only some
-of its children, whoever calls. Get-or-create is idempotent by the
-node's unique key, so it runs UNLOCKED: a racing second admission blocks
-on the unique index until the winner's transaction ends, then re-reads
-the winner's row; a refused admission rolls its node back with everything else. Node
-BEFORE path, so a racing loser mints no orphan path.
+caller such as the column create or the list delete already holds one),
+so a node never lands without its path and a workflow never loses only
+some of its children, whoever calls. Get-or-create is idempotent by the
+node's unique key, so it takes no lock of its own: a racing second
+create blocks on the unique index until the winner's transaction ends,
+then re-reads the winner's row; a create that fails after the node is
+minted rolls it back with everything else (a column refusal is judged
+before it). Node BEFORE path, so a racing loser mints no
+orphan path.
 
 The module-level readers are the ONE spelling of a node's at-rest
-config (config_of), of "which columns does a node fill" (a run fills a
-node's whole set), and of the node -> typed config hop (config_as, and
-agent_id_of over it); every caller that needs any of the three reads it
+config (config_of), of "which columns does a node fill" (columns_for_node,
+the judgement's set) and "which of them does a run write" (written_columns,
+every lane's set), and of the node -> typed config hop (config_as, and
+agent_id_of over it); every caller that needs any of them reads it
 here.
 
 Path persistence is KIND-BLIND: a caller builds typed configs in
@@ -30,17 +33,24 @@ wait_until (by the paths it names). An agent column's path is minted
 a marker; no move displaces a head marker or puts a node ahead of one.
 That is what lets a reader ask which paths an arrival starts with one
 indexed read of the entry markers instead of a walk of the workflow.
+
+The vocabulary: a path's HEAD is its marker, never anything else. Every
+other node is an ACTION (it runs; a marker never does). An ENTRY ACTION
+is the action right behind an entry marker: what an arriving row
+starts, and the only place a user's fill may start.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Sequence
+from typing import NamedTuple
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Subquery
 
 from openbower_kernel.ranks import first_key, key_between, keys_between, respace_keys
+from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import WorkflowColumn
 
 from ..constants import RANK_REBALANCE_LENGTH
@@ -53,6 +63,14 @@ from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 
 logger = logging.getLogger(__name__)
+
+
+class AgentColumnUse(NamedTuple):
+    """One sheet with columns an agent fills."""
+
+    list_id: str
+    label: str
+    column_keys: tuple[str, ...]
 
 
 class NodeNotFound(Exception):
@@ -90,6 +108,20 @@ def columns_for_node(target_list: List, node_id: str) -> tuple[str, ...]:
     """The keys one node fills on this sheet; empty when none bind to
     it (a node whose last column was removed is inert, not gone)."""
     return tuple(columns_by_node(target_list).get(node_id, ()))
+
+
+def written_columns(target_list: List, node_id: str, config: AgentConfig) -> tuple[str, ...]:
+    """The keys one agent node WRITES on this sheet: its columns that
+    one of the agent's current outputs backs, in sheet order. The one
+    spelling for every lane (a fill's consent and an arrival's run),
+    so the two agree on what a run lands. The output set is fixed while
+    the columns exist (an agent save refuses a change), so this is
+    normally every column of the node; a save that raced the create
+    can leave a column no output backs, and that column is written by
+    no lane (a run has nothing to say for it, and a diagnosis it never
+    produced must not land there)."""
+    outputs = {output.key for output in config.outputs}
+    return tuple(key for key in columns_for_node(target_list, node_id) if key in outputs)
 
 
 def config_of(node: Node) -> NodeConfig:
@@ -365,6 +397,68 @@ class WorkflowService:
         step), or None at the path's end. Ranks compare in the column's
         C collation, so the database orders them."""
         return Node.objects.filter(account_id=self.account_id, path_id=path_id, rank__gt=rank).order_by("rank").first()
+
+    def marker_and_first_action(self, node_id: str) -> tuple[Node, Node] | None:
+        """The first two nodes of the path `node_id` stands on: its head
+        marker and the first action behind it, in ONE read (a two-row
+        range of the (path, rank) key under a subquery for the path).
+        None for a node with no path, or a path holding its marker
+        alone."""
+        on_path = Node.objects.filter(account_id=self.account_id, id=node_id).exclude(path_id="").values("path_id")
+        path_id = Subquery(on_path[:1])
+        first_two = Node.objects.filter(account_id=self.account_id, path_id=path_id).order_by("rank")[:2]
+        nodes = list(first_two)
+        if len(nodes) < 2:
+            return None
+        return nodes[0], nodes[1]
+
+    def entry_action_ids(self, list_id: str) -> list[str]:
+        """The sheet's entry actions: each the action right behind an
+        ENTRY marker, what an arrival starts and where a user's fill may
+        start. ONE read: every node on the sheet's entry-headed paths, in
+        path order, so the second of each path is its entry action (the
+        first is its head marker)."""
+        workflow = Workflow.objects.filter(account_id=self.account_id, list_id=list_id).values("id")
+        entry_paths = Node.objects.filter(account_id=self.account_id, kind=ENTRY, workflow_id__in=workflow).values(
+            "path_id"
+        )
+        on_entry_paths = (
+            Node.objects.filter(account_id=self.account_id, path_id__in=entry_paths)
+            .order_by("path_id", "rank")
+            .values_list("path_id", "id")
+        )
+        actions: list[str] = []
+        seen_on_path: dict[str, int] = {}
+        for path_id, node_id in on_entry_paths:
+            position = seen_on_path.get(path_id, 0)
+            seen_on_path[path_id] = position + 1
+            if position == 1:
+                actions.append(str(node_id))
+        return actions
+
+    def agent_column_uses(self, agent_id: str) -> list[AgentColumnUse]:
+        """Every sheet with a column the agent fills: its column-agent
+        nodes (at most one per sheet, the get-or-create identity), each
+        with the sheet's columns bound to it. A node whose columns were
+        all deleted uses nothing. Three reads, asked on an agent save."""
+        config = ColumnAgent(agent_id=agent_id)
+        node_rows = Node.objects.filter(
+            account_id=self.account_id, kind=config.KIND, identity=config.identity()
+        ).values_list("workflow_id", "id")
+        node_by_workflow = {str(workflow_id): str(node_id) for workflow_id, node_id in node_rows}
+        if not node_by_workflow:
+            return []
+        workflow_rows = Workflow.objects.filter(account_id=self.account_id, id__in=list(node_by_workflow)).values_list(
+            "list_id", "id"
+        )
+        workflow_by_list = {str(list_id): str(workflow_id) for list_id, workflow_id in workflow_rows}
+        uses: list[AgentColumnUse] = []
+        for target in List.objects.filter(account_id=self.account_id, id__in=list(workflow_by_list)).order_by("id"):
+            node_id = node_by_workflow[workflow_by_list[str(target.id)]]
+            keys = columns_for_node(target, node_id)
+            if keys:
+                uses.append(AgentColumnUse(list_id=str(target.id), label=target.label, column_keys=keys))
+        return uses
 
     def workflow_of(self, list_id: str) -> Workflow | None:
         """The sheet's workflow, or None for a sheet that never gained a

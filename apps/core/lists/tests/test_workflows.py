@@ -22,11 +22,11 @@ from ..models import Node, NodePath, NodeRun, Workflow
 from ..nodes.base import NodeConfig
 from ..nodes.column_agent import PREVIEW_IDENTITY, ColumnAgent
 from ..nodes.entry import Entry
-from ..nodes.registry import HEAD_OF_PATH_MARKERS
+from ..nodes.registry import ENTRY, HEAD_OF_PATH_MARKERS
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
 from ..services.columns import ColumnService
-from ..services.fill_admission import NoEligibleRows
+from ..services.fill_admission import ColumnCollision, NoEligibleRows
 from ..services.webhook_columns import WebhookColumnService
 from ..services.workflows import (
     NodeNotFound,
@@ -39,7 +39,7 @@ from ..services.workflows import (
     columns_for_node,
     config_as,
 )
-from .fill_helpers import consent_of, settle_all
+from .fill_helpers import chain_behind, consent_of, settle_all
 from .test_fill_admission import ACCOUNT, USER, AdmissionTestCase, quick_config, tick_jobs
 
 
@@ -124,14 +124,14 @@ class NodeGetOrCreateTests(AdmissionTestCase):
 
 
 class AdmissionNodeTests(AdmissionTestCase):
-    def test_one_admit_binds_every_output_column_to_one_node(self) -> None:
+    def test_one_fill_binds_every_output_column_to_one_node(self) -> None:
         config = quick_config(
             outputs=[
                 AgentOutput(key="email", label="Email", type="email"),
                 AgentOutput(key="status", label="Status", type="text"),
             ]
         )
-        fill = self.admit(config=config)
+        fill = self.add_and_fill(config=config)
         self.sheet.refresh_from_db()
         node = Node.objects.get(kind=ColumnAgent.KIND)
         self.assertEqual(columns_by_node(self.sheet), {str(node.id): ["email", "status"]})
@@ -141,7 +141,7 @@ class AdmissionNodeTests(AdmissionTestCase):
         self.assertEqual(agent_id_of(node), consent_of(str(fill.id)).agent_id)
 
     def test_every_workflow_column_maps_to_its_node_whatever_the_kind(self) -> None:
-        self.admit()
+        self.add_and_fill()
         destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
         destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
         webhook_columns = WebhookColumnService(account_id=ACCOUNT, user_id=USER)
@@ -157,12 +157,12 @@ class AdmissionNodeTests(AdmissionTestCase):
         webhook = Node.objects.get(kind=Webhook.KIND)
         self.assertEqual(columns_by_node(sheet), {str(agent.id): ["answer"], str(webhook.id): ["crm_sync"]})
 
-    def test_a_refill_reuses_the_column_s_node(self) -> None:
-        fill = self.admit()
+    def test_a_second_fill_reuses_the_column_s_node(self) -> None:
+        fill = self.add_and_fill()
         settle_all(str(fill.id))
         self.fills.cancel(str(fill.id))
         self.lists.add_rows(self.sheet, [{"company": "third.io"}])
-        again = self.admission.refill(list_id=str(self.sheet.id), column_key="answer")
+        again = self.admission.fill_column(list_id=str(self.sheet.id), column_key="answer")
         tick_jobs()
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (2, 1))
         self.assertEqual(
@@ -171,8 +171,8 @@ class AdmissionNodeTests(AdmissionTestCase):
         )
 
     def test_different_agents_on_one_sheet_share_the_workflow_on_separate_paths(self) -> None:
-        self.admit()
-        self.admit(config=quick_config(outputs=[AgentOutput(key="other", label="Other", type="text")]))
+        self.add_and_fill()
+        self.add_and_fill(config=quick_config(outputs=[AgentOutput(key="other", label="Other", type="text")]))
         workflow = Workflow.objects.get()
         nodes = list(Node.objects.filter(kind=ColumnAgent.KIND))
         self.assertEqual(len(nodes), 2)
@@ -189,17 +189,90 @@ class AdmissionNodeTests(AdmissionTestCase):
             origin="manual",
         )
         self.lists.add_rows(other, [{"company": "b.com"}])
-        self.admit(config=None, agent_id=str(agent.id))
-        self.admit(config=None, agent_id=str(agent.id), list_id=str(other.id), confirmed_row_count=1)
+        self.add_and_fill(config=None, agent_id=str(agent.id))
+        self.add_and_fill(config=None, agent_id=str(agent.id), list_id=str(other.id))
         self.assertEqual(Workflow.objects.count(), 2)
         self.assertEqual(Node.objects.filter(identity=str(agent.id)).count(), 2)
 
-    def test_a_refused_admission_leaves_no_node(self) -> None:
-        # The node is minted before the eligible walk, so a refusal
-        # after it must roll the node back with the fill.
-        with self.assertRaises(NoEligibleRows):
-            self.admit(config=quick_config(prompt="Find the answer for {{missing}}"))
+    def test_a_refused_column_add_writes_nothing(self) -> None:
+        # The column refusals are judged before the agent or node is
+        # written, so a refusal inserts no row at all (not one rolled
+        # back). FAILS if the create writes before it can refuse.
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"kind": "plain", "key": "answer", "label": "Answer", "type": "text"},
+        ]
+        self.sheet.save(update_fields=["columns"])
+        with CaptureQueriesContext(connection) as captured, self.assertRaises(ColumnCollision):
+            self.add_column()
+        inserts = [q["sql"] for q in captured.captured_queries if q["sql"].lstrip().upper().startswith("INSERT")]
+        self.assertEqual(inserts, [])
+
+    def test_a_refused_column_add_leaves_no_node(self) -> None:
+        # The column refusals are judged before the node is minted, so a
+        # refused add leaves no node, path, or workflow behind.
+        self.sheet.columns = [
+            *self.sheet.columns,
+            {"kind": "plain", "key": "answer", "label": "Answer", "type": "text"},
+        ]
+        self.sheet.save(update_fields=["columns"])
+        with self.assertRaises(ColumnCollision):
+            self.add_column()
         self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (0, 0, 0))
+
+    def test_a_refused_fill_keeps_the_column_and_its_node(self) -> None:
+        # The column outlives a fill refused for its rows: its prompt is
+        # fixable from the tracker, which needs the node behind it.
+        with self.assertRaises(NoEligibleRows):
+            self.add_and_fill(config=quick_config(prompt="Find the answer for {{missing}}"))
+        self.assertEqual(Node.objects.filter(kind=ColumnAgent.KIND).count(), 1)
+        self.assertEqual(NodeRun.objects.count(), 0)
+
+
+class EntryActionTests(AdmissionTestCase):
+    """The nodes a fill may start at: each right behind its path's
+    entry marker, read off the paths, never stored."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.workflows = WorkflowService(account_id=ACCOUNT)
+
+    def test_the_entry_actions_are_the_actions_right_behind_the_entries_in_one_read(self) -> None:
+        # The sheet's entry actions: its agent, and the first action of
+        # an entry path with more work behind it, never that later work,
+        # never a chained node behind a barrier, never another sheet's,
+        # in ONE read. FAILS if the read takes a path's marker or a later
+        # node, crosses sheets, or pays more than one query.
+        self.add_column()
+        other = self.lists.create(owner_id=USER, label="Other", columns=[], origin="manual")
+        self.add_column(list_id=str(other.id))
+        self.sheet.refresh_from_db()
+        first = next(column.node_id for column in self.sheet.columns if column.key == "answer")
+        chain_behind(self.sheet, upstream_node_id=first, key="later")
+        _, walked = self.workflows.create_path(
+            self.sheet,
+            [
+                Entry(),
+                ColumnAgent(agent_id="01AGENTDDDDDDDDDDDDDDDDDDD"),
+                ColumnAgent(agent_id="01AGENTEEEEEEEEEEEEEEEEEEE"),
+            ],
+        )
+        with self.assertNumQueries(1):
+            actions = self.workflows.entry_action_ids(str(self.sheet.id))
+        self.assertEqual(sorted(actions), sorted([first, str(walked[1].id)]))
+
+    def test_a_sheet_with_no_workflow_has_no_entry_actions(self) -> None:
+        self.assertEqual(self.workflows.entry_action_ids(str(self.sheet.id)), [])
+
+    def test_the_marker_and_first_action_read_in_one_read(self) -> None:
+        (key,) = self.add_column()
+        self.sheet.refresh_from_db()
+        node_id = next(column.node_id for column in self.sheet.columns if column.key == key)
+        with self.assertNumQueries(1):
+            opening = self.workflows.marker_and_first_action(node_id)
+        assert opening is not None
+        marker, behind = opening
+        self.assertEqual((marker.kind, str(behind.id)), (ENTRY, node_id))
 
 
 class ListDeleteTests(AdmissionTestCase):
@@ -219,7 +292,7 @@ class ListDeleteTests(AdmissionTestCase):
         self.assertEqual((Node.objects.count(), NodePath.objects.count(), Workflow.objects.count()), (2, 1, 1))
 
     def test_deleting_the_list_removes_its_workflow_and_leaves_the_preview_node(self) -> None:
-        self.admit()
+        self.add_and_fill()
         preview = WorkflowService(account_id=ACCOUNT).get_or_create_preview_node()
         self.lists.delete(self.sheet)
         self.assertEqual((Workflow.objects.count(), NodePath.objects.count()), (0, 0))
@@ -258,7 +331,7 @@ class HeadMarkerInvariantTests(AdmissionTestCase):
         self.assertEqual(stranded, [], where)
 
     def test_every_gesture_leaves_each_path_headed_by_one_marker(self) -> None:
-        self.admit()
+        self.add_and_fill()
         self._assert_invariant("an agent column")
         self.sheet.refresh_from_db()
         self.sheet = self.columns.add(

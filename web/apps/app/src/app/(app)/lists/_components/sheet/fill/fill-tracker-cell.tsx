@@ -13,7 +13,7 @@ import {
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { FillProgress } from "./fill-progress";
-import { RefillScope } from "./fill-refill-scope";
+import { FillColumnScope } from "./fill-column-scope";
 import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
 import type { LiveRun } from "./lib/live-status";
 
@@ -31,9 +31,10 @@ const PROMPT_TOGGLE_CHARS = 256;
  * popover IS that column's management, one padded panel of fixed
  * width in reading order: the progress line, the FillProgress chip
  * while live (counters, ETA, pace, Stop), the failed run's error
- * verbatim with its resume verb when the newest run ended early
- * (Retry for a failed run, Continue for one the user stopped), the
- * scoped continue for terminal runs, and
+ * verbatim when the newest run failed (a stopped or failed run is
+ * over: a new fill, from the Fill next / Fill all remaining controls
+ * below, runs the rows it never reached), those controls for terminal
+ * runs on an entry action's column, and
  * the prompt peek with its inline EDIT (reading and writing the
  * column-scoped prompt endpoint, the column's CURRENT config; a live
  * run disables the affordance, since a fill reads its agent live and
@@ -57,8 +58,9 @@ export function FillTrackerCell({
   pollTrouble,
   runs,
   rowCount,
+  startsFill,
   onStop,
-  onRefill,
+  onFill,
 }: {
   listId: string;
   column: AiColumn;
@@ -66,8 +68,9 @@ export function FillTrackerCell({
   pollTrouble: boolean;
   runs: LiveRun[];
   rowCount: number;
+  startsFill: boolean;
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
+  onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
 }) {
   if (summary === undefined) {
     // Sized like the header line it resolves into. Once the page's
@@ -151,54 +154,16 @@ export function FillTrackerCell({
             // than guessing a cause.
             <p className="text-xs text-danger">{summary.last_error?.message ?? "The fill failed."}</p>
           )}
-          {!live && (summary.current_status === "failed" || summary.current_status === "cancelled") && (
-            <ResumeContinue
-              // The VERB tracks who ended the run: the user stopped a
-              // cancelled one (picking it back up is Continue), the
-              // system killed a failed one (Retry, beside the error
-              // that says why). Same resume either way, and never a
-              // "Rerun": the gesture finishes the remainder, it does
-              // not re-run rows that answered.
-              verb={summary.current_status === "failed" ? "Retry" : "Continue"}
-              onContinue={() => onRefill(column.key, { resumeId: summary.current_fill_id })}
-            />
-          )}
-          {!live && <RefillScope onRefill={(maxRowCount) => onRefill(column.key, { maxRowCount })} />}
+          {!live &&
+            (startsFill ? (
+              <FillColumnScope onFill={(maxRowCount) => onFill(column.key, { maxRowCount })} />
+            ) : (
+              <p className="text-xs text-muted">Fills after the columns it waits on.</p>
+            ))}
           <PromptPeek listId={listId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>
     </Popover>
-  );
-}
-
-/** The resume verb for a stopped or failed newest run: resumes the
- * run the column names (the server judges what that run still owes
- * across every column it maps). A refusal renders verbatim beside the
- * verb (tier 1). */
-function ResumeContinue({ verb, onContinue }: { verb: "Retry" | "Continue"; onContinue: () => Promise<string | null> }) {
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState("");
-  async function go() {
-    if (busy) return;
-    setBusy(true);
-    setRefusal("");
-    const message = await onContinue();
-    // Success stays BUSY: the summary this button reads is stale
-    // until the next poll lands (the branch then re-renders without
-    // it), and re-arming now invites a second click that resends the
-    // old resume id and buys a fill_active 409. Only a refusal
-    // re-arms, with its verbatim why beside the verb.
-    if (message === null) return;
-    setBusy(false);
-    setRefusal(message);
-  }
-  return (
-    <div>
-      <Button size="sm" variant="ghost" loading={busy} onClick={() => void go()}>
-        {verb}
-      </Button>
-      {refusal && <p className="mt-1 text-xs text-danger">{refusal}</p>}
-    </div>
   );
 }
 
@@ -383,8 +348,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
       )}
       {edited && !editing && (
         <p className="mt-1.5 text-xs text-faint">
-          Blanks settled under the old prompt will run again on the next fill; use Fill next or
-          Fill all remaining to start it.
+          Saved. Rows not yet run use the new prompt; rows already run keep their results.
         </p>
       )}
     </div>

@@ -5,8 +5,9 @@ knowing how.
 
 Two halves. WHICH rows are owed a run, asked per page: `enqueue_runs`
 takes the rows in scope, reads whatever inputs the kind's judgement
-needs (its own reads, batched as it sees fit: cell records over columns
-for a webhook barrier or a refill, nothing at all for a fresh fill),
+needs (its own reads, batched as it sees fit: cell records over a
+webhook's barrier, or over an agent's own columns for its attempted
+rows),
 decides which rows are owed a run, inserts those runs under the open-run
 key so a row offered twice is a no-op whichever walker offered it, and
 reports how many rows it offered (a row another run already holds
@@ -24,16 +25,19 @@ default, so a dispatcher holding the wrong shape fails loudly instead of
 silently doing nothing. The dispatchers call the PUBLIC pair,
 `process_run` and `process_batch`, which run the kind's half and then
 the one thing every kind owes the workflow after a run reaches DONE on
-a row: the ADVANCE (services/workflow_reactions.py), which moves the workflow one step for it
-node behind a barrier this node's path feeds. A kind never calls it and
-cannot forget it.
+a row: the ADVANCE (services/workflow_reactions.py), which moves the
+workflow one step for it (the next node on this node's path, or the
+node behind a barrier this node's path feeds). A kind never calls it
+and cannot forget it.
 
 A processor is constructed for ONE node of its kind, account-scoped,
-with the WALK SCOPE that says what this pass is for (a fresh fill under
-a fill job, the remaining rows of a refill, the rows a push appended, a
-structural backfill); a kind reads the parts of the scope it cares
-about and ignores the rest. Execution ignores the scope: a run carries
-its own identity."""
+and is the node alone. A judgement names its OCCASION: the walk scope
+(a user's fill under a fill job, the rows a push appended, a structural
+backfill) is an argument of `enqueue_runs` (and of the agent kind's
+own `probe`), never a property of the processor, so a walker cannot forget it and an
+executor never carries one; a kind reads the parts of the scope it
+cares about and ignores the rest. Execution names no occasion: a run
+carries its own identity."""
 
 from __future__ import annotations
 
@@ -47,6 +51,7 @@ from typing import ClassVar
 from pydantic import BaseModel
 
 from ..cells import CellWrite
+from ..constants import MAX_JUDGED_ROWS
 from ..models import List, ListRow, Node, NodeRun
 from ..services.node_runs import NodeRunFlow
 
@@ -101,15 +106,14 @@ class FillMode(StrEnum):
     agent kind judges each occasion by its own rule; the webhook kind
     judges every one of them the same way."""
 
-    # A fresh fill: every row the prompt can act on, under a fill job.
-    FRESH = "fresh"
-    # A refill: the rows still blank in the walked columns, and not
-    # already owed by the run being resumed, under a fill job.
-    REMAINING = "remaining"
-    # The sheet moved on its own, so the node judges what it is missing:
-    # rows arrived at the sheet, or a barrier ahead of the node cleared.
-    # The node runs unless every column it fills already holds a value.
-    # No fill job, so its runs ride the autofill lane (fill_run_id NULL).
+    # A user's fill, under a fill job: the fill the drawer starts right
+    # after creating an AI column, or Fill next N / Fill all remaining
+    # from the column's tracker. N rides the walk's limit, not the scope; every door
+    # judges the same way.
+    MANUAL = "manual"
+    # The sheet moved on its own: rows arrived at the sheet, or a
+    # barrier ahead of the node cleared. No fill job, so its runs ride
+    # the autofill lane (fill_run_id NULL).
     AUTOFILL = "autofill"
     # A structural walk over the whole sheet (a webhook column added or
     # its wait set changed): a node that just changed, caught up on the
@@ -118,23 +122,16 @@ class FillMode(StrEnum):
 
 
 class FillScope(BaseModel):
-    """The typed context of one pass, carried on the walker's payload
-    and handed to the processor at construction."""
+    """The typed context of one pass, built by its walker and handed to
+    the judging call (`enqueue_runs`, and the agent kind's `probe`).
+    Which columns a pass judges is the node's to know (its own on the
+    sheet), never the starter's."""
 
-    mode: FillMode = FillMode.BACKFILL
-    # The fill job the runs belong to, for FRESH and REMAINING; "" otherwise.
+    # No default: a scope that forgot its mode would silently judge as
+    # some other occasion.
+    mode: FillMode
+    # The fill job the runs belong to, for MANUAL; "" otherwise.
     fill_run_id: str = ""
-    # The stopped fill a REMAINING walk resumes (Continue): the rows it
-    # still owed, its ABANDONED runs, are the only ones offered. "" =
-    # the column's whole remainder.
-    resumed_fill_id: str = ""
-    # The columns this pass judges across, DECIDED BY THE STARTER and
-    # never read off the sheet by the processor: for a REMAINING walk
-    # the one column the user clicked (a widening gesture) or the
-    # resumed fill's whole set (Continue); for an AUTOFILL pass the
-    # columns the node fills on the sheet, as the reaction read them.
-    # Empty for the modes that judge by no column.
-    column_keys: list[str] = []
 
 
 # The ListRow fields queuing ANY run reads: a run is stamped with its
@@ -144,6 +141,34 @@ class FillScope(BaseModel):
 _RUN_ROW_FIELDS: tuple[str, ...] = ("rank",)
 
 
+class TooManyRowsToJudge(Exception):
+    """A caller handed one judgement more than MAX_JUDGED_ROWS rows: a
+    caller bug, fixed by paging at the door, since the judgement's work
+    runs inside the caller's transaction."""
+
+    def __init__(self, *, kind: str, count: int) -> None:
+        super().__init__(f"a {kind} judgement takes at most {MAX_JUDGED_ROWS} rows, was handed {count}")
+
+
+class NodeFillsNoColumn(Exception):
+    """A node asked to judge rows while it fills no column on the sheet:
+    every walker skips such a node before offering rows (its columns
+    were all deleted), so reaching one here is a caller bug."""
+
+    def __init__(self, *, kind: str) -> None:
+        super().__init__(f"a {kind} node that fills no column on this sheet was asked to judge rows")
+
+
+class FillModeUnsupported(Exception):
+    """A node kind handed a walk it has no rule for (a backfill reaching
+    an agent, or a mode added without teaching the kind): a caller bug,
+    never a user-facing refusal, so it fails the slice loudly rather
+    than being judged as some other occasion."""
+
+    def __init__(self, *, kind: str, mode: FillMode) -> None:
+        super().__init__(f"{kind} nodes have no rule for a {mode} walk")
+
+
 class NodeProcessor(ABC):
     KIND: ClassVar[str]
     # The ListRow fields THIS KIND's judgement reads off a row it is
@@ -151,25 +176,32 @@ class NodeProcessor(ABC):
     # below, added for every kind whatever a kind declares).
     REQUIRED_ROW_FIELDS: ClassVar[tuple[str, ...]] = ()
 
-    def __init__(self, *, account_id: str, node: Node, scope: FillScope) -> None:
+    def __init__(self, *, account_id: str, node: Node) -> None:
         self.account_id = account_id
         self.node = node
-        self.scope = scope
 
-    def enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+    def enqueue_runs(
+        self, target_list: List, rows: Sequence[ListRow], *, scope: FillScope, now: datetime, limit: int = 0
+    ) -> int:
         """The walkers' call: the page's row_fields() loaded first,
         in one read, then the kind's `_enqueue_runs`. A caller may hand
         rows loaded with less than a kind reads (the advance loads ids
         and ranks only), and a deferred field loads one instance at a
         time the first time it is touched, so a kind left to Django would
-        pay a query per row without asking for one."""
+        pay a query per row without asking for one. Refuses more than
+        MAX_JUDGED_ROWS rather than paging them: the work is the caller's
+        transaction's, so a door handing more is what has to change."""
         if not rows:
             return 0
+        if len(rows) > MAX_JUDGED_ROWS:
+            raise TooManyRowsToJudge(kind=self.node.kind, count=len(rows))
         rows = self._hydrate_required_fields(rows)
-        return self._enqueue_runs(target_list, rows, now=now, limit=limit)
+        return self._enqueue_runs(target_list, rows, scope=scope, now=now, limit=limit)
 
     @abstractmethod
-    def _enqueue_runs(self, target_list: List, rows: Sequence[ListRow], *, now: datetime, limit: int = 0) -> int:
+    def _enqueue_runs(
+        self, target_list: List, rows: Sequence[ListRow], *, scope: FillScope, now: datetime, limit: int = 0
+    ) -> int:
         """Queue a run for every row among `rows` this node owes one to,
         under the open-run key, and return how many rows were owed one
         (a row an open run already holds counts); with `limit`, stop at

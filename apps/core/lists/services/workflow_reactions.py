@@ -4,9 +4,9 @@ can undergo, each answered by offering rows to the nodes that care
 the open-run key repeats as a no-op).
 
 TRIGGER: rows arrived on the sheet, so the workflow starts for them.
-The node behind each ENTRY marker (the head of a path nothing feeds)
-judges the new rows under AUTOFILL: it runs unless they arrived with
-every column it fills already valued. A node standing behind a WAIT is
+The entry action behind each ENTRY marker (the head of a path nothing
+feeds) judges the new rows under AUTOFILL: it runs unless any column it
+fills already has a record for the row. A node standing behind a WAIT is
 not started by an arrival; its barrier is what starts it, through the
 advance. Called by every door rows enter through
 (operations/append_rows.py); a sheet with no workflow starts nothing,
@@ -172,21 +172,20 @@ class WorkflowReactions:
 
         The occasion is always AUTOFILL, whichever reaction this is: the
         sheet moved on its own, and the node judges what it is missing.
-        Derived here rather than asked of the caller, because a caller
-        that forgets does not fail, it silently hands over the default
-        occasion (a structural walk, which an agent answers with no rows
-        at all), and a barrier becomes a dead end for every kind that
-        reads the occasion."""
+        Derived here rather than asked of the caller: the occasion is a
+        fact of the reaction, not a choice (a backfill named here would
+        have an agent refuse the pass, FillModeUnsupported)."""
         if not rows:
             return 0
         if self._refuse_marker(node):
             return 0
-        # The columns the judgement looks at: the node's own on this
-        # sheet, never read by the processor itself.
-        keys = columns_for_node(target_list, str(node.id))
-        scope = FillScope(mode=FillMode.AUTOFILL, column_keys=list(keys))
-        processor = processor_for(account_id=self.account_id, node=node, scope=scope)
-        return processor.enqueue_runs(target_list, rows, now=now)
+        # A node whose columns were all deleted stays on its path (its
+        # runs point at it) and fills nothing, so it is handed no rows.
+        if not columns_for_node(target_list, str(node.id)):
+            return 0
+        processor = processor_for(account_id=self.account_id, node=node)
+        scope = FillScope(mode=FillMode.AUTOFILL)
+        return processor.enqueue_runs(target_list, rows, scope=scope, now=now)
 
     def _queue_runs(
         self, list_id: str, row_ids: Sequence[str], node: Node, *, now: datetime, target_list: List | None = None

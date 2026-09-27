@@ -23,6 +23,7 @@ from ..models import List, ListRow
 from ..nodes.webhook import Webhook
 from . import cell_truth, fill_progress, webhook_runs
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
+from .fill_admission.columns import keys_under_fill
 from .lists import ListNotFound
 from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
 
@@ -134,6 +135,10 @@ def claim_key(target_list: List, *, label: str) -> str:
     if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
         raise ReservedColumnKey(label=label)
     if key in {column.key for column in target_list.columns}:
+        raise ColumnExists(key=key)
+    # A key an open fill still writes is held too: a column added under
+    # it now would receive that fill's answers.
+    if key in keys_under_fill(target_list):
         raise ColumnExists(key=key)
     if len(target_list.columns) >= MAX_LIST_COLUMNS:
         raise ColumnsFull()
@@ -281,8 +286,8 @@ class ColumnService:
             # Every fill that touched this column stops. A fill can own
             # SEVERAL columns (one multi-output agent makes them
             # together), so a live sibling is stopped too rather than
-            # left writing into a column that no longer exists; the
-            # sibling refills.
+            # left writing into a column that no longer exists; a new
+            # fill picks the sibling up.
             open_here = fill_progress.open_fills().filter(target_id=str(target_list.id))
             for fill_run_id, consent in fill_progress.iter_consents(open_here):
                 if key in consent.column_keys:
@@ -362,8 +367,8 @@ class ColumnService:
         AgentService(account_id=self.account_id).delete_ephemeral([agent_id_of(node)])
 
     def fill_config(self, target_list_id: str, *, column_key: str) -> AgentConfig:
-        """The CURRENT config filling a column (what a refill would
-        run), read through the column's custody path. A retired
+        """The CURRENT config filling a column (what its next fill
+        would run), read through the column's custody path. A retired
         provider still reads (peeking is not acting); only the writes
         below refuse it."""
         agents = AgentService(account_id=self.account_id)
@@ -375,8 +380,8 @@ class ColumnService:
         ephemeral or roster; the builder stays the roster's full
         editor). Only the prompt moves: the rest of the config
         round-trips through the row untouched. No List lock: the write
-        lands on the agent row, and running fills hold their frozen
-        snapshot, so the edit reaches the NEXT admission by
+        lands on the agent row, and a fill reads its agent live, so the
+        edit reaches a running fill's next row and every later fill by
         construction. Returns the stored config."""
         agents = AgentService(account_id=self.account_id)
         agent = self._fill_agent(target_list_id, column_key=column_key, agents=agents)

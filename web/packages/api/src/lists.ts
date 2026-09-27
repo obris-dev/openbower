@@ -15,6 +15,7 @@ import {
   FolderSummarySchema,
   ImportResultSchema,
   ListColumnSchema,
+  ListDetailSchema,
   PlainColumnSchema,
   ListRowsPageSchema,
   ListsPageSchema,
@@ -34,6 +35,7 @@ import {
   type FolderSummary,
   type ImportResult as WireImportResult,
   type ListColumn as WireListColumn,
+  type ListDetail as WireListDetail,
   type ListRowsPage,
   type ListsPage as WireListsPage,
   type ListSummary as WireListSummary,
@@ -78,6 +80,10 @@ export type UnknownColumn = Pick<PlainColumn, "key" | "label" | "type"> & { kind
 export type ListColumn = WireListColumn | UnknownColumn;
 export type ColumnKind = ListColumn["kind"];
 export type ListSummary = Omit<WireListSummary, "columns"> & { columns: ListColumn[] };
+/** One list as its SHEET holds it: the summary plus its entry actions
+ * (where a fill may start). The detail door (GET and PATCH) and every
+ * write to the columns array answer with this. */
+export type ListDetail = Omit<WireListDetail, "columns"> & { columns: ListColumn[] };
 export type ListsPage = Omit<WireListsPage, "items"> & { items: ListSummary[] };
 export type ImportResult = Omit<WireImportResult, "list"> & { list: ListSummary };
 
@@ -104,6 +110,11 @@ const UnknownColumnSchema = z
   .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
 const TolerantListColumnSchema = z.union([ListColumnSchema, UnknownColumnSchema]);
 export const TolerantListSummarySchema = ListSummarySchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
+// `entry_action_ids` stays REQUIRED, against the default-new-fields
+// precedent below: this bundle's fill route and create semantics need
+// this server anyway, so an older server is not a case to tolerate, and
+// a defaulted [] would silently hide every Fill control instead.
+export const TolerantListDetailSchema = ListDetailSchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
 export const TolerantListsPageSchema = ListsPageSchema.extend({ items: z.array(TolerantListSummarySchema) });
 const TolerantImportResultSchema = ImportResultSchema.extend({ list: TolerantListSummarySchema });
 
@@ -131,7 +142,7 @@ export type ToolStatus = (typeof TOOL_STATUSES)[ToolKey][number];
 export const ROW_LEASE_STALE_SECONDS = WIRE_CONSTANTS.ROW_LEASE_STALE_SECONDS;
 // The SETTLED partition of CellState, off the contract document: the
 // model's own verdicts, how the sheet SPEAKS (a quiet word rather than
-// a warning), not what a refill targets: every blank re-runs.
+// a warning), not what a fill targets: no attempted cell is re-asked.
 // The client derives its words-vs-dot split from this, never a
 // hand-retyped list beside its copy.
 // The whole cause vocabulary this bundle knows, read off the generated
@@ -152,26 +163,20 @@ export type SettledCellState = (typeof SETTLED_CELL_STATES)[number];
 // offending surface is the OUTPUTS (they name what the fill would
 // write, so the drawer marks that pane). Every other refusal renders
 // through its verbatim detail alone and needs no name here. A fill
-// never refuses on a grown sheet: its range is the count the user
-// consented to, and rows past it wait for the next refill.
+// never refuses on a grown sheet: its range is the rows that existed
+// at the click, and a row added after waits for the next fill.
 export const COLUMN_ORDER_STALE_CODE = "column_order_stale";
 export const COLUMN_COLLISION_CODE = "column_collision";
 export const RESERVED_KEY_CODE = "reserved_key";
 export const DERIVED_KEY_COLLISION_CODE = "derived_key_collision";
 
 /** The AI-column add's POST body (the server's AiColumnRequest): the
- * quick config XOR an existing agent (its OUTPUTS are the columns;
- * no column label rides the request), and the row count the user was
- * shown (echoed; the fill covers at most that many rows, top down, so
- * a row that landed after the page loaded waits for the next fill).
- * `max_row_count` scopes the fill to the sheet's first N qualifying
- * rows; omitted means every row. The server admits the true eligible
- * count either way. */
+ * quick config XOR an existing agent (its OUTPUTS are the columns; no
+ * column label rides the request). Creating the columns starts no
+ * fill; postColumnFill does. */
 export type AiColumnBody = {
   config?: AgentConfig;
   agent_id?: string;
-  confirmed_row_count: number;
-  max_row_count?: number;
 };
 
 // Column-type OPTIONS derive from the generated contract (a type
@@ -218,8 +223,8 @@ export async function fetchAllLists(): Promise<ApiResult<{ items: ListSummary[];
   return { status: "ok", data: { items, truncated } };
 }
 
-export async function fetchList(id: string): Promise<ApiResult<ListSummary>> {
-  return http.get(apiRoutes.lists.detail(id), TolerantListSummarySchema);
+export async function fetchList(id: string): Promise<ApiResult<ListDetail>> {
+  return http.get(apiRoutes.lists.detail(id), TolerantListDetailSchema);
 }
 
 // A cause this bundle has never heard of (a server ahead of the app)
@@ -345,8 +350,8 @@ export function renderablePage(page: {
 export async function updateList(
   id: string,
   patch: { label?: string; folder_id?: string },
-): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.detail(id), TolerantListSummarySchema, patch);
+): Promise<ApiResult<ListDetail>> {
+  return http.patch(apiRoutes.lists.detail(id), TolerantListDetailSchema, patch);
 }
 
 export async function createList(label: string): Promise<ApiResult<ListSummary>> {
@@ -401,12 +406,12 @@ export async function saveRunAsList(
  * a sibling. Refusals
  * (reserved key, duplicate, cap) surface through the funnel as the
  * server's verbatim detail plus code; the 200 body is the updated
- * summary. */
+ * list detail. */
 export async function postColumn(
   id: string,
   body: { label: string; type: ColumnType },
-): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.columns(id), TolerantListSummarySchema, body);
+): Promise<ApiResult<ListDetail>> {
+  return http.post(apiRoutes.lists.columns(id), TolerantListDetailSchema, body);
 }
 
 /** Reorder the sheet's columns, sending the WHOLE key order.
@@ -415,66 +420,64 @@ export async function postColumn(
  * permutation of the ones it holds, which a (from, to) pair cannot be
  * checked against, and refuses with 409 when a teammate has added or
  * deleted a column since this client read the sheet. The 200 body is
- * the updated summary, so the caller renders the SERVER's order
+ * the updated list detail, so the caller renders the SERVER's order
  * rather than trusting its own optimistic move. */
-export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.columnOrder(id), TolerantListSummarySchema, { keys });
+export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListDetail>> {
+  return http.patch(apiRoutes.lists.columnOrder(id), TolerantListDetailSchema, { keys });
 }
 
 /** Relabel one column. The KEY is the address and never changes: row
  * data is keyed on it server-side, so a key that followed the label
  * would strand every cell the column holds. */
-export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<ListSummary>> {
-  return http.patch(apiRoutes.lists.column(id, key), TolerantListSummarySchema, { label });
+export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<ListDetail>> {
+  return http.patch(apiRoutes.lists.column(id, key), TolerantListDetailSchema, { label });
 }
 
 /** Delete one column and everything in it. Any column, not only an AI
- * one. The body is the updated summary, so the sheet re-renders its
+ * one. The body is the updated list detail, so the sheet re-renders its
  * columns from the response. */
-export async function deleteColumn(id: string, key: string): Promise<ApiResult<ListSummary>> {
+export async function deleteColumn(id: string, key: string): Promise<ApiResult<ListDetail>> {
   // Through `request` rather than `http.delete`, which is the
-  // no-content form: this DELETE answers with the updated summary, so
+  // no-content form: this DELETE answers with the updated list detail, so
   // the sheet re-renders its columns from the response like it does
   // after every other columns write.
-  return request(apiRoutes.lists.column(id, key), TolerantListSummarySchema, { method: "DELETE" });
+  return request(apiRoutes.lists.column(id, key), TolerantListDetailSchema, { method: "DELETE" });
 }
 
-/** Add an AI column and admit its fill in one server transaction;
- * returns the run envelope to attach to. Every refusal (row growth,
- * same-column active, caps, occupied-key collisions) surfaces through
- * the funnel as its server-written detail plus code. */
-export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<FillRunWire>> {
-  return fillResult(await http.post(apiRoutes.lists.aiColumn(id), TolerantFillRunWireSchema, body));
+/** Add an AI column set (one column per agent output); starts no
+ * fill. The body is the updated list detail, so the sheet re-renders its
+ * columns from the response. Refusals (caps, occupied-key collisions,
+ * an unrunnable model) surface through the funnel as the server's
+ * verbatim detail plus code. */
+export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<ListDetail>> {
+  return http.post(apiRoutes.lists.aiColumn(id), TolerantListDetailSchema, body);
 }
 
-/** Refill: the one recovery primitive. Starts a NEW run over the
- * column's rows without an answer (answered rows are excluded
- * server-side, never re-run and never re-billed; appended rows are
- * covered, so resume and fill-remaining are the same gesture). The
- * column names everything and the fill reads the agent's config
- * live; the one optional body fact is `max_row_count`, scoping the new
- * run to the next N unanswered rows (omitted means all of them, and the
+/** Fill a column: the one way a fill starts, from the drawer right
+ * after the column is created or from the column's tracker. A NEW fill
+ * over the column's rows never attempted (a row that ran, whatever came
+ * of it, is never re-run and never re-billed; appended rows are
+ * covered). The column names everything and the fill reads the agent's
+ * config live; the one optional body fact is `max_row_count`, scoping
+ * the fill to the next N such rows (omitted means all of them, and the
  * server owns the true eligible count either way). Refusals
- * (same-column active, caps, empty target) surface through the funnel
- * as the server's verbatim detail plus code; the 201 body is the run
- * envelope to attach to. */
-export async function postFillRefill(
+ * (same-column active, caps, nothing left to fill) surface through the
+ * funnel as the server's verbatim detail plus code; the 201 body is the
+ * run envelope to attach to. */
+export async function postColumnFill(
   id: string,
   columnKey: string,
-  opts: { max_row_count?: number; resumeFill?: string } = {},
+  opts: { max_row_count?: number } = {},
 ): Promise<ApiResult<FillRunWire>> {
-  // resumeFill bounds the new fill to THAT stopped fill's own
-  // unresolved rows (Continue resumes; the extend gestures widen).
   // The option is named for the wire key it writes: DRF drops a body
-  // key it does not declare without complaining, so a name that
-  // drifts from the server's does not fail, it silently widens the
-  // fill to the whole column against the user's metered key.
+  // key it does not declare without complaining, so a name that drifts
+  // from the server's does not fail, it silently widens the fill to the
+  // whole column against the user's metered key.
   const body: Record<string, unknown> = {};
   if (opts.max_row_count !== undefined) body.max_row_count = opts.max_row_count;
-  if (opts.resumeFill !== undefined) body.resume_fill = opts.resumeFill;
   return fillResult(
     await http.post(
-      apiRoutes.lists.columnRefill(id, columnKey),
+      apiRoutes.lists.columnFill(id, columnKey),
       TolerantFillRunWireSchema,
       Object.keys(body).length > 0 ? body : undefined,
     ),
@@ -491,7 +494,7 @@ export async function updateColumnPrompt(id: string, columnKey: string, prompt: 
   return http.patch(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema, { prompt });
 }
 
-/** The column's CURRENT fill config (what a refill would run): the
+/** The column's CURRENT fill config (what its next fill would run): the
  * prompt-peek surfaces read this. */
 export async function getColumnPrompt(id: string, columnKey: string): Promise<ApiResult<ColumnPromptWire>> {
   return http.get(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema);
@@ -593,9 +596,9 @@ const TolerantWebhookColumnPreviewResponseSchema = WebhookColumnPreviewResponseS
   envelope: z.record(z.string(), z.unknown()),
 });
 
-/** Add a webhook column; the 201 body IS the summary, the shape every columns write returns. */
-export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.columnWebhook(id), TolerantListSummarySchema, body);
+/** Add a webhook column; the 201 body IS the list detail, the shape every columns write returns. */
+export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<ListDetail>> {
+  return http.post(apiRoutes.lists.columnWebhook(id), TolerantListDetailSchema, body);
 }
 
 export async function getColumnWebhook(id: string, key: string): Promise<ApiResult<WebhookColumnConfigWire>> {

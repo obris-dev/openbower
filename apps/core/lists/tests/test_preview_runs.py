@@ -254,7 +254,7 @@ class PreviewRunServiceTests(TestCase):
                 node_id=f"01NODE{n:020d}",
                 agent_id=f"01AGENT{n:019d}",
                 column_keys=["answer"],
-                consented=1,
+                target_row_count=1,
             )
         self.assertEqual(open_fill_count(ACCOUNT), MAX_ACTIVE_FILLS)
         run = self._start()
