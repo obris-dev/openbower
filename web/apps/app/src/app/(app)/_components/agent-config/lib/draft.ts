@@ -77,7 +77,7 @@ export function parseDraft(raw: string | null): Draft | null {
   if (tools.success) draft.tools = tools.data;
   const testRow = stringRecord(record.testRow);
   // Values clamp on RESTORE (the borrow path's rule): a draft from
-  // before the bench bound existed can hold a value the server
+  // before the preview bound existed can hold a value the server
   // would refuse, and the field must show exactly what a test will
   // run.
   if (testRow) {

@@ -10,9 +10,10 @@ import {
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { livenessRead, type LiveRun } from "./lib/live-status";
+import { readsAreTroubled } from "../lib/pending-refresh";
 
 // Poll cadence (binary). Open-ended like every worker-supervised
-// poll (the bench's use-test-fill rides the same doctrine): the LOOP
+// poll (the preview's use-preview-run rides the same doctrine): the LOOP
 // has no budget, never that a request stays open. Each poll is its
 // own short bounded GET, and liveness rides the worker's heartbeat on
 // the envelope, not this browser.
@@ -21,7 +22,6 @@ const FILL_POLL_INTERVAL_MS = 4_096;
 // (binary). Blips never stop a loop supervising a live run: the fill
 // continues server-side regardless, so the only honest client move is
 // a warning that updates are not reaching this page.
-const MAX_POLL_ERRORS = 4;
 // The backoff ceiling for a failing poll (binary): a downed API must
 // not be hammered by every open sheet, and a minute is still a live
 // supervisor from the user's point of view.
@@ -68,10 +68,9 @@ export function useFill(
       // the sheet already holds; walking them again here would be a
       // second full page-through of the loaded sheet every tick,
       // fetching each row's data only to throw it away and keep
-      // .states. Nothing needs clearing when the last fill goes
-      // terminal either: pending is derived from queued tasks on LIVE
-      // fills, and stopping a fill abandons its tasks before it flips,
-      // so both legs of that derivation go false on their own.
+      // .states. Pending is any open run of the cell's node, whichever
+      // lane queued it, so a cell can read pending with no fill live;
+      // the sheet re-reads those on its own schedule (lib/pending-refresh).
       return read.live ? "ok-live" : "ok-idle";
     },
     [listId],
@@ -96,7 +95,7 @@ export function useFill(
         // whatever this page can reach, so quitting would strand a
         // live run behind copy that says updates are still coming.
         // Repeated failures back off instead, up to a ceiling.
-        if (errors >= MAX_POLL_ERRORS) setPollTrouble(true);
+        if (readsAreTroubled(errors)) setPollTrouble(true);
       } else {
         errors = 0;
         setPollTrouble(false);

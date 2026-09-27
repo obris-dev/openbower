@@ -20,6 +20,8 @@ from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
 from lists.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, ListOrigin
+from lists.models import List
+from lists.serializers import ingest_schema_wire
 from lists.services.lists import ListService
 
 _CORE_AUD = "openbower-core"
@@ -239,14 +241,27 @@ class IngestValidationTests(TestCase):
         self.assertIn("unknown column", resp.json()["detail"])
         self.assertEqual(captured, [])  # refused up front, never published
 
-    def test_an_overridden_ai_column_is_validated_too(self):
-        # An AI column a producer overrides is held to its type like any
-        # other, now that the schema surfaces it as pushable.
-        captured: list = []
-        resp = self._push([{"rank": "not-a-number"}], captured)
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("rank", resp.json()["detail"])
-        self.assertEqual(captured, [])  # refused up front, never published
+    def test_a_recorded_column_is_refused_whatever_its_value(self):
+        # A column whose cells are recorded is not pushable at all: its
+        # value and the record of what filled it are written together by
+        # the landing, which a push cannot do. So it is refused in its
+        # OWN words before its type is ever considered, and a perfectly
+        # typed value is refused the same way. FAILS if a recorded
+        # column is merely type-checked (the refusal would then read as
+        # a shape complaint, and a well-typed value would be stored).
+        for value in ("not-a-number", "42"):
+            with self.subTest(value=value):
+                captured: list = []
+                resp = self._push([{"rank": value}], captured)
+                self.assertEqual(resp.status_code, 400)
+                self.assertIn("is filled for you", resp.json()["detail"])
+                self.assertEqual(captured, [])  # refused up front, never published
+
+    def test_the_push_schema_lists_only_the_columns_no_workflow_fills(self):
+        # The schema a producer reads agrees with the refusal above: a
+        # workflow column is absent, not listed and then refused.
+        schema = ingest_schema_wire(List.objects.get(id=self.list_id))
+        self.assertEqual([column["key"] for column in schema["columns"]], ["domain", "score"])
 
     def test_a_well_typed_push_is_accepted(self):
         captured: list = []

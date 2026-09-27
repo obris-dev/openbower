@@ -24,7 +24,7 @@ export type ConfigDraft = {
 export type SectionKey = "label" | "prompt" | "model" | "outputs";
 export type Missing = Record<SectionKey, boolean>;
 // "fill" is the sheet drawer's attempt: the same three sections
-// as a bench test (no agent name is asked for there either).
+// as a preview test (no agent name is asked for there either).
 export type Attempt = "test" | "save" | "fill" | null;
 
 export type ChecklistItem = { key: SectionKey; anchor: string; label: string; missing: boolean };

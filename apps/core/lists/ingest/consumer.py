@@ -2,8 +2,9 @@
 worker consumes accepted row-push events, dedupes them against the inbox, and
 appends the rows to the sheet.
 
-Enriching the appended rows (running the sheet's AI columns) is NOT done
-here: that is a reconciler, a separate work stream. The loop lifecycle
+The append goes through AppendRowsOperation, which starts the sheet's
+workflow for the new rows in the same transaction, so a pushed row's AI
+columns fill like any other arrival's. The loop lifecycle
 (subscribe, poll, commit, stop) lives here; the management command owns only
 signals. `handle_ingest_event` is separable and tested without a broker.
 """
@@ -19,8 +20,8 @@ from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
-from ..services import autofill
-from ..services.lists import ListNotFound, ListService, ListsFull
+from ..operations.append_rows import AppendRowsOperation
+from ..services.lists import ColumnNotWritable, ListNotFound, ListService, ListsFull
 from .events import IngestEvent, from_wire
 from .topics import LIST_ROWS_INGESTED
 
@@ -57,22 +58,25 @@ class AppendResult(NamedTuple):
 
 
 def _append_rows(event: IngestEvent) -> AppendResult:
-    """The side effect: append the pushed rows to the sheet AND enqueue
-    autofill for them, owning its own terminal-error handling (a deleted
-    or full list is a drop, reported for the caller to log). Only
-    transient failures (a DatabaseError) raise.
-
-    The enqueue rides the caller's transaction (handle_ingest_event's
-    atomic), so rows and their autofill work commit together: a row can
-    never land with no work queued to fill it."""
+    """The side effect: the pushed rows through the one append (rows
+    and their workflow trigger, one transaction), owning its own
+    terminal-error handling (a deleted or full list is a drop, reported
+    for the caller to log). Only transient failures (a DatabaseError)
+    raise. Rides the caller's transaction (handle_ingest_event's
+    atomic), so a redelivery cannot double-apply."""
     lists = ListService(account_id=event.account_id)
     try:
         target = lists.get(event.list_id)
-        created = lists.add_rows(target, event.rows)
-    except (ListNotFound, ListsFull) as e:
+        report = AppendRowsOperation(account_id=event.account_id, target_list=target, rows=event.rows).run()
+    except (ListNotFound, ListsFull, ColumnNotWritable) as e:
+        # All three are TERMINAL for this event: a deleted or full list,
+        # and a row carrying a column whose cells are recorded (the view
+        # refuses that one at the door, so an event carrying it came
+        # from somewhere that skipped the door and will never become
+        # valid). Dropped and recorded, never retried, or the bus would
+        # redeliver it forever.
         return AppendResult(applied=False, reason=str(e))
-    autofill.enqueue_rows(account_id=event.account_id, target_list=target, rows=created)
-    return AppendResult(applied=True, added=len(created))
+    return AppendResult(applied=True, added=report.added)
 
 
 def handle_ingest_event(event: IngestEvent) -> str:

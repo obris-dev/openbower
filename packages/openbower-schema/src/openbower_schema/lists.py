@@ -76,14 +76,25 @@ class PlainColumn(ColumnBase):
     kind: Literal["plain"] = "plain"
 
 
-class AiColumn(ColumnBase):
+class WorkflowColumn(ColumnBase):
+    """A column kind backed by the sheet's workflow: a node on one of
+    its paths fills the cells, and arriving rows (an import, a push)
+    never carry one, since its value and its record land together. Never a
+    column on its own, like ColumnBase: the kinds below are the
+    members. `node_id` is declared HERE and nowhere else, so a kind
+    gets a node only by extending this, and a reader asks
+    isinstance(column, WorkflowColumn) rather than listing kinds."""
+
+    node_id: str = Field(description="The workflow node whose runs write this column's cells.")
+
+
+class AiColumn(WorkflowColumn):
     """A column an agent fills. The column binds to the NODE that fills
     it; the agent, and its ephemeral-vs-roster custody, hangs off the
     node, so editing what fills a column goes through the column,
     never this id."""
 
     kind: Literal["ai"] = "ai"
-    node_id: str = Field(description="The node that fills this column (an agent bound to this sheet).")
     current_fill_id: str = Field(
         default="",
         description="The fill run that speaks for this column, stored here when it opens and "
@@ -92,17 +103,14 @@ class AiColumn(ColumnBase):
     )
 
 
-class WebhookColumn(ColumnBase):
-    """A Send webhook column. It IS the webhook node at rank 1 of its
-    own path (the wait node at rank 0 names the paths it waits on); the
+class WebhookColumn(WorkflowColumn):
+    """A Send webhook column. It IS the second node of its own path
+    (the wait node before it names the paths it waits on); the
     column holds no row data, its cells show delivery state."""
 
+    # The inherited `type` rides on every kind so the base projection
+    # holds; a webhook column's is never read.
     kind: Literal["webhook"] = "webhook"
-    # `type` rides on every kind so the base projection holds; a
-    # webhook column\'s is never read.
-    node_id: str = Field(
-        description="The webhook node this column is; its config and the wait node's hang off the path."
-    )
 
 
 # A column is exactly ONE of these by construction: the union is
@@ -128,9 +136,10 @@ type ListColumn = Annotated[
 
 class IngestColumn(BaseModel):
     """One column of the push schema: the key a row dict keys on and the
-    value's type. `autopopulated` marks the AI columns, left blank they
-    are filled by autofill after append, so a producer knows which
-    columns it owns and which it may leave to the system."""
+    value's type. Only the columns a producer OWNS appear: a column the
+    system fills is written with its own record of what filled it, and
+    a push writes rows alone, so such a column is absent here and its
+    key is refused on append."""
 
     key: str = Field(max_length=COLUMN_KEY_MAX_LENGTH, description="Row data dicts key on this.")
     label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
@@ -139,29 +148,19 @@ class IngestColumn(BaseModel):
         "value does not satisfy it (number, currency, and date carry shape rules), so send values "
         "of this type."
     )
-    # A literal default (not default_factory) so it reaches the JSON
-    # schema and a consumer parsing an older payload without the key reads
-    # a hard column, never refuses it.
-    autopopulated: bool = Field(
-        default=False,
-        description="True on AI columns: left blank, autofill researches and fills this after "
-        "append. A push MAY still send a value to pin its own (write-if-blank keeps it, and "
-        "autofill skips an agent whose columns a row already fills). False on hard columns, which "
-        "a producer provides.",
-    )
 
 
 class IngestSchema(BaseModel):
     """The pushable row shape for POST /v1/lists/{id}/ingest: a row in the
     push is a dict keyed by these columns' keys, each value validated
-    against the column's type on append. Hard columns (autopopulated
-    false) are the data a producer sends; AI columns (autopopulated true)
-    autofill owns, a push may leave them blank or send a value to pin its
-    own. A client builds a push off this without guessing keys."""
+    against the column's type on append. These are the columns a
+    producer owns; the ones the system fills are not here and are
+    refused if sent, because their values arrive with the record of
+    what filled them. A client builds a push off this without guessing
+    keys."""
 
     columns: list[IngestColumn] = Field(
-        default=[],
-        description="Columns of the push schema, in display order; AI columns carry autopopulated true.",
+        default=[], description="Columns of the push schema, in display order; the ones a producer owns."
     )
 
 
@@ -193,6 +192,22 @@ class ListSummary(BaseModel):
     updated_at: str
 
 
+class ListDetail(ListSummary):
+    """One list as its SHEET holds it: the summary plus what only the
+    open sheet needs from its workflow. The detail door (GET and PATCH)
+    and every write to the columns array (add, AI create, webhook
+    create, rename, reorder, delete) answer with this; a column's own
+    config doors (prompt, webhook config) answer their config, and the
+    index, list create, CSV import, and a saved discover run stay on
+    the summary and read no workflow."""
+
+    entry_action_ids: list[str] = Field(
+        description="The sheet's entry actions: the workflow nodes an arriving row starts, each the "
+        "action right behind its path's entry marker. A column whose node_id is here is one a "
+        "fill may start at. Derived from the sheet's paths on every read, never stored.",
+    )
+
+
 # The per-cell state the rows page ships. `pending` is the ONE
 # non-terminal value (it is the queue state, and drives the shimmer);
 # the rest are terminal. `filled` travels ONLY when the run that
@@ -206,12 +221,12 @@ WireCellState = Literal[
     "filled",
     "no_evidence",
     # The model spent its request/tool budget without producing an
-    # answer: SETTLED (the same config re-buys the same refusal), unlike
-    # model_error, which is infrastructure and retries.
+    # answer: the model's own verdict, so the sheet shows a quiet word
+    # rather than a warning.
     "no_answer",
     # An answer arrived but failed provenance verification (its
-    # citations never confirmed it for THIS row): SETTLED, since the
-    # same config re-buys the same unconfirmable answer.
+    # citations never confirmed it for THIS row): the model's own
+    # verdict, a quiet word.
     "unverified",
     "unparseable",
     "type_mismatch",
@@ -219,11 +234,18 @@ WireCellState = Literal[
     "transient",
     # A tool's door did not serve this row. The SHEET keys on the base
     # code only (which tool, and the tool's own code, ride `tools`):
-    # not configured is written at once and re-runs on Continue once
-    # set up; unavailable (rate limited, unreachable, or erroring past
-    # the row's retries) parks first and lands after the attempt cap.
+    # not configured is written at once; unavailable (rate limited,
+    # unreachable, or erroring past the row's retries) parks first and
+    # lands after the attempt cap. Either way the row was attempted, and
+    # no fill re-asks it.
     "tool_not_configured",
     "tool_unavailable",
+    # A Send webhook column's cell (the column holds no value): the
+    # row's digest delivered, or its last send gave up (the delivery
+    # log says why). While a send is owed the cell is `pending`, off
+    # the open run, exactly as an agent cell is.
+    "sent",
+    "failed",
 ]
 
 
@@ -242,21 +264,31 @@ class CellStateWire(BaseModel):
 
 
 class ListRowWire(BaseModel):
+    """A row in SHEET ORDER: the page's array order is the order, and a
+    row number is whatever the renderer counts. Nothing about order
+    rides the row itself (the server keeps a rank a move rewrites on
+    one row; a client never needs it)."""
+
     id: str
-    position: int = Field(description="1-based dense display/paging order.")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},
-        description="AI cell states keyed by column key: every cell without a value, plus "
-        "filled cells whose run had a degraded tool. Slim on absences by contract, so a "
-        "long-filled sheet carries almost nothing here. A value in `data` with no entry here "
-        "IS filled and clean, and never-attempted is likewise an absence.",
+        description="Cell states keyed by column key, for every node column (AI and Send webhook "
+        "alike): every cell without a value, plus filled cells whose run had a degraded tool. "
+        "Slim on absences by contract, so a long-filled sheet carries almost nothing here. A "
+        "value in `data` with no entry here IS filled and clean; never-attempted (an AI cell no "
+        "fill reached, a webhook cell whose row was never due) is likewise an absence.",
     )
 
 
 class ListRowsPage(BaseModel):
     items: list[ListRowWire]
-    next_cursor: str | None = Field(default=None, description="The last position when more rows exist.")
+    next_cursor: str | None = Field(
+        default=None,
+        description="An opaque cursor for the next page when more rows exist: hand it back as ?after= "
+        "verbatim (it carries what the server needs to continue; nothing about it is for the client "
+        "to read).",
+    )
 
 
 class ListsPage(BaseModel):

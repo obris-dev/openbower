@@ -146,7 +146,7 @@ def cell_run_worst_case_seconds() -> int:
     search at its clamped worst case. The NORMAL fill worker's compose
     stop_grace_period must clear it (a row that runs to the bound
     still owes its outcome write); the test lane's worker trades that
-    away deliberately, so its short grace kills an in-flight bench
+    away deliberately, so its short grace kills an in-flight preview
     row. Called, like the search bound it composes."""
     return (
         MAX_TOOL_CALLS + 3 + CAPPED_VERDICT_REQUESTS
@@ -156,6 +156,15 @@ def cell_run_worst_case_seconds() -> int:
 # The people-profile site find_contacts pins its queries to (the tool
 # injects the site: scope; the model never controls it).
 DEFAULT_PEOPLE_SITE = "linkedin.com/in"
+
+
+# Stable error codes for the agents lane's refusals: the machine leg of
+# the {error, detail} envelope it answers with (the detail is
+# server-authored copy the client renders verbatim, tier 1).
+class AgentErrorCode(StrEnum):
+    # The save changes the output set of an agent whose columns are on
+    # a sheet; the user makes a new agent or deletes those columns (409).
+    OUTPUTS_IN_USE = "agent_outputs_in_use"
 
 
 class ToolStatus(StrEnum):

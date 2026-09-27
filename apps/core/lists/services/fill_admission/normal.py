@@ -1,201 +1,96 @@
-"""The NORMAL kind's admission service. admit() is the column add:
-caps and refusals, column resolution (match-or-refuse), the config
-snapshot, the ephemeral-agent create, the row-count echo, the fill
-row, and the bulk insert of the queue.
-refill() is the one RECOVERY primitive, admission-shaped: a NEW fill
-over the column's unanswered rows. Everything here goes through
-ONE-transaction methods, and the columns write lands in the same
-transaction as the fill and its queue: anything less can append a
-column whose fill never lands, leaving the sheet carrying a column
-nothing will ever fill. The List lock is taken LATE inside that
-transaction, over the columns write alone; admit()'s docstring
-carries the why. Account-scoped like every lists service."""
+"""Fill admission: the one way a user starts a fill, on an AI column
+that already exists (created by AiColumnService; the drawer creates then
+fills, the tracker fills). It checks the caps and refusals, opens the
+fill job, and points the agent's columns at it. It never adds a column:
+an agent's output set is fixed while its columns exist.
+
+Admission DECIDES and QUEUES; it does not walk the sheet. The walk
+itself (one page per slice, the agent processor judging each row) is
+the fill job's first slices, worked within seconds by the jobs
+container, so a 50,000 row sheet costs the request only the probe: a
+scan that stops at the first row owed work, which reads the whole sheet
+only when no row is (a column already tried everywhere, or a prompt no
+row can feed). A fill runs the agent's CURRENT config, so an edit
+reaches its next row; admission still resolves and probes the config
+once, so a broken config refuses at the click. Account-scoped like
+every lists service."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from itertools import batched, islice
-
 from django.db import transaction
-from django.utils import timezone
 
-from agents.models import Agent
 from agents.services import AgentNotFound, AgentService
-from openbower_schema.agents import LABEL_MAX_LENGTH as AGENT_LABEL_MAX_LENGTH
+from jobs.models import Job
+from jobs.services import JobService
+from openbower_kernel.fields import new_ulid
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig
 
-from ...constants import FILL_WRITE_BATCH, NodeRunStatus
-from ...models import Fill, List, ListRow, Node, NodeRun
-from ..fingerprint import config_fingerprint
+from ...jobs.fill import FillJob
+from ...models import List, ListRow
+from ...nodes.registry import ENTRY
+from ...processors import processor_for
 from ..lists import ListNotFound
-from ..workflows import WorkflowService, agent_id_of, columns_for_node
-from .base import AdmissionBase
-from .columns import claim_columns, preview_columns, require_fill_column
+from ..workflows import NodeNotFound, WorkflowService, agent_id_of, written_columns
+from .base import check_model
+from .columns import check_account_cap, check_columns_free, point_columns, require_fill_column
 from .errors import (
     ColumnAgentMissing,
     ColumnNoLongerFilled,
     EmptyFill,
+    FillColumnDownstream,
     FreeSearchBudget,
     NoEligibleRows,
+    NothingToFill,
     ProviderRetiredRefusal,
-    RefillEmpty,
-    ResumeConfigChanged,
-    ResumeRunNotFound,
-    RowCountChanged,
-    TargetCountChanged,
 )
-from .targets import RefillTargets, free_provider_row_cap, iter_eligible_rows
+from .targets import free_provider_row_cap
 
 
-class FillAdmissionService(AdmissionBase):
+class FillAdmissionService:
     def __init__(self, *, account_id: str, user_id: str) -> None:
-        super().__init__(account_id=account_id, user_id=user_id)
+        self.account_id = account_id
+        self.user_id = user_id
         self.agents = AgentService(account_id=account_id)
         self.workflows = WorkflowService(account_id=account_id)
 
-    def admit(
-        self,
-        *,
-        list_id: str,
-        config: AgentConfig | None = None,
-        agent_id: str = "",
-        confirmed_row_count: int,
-        rows: int = 0,
-    ) -> Fill:
-        """The one transaction. Exactly one of `config` (the quick tab:
-        an ephemeral agent is created) or `agent_id` (a roster agent)
-        is given; the serializer enforces the exclusivity, this method
-        trusts it. `rows` scopes the fill to the FIRST N eligible rows
-        (0 = all): the cutoff lands on the last targeted position, and
-        rows past it stay not-attempted (the designed state a later
-        refill extends).
-
-        The List lock is taken LAST, and held only across the one
-        write that needs it: the columns write. Everything before it (the
-        guards, the eligible walk, the fill row, and the queue insert,
-        which is one NodeRun per targeted row and the expensive part
-        of admission) touches no column, so none of it needs the list
-        locked. A Postgres row lock cannot be released early, so the
-        only way to hold it briefly is to acquire it late.
-
-        What that costs is one wasted build when a deferred guard
-        actually fires: the queue is inserted, the lock is taken, the
-        columns disagree, and the whole transaction rolls back. Never a
-        wrong result, and the preview keeps it to true RACES by running
-        every deterministic refusal up front; the likeliest race is a
-        double-submitted Fill button, whose loser wastes one build and
-        hears the same-column refusal it should.
-
-        What it buys is that a 50,000 row admission no longer blocks
-        every other sheet-level write for the length of its insert. The
-        List row lock is taken by column adds, renames, reorders and
-        deletes, by add_rows, by the list delete, and by another
-        admission. It is NOT taken by the worker: write_cells locks the
-        ListRow and reads the list unlocked, for the column types only.
-
-        One key IS held early, on purpose: the node and workflow
-        get-or-create is the transaction's first write on a key a concurrent
-        admission can collide on (the quick tab's ephemeral agent, written
-        before it, holds only its own fresh id), and Postgres holds an
-        uncommitted unique-index entry until commit, so a
-        concurrent admission on the same key waits for this one's whole
-        build. That is a sheet's FIRST AI column (the workflow key) or
-        the same roster agent twice on one sheet (the node key, the
-        double-submitted Fill button, refused anyway once it wakes). It
-        stays inside because the runs are stamped with the node at birth
-        and a refusal must roll the node back with the ephemeral agent
-        whose id names it; minting it committed would leave both as
-        litter with no owner on every refusal.
-
-        The agent resolve and the model probe run before the
-        transaction for a related reason: the probe is an HTTP call (a
-        cold roster probe measured 1.9s healthy, and a dead source pays
-        the list timeout), and nothing that slow belongs inside a
-        transaction at all."""
-        agent, resolved_config = self._resolve_agent(config=config, agent_id=agent_id)
-        self._check_model(resolved_config)
-        with transaction.atomic():
-            target_list = self._list_or_raise(list_id)
-            self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
-
-            if agent is None:
-                # The ephemeral row needs SOME label for custody
-                # surfaces; the first output's is the least arbitrary.
-                # Created BEFORE the guards because the append needs its
-                # id and the three steps are one sequence; a refusal
-                # rolls this row back with everything else.
-                agent = self.agents.create_ephemeral(
-                    owner_id=self.user_id,
-                    label=resolved_config.outputs[0].label[:AGENT_LABEL_MAX_LENGTH],
-                    config=resolved_config,
-                )
-            # The node binds this agent to this sheet: get-or-create, so
-            # a second column from the same roster agent reuses it (one
-            # node per agent per sheet is the run's own grain). Unlocked,
-            # inside the transaction: idempotent by its unique key, and a
-            # refusal below rolls it back with everything else.
-            node = self.workflows.get_or_create_column_agent_node(target_list, agent_id=str(agent.id))
-            column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id)
-            eligible = iter_eligible_rows(target_list, prompt=resolved_config.prompt)
-            targets = islice(eligible, rows) if rows else eligible
-            fill = self._open_fill(
-                target_list,
-                node=node,
-                resolved_config=resolved_config,
-                column_keys=column_keys,
-                targets=targets,
-            )
-            if not fill.confirmed_row_count:
-                raise NoEligibleRows()
-
-            # The lock, last, over the one write that needs it. The
-            # guards run AGAIN here because the reads above were
-            # unlocked: this is the judgement that counts, and the work
-            # above is discarded with the transaction if it refuses.
-            locked = self._list_or_raise(list_id, lock=True)
-            self._check_row_count(list_id, rows=rows, confirmed_row_count=confirmed_row_count)
-            claim_columns(
-                locked,
-                config=resolved_config,
-                node_id=str(node.id),
-                fill_run_id=str(fill.id),
-                account_id=self.account_id,
-            )
-        return fill
-
-    def refill(
+    def fill_column(
         self,
         *,
         list_id: str,
         column_key: str,
-        rows: int = 0,
-        resume_fill_id: str = "",
-        confirmed_row_count: int = 0,
-    ) -> Fill:
-        """The ONE recovery primitive, admission-shaped: a NEW fill over
-        the column's eligible rows without an answer (terminal outcomes
-        are immutable, so recovery is never a reopened row). Unscoped,
-        the cutoff is the CURRENT row count, so appended rows are
-        covered and fill-remaining and resume are the same gesture;
-        `rows` caps the target at the first N and lands the cutoff on
-        the last targeted position (the next tranche of a scoped fill).
-        The snapshot is FRESH on purpose: agent edits since the stopped
-        fill apply, and blanks settled under a DIFFERENT config re-enter
-        the target set (the changed prompt is a changed ask; see
-        RefillTargets).
+        max_row_count: int = 0,
+    ) -> Job:
+        """A NEW fill over the column, from the drawer right after the
+        column is created or from the column's tracker (Fill all
+        remaining, Fill next N): the sheet as it stands, or its first N
+        owed rows (`max_row_count`). The column names its agent, and the
+        fill writes all of that agent's columns as one unit: it targets
+        the rows none of them has a record for. A row that ran, whatever
+        came of it, is done until the user asks again, and an edited
+        prompt changes nothing about that (a fill reads its agent live
+        for the rows it does run).
 
-        Like admit, the shape is judged and the queue built against
-        UNLOCKED reads, and the List lock comes last, over the claim
-        and the settle alone; the locked pass re-runs the guards, and
-        that re-judgement is the one that counts (a column deleted in
-        between simply refuses there, rolling the built fill back).
-        The agent resolve and the model probe also run before the
-        transaction entirely: network IO must not hold any of it."""
+        The shape is judged against UNLOCKED reads and the List lock
+        comes last, over the one columns write; the locked pass
+        re-runs the guards, and that re-judgement is the one that counts.
+        The agent resolve and the model probe run before the transaction
+        entirely: network IO must not hold any of it. The row probe runs
+        inside it and reads the whole consent when the column is done
+        (the NothingToFill answer); a fill writes nothing before it, so
+        that scan holds nothing another request waits on."""
         peek = self._list_or_raise(list_id)
         column = require_fill_column(peek, column_key)
-        # A missing NODE raises as the corruption it is (nodes die only
+        # A fill starts where an arrival does: at an entry action, the
+        # action right behind its path's entry marker. A node downstream
+        # of a barrier is reached by the workflow, never started. A
+        # missing NODE raises as the corruption it is (nodes die only
         # with their list); a missing AGENT is the allowed orphaning.
-        node = self.workflows.get_node(column.node_id)
+        front = self.workflows.marker_and_first_action(column.node_id)
+        if front is None:
+            raise NodeNotFound(column.node_id)
+        marker, node = front
+        if marker.kind != ENTRY or str(node.id) != column.node_id:
+            raise FillColumnDownstream()
         try:
             agent = self.agents.get_for_fill(agent_id_of(node))
         except AgentNotFound as e:
@@ -206,213 +101,118 @@ class FillAdmissionService(AdmissionBase):
         if agent.provider_retired:
             raise ProviderRetiredRefusal()
         resolved_config = agent.config()
-        self._check_model(resolved_config)
+        check_model(resolved_config)
         with transaction.atomic():
-            # Unlocked while the shape is worked out and the queue is
-            # built; the List lock comes at the end, over the claim and
-            # the settle. Same reasoning as admit.
             target_list = self._list_or_raise(list_id)
             require_fill_column(target_list, column_key)
-            # The stopped fill's shape, re-derived from the CURRENT
-            # config (each output's own key is its column key). The
-            # config is FRESH on purpose so agent edits apply, which
-            # means the output set can differ from the one that built
-            # these columns: a new output has to become a real column
-            # here or its answers land nowhere a surface can read.
-            owned = frozenset(columns_for_node(target_list, str(node.id)))
-            column_keys = preview_columns(target_list, config=resolved_config, account_id=self.account_id, owned=owned)
-            if column_key not in column_keys:
-                # The URL names the column; the CONFIG names what the
-                # new fill will write, and an output removed or renamed
-                # since makes them disagree. Walking one column while
-                # opening a fill that owns another re-targets every row
-                # already answered in the second, spending a metered
-                # completion on each that write_cells then refuses as
-                # occupied.
-                #
-                # NOT FillColumnNotFound: that is for a column the
-                # sheet does not have, and this one is right there in
-                # front of the user, carrying a fill.
-                raise ColumnNoLongerFilled(key=column_key)
-
-            fingerprint = config_fingerprint(resolved_config)
-            source: Fill | None = None
-            if resume_fill_id:
-                # CONTINUE means finish what THAT fill consented to,
-                # never the column's whole remainder (the extend
-                # gestures widen; resume does not), and under the
-                # config it consented to (a changed prompt refuses).
-                source = Fill.objects.filter(id=resume_fill_id, list_id=str(target_list.id)).first()
-                if source is None:
-                    raise ResumeRunNotFound()
-                if source.config_fingerprint != fingerprint:
-                    raise ResumeConfigChanged()
-            # A RESUME judges owed-ness across the resumed fill's WHOLE
-            # column set, a widening gesture across the one column the
-            # user clicked. The fill owns every output its agent
-            # declares, so Continue on a multi-output fill that looked
-            # at one column would skip every row whose first column was
-            # already answered and leave its siblings' retryable blanks
-            # unreachable from that surface.
-            # A fill always owns at least one column, so a resume's set
-            # is never empty; no `or [column_key]` fallback, which could
-            # only ever fire by silently NARROWING the resume.
-            walked = source.column_keys if source is not None else [column_key]
-            remaining = RefillTargets(
-                target_list,
-                column_keys=walked,
-                fingerprint=fingerprint,
-                prompt=resolved_config.prompt,
-                owed_by=resume_fill_id,
+            row_count = self._require_rows(list_id)
+            column_keys = self._written_columns(
+                target_list, node_id=str(node.id), config=resolved_config, column_key=column_key
             )
-            # Eligibility and the resume bound both ride the targeting
-            # pass, so this is one lazy stream: a scoped refill stops
-            # at its N, and nothing behind it has been fetched.
-            targets = islice(remaining, rows) if rows else remaining
-            fill = self._open_fill(
+            # The deterministic refusals before the queue is built: a
+            # "no" knowable up front must not cost a walk first.
+            check_columns_free(target_list, column_keys=column_keys)
+            check_account_cap(self.account_id)
+            fill = self._consent(
                 target_list,
-                node=node,
-                resolved_config=resolved_config,
+                node_id=str(node.id),
+                agent_id=str(agent.id),
                 column_keys=column_keys,
-                targets=targets,
+                row_count=row_count,
+                max_row_count=max_row_count,
             )
-            if not fill.confirmed_row_count:
-                # EMPTY is diagnosed first. A finished column consents
-                # to nothing, and checking the echo before this made
-                # 0 != N fire instead, so "Fill all remaining" on a
-                # done column reported that the sheet now has 0 rows,
-                # and NoEligibleRows became unreachable for any caller
-                # that echoed at all, which is the whole point of the
-                # dropped flag. The walk ran to the end here, so the
-                # flag is settled and can name WHICH filter emptied it.
-                if remaining.dropped_any:
+            self._check_budget(resolved_config, target_row_count=fill.target_row_count)
+            processor = processor_for(account_id=self.account_id, node=node)
+            probe = processor.probe(target_list, scope=fill.scope(), until_id=fill.until_id, covered=fill.covered)
+            if not probe.found:
+                # EMPTY is diagnosed by the probe, which scanned to the
+                # end of the range without finding work, so its flag can
+                # name WHICH filter emptied it: "the column is done" and
+                # "your prompt reads columns these rows have not got"
+                # need different next steps from the user.
+                if probe.dropped_any:
                     raise NoEligibleRows()
-                raise RefillEmpty()
-            # The consent echo, checked AFTER the walk and inside the
-            # transaction, because the number the user was shown is a
-            # count of what this click would SPEND and only the walk
-            # knows that. Nothing has run yet; the refusal rolls the
-            # fill back with everything else.
-            #
-            # UNSCOPED asks only, the same rule admit follows: a scoped
-            # ask names its own N and never showed a total. And GROWTH
-            # only, also admit's rule: the number is a spend ceiling,
-            # so fewer owed rows than reviewed is a cheaper answer to
-            # the same question, never drift worth refusing.
-            if rows == 0 and confirmed_row_count and fill.confirmed_row_count > confirmed_row_count:
-                raise TargetCountChanged(fill.confirmed_row_count)
+                raise NothingToFill()
 
-            # The lock, last, over the claim. The guards that read the
-            # array run AGAIN here, against the locked copy, because
-            # everything above judged an unlocked read; a refusal rolls
-            # the fill and its queue back with it.
+            # The lock, last, over the consent and the one columns write.
+            # Everything above judged an unlocked read, so the column set
+            # the fill OWNS is derived again here, from the locked copy,
+            # and the job is minted from that: a consent frozen off the
+            # unlocked read could name a column deleted meanwhile, whose
+            # answers would then land in any column re-added under its
+            # key. The guards run again for the same reason.
             locked = self._list_or_raise(list_id, lock=True)
             require_fill_column(locked, column_key)
-            claim_columns(
-                locked,
-                config=resolved_config,
-                node_id=str(node.id),
-                fill_run_id=str(fill.id),
-                account_id=self.account_id,
-                owned=frozenset(columns_for_node(locked, str(node.id))),
+            column_keys = self._written_columns(
+                locked, node_id=str(node.id), config=resolved_config, column_key=column_key
             )
-        return fill
+            check_columns_free(locked, column_keys=column_keys)
+            check_account_cap(self.account_id)
+            consent = self._consent(
+                locked,
+                node_id=str(node.id),
+                agent_id=str(agent.id),
+                column_keys=column_keys,
+                row_count=row_count,
+                max_row_count=max_row_count,
+                until_id=fill.until_id,
+            )
+            job = self._open_fill(locked, consent)
+            point_columns(locked, column_keys=column_keys, fill_run_id=str(job.id))
+        return job
 
-    def _open_fill(
-        self,
+    @staticmethod
+    def _consent(
         target_list: List,
         *,
-        node: Node,
-        resolved_config: AgentConfig,
+        node_id: str,
+        agent_id: str,
         column_keys: list[str],
-        targets: Iterator[tuple[str, int]],
-    ) -> Fill:
-        """Everything after the DECISION, shared by both admission
-        paths: the fill row carrying its frozen config, and the QUEUE.
-        The node is the one binding both callers hold (admit minted it,
-        refill looked it up): the fill's agent is read off it, and every
-        task is a run of it. `resolved_config` still rides separately,
-        because it is the PROBED config the fill freezes (the roster
-        agent's current one, or the quick tab's draft), never the node's.
-        Runs UNLOCKED, inside the caller's transaction: the
-        transaction is what makes the column and the fill land
-        together; the lock comes later and covers only the writes that
-        need it.
-
-        `targets` is CONSUMED, in FILL_WRITE_BATCH steps: nothing here
-        holds the sheet in memory, and a 50,000 row fill peaks at one
-        batch rather than a dict of every row plus a list of every task
-        built from it. The count is therefore only known at the end, so
-        `confirmed_row_count` is stamped after the walk, in this same
-        transaction.
-
-        A caller reads `confirmed_row_count == 0` as "nothing to do"
-        and raises its own refusal: which one that is depends on why
-        the stream was empty, and only the caller knows that.
-
-        NOTHING is written to the sheet. A targeted cell shimmers
-        because a QUEUED task says so, which is why cancelling needs no
-        sweep and why a 25,000 row fill does not write 50,000 cell rows
-        on a click."""
-        fill = Fill.objects.create(
-            account_id=self.account_id,
-            user_id=self.user_id,
+        row_count: int,
+        max_row_count: int,
+        until_id: str = "",
+    ) -> FillJob:
+        """The fill's consent. The SET is an id minted at the click (ids
+        are insertion order, so every row that exists now is older and a
+        row appended after is newer and never walked), reused when the
+        locked pass rebuilds the consent so the probe and the walk agree
+        on the range; the COUNT is the sheet as it stood at the click."""
+        return FillJob(
             list_id=str(target_list.id),
-            agent_id=agent_id_of(node),
+            node_id=node_id,
+            agent_id=agent_id,
             column_keys=column_keys,
-            config_snapshot=resolved_config.model_dump(),
-            config_fingerprint=config_fingerprint(resolved_config),
-            confirmed_row_count=0,
+            until_id=until_id or new_ulid(),
+            covered=row_count,
+            max_row_count=max_row_count,
         )
-        consented = 0
-        cap = free_provider_row_cap(resolved_config)
-        # Tasks are born READY (the manual provisioner moves READY ->
-        # QUEUED when it publishes), stamped for the reclaim scan/audit from
-        # the start, and carrying the node they are a run of: the one
-        # grain every lane shares.
-        now = timezone.now()
-        # strict=False: the last page is short whenever the target count
-        # is not a multiple of the batch, which is the normal case.
-        for page in batched(targets, FILL_WRITE_BATCH, strict=False):
-            tasks = []
-            for row_id, position in page:
-                consented += 1
-                # Free-provider budget, checked AS the walk counts rather
-                # than against a total nobody has yet. Per ROW, not per
-                # page, so the refusal names the count that crossed the
-                # cap instead of wherever the page happened to end. It
-                # refuses inside the transaction, so nothing lands.
-                if consented > cap:
-                    raise FreeSearchBudget(searches=MAX_TOOL_CALLS * consented)
-                tasks.append(
-                    NodeRun(
-                        account_id=self.account_id,
-                        fill_run_id=str(fill.id),
-                        node_id=str(node.id),
-                        row_id=row_id,
-                        list_id=fill.list_id,
-                        position=position,
-                        status=NodeRunStatus.READY,
-                        last_state_change_at=now,
-                    )
-                )
-            # No ignore_conflicts: the fill id is minted just above, so
-            # nothing else can hold a task under it and a duplicate
-            # could only mean the target stream yielded a row twice.
-            # Swallowing that would leave confirmed_row_count, which is
-            # the progress denominator on every surface, disagreeing
-            # with the queue it counts.
-            NodeRun.objects.bulk_create(tasks)
 
-        # No columns write here. The caller claims them AFTER this
-        # returns, under the List lock, in one write that carries both
-        # the node link and this fill's id: the queue insert is the
-        # expensive part of admission and it has no business happening
-        # between two writes to the same array.
+    @staticmethod
+    def _written_columns(target_list: List, *, node_id: str, config: AgentConfig, column_key: str) -> list[str]:
+        """The columns this fill writes: the node's, as every lane reads
+        them (written_columns), refused when the column asked for is not
+        among them."""
+        written = list(written_columns(target_list, node_id, config))
+        if column_key not in written:
+            raise ColumnNoLongerFilled(key=column_key)
+        return written
 
-        Fill.objects.filter(id=fill.id).update(confirmed_row_count=consented)
-        fill.refresh_from_db()
-        return fill
+    def _open_fill(self, target_list: List, fill: FillJob) -> Job:
+        """The fill job, in this transaction, so it can never see a
+        columns write that was rolled back: the consent as its payload,
+        the walk as its first slices. NOTHING is written to the sheet:
+        a targeted cell shimmers because a queued run says so."""
+        return JobService(account_id=self.account_id).enqueue(fill, user_id=self.user_id, target_id=str(target_list.id))
+
+    @staticmethod
+    def _check_budget(config: AgentConfig, *, target_row_count: int) -> None:
+        """The free vendor's row cap, refused on the fill's target row
+        count before anything is written: a bound rather than the walked
+        count, so a sheet with many rows the prompt cannot act on is
+        judged on what the user asked to spend, not on what the walk
+        would have found."""
+        if target_row_count > free_provider_row_cap(config):
+            raise FreeSearchBudget(searches=MAX_TOOL_CALLS * target_row_count)
 
     def _list_or_raise(self, list_id: str, *, lock: bool = False) -> List:
         """The account-scoped list read, locked only when the caller is
@@ -423,28 +223,11 @@ class FillAdmissionService(AdmissionBase):
         except List.DoesNotExist as e:
             raise ListNotFound(list_id) from e
 
-    def _resolve_agent(self, *, config: AgentConfig | None, agent_id: str) -> tuple[Agent | None, AgentConfig]:
-        if config is not None:
-            return None, config
-        # Roster-only on purpose: an ephemeral row belongs to exactly
-        # one node, so a second ADMISSION can never reach it.
-        agent = self.agents.get(agent_id)
-        if agent.provider_retired:
-            raise ProviderRetiredRefusal()
-        return agent, agent.config()
-
-    def _check_row_count(self, list_id: str, *, rows: int, confirmed_row_count: int) -> None:
-        """The sheet has rows, and it has the count the user consented
-        to. Run unlocked to fail fast and again under the lock, where
-        the List lock (not this read) is what makes the second answer
-        authoritative; one body so the two passes cannot drift."""
+    @staticmethod
+    def _require_rows(list_id: str) -> int:
+        """The sheet has rows; returns how many, the range the consent
+        covers."""
         row_count = ListRow.objects.filter(list_id=list_id).count()
         if row_count == 0:
             raise EmptyFill()
-        # The consent echo guards the sheet total the user READ, which
-        # a scoped fill never shows: it asked for the first N usable
-        # rows, and sheet growth cannot change what N means. GROWTH
-        # only: the count is a spend ceiling, so only more rows than
-        # consented refuses; fewer just fills less.
-        if rows == 0 and row_count > confirmed_row_count:
-            raise RowCountChanged(row_count)
+        return row_count

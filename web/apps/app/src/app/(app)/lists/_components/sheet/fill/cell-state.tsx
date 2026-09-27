@@ -18,14 +18,17 @@ export type SearchProviderChoice = AgentCatalog["search_provider"] | null;
 
 // The blank causes in user words (the server ships the structured
 // cause, this surface phrases it). The settled-vs-retryable PARTITION
-// comes off the contract (SETTLED_CELL_STATES): a SETTLED cause is
-// terminal under this config, so the cell speaks a quiet word instead
-// of a warning dot; a RETRYABLE cause re-runs on the next fill and
-// keeps the dot. The copy records below are typed against that
-// partition, so a cause added server-side fails the build here
-// instead of rendering an unnamed cell.
+// comes off the contract (SETTLED_CELL_STATES): a SETTLED cause is the
+// model's own verdict, so the cell speaks a quiet word instead of a
+// warning dot; a RETRYABLE cause is infrastructure's doing and keeps
+// the dot. Either way the cell was attempted, and no fill re-asks it
+// (re-asking is the user's own gesture). The copy records below
+// are typed against that partition, so a cause added server-side
+// fails the build here instead of rendering an unnamed cell.
 type SettledCause = SettledCellState;
-type RetryableCause = Exclude<RenderableCellState, "pending" | "filled" | SettledCause>;
+// `sent` and `failed` are a Send webhook cell's, rendered by its own
+// cell; an AI cell never carries them.
+type RetryableCause = Exclude<RenderableCellState, "pending" | "filled" | "sent" | "failed" | SettledCause>;
 
 const SETTLED_CAUSES: Record<SettledCause, { word: string; cause: string }> = {
   no_evidence: { word: "none found", cause: "No evidence found" },
@@ -34,12 +37,14 @@ const SETTLED_CAUSES: Record<SettledCause, { word: string; cause: string }> = {
   unparseable: { word: "unusable", cause: "The model's answer could not be used" },
   type_mismatch: { word: "wrong type", cause: "The answer did not fit this column's type" },
 };
-const SETTLED_FACT = "Won't re-run on Continue; edit the prompt to try again.";
-// Filled settles UNCONDITIONALLY server-side (its own disjunct: no
-// fingerprint gate, no value test), so no gesture short of deleting
-// the column re-runs it: the fact states the exclusion and stops,
-// naming no remedy.
-const FILLED_FACT = "Won't re-run on Continue: this cell already counted as filled.";
+// Every fact states the exclusion and stops, naming no remedy: a fill
+// never re-asks a row its agent attempted, and no gesture short of
+// deleting the column re-asks it today. A tool's own remedy (set it
+// up, a metered vendor) rides its CAUSE line, where it is advice for
+// the rows not yet tried, never after the exclusion it would
+// contradict.
+const SETTLED_FACT = "Won't re-run on Fill all remaining: this row was already tried.";
+const FILLED_FACT = "Won't re-run on Fill all remaining: this cell already counted as filled.";
 
 // The retryable causes that are NOT a tool's doing carry one sentence
 // each; the two tool_* states carry none of their own, because the
@@ -52,14 +57,12 @@ const RETRYABLE_CAUSES: Record<Exclude<RetryableCause, "tool_not_configured" | "
   // bundle predates.
   [UNKNOWN_CELL_STATE]: "This page is older than the reason given",
 };
-const RETRY_FACT = "Runs again on Continue.";
-const NOT_CONFIGURED_FACT = "Runs again on Continue once it's set up.";
-// The retryable FACT is a promise, and an unrecognised cause cannot
-// make it: if the cause the server added is a settled one, Continue
-// will not re-run this cell. The dot is still the honest mark (it has
-// not been shown to settle), but the sentence beside it must claim as
-// little as the cause does.
-const UNKNOWN_FACT = "This page is too old to say whether Continue will retry it.";
+const ATTEMPTED_FACT = "Won't re-run on Fill all remaining: this row was already tried.";
+const NOT_CONFIGURED_FACT = "Won't re-run on Fill all remaining, even once it's set up: this row was already tried.";
+// A cause this bundle has never heard of claims nothing about what the
+// next fill does with it either: the bundle cannot know, and a promise
+// beside "older than the reason given" would contradict it.
+const UNKNOWN_FACT = "This page is too old to say what the next fill does with it.";
 
 // The copy table for a TOOL's status code: what its provider did, in user
 // words, and the fix where one exists. Resolved by (tool, code) first,
@@ -148,7 +151,7 @@ function toolSentence(tool: ToolKey, code: string, searchProvider: SearchProvide
  * stays as the desktop quick peek). The Popover primitive carries the
  * floor (aria-expanded, Escape, outside-click, focus return), and its
  * panel portals to body, so the sheet's own overflow never clips it. */
-function CauseMark({ cause, fact, children }: { cause: string; fact: string; children: React.ReactNode }) {
+export function CauseMark({ cause, fact, children }: { cause: string; fact: string; children: React.ReactNode }) {
   const sentence = `${cause}. ${fact}`;
   return (
     <Popover className="flex h-5 items-center">
@@ -234,9 +237,9 @@ export function AiCellState({ entry, searchProvider = null }: { entry: Renderabl
       ? toolSentence(first[0], first[1], searchProvider)
       : { cause: "A tool did not serve this row", fix: "" };
     const fact =
-      state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? FILLED_FACT : RETRY_FACT;
+      state === "tool_not_configured" ? NOT_CONFIGURED_FACT : state === "filled" ? FILLED_FACT : ATTEMPTED_FACT;
     return (
-      <CauseMark cause={sentence.cause} fact={[fact, sentence.fix].filter(Boolean).join(" ")}>
+      <CauseMark cause={[sentence.cause, sentence.fix].filter(Boolean).join(". ")} fact={fact}>
         <WarningDot />
       </CauseMark>
     );
@@ -244,7 +247,7 @@ export function AiCellState({ entry, searchProvider = null }: { entry: Renderabl
   return (
     <CauseMark
       cause={RETRYABLE_CAUSES[state as keyof typeof RETRYABLE_CAUSES]}
-      fact={state === UNKNOWN_CELL_STATE ? UNKNOWN_FACT : RETRY_FACT}
+      fact={state === UNKNOWN_CELL_STATE ? UNKNOWN_FACT : ATTEMPTED_FACT}
     >
       <WarningDot />
     </CauseMark>

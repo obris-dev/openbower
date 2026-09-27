@@ -59,13 +59,13 @@ export const apiRoutes = {
     // GET: keyset deliveries by -id (?after=&limit=).
     deliveries: (id: string) => `/${API_VERSION}/webhooks/${id}/deliveries`,
   },
-  fills: {
-    // POST a drafted config + one hand-fed row; 202 + a test-kind run to poll.
-    test: `/${API_VERSION}/fills/test`,
-    // GET: one run by id (a complete test run's result rides it).
-    detail: (id: string) => `/${API_VERSION}/fills/${id}`,
-    // POST: stop a run wherever it is scoped; terminal runs no-op.
-    cancel: (id: string) => `/${API_VERSION}/fills/${id}/cancel`,
+  runs: {
+    // POST a drafted config + one hand-fed row; 202 + a preview run to poll.
+    preview: `/${API_VERSION}/runs/preview`,
+    // GET: one preview run by id (its result rides it once it finished).
+    detail: (id: string) => `/${API_VERSION}/runs/${id}`,
+    // POST: abandon an unclaimed preview run; a running or terminal run no-ops.
+    cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
   lists: {
     // GET: keyset index (?after=). POST: create.
@@ -78,7 +78,7 @@ export const apiRoutes = {
     import: `/${API_VERSION}/lists/import`,
     // GET / PATCH {label} / DELETE.
     detail: (id: string) => `/${API_VERSION}/lists/${id}`,
-    // GET: keyset rows by position (?after=&limit=). POST: append rows.
+    // GET: keyset rows in sheet order (?after=<the page's next_cursor, verbatim>&limit=). POST: append rows.
     rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
     // POST: append one blank column (no fill attached).
     columns: (id: string) => `/${API_VERSION}/lists/${id}/columns`,
@@ -87,18 +87,18 @@ export const apiRoutes = {
     // holds).
     columnOrder: (id: string) => `/${API_VERSION}/lists/${id}/column-order`,
     column: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${encodeURIComponent(key)}`,
-    // POST: add an AI column and admit its fill in one transaction.
+    // POST {config | agent_id}: add an AI column set (no fill); 201 with the list detail.
     aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
     // POST: one sample digest to a destination, sent now; 200 with the delivery.
     columnWebhookTest: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/test`,
-    // POST {label, destination_id, wait_keys, payload_keys, interval_seconds}: add a webhook column; 201 with the summary.
+    // POST {label, destination_id, wait_keys, payload_keys, interval_seconds}: add a webhook column; 201 with the list detail.
     columnWebhook: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook`,
     // POST: the envelope a test of this body would carry, rendered server-side, sent nowhere.
     columnWebhookPreview: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/preview`,
     // GET / PATCH one webhook column's config.
     columnWebhookConfig: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/webhook`,
-    // POST: refill a column's unanswered rows (a NEW run, fresh snapshot).
-    columnRefill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/refill`,
+    // POST {max_row_count?}: fill a column's rows never attempted (a NEW fill); 201 with the run.
+    columnFill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/fill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).
     columnPrompt: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/prompt`,
     // GET: keyset fill runs by -id (?after=), ALL states first-class.

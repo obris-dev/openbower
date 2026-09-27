@@ -43,9 +43,16 @@ class IterIdPagesTests(TestCase):
     def test_an_empty_queryset_yields_nothing(self):
         self.assertEqual(list(iter_id_pages(WebhookDelivery.objects.none(), batch=2)), [])
 
-    def test_an_unconsumed_page_raises_instead_of_spinning(self):
-        _rows(3)
-        pages = iter_id_pages(WebhookDelivery.objects.all(), batch=2)
-        next(pages)
-        with self.assertRaises(RuntimeError):
-            next(pages)
+    def test_a_page_the_caller_leaves_in_place_still_advances(self):
+        # The LOOP owns its progress, so a caller that rewrites its page
+        # rather than removing it still terminates and still sees each
+        # id exactly once. FAILS if the walk goes back to asking the
+        # same question and depending on the caller to shrink the
+        # answer, which is a contract a caller can silently break.
+        ids = _rows(5)
+        seen = []
+        for page in iter_id_pages(WebhookDelivery.objects.all(), batch=2):
+            seen.append(page)
+            WebhookDelivery.objects.filter(id__in=page).update(status=DeliveryStatus.REJECTED)
+        self.assertEqual([pk for page in seen for pk in page], sorted(ids))
+        self.assertEqual(WebhookDelivery.objects.count(), 5)

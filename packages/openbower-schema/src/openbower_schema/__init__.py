@@ -28,7 +28,6 @@ from .fills import (
     ColumnPromptWire,
     FillCounters,
     FillError,
-    FillRunDetail,
     FillRunPage,
     FillRunWire,
 )
@@ -39,6 +38,7 @@ from .lists import (
     ImportResult,
     IngestAccepted,
     ListColumn,
+    ListDetail,
     ListRowsPage,
     ListRowWire,
     ListsPage,
@@ -47,6 +47,7 @@ from .lists import (
     RowsAdded,
     WebhookColumn,
 )
+from .runs import NodeRunWire
 from .webhooks import (
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
@@ -80,7 +81,6 @@ __all__ = [
     "Company",
     "FillCounters",
     "FillError",
-    "FillRunDetail",
     "FillRunPage",
     "FillRunWire",
     "FolderSummary",
@@ -88,6 +88,7 @@ __all__ = [
     "ImportResult",
     "IngestAccepted",
     "ListColumn",
+    "ListDetail",
     "ListRowWire",
     "ListRowsPage",
     "ListSummary",
@@ -95,6 +96,7 @@ __all__ = [
     "LookalikeGroup",
     "LookalikeItem",
     "LookalikeListResponse",
+    "NodeRunWire",
     "PlainColumn",
     "RowsAdded",
     "WebhookColumn",

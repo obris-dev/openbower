@@ -15,14 +15,16 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from jobs.constants import JobStatus
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.lists import AiColumn, ListSummary, PlainColumn
 
-from ..constants import MAX_LIST_COLUMNS, FillStatus, StoredCellState
-from ..models import Fill, ListCellState, ListRow, Node
+from ..constants import MAX_LIST_COLUMNS, StoredCellState
+from ..models import ListCellState, ListRow, Node
 from ..services.columns import ColumnKeysNotUnique, ColumnOrderStale, ColumnService
 from ..services.lists import ListService
 from ..services.workflows import WorkflowService
+from .fill_helpers import open_fill_job
 
 
 def _config() -> AgentConfig:
@@ -246,6 +248,16 @@ class ColumnDeleteTests(TestCase):
         self.node = WorkflowService(account_id=TEST_IDENTITY["account_id"]).get_or_create_column_agent_node(
             self.sheet, agent_id=str(self.agent.id)
         )
+        # The rows carry their values while the columns are still PLAIN:
+        # a recorded column's values never arrive with a row, and the
+        # states below are what a landing would have written with them.
+        self.lists.add_rows(
+            self.sheet,
+            [
+                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
+                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
+            ],
+        )
         self.sheet.columns = [
             self.sheet.columns[0],
             *[
@@ -254,13 +266,6 @@ class ColumnDeleteTests(TestCase):
             ],
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        self.lists.add_rows(
-            self.sheet,
-            [
-                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
-                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
-            ],
-        )
         for row in ListRow.objects.filter(list_id=str(self.sheet.id)):
             for key in ("contact_name", "contact_url"):
                 ListCellState.objects.create(
@@ -326,19 +331,31 @@ class ColumnDeleteTests(TestCase):
         self.assertTrue(Agent.objects.filter(id=self.agent.id).exists())
 
     def test_a_live_fill_touching_the_column_is_cancelled(self) -> None:
-        fill = Fill.objects.create(
+        fill = open_fill_job(
             account_id=TEST_IDENTITY["account_id"],
+            user_id=TEST_IDENTITY["id"],
             list_id=str(self.sheet.id),
+            node_id=str(self.node.id),
             agent_id=str(self.agent.id),
             column_keys=["contact_name", "contact_url"],
-            status=FillStatus.RUNNING,
-            confirmed_row_count=2,
+            target_row_count=2,
+        )
+        other = open_fill_job(
+            account_id=TEST_IDENTITY["account_id"],
+            user_id=TEST_IDENTITY["id"],
+            list_id=str(self.sheet.id),
+            node_id=str(self.node.id),
+            agent_id=str(self.agent.id),
+            column_keys=["other"],
+            target_row_count=2,
         )
         self.client.delete(self.url("contact_name"))
         fill.refresh_from_db()
+        other.refresh_from_db()
         # The sibling is stopped too rather than left writing into a
-        # column that no longer exists.
-        self.assertEqual(fill.status, FillStatus.CANCELLED)
+        # column that no longer exists; a fill naming another column is
+        # untouched (FAILS if the delete cancels every open fill).
+        self.assertEqual((fill.status, other.status), (JobStatus.CANCELLED, JobStatus.READY))
 
     def test_an_unknown_key_is_not_found(self) -> None:
         self.assertEqual(self.client.delete(self.url("nope")).status_code, 404)
@@ -367,7 +384,7 @@ class ColumnDeleteTests(TestCase):
         resp = self.client.patch(self.url("nope"), {"label": "X"}, content_type="application/json")
         self.assertEqual(resp.status_code, 404)
 
-    def test_refilling_an_ORPHANED_column_answers_in_the_users_terms(self) -> None:
+    def test_filling_an_ORPHANED_column_answers_in_the_users_terms(self) -> None:
         # Deleting an agent leaves its columns orphaned ON PURPOSE, so
         # this is a normal state, not an internal error: it must not
         # 404 about an agent id the user never saw.
@@ -376,13 +393,7 @@ class ColumnDeleteTests(TestCase):
         Agent.objects.filter(id=self.agent.id).delete()
         admission = FillAdmissionService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"])
         with self.assertRaises(ColumnAgentMissing) as caught:
-            admission.refill(
-                list_id=str(self.sheet.id),
-                column_key="contact_name",
-                rows=None,
-                resume_fill_id="",
-                confirmed_row_count=2,
-            )
+            admission.fill_column(list_id=str(self.sheet.id), column_key="contact_name")
         self.assertIn("deleted", str(caught.exception))
         self.assertEqual(caught.exception.code, "column_agent_missing")
 

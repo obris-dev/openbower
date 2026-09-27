@@ -22,6 +22,14 @@ export const RETRY = "Retry";
 export const PREVIEW_WAITING_LINE = "Choose a destination and the columns to wait for to see the payload.";
 export const PREVIEW_FAILED_LINE = "The payload preview did not load.";
 
+// The cell's words, one per wire state (the column holds no value, so
+// the word is the whole cell), and the failed cell's fuller sentence.
+export const CELL_WAITING = "waiting";
+export const CELL_SENT = "sent";
+export const CELL_FAILED = "failed";
+export const CELL_FAILED_CAUSE = "The last send failed";
+export const CELL_FAILED_FACT = "The destination's delivery log in Settings says why. The row is sent again when a waited-on column is filled again.";
+
 export const WAIT_LEGEND = "Send once these columns complete";
 export const WAIT_HINT =
   "Complete means filled, or blank with a reason. A row is sent again whenever one of these columns is filled again. Fewer columns means faster sends. Columns filled by one agent finish together, so they are chosen together.";
@@ -50,8 +58,9 @@ export const DELETE_WEBHOOK_COLUMN_CONSEQUENCE = "This stops sending; nothing el
 export const GAP_DESTINATION = "Choose a destination.";
 export const GAP_WAIT = "Choose at least one column to wait for.";
 
-/** The stepper's line: the count is the rows this page has loaded, not
- * the sheet's, and says so once there is more than one. */
-export function rowLine(position: number, count: number): string {
-  return count > 1 ? `Row ${position} of ${count} loaded` : `Row ${position}`;
+/** The stepper's line: `place` is the row's place among the loaded
+ * rows counted from one; the count is the rows this page has loaded,
+ * not the sheet's, and says so once there is more than one. */
+export function rowLine(place: number, count: number): string {
+  return count > 1 ? `Row ${place} of ${count} loaded` : `Row ${place}`;
 }

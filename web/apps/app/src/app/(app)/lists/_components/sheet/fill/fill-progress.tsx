@@ -23,7 +23,7 @@ const STATUS_LABEL: Record<LiveRun["status"], string> = {
 };
 
 /** A LIVE run's chip (the tracker popover's status line): counters
- * (attempted of the consented row count), Stop, and
+ * (attempted of the target row count), Stop, and
  * heartbeat staleness as warning-role copy judged against the wire's
  * lease window (fill-staleness owns the judgment and the per-status
  * copy; a stale heartbeat is degraded REPORTING, never failure). The
@@ -52,7 +52,7 @@ export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Prom
     // keeps the copy's minutes moving even when polls blip.
     const refresh = () => {
       setNow(Date.now());
-      setRemainingSeconds(etaSeconds(etaSamples.current, run.confirmed_row_count - run.counters.attempted));
+      setRemainingSeconds(etaSeconds(etaSamples.current, run.target_row_count - run.counters.attempted));
     };
     const seed = setTimeout(refresh, 0);
     const timer = setInterval(refresh, STALENESS_TICK_MS);
@@ -81,9 +81,15 @@ export function FillProgress({ run, onStop }: { run: LiveRun; onStop: () => Prom
     };
   }, [needsFollowup, supportFollowup]);
 
-  const counters = `${count(run.counters.attempted)} of ${count(run.confirmed_row_count)} | ${count(
-    run.counters.filled,
-  )} filled | ${count(run.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
+  // While the walk that queues the run's rows is still going (seconds
+  // after the click) the denominator is the consent, not yet the
+  // target set: the chip says what is happening rather than "0 of N".
+  const counters =
+    run.targeted_at === null && run.counters.attempted === 0
+      ? `queuing ${count(run.target_row_count)} rows`
+      : `${count(run.counters.attempted)} of ${count(run.target_row_count)} | ${count(
+          run.counters.filled,
+        )} filled | ${count(run.counters.blank)} blank${remainingSeconds !== null ? ` | ${formatEta(remainingSeconds)} remaining` : ""}`;
   const warning = staleWarning(run, now, supportFollowup ?? undefined);
 
   async function stop() {

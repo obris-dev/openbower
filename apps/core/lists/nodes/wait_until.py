@@ -1,11 +1,16 @@
 """The wait_until kind: the fan-in barrier a webhook column's path
-starts with. Its config names the PATHS it waits on (never nodes: a
-node appended or reordered on an upstream path later still means
-"after that path ends"), each of which ends in a column_agent node. No
-identity: nothing looks a wait node up by one, it is the path's rank 0
-(the rank key keeps that slot unique). Inert structure until the
-per-row engine lands; the flush finds it as the path's rank 0 and
-resolves the columns that end the paths it names."""
+starts with. One of the two MARKER kinds (the other is entry): a path
+whose head is this one is fed by the paths this config names, so an
+arrival never starts it, its barrier does. The config names PATHS,
+never nodes (a node appended or reordered on an upstream path later
+still means "after that path ends"), each of which ends in a
+column_agent node. No identity: nothing looks a wait node up by one, it
+is the node that STARTS its path (its rank sorts first; a move never
+puts a node ahead of it). A barrier, not a ledger, and a marker never
+runs: when every column ending the paths it names is done for a row,
+the only effect is a run for each node behind it on the path (the
+advance in services/workflow_reactions.py); the flush finds it as the
+path's first node to re-resolve those columns at claim time."""
 
 from __future__ import annotations
 

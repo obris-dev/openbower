@@ -5,7 +5,7 @@ import { useToast } from "@bower/ui";
 import {
   COLUMN_ORDER_STALE_CODE,
   COLUMN_WAITED_ON_CODE,
-  ROW_COUNT_CHANGED_CODE,
+  GENERIC_FAILURE,
   deleteColumn,
   fetchList,
   postAiColumn,
@@ -15,43 +15,48 @@ import {
   reorderColumns,
   updateColumnWebhook,
   updateList,
+  type AiColumnBody,
   type ColumnType,
   type ListColumn,
-  type ListSummary,
+  type ListDetail,
   type WebhookColumnBody,
   type WebhookColumnPatchBody,
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { columnsInKeyOrder } from "./lib/column-order";
-import type { AiColumnPayload, ColumnOutcome } from "./use-ai";
+import { createdColumnKey } from "./lib/created-columns";
+import type { ColumnOutcome } from "./use-ai";
 
 // Re-exported beside the ops that produce it, so the sheet imports
 // its hook surface from one place; the TYPE lives with the drawer
 // that renders it.
 export type { ColumnOutcome };
 
+/** The AI column create's outcome: on success, one key it added, so
+ * the caller can fill the agent's columns (they fill as one unit). */
+export type AiColumnOutcome = { ok: true; key: string } | Extract<ColumnOutcome, { ok: false }>;
+
 // The outcome when the page is leaving for login: no code and no
 // copy, so no surface renders a refusal while navigation lands.
-const LEAVING: ColumnOutcome = { ok: false, error: "", detail: "" };
+const LEAVING: Extract<ColumnOutcome, { ok: false }> = { ok: false, error: "", detail: "" };
 
-/** The list summary and every write to it. Column writes echo the
- * WHOLE summary back (columns, row count, label), so one owner holds
+/** The list detail and every write to it. Column writes echo the
+ * WHOLE detail back (columns, row count, label, entry actions), so one owner holds
  * it and every op replaces it from the response; the title rename is
  * the one non-column write and rides here for the same reason. What
  * a write means for the rest of the sheet (rows to re-read, a fill to
  * re-attach, a drawer to close) is the sheet's composition, not this
  * hook's: each op reports its outcome and stops. */
-export function useColumns(initialDetail: ListSummary): {
-  detail: ListSummary;
+export function useColumns(initialDetail: ListDetail): {
+  detail: ListDetail;
   pendingColumn: { type: ColumnType } | null;
   reorder: (keys: string[]) => Promise<void>;
   rename: (key: string, label: string) => Promise<void>;
   remove: (column: ListColumn) => Promise<ColumnOutcome>;
-  addAi: (payload: AiColumnPayload) => Promise<ColumnOutcome>;
+  addAi: (body: AiColumnBody) => Promise<AiColumnOutcome>;
   addWebhook: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
   saveWebhook: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
-  refreshDetail: () => Promise<void>;
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
   renameList: (label: string) => Promise<boolean>;
@@ -68,24 +73,13 @@ export function useColumns(initialDetail: ListSummary): {
   // succeed in place. True when the page is leaving for login.
   // SILENT on a non-ok by design: this runs only on refusal paths,
   // where the caller's own toast or rendered refusal is the voice and
-  // a second message would be noise (the success-path re-read is
-  // refreshDetail, which speaks for itself).
+  // a second message would be noise.
   const reread = useCallback(async (): Promise<boolean> => {
     const summary = await fetchList(detail.id);
     if (redirectIfUnauthenticated(summary)) return true;
     if (summary.status === "ok") setDetail(summary.data);
     return false;
   }, [detail.id]);
-
-  // The SUCCESS-path re-read, for callers reconciling after a write
-  // whose echo carries no summary (the AI add's run envelope): the
-  // one fetch here that may toast, because no other voice speaks for
-  // its failure.
-  const refreshDetail = useCallback(async (): Promise<void> => {
-    const summary = await fetchList(detail.id);
-    if (!ensureOk(summary, toast, { title: "Sheet not refreshed" })) return;
-    setDetail(summary.data);
-  }, [detail.id, toast]);
 
   // Reorder is OPTIMISTIC, because a drag that waits for a round trip
   // reads as a failed drag. The server's echo replaces the guess
@@ -193,23 +187,23 @@ export function useColumns(initialDetail: ListSummary): {
     [detail.id],
   );
 
-  // The blank add starts nothing: the 200 body IS the updated summary,
+  // The blank add starts nothing: the 200 body IS the updated detail,
   // so the new column renders straight from the response.
-  // The AI add starts a fill. Its echo is the run envelope, not the
-  // summary, so the caller reconciles afterwards (refreshDetail, the
-  // rows, the fill attachment): the outcome returns on the 201 at
-  // once, and the drawer closes without waiting on a second read.
+  // The AI add starts nothing either: it creates the column set and
+  // echoes the detail. The new column is read from that reply alone
+  // (createdColumnKey), handed back so the caller can fill it. A reply
+  // ending in no AI column is a contract break, not a state to render.
   const addAi = useCallback(
-    async (payload: AiColumnPayload): Promise<ColumnOutcome> => {
-      const res = await postAiColumn(detail.id, payload);
+    async (body: AiColumnBody): Promise<AiColumnOutcome> => {
+      const res = await postAiColumn(detail.id, body);
       if (redirectIfUnauthenticated(res)) return LEAVING;
-      if (res.status !== "ok") {
-        if (res.code === ROW_COUNT_CHANGED_CODE && (await reread())) return LEAVING;
-        return { ok: false, error: res.code ?? "", detail: res.message };
-      }
-      return { ok: true };
+      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
+      setDetail(res.data);
+      const key = createdColumnKey(res.data.columns);
+      if (key === null) return { ok: false, error: "", detail: GENERIC_FAILURE };
+      return { ok: true, key };
     },
-    [detail.id, reread],
+    [detail.id],
   );
 
   // A PLAIN column is a name and a type, which is not a drawer's worth
@@ -258,7 +252,6 @@ export function useColumns(initialDetail: ListSummary): {
     addAi,
     addWebhook,
     saveWebhook,
-    refreshDetail,
     startPending,
     namePending,
     renameList,

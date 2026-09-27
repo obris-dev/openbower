@@ -1,13 +1,15 @@
-"""The refusal taxonomy, admission's shared vocabulary. Kind-agnostic
-on purpose: both admission kinds raise from this one set, so the
-wire's error shapes cannot fork by kind."""
+"""The refusal taxonomy, shared by the AI column create and the
+column fill: both raise from this one set, so the wire's error shapes
+cannot fork."""
 
 from __future__ import annotations
 
 from ...constants import (
+    AGENT_MISSING_MESSAGE,
     FREE_SEARCH_FILL_BUDGET,
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
+    PROVIDER_RETIRED_MESSAGE,
     FillErrorCode,
 )
 
@@ -29,7 +31,7 @@ class ColumnAgentMissing(FillRefused):
     code = FillErrorCode.COLUMN_AGENT_MISSING
 
     def __init__(self) -> None:
-        super().__init__("The agent this column used has been deleted. Write a new prompt to fill it again.")
+        super().__init__(AGENT_MISSING_MESSAGE)
 
 
 class SameColumnFillActive(FillRefused):
@@ -47,40 +49,6 @@ class AccountFillsFull(FillRefused):
 
     def __init__(self) -> None:
         super().__init__(f"This account already has {MAX_ACTIVE_FILLS} fills running; wait for one to finish.")
-
-
-class RowCountChanged(FillRefused):
-    """The consent echo failed: the sheet GREW after the user read the
-    numbers, so an unscoped fill would spend past the count the button
-    named. Growth only: the number is a spend CEILING, and a ceiling
-    is violated only upward; a shrunken sheet fills fewer rows than
-    consented, which betrays no one."""
-
-    code = FillErrorCode.ROW_COUNT_CHANGED
-
-    def __init__(self, actual: int) -> None:
-        self.actual = actual
-        super().__init__(
-            f"The sheet has grown since you reviewed; it now has {actual} rows. Check the numbers and start again."
-        )
-
-
-class TargetCountChanged(FillRefused):
-    """Refill's consent echo. Its own refusal, not the admit lane's,
-    because the number is not the SHEET's size: refill counts what the
-    column still owes, and reusing admit's copy told a 5,000 row sheet
-    with two owed rows that it now has two rows.
-
-    Same machine code, deliberately: the client's recovery for both is
-    to re-read the count it showed and let the user start again."""
-
-    code = FillErrorCode.ROW_COUNT_CHANGED
-
-    def __init__(self, actual: int) -> None:
-        self.actual = actual
-        super().__init__(
-            f"This column has {actual} rows left to fill, more than the number you reviewed. Check it and start again."
-        )
 
 
 class EmptyFill(FillRefused):
@@ -103,14 +71,14 @@ class NoEligibleRows(FillRefused):
         super().__init__("No rows have values for this prompt's variables.")
 
 
-class RefillEmpty(FillRefused):
-    """The no-fill-that-does-nothing rule, worded for refill: the sheet
-    has rows, but none of them is this column's remaining work."""
+class NothingToFill(FillRefused):
+    """The no-fill-that-does-nothing rule: the sheet has rows, but every
+    one of them was already tried in this column."""
 
-    code = FillErrorCode.REFILL_EMPTY
+    code = FillErrorCode.NOTHING_TO_FILL
 
     def __init__(self) -> None:
-        super().__init__("Every row of this column already has an answer.")
+        super().__init__("Every row of this column has already been tried.")
 
 
 class FreeSearchBudget(FillRefused):
@@ -127,64 +95,19 @@ class FreeSearchBudget(FillRefused):
         )
 
 
-class TestFillActive(FillRefused):
-    """A TEAMMATE'S test run is observably live (a fresh heartbeat, or
-    too young to have missed one). Your own live test never refuses:
-    it is superseded (cancelled) by the new start."""
-
-    code = FillErrorCode.TEST_ACTIVE
-
-    def __init__(self) -> None:
-        super().__init__("A teammate's test is running; wait a moment for it to finish.")
-
-
-class TestRowInvalid(FillRefused):
-    """A hand-fed test row past the wire's bench bounds: REFUSED,
-    never truncated, because a truncated test would diagnose a
-    different row than the user typed. The bounds ship in x-constants,
-    so a client can make this refusal unreachable; the copy names the
-    bound that fired."""
-
-    code = FillErrorCode.TEST_ROW_INVALID
-
-    def __init__(self, why: str) -> None:
-        super().__init__(why)
-
-
-class ColumnTypeChanged(FillRefused):
-    """An output this agent already fills now declares a DIFFERENT
-    type from the column holding its answers.
-
-    A refusal rather than a silent retype either way: retyping a
-    column that holds answers makes every later answer TYPE_MISMATCH
-    over data that cannot match, and refusing to retype strands the
-    column at a type its own output never produces. A column's shape
-    is fixed while it exists; changing it means deleting it, which is
-    the same rule collisions follow."""
-
-    code = FillErrorCode.COLUMN_TYPE_CHANGED
-
-    def __init__(self, *, key: str, stored: str, wanted: str) -> None:
-        self.key = key
-        super().__init__(
-            f"The {key} column is {stored} and this agent now writes {wanted}. "
-            "Delete the column to change its type, or set the output back."
-        )
-
-
 class ColumnNoLongerFilled(FillRefused):
-    """The column is on the sheet and carries a fill, but its agent no
-    longer declares an output that lands there: an output renamed or
-    removed since. A REFUSAL, not a 404, because the thing the user
-    pointed at exists and they can see it; what changed is the ask."""
+    """The column is on the sheet, but its agent no longer declares an
+    output that lands there. An agent save refuses an output change
+    while its columns exist, so only a save that raced the column's
+    create reaches this. A REFUSAL, not a 404: the column is right there
+    in front of the user."""
 
     code = FillErrorCode.FILL_COLUMN_RETIRED
 
     def __init__(self, *, key: str) -> None:
         self.key = key
         super().__init__(
-            f"This agent no longer writes the {key} column; its outputs were renamed or removed. "
-            "Open the agent to restore that output, or add a column for the new one."
+            f"This agent no longer writes the {key} column. Delete this column; the agent's other columns still fill."
         )
 
 
@@ -208,7 +131,7 @@ class ColumnCollision(FillRefused):
         # deleting it: re-run it from the column itself. Telling that
         # user to delete a column of answers would be true and wrong.
         super().__init__(
-            f"An agent already fills the {key} column; use Fill remaining on it, or delete it to start over."
+            f"An agent already fills the {key} column; use Fill all remaining on it, or delete it to start over."
             if filled
             else f"This sheet already has a {key} column. Rename this output, or delete that column first."
         )
@@ -247,39 +170,7 @@ class ProviderRetiredRefusal(FillRefused):
     code = FillErrorCode.PROVIDER_RETIRED
 
     def __init__(self) -> None:
-        super().__init__("This agent's provider is no longer supported; open the agent and pick a current model.")
-
-
-class ResumeRunNotFound(FillRefused):
-    """The named fill is not this SHEET's. Resolving it is what scopes
-    the resume: NodeRun carries no account of its own (it is
-    reached through its fill, which does), so reading rows for an
-    unresolved id would query another account's table. Nothing crosses
-    today, because row ids are ULIDs and the intersection empties, but
-    that is the id scheme doing the scoping by accident. The refusal
-    is also the honest answer: without it a foreign id reads back as
-    "every row already has an answer", which is a false statement
-    about the caller's own sheet."""
-
-    code = FillErrorCode.RESUME_NOT_FOUND
-
-    def __init__(self) -> None:
-        super().__init__("That fill is not on this sheet; start a new fill instead.")
-
-
-class ResumeConfigChanged(FillRefused):
-    """Continue means finish THAT fill's consented work, and the config
-    it consented under is part of the consent: resuming it under a
-    different prompt would be a different fill wearing its name. The
-    widening gestures run the new config."""
-
-    code = FillErrorCode.CONFIG_CHANGED
-
-    def __init__(self) -> None:
-        super().__init__(
-            "The prompt changed since this fill stopped. Use Fill next rows or Fill all remaining "
-            "to run it with the new prompt."
-        )
+        super().__init__(PROVIDER_RETIRED_MESSAGE)
 
 
 class ModelUnrunnable(FillRefused):
@@ -287,6 +178,19 @@ class ModelUnrunnable(FillRefused):
 
     def __init__(self, why: str) -> None:
         super().__init__(why)
+
+
+class FillColumnDownstream(FillRefused):
+    """The column is on the sheet and an agent fills it, but its node is
+    not an entry action: it stands downstream of other work (a barrier),
+    so a fill starting there would run rows the workflow has not brought
+    to it. A REFUSAL, not a 404: the column is right there; the fill
+    starts upstream."""
+
+    code = FillErrorCode.FILL_COLUMN_DOWNSTREAM
+
+    def __init__(self) -> None:
+        super().__init__("This column fills after the columns it waits on. Fill those columns instead.")
 
 
 class FillColumnNotFound(Exception):

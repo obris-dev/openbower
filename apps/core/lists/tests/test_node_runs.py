@@ -18,24 +18,31 @@ import threading
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+from django.db import IntegrityError
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
+from jobs.services import JobRunner
 from openbower_schema.lists import AiColumn
 
-from ..constants import NodeRunStatus
+from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..ingest.consumer import handle_ingest_event
 from ..ingest.events import IngestEvent
 from ..models import ListRow, NodeRun
+from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 from ..operations.provision import AutofillProvisionOperation
-from ..services import autofill
-from ..services.fill_admission import FillAdmissionService
+from ..services import cell_truth
 from ..services.lists import ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
+from ..services.workflow_reactions import WorkflowReactions
+from ..services.workflows import WorkflowService
+from .fill_helpers import start_fill
 from .test_fill_worker import quick_config
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
+AGENT_A = "01AGT" + "A" * 21
+AGENT_B = "01AGT" + "B" * 21
 
 
 class AutofillHarness(TransactionTestCase):
@@ -60,10 +67,9 @@ class AutofillHarness(TransactionTestCase):
             origin="manual",
         )
         self.lists.add_rows(sheet, [{"company": f"seed{n}.com"} for n in range(rows)])
-        with patch("lists.services.fill_admission.base.model_for"):
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
-            )
+        with patch("lists.services.runnable.model_for"):
+            _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
+        JobRunner(worker_id="test:1").tick()
         sheet.refresh_from_db()
         node_id = next(column.node_id for column in sheet.columns if isinstance(column, AiColumn))
         return sheet, node_id, fill
@@ -110,6 +116,7 @@ class EnqueueTests(AutofillHarness):
         for task in tasks:
             self.assertIsNone(task.fill_run_id)
             self.assertEqual(task.node_id, node_id)
+            self.assertEqual(task.kind, COLUMN_AGENT)
             self.assertEqual(task.account_id, ACCOUNT)
             # Denormalized from the target sheet: an autofill run has no
             # Fill, so its list comes off the List it was pushed to.
@@ -117,76 +124,87 @@ class EnqueueTests(AutofillHarness):
             self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)
 
-    def test_a_push_that_overrides_an_ai_column_skips_that_node(self) -> None:
-        sheet, node_id, _ = self._ai_sheet()
+    def test_a_push_carrying_a_recorded_column_is_dropped_whole(self) -> None:
+        # A recorded column's value and its truth are written together
+        # by the landing, and a push writes rows alone, so a value for
+        # one never arrives with a row. The view refuses it at the door;
+        # an event that reached the bus anyway is TERMINAL (it will
+        # never become valid), so it is dropped and recorded rather than
+        # redelivered forever. The batch is one unit: the blank row
+        # beside it lands nothing either. FAILS if the push stores the
+        # value, or if the event retries.
+        sheet, _node_id, _ = self._ai_sheet()
         ai_key = next(c.key for c in sheet.columns if isinstance(c, AiColumn))
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
-
-        # One row pins the AI column (an override), one leaves it blank.
         self.assertEqual(
             self._push(sheet, [{"company": "override.com", ai_key: "PINNED"}, {"company": "blank.com"}]),
-            "applied",
+            "dropped",
         )
+        self.assertEqual(self._new_row_ids(sheet, before), set())
+        self.assertFalse(self._null_run_tasks().exists())
 
-        tasks = list(self._null_run_tasks())
-        # Only the row that left the AI column blank is owed a fill; the
-        # overridden node gets no task.
-        self.assertEqual(len(tasks), 1)
-        (task,) = tasks
-        blank_row = ListRow.objects.get(list_id=str(sheet.id), data__company="blank.com")
-        self.assertEqual(task.row_id, str(blank_row.id))
-        self.assertEqual(task.node_id, node_id)
-
-        # The pushed value persisted as the producer sent it.
-        override_row = ListRow.objects.get(list_id=str(sheet.id), data__company="override.com")
-        self.assertEqual(override_row.data[ai_key], "PINNED")
-        self.assertEqual(self._new_row_ids(sheet, before), {str(blank_row.id), str(override_row.id)})
-
-    def test_a_multi_column_agent_skips_only_when_every_column_is_filled(self) -> None:
-        # One node (an agent) owns TWO columns. A row that fills BOTH is skipped (no
-        # work left); a row that leaves one blank STILL enqueues. This pins
-        # the all() semantics a single-column fixture cannot (there
-        # all([x]) == any([x]) == x). A "0" counts as filled (it strips
-        # truthy), never blank.
-        node_id = "01ND" + "A" * 22
+    def test_a_multi_column_agent_skips_a_row_any_of_its_columns_was_attempted_on(self) -> None:
+        # One node (an agent) owns TWO columns and answers both in one
+        # run. A row attempted on both is done, and so is a row attempted
+        # on one: that run already happened, and re-asking is the user's
+        # gesture. Only a row neither column was attempted on is owed.
+        # FAILS if the rule needs EVERY column settled, which re-runs a
+        # row for its one blank sibling.
         sheet = self.lists.create(
             owner_id=USER,
             label="Multi",
-            columns=[
-                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_id},
-                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
-            ],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        full, partial = self.lists.add_rows(
-            sheet,
-            [
-                {"company": "full.co", "a": "0", "b": "y"},  # both of the node's columns filled ("0" counts) -> skip
-                {"company": "partial.co", "a": "x"},  # b blank -> still owes the node
-            ],
+        # A real node: the processor that judges the rows is the NODE's.
+        node_id = str(WorkflowService(account_id=ACCOUNT).get_or_create_column_agent_node(sheet, agent_id=AGENT_A).id)
+        sheet.columns = [
+            *sheet.columns,
+            {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_id},
+            {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
+        ]
+        sheet.save(update_fields=["columns", "updated_at"])
+        both, one, neither = self.lists.add_rows(
+            sheet, [{"company": "both.co"}, {"company": "one.co"}, {"company": "neither.co"}]
         )
-        sheet.refresh_from_db()
-        created = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=[full, partial])
-        self.assertEqual(created, 1)  # only the partial row's node has work
-        self.assertEqual(self._null_run_tasks().filter(row_id=str(partial.id)).count(), 1)
-        self.assertEqual(self._null_run_tasks().filter(row_id=str(full.id)).count(), 0)
+        attempted = (
+            (both, {"a": StoredCellState.FILLED, "b": StoredCellState.NO_ANSWER}),
+            (one, {"a": StoredCellState.FILLED}),
+        )
+        for row, states in attempted:
+            cell_truth.write(
+                account_id=ACCOUNT,
+                list_id=str(sheet.id),
+                row_id=str(row.id),
+                fill_run_id=None,
+                states=states,
+                tools={},
+                source=CellSource.NODE,
+            )
+        created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [both, one, neither])
+        self.assertEqual(created, 1)
+        self.assertEqual(self._null_run_tasks().filter(row_id=str(neither.id)).count(), 1)
+        self.assertFalse(self._null_run_tasks().filter(row_id__in=[str(both.id), str(one.id)]).exists())
 
     def test_a_push_to_a_two_node_sheet_enqueues_one_task_per_node_for_the_row(self) -> None:
         # Two distinct nodes on one sheet: the one shape where a row owes
         # more than one task, and the only one the task-id message key
         # touches. Both land under the (row, node) key.
-        node_a, node_b = "01ND" + "A" * 22, "01ND" + "B" * 22
         sheet = self.lists.create(
             owner_id=USER,
             label="Two nodes",
-            columns=[
-                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
-                {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_a},
-                {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_b},
-            ],
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
+        workflows = WorkflowService(account_id=ACCOUNT)
+        node_a = str(workflows.get_or_create_column_agent_node(sheet, agent_id=AGENT_A).id)
+        node_b = str(workflows.get_or_create_column_agent_node(sheet, agent_id=AGENT_B).id)
+        sheet.columns = [
+            *sheet.columns,
+            {"key": "a", "label": "A", "type": "text", "kind": "ai", "node_id": node_a},
+            {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_b},
+        ]
+        sheet.save(update_fields=["columns", "updated_at"])
         before = {str(r.id) for r in ListRow.objects.filter(list_id=str(sheet.id))}
         self.assertEqual(self._push(sheet, [{"company": "both.co"}]), "applied")
         [row_id] = self._new_row_ids(sheet, before)
@@ -202,13 +220,13 @@ class EnqueueTests(AutofillHarness):
         created = self.lists.add_rows(sheet, [{"company": "dupe.com"}])
         sheet.refresh_from_db()
 
-        first = autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=created)
+        first = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, created)
         self.assertEqual(first, 1)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
 
         # The partial unique (row_id, node_id) WHERE fill_run_id IS NULL
         # makes a second enqueue a no-op (bulk_create ignore_conflicts).
-        autofill.enqueue_rows(account_id=ACCOUNT, target_list=sheet, rows=created)
+        WorkflowReactions(account_id=ACCOUNT).trigger(sheet, created)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(created[0].id)).count(), 1)
 
 
@@ -306,7 +324,7 @@ class ProvisionerTests(AutofillHarness):
         # Age the claim stamp so the settle's re-stamp is unambiguous.
         aged = timezone.now() - timedelta(seconds=300)
         NodeRun.objects.filter(id=task.id).update(last_state_change_at=aged)
-        self.assertTrue(flow.settle(str(task.id), {}, status=NodeRunStatus.DONE))
+        self.assertTrue(flow.settle(str(task.id), result={}, status=NodeRunStatus.DONE))
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.DONE)
         self.assertGreater(task.last_state_change_at, aged)  # settle re-stamped, not left at the aged claim
@@ -359,3 +377,110 @@ class ReaperTests(AutofillHarness):
         self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 0)  # nothing reclaimed
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.QUEUED)  # still QUEUED, untouched
+
+    def test_a_stale_webhook_run_returns_to_deferred_never_ready(self) -> None:
+        # A flush that died mid-batch leaves its webhook runs PROCESSING.
+        # READY would hand them to the agent worker, which cannot run a
+        # webhook; DEFERRED puts them back where the next flush tick
+        # finds them, at the window that was already due. FAILS if the
+        # reclaim stops branching on kind.
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        now = timezone.now()
+        window = now - timedelta(seconds=120)
+        stale_at = now - timedelta(seconds=PROCESSING_STALE_SECONDS + 60)
+        webhook_run = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.PROCESSING, not_before=window)
+        NodeRun.objects.filter(id__in=[agent_run.id, webhook_run.id]).update(
+            status=NodeRunStatus.PROCESSING, leased_by="dead:1", last_state_change_at=stale_at
+        )
+
+        self.assertEqual(NodeRunFlow.reclaim_stale_processing(), 2)
+
+        agent_run.refresh_from_db()
+        webhook_run.refresh_from_db()
+        self.assertEqual(agent_run.status, NodeRunStatus.READY)
+        self.assertEqual((webhook_run.status, webhook_run.leased_by, webhook_run.processing_at), ("deferred", "", None))
+        self.assertEqual(webhook_run.not_before, window)
+
+    def test_the_agent_pick_never_sees_a_webhook_run(self) -> None:
+        # The lane gate the provisioner relies on: a due webhook run in
+        # any status the agent lane could otherwise read is invisible to
+        # its pick. FAILS if the pick drops its kind filter AND a webhook
+        # run ever reaches READY.
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.READY, not_before=None)
+        picked = list(NodeRunFlow.iter_ready(limit=10))
+        self.assertEqual([t.id for t in picked], [agent_run.id])
+
+
+def _webhook_run(sheet, row_id: str, *, status: NodeRunStatus, not_before) -> NodeRun:
+    return NodeRun.objects.create(
+        account_id=ACCOUNT,
+        fill_run_id=None,
+        node_id="01NODEWEBHOOK" + "0" * 13,
+        kind=WEBHOOK,
+        row_id=row_id,
+        list_id=str(sheet.id),
+        rank="a0",
+        status=status,
+        not_before=not_before,
+        last_state_change_at=timezone.now(),
+    )
+
+
+class OpenRunKeyTests(AutofillHarness):
+    """The automatic lane's idempotency key: one OPEN run per (row,
+    node), settled runs being history."""
+
+    def test_a_second_open_run_for_the_row_and_node_is_refused(self) -> None:
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+        with self.assertRaises(IntegrityError):
+            _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+
+    def test_a_settled_run_lets_the_row_and_node_open_a_new_one(self) -> None:
+        sheet, _, _ = self._ai_sheet()
+        self._push(sheet, [{"company": "a.co"}])
+        (agent_run,) = list(self._null_run_tasks())
+        first = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DONE, not_before=None)
+        second = _webhook_run(sheet, agent_run.row_id, status=NodeRunStatus.DEFERRED, not_before=None)
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(NodeRun.objects.filter(kind=WEBHOOK, row_id=agent_run.row_id).count(), 2)
+
+    def test_a_run_with_no_rank_is_refused_at_the_insert(self) -> None:
+        # Same shape as the kind: a run with no rank would sort first in
+        # every claim forever, so the insert fails instead. Named, so the
+        # refusal is this constraint's and not a sibling's.
+        with self.assertRaisesMessage(IntegrityError, "node_run_rank_named"):
+            NodeRun.objects.create(
+                account_id=ACCOUNT,
+                fill_run_id=None,
+                node_id="01NODERANKLESS" + "0" * 12,
+                kind=COLUMN_AGENT,
+                row_id="01ROW" + "0" * 21,
+                list_id="01LIST" + "0" * 20,
+                status=NodeRunStatus.READY,
+                last_state_change_at=timezone.now(),
+            )
+
+    def test_a_run_with_no_kind_is_refused_at_the_insert(self) -> None:
+        # The kind is a lane, and a CharField silently stores "" when a
+        # writer forgets it; the check constraint makes that an error at
+        # the insert instead of a run no lane will ever claim. The rank
+        # is given, so the kind is the ONLY thing missing.
+        with self.assertRaisesMessage(IntegrityError, "node_run_kind_named"):
+            NodeRun.objects.create(
+                account_id=ACCOUNT,
+                fill_run_id=None,
+                node_id="01NODEKINDLESS" + "0" * 12,
+                row_id="01ROW" + "0" * 21,
+                list_id="01LIST" + "0" * 20,
+                rank="a0",
+                status=NodeRunStatus.READY,
+                last_state_change_at=timezone.now(),
+            )

@@ -4,9 +4,10 @@ destination of this account), what rides (the payload column keys),
 how often the flush batches them (one of the contract's cadence
 presets, in seconds), and whether it is running. No identity: nothing
 looks a webhook node up by one, and a path may hold several at
-successive ranks (the rank key keeps each slot unique). The flush's
-schedule state (a due cursor, backoff, the watermark) arrives with the
-flush."""
+successive ranks (the rank key keeps each slot unique). The schedule
+state lives on the node's RUNS (services/webhook_runs.py): each row's
+run holds its window in `not_before` and the flush claims what is
+due."""
 
 from __future__ import annotations
 

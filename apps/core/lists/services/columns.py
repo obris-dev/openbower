@@ -14,15 +14,16 @@ from django.db.models import Value
 
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
+from openbower_kernel.batches import iter_id_pages
 from openbower_schema.agents import AgentConfig
 from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
 
-from ..constants import LIVE_FILL_STATUSES, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode, FillStatus
-from ..models import Fill, List, ListRow
+from ..constants import FILL_WRITE_BATCH, MAX_LIST_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode
+from ..models import List, ListRow
 from ..nodes.webhook import Webhook
-from . import cell_truth
+from . import cell_truth, fill_progress, webhook_runs
 from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
-from .fill_progress import stop_fill
+from .fill_admission.columns import keys_under_fill
 from .lists import ListNotFound
 from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
 
@@ -135,6 +136,10 @@ def claim_key(target_list: List, *, label: str) -> str:
         raise ReservedColumnKey(label=label)
     if key in {column.key for column in target_list.columns}:
         raise ColumnExists(key=key)
+    # A key an open fill still writes is held too: a column added under
+    # it now would receive that fill's answers.
+    if key in keys_under_fill(target_list):
+        raise ColumnExists(key=key)
     if len(target_list.columns) >= MAX_LIST_COLUMNS:
         raise ColumnsFull()
     return key
@@ -246,29 +251,47 @@ class ColumnService:
                 self._refuse_if_waited_on(target_list, workflows, node_id=node_id)
             columns = [column for column in target_list.columns if column.key != key]
 
-            # ONE UPDATE over the sheet's rows, so an O(rows) write
-            # dissolves inside the transaction rather than stranding
-            # data invisibly. It touches rows that never held the key
-            # too, and that is accepted: narrowing it means asking the
-            # blob what it contains, and NOTHING in this codebase
-            # queries row data (ListCellState exists so counting
-            # filled cells never has to). The blob is storage; the
-            # structured record is what answers questions about it.
-            ListRow.objects.filter(list_id=str(target_list.id)).update(data=_JsonbWithoutKey("data", Value(key)))
+            # The sheet's rows, BY ASCENDING ID, which is the order a
+            # landing locks its own rows in: one statement over the
+            # whole sheet locks in scan order, which after a move is
+            # rank order, and two writers taking the same rows in
+            # opposite orders is a deadlock Postgres resolves by
+            # killing one of them. Paging also bounds a statement whose
+            # size is the sheet's.
+            #
+            # It touches rows that never held the key too, and that is
+            # accepted: narrowing it means asking the blob what it
+            # contains, and NOTHING in this codebase queries row data
+            # (ListCellState exists so counting filled cells never has
+            # to). The blob is storage; the structured record is what
+            # answers questions about it.
+            rows = ListRow.objects.filter(list_id=str(target_list.id))
+            for ids in iter_id_pages(rows, batch=FILL_WRITE_BATCH):
+                # Locked BY ID first, because an UPDATE takes its locks
+                # in whatever order it scans and Django drops an
+                # ordering from one: a landing locks its rows by id, and
+                # two writers taking the same rows in opposite orders is
+                # a deadlock Postgres settles by killing one.
+                held = list(
+                    ListRow.objects.filter(id__in=ids).select_for_update().order_by("id").values_list("id", flat=True)
+                )
+                ListRow.objects.filter(id__in=held).update(data=_JsonbWithoutKey("data", Value(key)))
+
+            # The column's truth goes BEFORE any run is touched: a landing
+            # takes ListRow, then ListCellState, then NodeRun, and the
+            # cancel below abandons runs, so the same order here is what
+            # keeps this delete off an ABBA deadlock with a fill landing.
+            cell_truth.purge_column(str(target_list.id), key)
 
             # Every fill that touched this column stops. A fill can own
             # SEVERAL columns (one multi-output agent makes them
             # together), so a live sibling is stopped too rather than
-            # left writing into a column that no longer exists; the
-            # sibling refills.
-            for fill_run_id in Fill.objects.filter(
-                list_id=str(target_list.id),
-                status__in=LIVE_FILL_STATUSES,
-                column_keys__contains=[key],
-            ).values_list("id", flat=True):
-                stop_fill(str(fill_run_id), FillStatus.CANCELLED)
-
-            cell_truth.purge_column(str(target_list.id), key)
+            # left writing into a column that no longer exists; a new
+            # fill picks the sibling up.
+            open_here = fill_progress.open_fills().filter(target_id=str(target_list.id))
+            for fill_run_id, consent in fill_progress.iter_consents(open_here):
+                if key in consent.column_keys:
+                    fill_progress.cancel(fill_run_id)
             target_list.columns = columns
             target_list.save(update_fields=["columns", "updated_at"])
             self._prune_payload_key(columns, workflows, key=key)
@@ -277,9 +300,11 @@ class ColumnService:
             # it, never with the first: a multi-output agent's other
             # columns still need their config readable.
             self._retire_ephemeral(target_list, node_id=node_id)
-            # A webhook column IS its path: no run points at its nodes,
-            # so unlike an agent's they go with the column.
+            # A webhook column IS its path, and its runs are its own:
+            # both go with the column, the runs first (they point at the
+            # node), unconditionally (a gone node still has runs by id).
             if webhook_node_id:
+                webhook_runs.purge_for_node(webhook_node_id)
                 try:
                     webhook_node = workflows.get_node(webhook_node_id)
                 except NodeNotFound:
@@ -312,10 +337,10 @@ class ColumnService:
         that is already gone has no path to be named, so the delete
         lands (the retire step logs that corruption)."""
         try:
-            path_id = workflows.get_node(node_id).path_id
+            node = workflows.get_node(node_id)
         except NodeNotFound:
             return
-        waits = workflows.wait_nodes_naming(path_id)
+        waits = workflows.waits_on(node.workflow_id, node.path_id)
         webhook_node_ids = {str(node.id) for wait in waits for node in workflows.nodes_on_path(wait.path_id)}
         labels = [
             column.label
@@ -342,8 +367,8 @@ class ColumnService:
         AgentService(account_id=self.account_id).delete_ephemeral([agent_id_of(node)])
 
     def fill_config(self, target_list_id: str, *, column_key: str) -> AgentConfig:
-        """The CURRENT config filling a column (what a refill would
-        run), read through the column's custody path. A retired
+        """The CURRENT config filling a column (what its next fill
+        would run), read through the column's custody path. A retired
         provider still reads (peeking is not acting); only the writes
         below refuse it."""
         agents = AgentService(account_id=self.account_id)
@@ -355,8 +380,8 @@ class ColumnService:
         ephemeral or roster; the builder stays the roster's full
         editor). Only the prompt moves: the rest of the config
         round-trips through the row untouched. No List lock: the write
-        lands on the agent row, and running fills hold their frozen
-        snapshot, so the edit reaches the NEXT admission by
+        lands on the agent row, and a fill reads its agent live, so the
+        edit reaches a running fill's next row and every later fill by
         construction. Returns the stored config."""
         agents = AgentService(account_id=self.account_id)
         agent = self._fill_agent(target_list_id, column_key=column_key, agents=agents)

@@ -12,9 +12,10 @@ class Workflow(AccountScopedModel):
     column has no workflow. Deleted only by ListService.delete, in the
     list's own transaction: nodes and paths point at it by id, nothing
     cascades, and the owning service removes them in order. It carries
-    only the list pointer today: no entry pointer (one path per node, so
-    there is no single entry) and no flag, since nothing reads either
-    yet."""
+    only the list pointer: a workflow has MANY entries, and which paths
+    an arrival starts is read off the entry markers by (account,
+    workflow, kind), so a pointer here would be a second copy of that
+    fact with nothing to gain."""
 
     list_id = models.CharField(_("list id"), max_length=26)
 

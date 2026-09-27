@@ -12,9 +12,10 @@ function run(status: FillRunWire["status"], id = "01RUN"): FillRunWire {
     status,
     column_keys: ["answer"],
     counters: { attempted: 0, filled: 0, blank: 0, transient: 0 },
-    confirmed_row_count: 10,
+    target_row_count: 10,
+    targeted_at: "2026-01-01T00:00:00Z",
     started_by: "01USER",
-    heartbeat_at: null,
+    heartbeat_at: "2026-01-01T00:00:00Z",
     error: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -45,7 +46,7 @@ test("a terminal run on the page is filtered, not trusted", () => {
 
 test("an empty runs leg with a live summary keeps the loop alive", () => {
   // The payload's halves come from separate server-side reads, so a
-  // fill admitted between them ships runs: [] beside a pending
+  // fill started between them ships runs: [] beside a pending
   // summary. Exiting on the runs leg alone would leave the glance
   // promising updates with nothing polling behind them.
   const read = livenessRead([], [{ current_status: "pending" }]);

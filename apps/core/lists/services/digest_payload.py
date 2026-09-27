@@ -13,23 +13,25 @@ from openbower_schema.fills import SETTLED_CELL_STATES
 from openbower_schema.webhooks import WebhookDigestData, WebhookDigestItem, WebhookSheetRef
 
 from ..constants import StoredCellState
-from ..models import List, ListRow
+from ..models import List
 
 # A column is DONE for a row when it holds an answer or a blank with a
-# reason. A retryable failure (a timeout, a missing tool) is neither:
-# the refill re-runs it, so a row carrying one is not complete yet, and
-# shipping it would mean shipping it again under a new completion once
-# the retry lands. Unlike admission's settled check this is not
-# config-relative: a blank with a reason is a real outcome for the
-# receiver whichever prompt produced it; re-asking is the sheet's
-# business.
-DONE_CELL_STATES: frozenset[str] = frozenset({StoredCellState.FILLED, *SETTLED_CELL_STATES})
+# reason, or, for a column that holds no value, when its send went out.
+# A failure (a timeout, a missing tool, a model error) is neither: the
+# receiver would get a blank that says nothing about the row, so a row
+# carrying one never completes, and a barrier over its column stays
+# shut for that row until the user re-asks it. A failed send is not
+# done either: nothing reached the receiver, and a barrier behind it
+# must not open. A blank with a reason is a real outcome for the
+# receiver whichever prompt produced it.
+DONE_CELL_STATES: frozenset[str] = frozenset({StoredCellState.FILLED, StoredCellState.SENT, *SETTLED_CELL_STATES})
 
 
 def completion_of(records: Mapping[str, tuple[str, datetime]], wait_keys: list[str]) -> datetime | None:
     """When a row completed for a set of waited-on columns: the newest
     record time among them once EVERY one holds a done state, else None
-    (absence means never attempted; a retryable failure means not yet)."""
+    (absence means never attempted; a failure means not until the user
+    re-asks the row)."""
     if any(key not in records or records[key][0] not in DONE_CELL_STATES for key in wait_keys):
         return None
     return max(records[key][1] for key in wait_keys)
@@ -51,7 +53,7 @@ def event_id_of(*, scope: str, row_id: str, stamp: str, test: bool) -> str:
 def build_digest_item(
     *,
     scope: str,
-    row: ListRow,
+    row_id: str,
     cells: dict[str, str],
     states: dict[str, str],
     completed_at: datetime | None,
@@ -68,9 +70,8 @@ def build_digest_item(
     fixed-width and gives a receiver nothing to parse."""
     stamp = (completed_at or sent_at).isoformat()
     return WebhookDigestItem(
-        event_id=event_id_of(scope=scope, row_id=str(row.id), stamp=stamp, test=test),
-        row_id=str(row.id),
-        position=row.position,
+        event_id=event_id_of(scope=scope, row_id=row_id, stamp=stamp, test=test),
+        row_id=row_id,
         completed_at=completed_at.isoformat() if completed_at else None,
         cells=cells,
         states=states,

@@ -9,10 +9,10 @@ from __future__ import annotations
 from datetime import timedelta
 from unittest.mock import patch
 
-import ulid
 from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
+from ulid import ULID
 
 from webhooks.constants import WEBHOOK_DELIVERY_MAX_AGE_SECONDS, DeliveryStatus, WebhookEnvelopeType
 from webhooks.models import WebhookDelivery
@@ -25,7 +25,7 @@ DESTINATION = "01DS" + "A" * 22
 def _delivery(age_seconds: int) -> WebhookDelivery:
     born = timezone.now() - timedelta(seconds=age_seconds)
     return WebhookDelivery.objects.create(
-        id=ulid.encode_time(int(born.timestamp() * 1000), 10) + ulid.encode_random(16),
+        id=str(ULID.from_timestamp(born.timestamp())),
         account_id=ACCOUNT,
         destination_id=DESTINATION,
         type=WebhookEnvelopeType.PING,

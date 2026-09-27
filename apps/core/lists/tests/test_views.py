@@ -66,10 +66,12 @@ class ListsViewsTests(TestCase):
         [column] = resp.json()["columns"]
         self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text"})
 
-    def test_ingest_get_marks_ai_columns_autopopulated(self):
-        # The webhook is self-describing: GET returns every column a producer
-        # can send, with the AI (fill-owned) columns marked autopopulated so a
-        # push can leave them blank for autofill or send a value to pin its own.
+    def test_ingest_get_omits_the_columns_a_producer_cannot_send(self):
+        # The push is self-describing: GET returns the columns a producer
+        # OWNS. A column whose cells are recorded is absent, because its
+        # value and the record of what filled it are written together by
+        # the landing and a push writes rows alone. FAILS if the schema
+        # advertises a column the door would refuse.
         lst = ListService(account_id=TEST_IDENTITY["account_id"]).create(
             owner_id=TEST_IDENTITY["id"],
             label="Push target",
@@ -84,9 +86,8 @@ class ListsViewsTests(TestCase):
         self.assertEqual(
             schema["columns"],
             [
-                {"key": "company", "label": "Company", "type": "url", "autopopulated": False},
-                {"key": "contact", "label": "Contact", "type": "text", "autopopulated": False},
-                {"key": "answer", "label": "Answer", "type": "text", "autopopulated": True},
+                {"key": "company", "label": "Company", "type": "url"},
+                {"key": "contact", "label": "Contact", "type": "text"},
             ],
         )
 
@@ -120,13 +121,23 @@ class ListsViewsTests(TestCase):
         self.assertEqual(added.json(), {"added": 5, "row_count": 5})
 
         first = self.client.get(reverse("lists_rows", kwargs={"id": list_id}), {"limit": 2}).json()
-        self.assertEqual([r["position"] for r in first["items"]], [1, 2])
-        self.assertEqual(first["next_cursor"], "2")
+        self.assertEqual([r["data"]["a"] for r in first["items"]], ["0", "1"])
+        # The cursor is opaque and self-contained (the last row's rank
+        # and id): nothing about order rides a row, and the next page
+        # needs no lookup.
+        self.assertTrue(first["next_cursor"].endswith("." + first["items"][-1]["id"]))
+        self.assertNotIn("position", first["items"][0])
         rest = self.client.get(
             reverse("lists_rows", kwargs={"id": list_id}), {"limit": 5, "after": first["next_cursor"]}
         ).json()
-        self.assertEqual([r["position"] for r in rest["items"]], [3, 4, 5])
+        self.assertEqual([r["data"]["a"] for r in rest["items"]], ["2", "3", "4"])
         self.assertIsNone(rest["next_cursor"])
+        row_id = first["items"][0]["id"]
+        bad_ranks = ("", "zz", "a\x00", "a1!", "a" * 100)
+        for bad in ("01ROW" + "0" * 21, "a0.nope", "not a cursor", *(f"{r}.{row_id}" for r in bad_ranks)):
+            with self.subTest(bad=bad):
+                resp = self.client.get(reverse("lists_rows", kwargs={"id": list_id}), {"after": bad})
+                self.assertEqual(resp.status_code, 400)
 
     def test_foreign_list_is_404(self):
         foreign = ListService(account_id="01AC" + "Z" * 22).create(

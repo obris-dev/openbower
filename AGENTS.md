@@ -31,10 +31,32 @@ auth + data services live in a separate private repo.
   (unpaged is allowed only where a HARD CAP bounds the whole
   collection, stated at the cap's constant, as the agents roster's
   MAX_AGENTS does): order
-  by `-id` with `?after=<last id>` (ULIDs are time-sortable; helpers in
-  the kernel), or by a dense rank where one exists (run results, where
-  `rank > :after` also gives cheap random access). `next_cursor` comes
-  from the last row of a full page.
+  by `-id` with `?after=<last id>` (ULIDs are time-sortable AND
+  monotonic within a process: `openbower_kernel.fields.new_ulid` mints
+  off python-ulid's locked strict generator, so id order is insertion
+  order even inside a bulk insert; helpers in the kernel), or by the fractional rank where the collection carries one (a
+  sheet's rows, below). `next_cursor` comes from the last row of a
+  full page.
+- A sheet row's IDENTITY is its id and its ORDER is `rank`, a
+  fractional STRING key (the same key orders a node on its path) (`openbower_kernel.ranks`, the sheet's vocabulary over
+  the `fractional-indexing` package): a move writes ONE row,
+  never a renumbering, and nothing stores a row number (a renderer
+  counts the page). ONE way to page rows, sheet order: the sheet and
+  the export keyset by `(rank, id)` off the opaque cursor the server
+  hands back; a WALK (a
+  fill, a backfill, a probe) pages the same way, off a
+  `RowCursor` that names the last row walked AND its rank (the rank is
+  the truth, so a keyset needs no row to exist; the client gets it as
+  the opaque `next_cursor`, `rank.id`, and hands it straight back, so
+  no page needs a lookup). A fill's consent
+  is a SET (the rows that existed at the click, an id bound) and a
+  COUNT (at most that many walked, in sheet order); a row moved out
+  from under a walk is the next fill's, exactly like a row appended
+  after the click, and one moved the other way is offered twice and
+  dropped by the fill's row key. A rank is only ever compared, never
+  interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
+  `rerank` job re-spaces the sheet. Rank columns carry the C collation
+  (byte order is the scheme's order).
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -52,7 +74,8 @@ auth + data services live in a separate private repo.
   child that settles itself terminally when its parent is gone (an
   autofill run finds its row missing and ends as a ledger row, claimed
   by a picker that never goes through the parent), and an account-level
-  singleton with no parent to be orphaned from (the bench node). Both
+  singleton with no parent to be orphaned from (the preview node, and its
+  preview runs, which own their input and are pruned by age). Both
   are named at the owner's delete, so a reader sees the choice rather
   than a gap.
 - An extensible roster is a REGISTRY, never an enum: each member is
@@ -71,9 +94,103 @@ auth + data services live in a separate private repo.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
   command over an operation (the reclaim_node_runs command over
-  NodeRunFlow.reclaim_stale_processing). Jobs run independently, so every command there must be safe
+  NodeRunFlow.reclaim_stale_processing and abandon_orphans). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
   never a lock.
+- BACKGROUND work a request must not do (a sheet-sized walk, a file
+  build) is a Job: a row in the `jobs` app's one table, a kind = a
+  typed payload class (`JobKind[Progress]`, typed by its own cursor)
+  with a `run(job, progress)` that does ONE bounded slice and hands
+  back where it stopped, registered from the owning app's `jobs`
+  package; `JobService(account_id=).enqueue(kind, user_id=)` for a job a user asked for,
+  `enqueue_system(...)` for one nobody did (its user is NULL, never a
+  sentinel). The
+  `jobs` compose service works them within seconds (a loop like the
+  provisioners); every transition is a compare-and-set on the job's
+  status, `attempts` counts unexpected exits only, and every slice is
+  idempotent because a reclaimed job re-walks its last one. A kind
+  waiting on something outside the job raises `JobWaiting` as its
+  slice's last act (parked until it asked to be woken, no attempt
+  spent); a stop from outside (a
+  user's cancel, a worker failing the job) goes through
+  `JobService.Global.stop`, which runs the kind's `on_stop` then flips the
+  status, and the runner's own transitions are predicated on
+  PROCESSING so a stopped job is never resurrected. A job is never a
+  NodeRun (a run is one node applied to one row) and a request never
+  walks a sheet: admission decides and queues. A FILL is a job of kind
+  `fill` (lists/jobs/fill.py): the consent is its payload, the walk
+  its first slices, the wait for its runs the rest; `fill_run_id` on a
+  run or a cell is the job's id, and a fill reads its agent's config
+  LIVE (no snapshot, no fingerprint). An agent's columns are ONE unit
+  (one run answers them together), and on every occasion an agent owes
+  a row only if none of its columns has a cell record: a row attempted
+  once, whatever came of it, is re-asked only by the user's own
+  gesture. (A webhook owes a row once its barrier completes after its
+  newest run; a failed cell never completes, so a barrier over it stays
+  shut for that row until the user re-asks it.) A stopped or failed
+  fill is simply over: a new fill (Fill all remaining, Fill next N) runs
+  the rows it never reached, since those are the ones never attempted.
+  An AI column autofills every row that arrives from its create on,
+  whether or not a fill ran or was refused. An agent's output set is
+  fixed while its columns are on a sheet (the agent save refuses a
+  change), so a fill never adds a column: the create makes them all.
+- Which rows a node owes a run to, and how one of its runs EXECUTES,
+  is the node kind's PROCESSOR (lists/processors, handed out by
+  `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
+  target_list, rows, scope, now)`, the scope a typed `FillScope`
+  naming the OCCASION (manual | autofill | backfill, never the door it
+  came through) as the judging call's own argument (a processor is the
+  node; an executor never carries an occasion), for the walkers, which
+  page rows and hand them over knowing no kind and no column (a kind
+  implements `_enqueue_runs`; the public call first loads, in one read, the
+  row fields the kind declares in `REQUIRED_ROW_FIELDS` that a caller left
+  out, so no judgement pays a query per row for a field it was not handed);
+  `_process_run(task, flow)` for a kind whose runs are claimed one at a
+  time off the topic, or `_process_batch(flow, now)` for a kind that
+  claims and settles a node's due runs together, for the dispatchers
+  (the node-run consumer, the deferred flush), which claim or iterate
+  and hand over knowing no kind. A kind overrides exactly one of the
+  two; the other keeps its raising default. The dispatchers call the
+  public `process_run` / `process_batch`, which run the kind's half and
+  then the ADVANCE every kind owes the workflow once a run reaches
+  DONE on a row (services/workflow_reactions.py: the workflow moves
+  one step for that row), so no kind can forget it. The workflow's
+  other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet: rows
+  enter through one
+  operation (lists/operations/append_rows.py: the list service's
+  primitive, then the trigger, one transaction), which every door (a
+  push, a person, an import, a snapshot) calls, and a pin holds that
+  nothing else in production calls the primitive.
+  The node config classes in lists/nodes stay what a node IS at rest.
+  Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
+  starts with exactly one of them: `entry` (the path is fed by nothing,
+  so an arrival starts it) and `wait_until` (the path is fed by the
+  paths its config names, so its barrier starts it). A marker never
+  runs: it has no processor, and a reaction skips it and offers the node
+  behind it, or stops and says so when it finds one behind work.
+  The workflow service is the one writer holding that invariant, and it
+  is what makes "which paths does an arrival start" one indexed read
+  rather than a walk of the workflow's nodes. A path's HEAD is its
+  marker and nothing else; every other node is an ACTION, and the
+  action right behind an entry marker is an ENTRY ACTION: what an
+  arrival starts, and the only place a user's fill starts (the sheet's
+  `ListDetail.entry_action_ids`). A column downstream of a barrier is
+  reached by the workflow and refuses a fill of its own
+  (`fill_column_downstream`).
+- How a column's CELLS change is the cell layer (lists/cells.py), and
+  every change lands as a `CellWrite` (the state a cell means to
+  record, the value it lands where blank, the tools behind it): a
+  node kind's run reaction (`NodeProcessor.on_run_landed`, one write
+  per column the node fills); a person's typed value is a `TypedWrite`
+  (the grid is read-only today, so cell editing designs its own rules
+  per column when it arrives). Only a workflow column's cells are
+  recorded (`WorkflowColumn`), so rows alone never carry one. Writes
+  are in-memory intents until `ListService.land_row` / `land_rows`
+  persists them, kind-blind: values onto the row write-if-blank
+  through the column's type, then one ledger record per write in ONE
+  upsert, FILLED and TYPE_MISMATCH derived from what the row reported
+  and every other state the write's own. Processors never touch a row
+  or a cell record; the landing never branches on a node kind.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy or a
   three-step (add nullable, deploy the code that writes it, backfill
   then set NOT NULL). Django drops the default after adding the

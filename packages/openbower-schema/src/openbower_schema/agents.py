@@ -30,14 +30,14 @@ LABEL_MAX_LENGTH = 128
 # pathological payloads, not prompt engineering.
 PROMPT_MAX_LENGTH = 262_144
 MAX_AGENT_OUTPUTS = 8
-# The test bench's hand-fed row cap (binary). A test admission
-# REFUSES a wider row (never truncates), so the bench cuts to this
+# The test preview's hand-fed row cap (binary). The preview's start
+# REFUSES a wider row (never truncates), so the preview cuts to this
 # many FILLED inputs in PROMPT order before sending and diagnoses the
 # cut (silent excess would render blank prompt variables).
 TEST_ROW_MAX_KEYS = 16
-# The bench row's per-key and per-value bounds (binary), WIRE facts:
-# a test-fill admission REFUSES past them (never truncates), so the
-# client must know the bound it can be refused under (bench inputs
+# The preview row's per-key and per-value bounds (binary), WIRE facts:
+# the preview's start REFUSES past them (never truncates), so the
+# client must know the bound it can be refused under (preview inputs
 # carry it as maxLength, making the refusal unreachable from the UI).
 TEST_KEY_MAX_LENGTH = 64
 TEST_VALUE_MAX_LENGTH = 512
@@ -104,7 +104,7 @@ class AgentOutput(BaseModel):
 
 class AgentConfig(BaseModel):
     """The runtime's interchange unit, shared by both custodies (a
-    saved agent, a column's quick prompt) and the test bench."""
+    saved agent, a column's quick prompt) and the test preview."""
 
     prompt: str = Field(max_length=PROMPT_MAX_LENGTH)
     provider: AgentProvider

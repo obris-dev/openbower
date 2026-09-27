@@ -130,8 +130,7 @@ class CellAnswerer:
         it, deliberately: the missing tool may be exactly why the
         output is empty, and Continue re-runs it once the provider is
         set up (provider credentials live in deployment settings,
-        outside the config fingerprint, so no settled state could
-        re-open on setup)."""
+        outside the config)."""
         for tool in tool_registry.toggled_tools(self._config):
             if tool.name in deps.served:
                 continue

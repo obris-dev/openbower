@@ -1,6 +1,6 @@
 /** The row-scope decisions the drawer's footer and the tracker's
- * scoped continue share: how many rows a gesture covers. Every figure
- * here is the CLIENT's consent arithmetic only; the server admits the
+ * Fill next control share: how many rows a gesture covers. Every figure
+ * here is the CLIENT's consent arithmetic only; the server owns the
  * true eligible count and its response is the truth. */
 
 // The default first-N scope (binary): small enough to be a cheap

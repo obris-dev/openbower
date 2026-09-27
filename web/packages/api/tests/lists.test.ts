@@ -1,7 +1,7 @@
 // addListRows: pinned here because no shipped UI posts rows yet; the
 // contract (route, body shape, RowsAdded parse) must not rot silently.
-// postFillRefill: its optional rows scope is pinned because omission
-// vs presence is the contract (no body means all remaining rows).
+// postColumnFill: its optional max_row_count scope is pinned because
+// omission vs presence is the contract (no body means all remaining rows).
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
@@ -21,11 +21,13 @@ import {
   postColumnWebhook,
   postColumnWebhookPreview,
   postColumnWebhookTest,
-  postFillRefill,
+  postAiColumn,
+  postColumnFill,
   reorderColumns,
   updateColumnWebhook,
   UNKNOWN_COLUMN_KIND,
   COLUMN_LABEL_MAX_LENGTH,
+  renderablePage,
 } from "../src/lists.ts";
 
 test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
@@ -53,17 +55,18 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
 });
 
 // A syntactically valid run envelope (values are fixtures, not
-// meaning): the refill test only cares that the 201 parses.
+// meaning): the fill test only cares that the 201 parses.
 const RUN_ENVELOPE = {
   agent_id: "01BBBBBBBBBBBBBBBBBBBBBBBB",
   column_keys: ["answer"],
-  confirmed_row_count: 10,
+  target_row_count: 10,
   counters: {
     attempted: 0,
     blank: 0,
     filled: 0,
     transient: 0,
   },
+  heartbeat_at: "2026-01-01T00:00:00Z",
   created_at: "2026-01-01T00:00:00Z",
   id: "01CCCCCCCCCCCCCCCCCCCCCCCC",
   list_id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
@@ -72,7 +75,27 @@ const RUN_ENVELOPE = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-test("postFillRefill sends rows only when scoped", async (t) => {
+// The AI column create's 201: the sheet (a ListDetail) with its new column.
+const AI_DETAIL = {
+  id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+  label: "Prospects",
+  columns: [
+    { kind: "plain", key: "company", label: "Company", type: "text" },
+    { kind: "ai", key: "answer", label: "Answer", type: "text", node_id: "01NDAAAAAAAAAAAAAAAAAAAAAA", current_fill_id: "" },
+  ],
+  origin: "manual",
+  row_count: 2,
+  entry_action_ids: ["01NDAAAAAAAAAAAAAAAAAAAAAA"],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+test("postColumnFill sends max_row_count only when scoped, by the exact key", async (t) => {
+  // The server's ColumnFillRequest declares `max_row_count`, and DRF
+  // DROPS a body key it does not declare rather than refusing it: a
+  // client writing any other name still gets a 201, and the fill covers
+  // the whole column instead of the next N rows, unbounded spend on the
+  // user's metered key reported as success. Only the exact key pins it.
   const calls: { url: string; init: RequestInit }[] = [];
   const realFetch = globalThis.fetch;
   t.after(() => {
@@ -86,43 +109,66 @@ test("postFillRefill sends rows only when scoped", async (t) => {
     });
   }) as typeof fetch;
 
-  const scoped = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer", { rows: 32 });
+  const scoped = await postColumnFill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer", { max_row_count: 32 });
   assert.equal(scoped.status, "ok");
-  const all = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer");
+  const all = await postColumnFill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer");
   assert.equal(all.status, "ok");
 
   assert.equal(calls.length, 2);
-  assert.ok(calls[0]!.url.endsWith("/columns/answer/refill"));
+  assert.ok(calls[0]!.url.endsWith("/columns/answer/fill"));
   assert.equal(calls[0]!.init.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { rows: 32 });
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { max_row_count: 32 });
   assert.equal(calls[1]!.init.body, undefined);
 });
 
-test("postFillRefill names the resume key the server declares", async (t) => {
-  // The server's ColumnRefillRequest declares `resume_fill`, and DRF
-  // DROPS a body key it does not declare rather than refusing it. So a
-  // client that writes any other name still gets a 201, and the fill
-  // it opens covers the whole column instead of the stopped fill's own
-  // unresolved rows: unbounded spend against the user's metered key,
-  // reported as success. Only the exact key can be asserted here.
+test("postAiColumn sends the column set alone and reads back the detail", async (t) => {
+  // Creating a column starts no fill, so no fill fact rides the body:
+  // the scope belongs to postColumnFill.
   const calls: { url: string; init: RequestInit }[] = [];
   const realFetch = globalThis.fetch;
   t.after(() => {
     globalThis.fetch = realFetch;
   });
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
-    calls.push({ url, init });
-    return new Response(JSON.stringify(RUN_ENVELOPE), {
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify(AI_DETAIL), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });
   }) as typeof fetch;
 
-  const resumed = await postFillRefill("01AAAAAAAAAAAAAAAAAAAAAAAA", "answer", {
-    resumeFill: "01FILLAAAAAAAAAAAAAAAAAAAA",
+  const res = await postAiColumn("01AAAAAAAAAAAAAAAAAAAAAAAA", { agent_id: "01AG" });
+  assert.ok(calls[0]!.url.endsWith("/columns/ai"));
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { agent_id: "01AG" });
+  assert.equal(res.status, "ok");
+  assert.ok(res.status === "ok");
+  assert.deepEqual(
+    res.data.columns.map((column) => column.key),
+    ["company", "answer"],
+  );
+  // The entry actions survive the parse: the tracker reads them to
+  // offer a fill.
+  assert.deepEqual(res.data.entry_action_ids, ["01NDAAAAAAAAAAAAAAAAAAAAAA"]);
+});
+
+test("fetchListRows hands the cursor back verbatim", async (t) => {
+  // The cursor is the server's (`rank.id`), opaque to this client:
+  // nothing here reads it, splits it, or rebuilds it from a row.
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
   });
-  assert.equal(resumed.status, "ok");
-  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { resume_fill: "01FILLAAAAAAAAAAAAAAAAAAAA" });
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ items: [], next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { after: "a0V.01ROWAAAAAAAAAAAAAAAAAAAA", limit: 2 });
+  assert.ok(calls[0]!.endsWith("/rows?after=a0V.01ROWAAAAAAAAAAAAAAAAAAAA&limit=2"), calls[0]);
 });
 
 test("the known cause vocabulary is read off the contract, not hand-typed", () => {
@@ -245,14 +291,13 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
     new Response(
       JSON.stringify({
         items: [
-          { id: "01R", position: 1, data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
+          { id: "01R", data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
           {
             id: "01S",
-            position: 2,
             data: { answer: "x" },
             states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
           },
-          { id: "01T", position: 3, data: {}, states: { answer: "no_evidence" } },
+          { id: "01T", data: {}, states: { answer: "no_evidence" } },
         ],
         next_cursor: null,
       }),
@@ -287,6 +332,7 @@ test("reorderColumns sends the WHOLE key order, and nothing about the columns", 
         folder_id: "",
         columns: [],
         row_count: 0,
+        entry_action_ids: [],
         origin: "manual",
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
@@ -351,6 +397,7 @@ const SUMMARY = {
   folder_id: "",
   columns: [{ key: "crm_sync", label: "CRM sync", type: "text", kind: "webhook" as const, node_id: "01NODE" }],
   row_count: 0,
+  entry_action_ids: [],
   origin: "manual",
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
@@ -383,7 +430,7 @@ test("the cadence presets and their default come off the contract", () => {
   assert.ok(WEBHOOK_CADENCE_SECONDS.includes(DEFAULT_WEBHOOK_CADENCE_SECONDS));
 });
 
-test("postColumnWebhook posts the config with its label and parses the summary with the webhook member", async (t) => {
+test("postColumnWebhook posts the config with its label and parses the detail with the webhook member", async (t) => {
   const calls = stubFetch(t, SUMMARY, 201);
   const body = { label: "CRM sync", destination_id: "01DST", wait_keys: ["answer"], payload_keys: ["company"], interval_seconds: 3600 };
   const res = await postColumnWebhook("01AAAAAAAAAAAAAAAAAAAAAAAA", body);
@@ -482,4 +529,21 @@ test("every column kind shares the base's label bound the client enforces", () =
   // definition of its own, so this is what pins the other members to it.
   assert.equal(WIRE_BOUNDS.AiColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
   assert.equal(WIRE_BOUNDS.WebhookColumn.label.maxLength, COLUMN_LABEL_MAX_LENGTH);
+});
+
+test("a webhook cell's state rides the one states record and an unknown one maps to the client member", () => {
+  const page = renderablePage({
+    items: [
+      { states: { crm_sync: { state: "sent", tools: {} } } },
+      { states: { crm_sync: { state: "pending", tools: {} } } },
+      // The server's next word: the page must still render, and the
+      // cell must claim no more than that something unrecognised happened.
+      { states: { crm_sync: { state: "throttled", tools: {} } } },
+      { states: {} },
+    ],
+  });
+  assert.deepEqual(
+    page.items.map((item) => item.states.crm_sync?.state ?? null),
+    ["sent", "pending", UNKNOWN_CELL_STATE, null],
+  );
 });

@@ -7,7 +7,6 @@ from ..constants import (
     CELL_SOURCE_MAX_LENGTH,
     CELL_STATE_MAX_LENGTH,
     COLUMN_KEY_MAX_LENGTH,
-    CONFIG_FINGERPRINT_MAX_LENGTH,
     CellSource,
     StoredCellState,
 )
@@ -31,28 +30,25 @@ class ListCellState(AccountScopedModel):
     that count every four seconds, so the scan is the wrong side of the
     trade: one narrow row per answered cell buys it back.
 
-    PENDING is deliberately absent. A queued NodeRun on a live fill IS
-    a pending cell, which is what lets admission write nothing to the
-    sheet and leaves a stopped fill with nothing to sweep.
+    PENDING is deliberately absent. An open run of the cell's node, from
+    whichever lane, IS a pending cell, which is what lets admission
+    write nothing to the sheet and leaves a stopped fill with nothing to
+    sweep.
 
-    `config_fingerprint` is the writing fill's frozen digest: a settled
-    blank holds only while the column's current config still matches
-    it, so editing a prompt re-opens exactly the cells whose refusal
-    that prompt bought."""
+    A record is also what makes a cell ATTEMPTED: whatever state it
+    holds, filled, the model's verdict, or an infrastructure failure,
+    no fill re-asks the row (re-asking is the user's gesture)."""
 
     list_id = models.CharField(_("list id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
-    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.FILL)
+    source = models.CharField(_("source"), max_length=CELL_SOURCE_MAX_LENGTH, default=CellSource.NODE)
     # The fill run that wrote it: the row drawer's link to that run's
     # NodeRun.result, which holds what the model actually said. NULL on
     # the automatic path (autofill), which has no fill run; the drawer
     # follows the writing task by (row, column) instead.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    config_fingerprint = models.CharField(
-        _("config fingerprint"), max_length=CONFIG_FINGERPRINT_MAX_LENGTH, blank=True, default=""
-    )
     # tool -> the status code it reported for the run that wrote
     # this cell, filled or blank alike ("open" for a tool that served).
     # The one place a FILLED cell can say a tool was degraded, and the
@@ -70,8 +66,8 @@ class ListCellState(AccountScopedModel):
         indexes = [
             # THE poll's index: filled and attempted per column come off
             # ONE grouped read of this, with no sheet scan anywhere.
-            # Also refill targeting (settled under a config) and
-            # selective refill (re-run everything that failed with X).
+            # Also a fill's targeting (attempted in the judged columns)
+            # and a selective rerun (everything that failed with X).
             models.Index(fields=["list_id", "column_key", "state"], name="cell_state_column_idx"),
             # Sheet-wide by state ("show me every unverified cell"). A
             # distinct index because the one above leads with

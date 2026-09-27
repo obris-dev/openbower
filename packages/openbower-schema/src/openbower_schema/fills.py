@@ -1,11 +1,12 @@
 """Wire contract for column fills (the AI-columns domain).
 
-A fill RUN is a durable background walk of a sheet: one agent run
-per row, cells written where blank, every blank carrying its cause. The
-queue is materialized at admission, one task per consented row, and a
-cell reads PENDING because a queued task on a live fill says so, so
-the wire speaks fill run envelopes, per-cell states, and nothing
-about workers. Copy a user reads says "fill", the feature's own
+A fill RUN is a durable background walk of a sheet: one agent run per
+row the agent has not yet attempted, every blank carrying its cause.
+The queue is materialized by the fill job's first slices (one run per
+row owed work in the consent range, queued within seconds of the
+click), and a cell
+reads PENDING because a queued task on a live fill says so, so the wire
+speaks fill run envelopes, per-cell states, and nothing about workers. Copy a user reads says "fill", the feature's own
 word; "run" names the record in type names and the page's `runs`
 key (FillRunWire, FillRunPage.runs), so prose can tell one run of a
 fill from the feature itself.
@@ -22,9 +23,14 @@ from .lists import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
 
-# The SETTLED partition of WireCellState: diagnoses the same config would
-# just reproduce, so they hold (and never re-spend) until the config
-# changes; every other cause re-runs on the next fill. A wire fact
+# The SETTLED partition of WireCellState: the model's own verdicts (a
+# quiet word on the sheet rather than a warning), as opposed to
+# infrastructure's causes. No attempted cell, verdict or failure, is
+# re-run by a fill: the partition is how the sheet SPEAKS, not what a
+# fill targets (re-asking is the user's explicit gesture). One
+# server-side reader branches on it too: a webhook digest treats FILLED
+# plus this partition as a completed row (digest_payload.DONE_CELL_STATES),
+# so a member added here changes when webhooks fire. A wire fact
 # (x-constants) so the client derives the partition instead of
 # hand-retyping it beside its copy.
 SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
@@ -35,9 +41,10 @@ SETTLED_CELL_STATES: tuple[WireCellState, ...] = (
     "type_mismatch",
 )
 
-# Per-row retry patience: the initial run plus 3 retries (binary). The
-# consent footer's "worst case 4x these counts" clause is this number,
-# so it is a wire fact, not a server internal.
+# Per-row retry patience: the initial run plus 3 retries (binary). A
+# wire fact so a client can state the worst-case spend beside a count.
+# A webhook send judges the cap AFTER it delivers, so a row's send is
+# tried once more than a run: 5 deliveries, the first plus 4 retries.
 NODE_RUN_ATTEMPTS = 4
 # The row-lease staleness window: a claimed row's lease is renewed in
 # bulk by the worker's supervising loop, which passes far more often
@@ -50,8 +57,8 @@ NODE_RUN_ATTEMPTS = 4
 ROW_LEASE_STALE_SECONDS = 256
 # Admission budget for the FREE search door (derived): MAX_TOOL_CALLS
 # searches per row times the largest sheet the free door should carry
-# end to end (128 rows, binary). Fills needing more are refused at
-# admission, naming the paid door.
+# end to end (128 rows, binary). A consent past it is refused at
+# admission, on the count the user agreed to, naming the paid door.
 FREE_SEARCH_FILL_BUDGET = MAX_TOOL_CALLS * 128
 
 
@@ -60,7 +67,7 @@ class CellAssessment(BaseModel):
     discarded: what the model staked on the answer, the account it
     gave of the evidence, and the value the floor dropped ("" when
     the answer landed). A typed wire shape, not a bare dict: the
-    bench renders these fields, and z.any() is a contract that
+    preview renders these fields, and z.any() is a contract that
     promises nothing."""
 
     confidence: float = 0.0
@@ -74,12 +81,12 @@ class CellRunResult(BaseModel):
     evidence the model saw, each tool call's diagnosis, and the causes
     behind any blank.
 
-    ONE shape for both landings. A NORMAL row's answers land in sheet
-    columns; a TEST row lands on its own task; both store this record,
-    so a reader that had to ask which landing produced it would be
-    reading two contracts through one field. The bench reads it
-    VERBATIM off the run-detail wire (FillRunDetail carries it whole),
-    so there is no second projection to drift.
+    ONE shape for both landings. A sheet row's answers land in its
+    columns; a preview run lands on itself; both store this record, so a
+    reader that had to ask which landing produced it would be reading
+    two contracts through one field. The preview reads it VERBATIM off
+    the run wire (NodeRunWire carries it whole), so there is no second
+    projection to drift.
 
     What LANDED is the sheet row plus its cell states; the difference
     between the two is the audit story (an answer write-if-blank
@@ -150,55 +157,32 @@ class FillRunWire(BaseModel):
     status: FillStatusWire
     column_keys: list[str] = Field(description="The columns this run owns, frozen at consent.")
     counters: FillCounters
-    confirmed_row_count: int = Field(
-        description="Rows this run TARGETED, fixed when it opened: the progress denominator. "
-        "The consent echo is a REQUEST field of the same name that admission compares against "
-        "the sheet, 409ing on drift; what ships here is what the walk actually consented to, "
-        "which a scoped fill makes smaller than the sheet."
+    target_row_count: int = Field(
+        description="The progress denominator: the sheet's row count at the click (or the fill's "
+        "Fill next N, when smaller), settled to the rows the walk actually targeted once "
+        "`targeted_at` is set (only ever downward: a row added after the click is never "
+        "targeted)."
+    )
+    targeted_at: str | None = Field(
+        default=None,
+        description="When the run's target set became whole: the walk that queues its runs has "
+        "offered every row in the consent range. Null while it is still queuing (seconds after "
+        "the click); a run cannot complete before it is set.",
     )
     started_by: str = Field(description="User id, ATTRIBUTION only; authorization is account membership.")
-    heartbeat_at: str | None = Field(
-        default=None,
-        description="The latest state change across this run's tasks (derived); the client judges "
-        "staleness against ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented "
-        "as failure).",
+    heartbeat_at: str = Field(
+        description="The fill's latest movement (derived): a run's state change, or the job's own "
+        "when that is newer (queuing, parking between polls, stopping), so a fill that has queued "
+        "nothing yet still reads as alive from its enqueue. The client judges staleness against "
+        "ROW_LEASE_STALE_SECONDS off the wire, warning-role only (never presented as failure).",
     )
     error: FillError | None = Field(
         default=None,
         description="This run's error, both legs (tier 1: the message renders verbatim); "
         "None unless the run FAILED, the same predicate ColumnFillSummary.last_error states.",
     )
-    # The config snapshot frozen at admission stays STORED, not wired:
-    # nothing renders it on a poll; GET /v1/fills/{id} (FillRunDetail)
-    # is where it lands when a surface needs it.
     created_at: str
-    updated_at: str
-
-
-# A fill's OPERATING MODE: "normal" writes a sheet; "test" is the
-# bench's one-row diagnostic run, landing its result on its task
-# instead of a sheet (the throwaway rides the real execution path on
-# purpose).
-FillKindWire = Literal["normal", "test"]
-
-
-class FillRunDetail(FillRunWire):
-    """One run, read by id (GET /v1/fills/{id}): the poll envelope's
-    fields plus what a single-run read can afford. `result` is the
-    completed TEST run's stored CellRunResult (its one task's record);
-    the `result` field below owns the full predicate. A test run
-    carries no sheet, so `list_id` and `agent_id` are blank ("") for
-    kind=test, and `confirmed_row_count`/`column_keys` describe the
-    hand-fed row rather than a consent echo."""
-
-    kind: FillKindWire = "normal"
-    result: CellRunResult | None = Field(
-        default=None,
-        description="A test run's stored result (its one task's record), served whenever that task"
-        " FINISHED, whatever the fill's terminal status (a cancel racing the last landing must not"
-        " strand a paid result); None while the task is unfinished, and always for kind=normal (a"
-        " normal fill's results live on the sheet).",
-    )
+    updated_at: str = Field(description="The fill's last transition (a claim, a park, a settle, a stop).")
 
 
 class ColumnFillSummary(BaseModel):
@@ -206,9 +190,11 @@ class ColumnFillSummary(BaseModel):
     instead of reconstructing (a client sum over one PAGE of fills
     silently undercounts the moment history outgrows the page).
 
-    Deliberately NOT carrying how many rows a refill would target: that
-    is planning-grade math on a four-second progress poll. It is asked
-    once, on the consent path, where it has to be exact anyway."""
+    Deliberately NOT carrying how many rows a new fill would target: that
+    is planning-grade math on a four-second progress poll, and the fill
+    request only probes for the first owed row. A fill's own count is
+    known once it has targeted its rows (FillRunWire.target_row_count
+    after `targeted_at`)."""
 
     column_key: str
     current_fill_id: str = Field(
@@ -256,10 +242,9 @@ class FillRunPage(BaseModel):
 class ColumnPromptWire(BaseModel):
     """The column's CURRENT fill config as the server holds it (GET),
     and the echo after a column-scoped edit (PATCH
-    /lists/{id}/columns/{key}/prompt). Live fills keep their frozen
-    snapshot; an edit reaches the NEXT fill's admission, so surfaces
-    peeking at "what fills this column" read HERE, never a fill's
-    snapshot."""
+    /lists/{id}/columns/{key}/prompt). A fill reads its agent live, so
+    an edit reaches a running fill's next row; surfaces peeking at
+    "what fills this column" read HERE."""
 
     prompt: str
     model: str

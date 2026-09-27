@@ -17,12 +17,12 @@ import {
   fetchAgentCatalog,
   GENERIC_FAILURE,
   loginUrl,
-  postFillRefill,
+  postColumnFill,
   type ListColumn,
   type WebhookColumn,
   webRoutes,
   type RenderableListRowsPage,
-  type ListSummary,
+  type ListDetail,
   type WebhookColumnBody,
   type WebhookColumnPatchBody,
 } from "@bower/api";
@@ -31,12 +31,13 @@ import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { menuButtonId } from "./column-header";
-import { UseAiDrawer, type AiColumnPayload } from "./use-ai";
+import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { SheetTable } from "./sheet-table";
+import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
 
@@ -52,7 +53,7 @@ import { useRows } from "./use-rows";
  * Three hooks own the three kinds of state (the summary and its
  * columns, the rows on screen, the fill attachment); this component
  * composes their reactions to each other and renders. */
-export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSummary; initialRows: RenderableListRowsPage }) {
+export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetail; initialRows: RenderableListRowsPage }) {
   const router = useRouter();
   const toast = useToast();
   const columns = useColumns(initialDetail);
@@ -119,6 +120,43 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     if ((anyLive && progressed) || (prev !== null && prev.live && !anyLive)) void refreshLoaded();
   }, [runsSignature, anyLive, refreshLoaded]);
 
+  // Pending cells no fill reports (an autofill on arrived rows, a
+  // webhook waiting for its window) re-read on their own schedule,
+  // backing off while the pending set holds still and restarting when
+  // it moves; a live fill's poll already re-reads, so this stands down
+  // while one runs. Stops when nothing reads pending.
+  // A read that keeps failing is surfaced the way the fill poll's is
+  // (one line, the cells holding still), never swallowed: a cell would
+  // otherwise shimmer with no sign the page has lost the server.
+  const pending = pendingSignature(rows);
+  const [pendingTrouble, setPendingTrouble] = useState(false);
+  useEffect(() => {
+    if (!pending || anyLive) return;
+    let attempt = 0;
+    let failures = 0;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function schedule() {
+      timer = setTimeout(async () => {
+        const read = await refreshLoaded();
+        if (stopped) return;
+        failures = read ? 0 : failures + 1;
+        setPendingTrouble(readsAreTroubled(failures));
+        attempt += 1;
+        schedule();
+      }, pendingRefreshDelayMs(attempt));
+    }
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [pending, anyLive, refreshLoaded]);
+  // The page's ONE trouble fact, whichever loop saw it. The re-read
+  // loop's trouble counts only while that loop runs (a pending cell,
+  // no live fill): its last word is stale the moment it stands down.
+  const pollTrouble = fill.pollTrouble || (pendingTrouble && Boolean(pending) && !anyLive);
+
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
   // full-screen-surface pattern, scoped here rather than globally
@@ -184,35 +222,42 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     return outcome;
   }
 
-  async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
-    const outcome = await columns.addAi(payload);
-    if (!outcome.ok) return outcome;
-    // The reconciles below are the SHEET's reactions; holding the
-    // drawer open through a second read would make the Save button
-    // claim work the server has already accepted. The poll loop's
-    // promise settles only when the fill ENDS, so the attach is
-    // fire-and-forget; the summary and the loaded rows are bounded
-    // reads, awaited.
+  // Two requests: the create, then the fill. A refused create keeps
+  // the drawer open on its refusal (the ask is what has to change).
+  // Once the columns exist the drawer's work is done, so it closes
+  // before the fill is asked for, and a refused fill is a toast on the
+  // sheet: the column stays, fillable from its tracker once the cause
+  // is fixed. A submission with no fill (a sheet with no rows) stops at
+  // the create; the new column's tracker still needs its summary read.
+  async function submitAiColumn({ body, fill: scope }: AiColumnSubmission): Promise<ColumnOutcome> {
+    const added = await columns.addAi(body);
+    if (!added.ok) return added;
     closeAddColumn();
-    void fill.refresh();
-    await columns.refreshDetail();
-    await refreshLoaded();
+    if (scope === null) {
+      void fill.refresh();
+      router.refresh();
+      return { ok: true };
+    }
+    const refusal = await fillColumn(added.key, { maxRowCount: scope.maxRowCount });
+    if (refusal) {
+      // The create gave the new columns their summaries; a refused fill
+      // re-attaches nothing, so read them here or the tracker holds its
+      // loading state until a reload.
+      void fill.refresh();
+      toast.error(refusal, "Fill not started");
+    }
     router.refresh();
-    return outcome;
+    return { ok: true };
   }
 
-  // Continue IS refill: a NEW run over the column's unanswered rows
-  // (all of them, the next `rows` when the scoped continue asked, or
-  // the stopped run's own remainder when resumeId names it, off the
-  // summary's current_fill_id). The COLUMN comes from the surface the
-  // user clicked: one run can map several columns, so deriving it
-  // from the run would refill a sibling. A refusal returns as the
-  // server's verbatim detail for the caller's error slot.
-  async function continueFill(columnKey: string, opts: { rows?: number; resumeId?: string } = {}): Promise<string | null> {
-    // An EMPTY resume id is a contract gap (the summary names no
-    // run), not a wider ask: refuse rather than widen the spend.
-    if (!columnKey || opts.resumeId === "") return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { rows: opts.rows, resumeFill: opts.resumeId });
+  // A fill is a NEW run over the rows its agent never attempted (all of
+  // them, or the next `rows` when the scoped ask named a count). The
+  // COLUMN comes from the surface the user clicked and names the agent,
+  // whose columns fill together. A refusal returns as the server's
+  // verbatim detail for the caller to render.
+  async function fillColumn(columnKey: string, opts: { maxRowCount?: number } = {}): Promise<string | null> {
+    if (!columnKey) return GENERIC_FAILURE;
+    const res = await postColumnFill(detail.id, columnKey, { max_row_count: opts.maxRowCount });
     if (redirectIfUnauthenticated(res)) return null;
     if (res.status !== "ok") return res.message;
     // The new run and its pending outcomes exist only server-side:
@@ -368,7 +413,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         listId={detail.id}
         listLabel={detail.label}
         columns={detail.columns}
-        sampleRows={rows.map((row) => ({ id: row.id, position: row.position, data: row.data }))}
+        sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
@@ -380,10 +425,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
             listId: detail.id,
             runs: fill.runs,
             summaries: fill.summaries,
-            pollTrouble: fill.pollTrouble,
+            pollTrouble,
             rowCount: detail.row_count,
+            entryActionIds: detail.entry_action_ids,
             onStop: fill.stop,
-            onRefill: continueFill,
+            onFill: fillColumn,
           }}
           onAddColumn={openAddColumn}
           onReorder={columns.reorder}
@@ -415,7 +461,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
         </p>
         <div className="flex min-w-0 flex-col items-end gap-1">
           <FillsGlance summaries={fill.summaries} liveRunIds={fill.runs.map((run) => run.id)} />
-          {fill.pollTrouble && (
+          {pollTrouble && (
             // Client-only fact, phrased as one: the page cannot see the
             // server, so it claims nothing about the fill itself. It is
             // the PAGE's trouble, so it renders once, under the band

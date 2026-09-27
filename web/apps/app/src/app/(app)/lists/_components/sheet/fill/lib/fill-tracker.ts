@@ -18,7 +18,7 @@ import type { ColumnFillSummary, FillRunWire } from "@bower/api";
 
 /** The slice of the run envelope these decisions read (FillRunWire
  * satisfies it structurally). */
-export type TrackerRun = Pick<FillRunWire, "confirmed_row_count"> & {
+export type TrackerRun = Pick<FillRunWire, "target_row_count"> & {
   counters: Pick<FillRunWire["counters"], "filled" | "attempted">;
 };
 
@@ -28,11 +28,11 @@ export type TrackerCell =
   | {
       kind: "live";
       /** "164 filled | 13% run": the current run's filled count beside
-       * its PROCESSED share (attempted over confirmed; progress means
+       * its PROCESSED share (attempted over targeted; progress means
        * processed, not productive, so a blank-heavy walk still reads
        * as moving). */
       text: string;
-      /** The run's walk progress (attempted over confirmed, clamped to
+      /** The run's walk progress (attempted over targeted, clamped to
        * [0, 1]); the live bar's width, and the percent's source. */
       fraction: number;
     };
@@ -62,9 +62,9 @@ function count(n: number): string {
  *
  * A column with nothing run names the WORK, because there the sheet
  * count and the target are the same question. Once a run has
- * happened they are not: a refill also re-runs rows that failed on
- * infrastructure and skips rows whose prompt variables are all blank,
- * so a subtraction from the sheet total is a different number from
+ * happened they are not: a new fill skips every row already tried and
+ * every row whose prompt variables are all blank, so a subtraction
+ * from the sheet total is a different number from
  * the one the button beneath it would spend. So the mixed case
  * reports only what is KNOWN, run out of the sheet, and names no
  * remainder at all. The exact target is computed on the consent path,
@@ -82,8 +82,8 @@ export function columnProgress(summary: ColumnFillSummary, rowCount: number): st
  * cell carries a failure or just the header line. */
 export function trackerCell(run: TrackerRun | null, currentStatus: ColumnFillSummary["current_status"]): TrackerCell {
   if (run !== null) {
-    const confirmed = run.confirmed_row_count;
-    const fraction = confirmed > 0 ? Math.min(Math.max(run.counters.attempted / confirmed, 0), 1) : 0;
+    const target = run.target_row_count;
+    const fraction = target > 0 ? Math.min(Math.max(run.counters.attempted / target, 0), 1) : 0;
     // The percent derives from the clamped fraction, so the text and
     // the bar can never disagree.
     const pct = Math.round(fraction * 100);

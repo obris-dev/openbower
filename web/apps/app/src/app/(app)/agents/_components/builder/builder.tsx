@@ -26,13 +26,13 @@ import { Breadcrumbs } from "../../../_components/breadcrumbs";
 import { configMissing, EMPTY_TOOLS, sheetsTruncatedNote } from "../../../_components/agent-config";
 import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, goToSection, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
 import { BuilderFooter } from "./footer";
-import { TestBench } from "./test-bench";
-import { useTestFill } from "./use-test-fill";
+import { TestPreview } from "./test-preview";
+import { usePreviewRun } from "./use-preview-run";
 
 type ModelTriple = { provider: Provider; source: string; model: string };
 
 /** The builder: the prompt
- * card with the test bench beneath it, a configuration rail (Model,
+ * card with the test preview beneath it, a configuration rail (Model,
  * Outputs, Tools), actions in the pinned footer. The WHOLE working
  * state (prompt, config, test inputs, last result) drafts to
  * localStorage per agent (custody lives in ./draft), so navigating
@@ -40,7 +40,7 @@ type ModelTriple = { provider: Provider; source: string; model: string };
  * blank). Drafts initialize state DURING first render, which is safe
  * only because the wrapper renders this client-only (ssr: false):
  * there is no server HTML to disagree with. The run lifecycle lives
- * in ./use-test-fill, readiness in ./readiness, the template grammar
+ * in ./use-preview-run, readiness in ./readiness, the template grammar
  * in ./template: this component holds form state and composition. */
 export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const router = useRouter();
@@ -51,7 +51,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   // and the discard is SAID, not silent (that is its own data loss).
   const draft = storedDraft && storedDraft.savedAt === agent?.updated_at ? storedDraft : null;
   const draftDiscarded = storedDraft !== null && draft === null;
-  const { testBusy, testStale, runTest } = useTestFill();
+  const { testBusy, testStale, runTest } = usePreviewRun();
 
   const [label, setLabel] = useState(draft?.label ?? agent?.label ?? "");
   const [prompt, setPrompt] = useState(draft?.prompt ?? agent?.config.prompt ?? "");
@@ -76,11 +76,11 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const [listsLoading, setListsLoading] = useState(true);
   const [listsTruncated, setListsTruncated] = useState(false);
   const [testRow, setTestRow] = useState<Record<string, string>>(draft?.testRow ?? {});
-  // Lifted from the prompt editor and bench so Clear draft resets them.
+  // Lifted from the prompt editor and preview so Clear draft resets them.
   const [variablesListId, setVariablesListId] = useState("");
   const [borrowListId, setBorrowListId] = useState("");
   const [testResult, setTestResult] = useState<CellRunResult | null>(draft?.testResult ?? null);
-  // The tools state THAT PRODUCED the stored result: the bench's
+  // The tools state THAT PRODUCED the stored result: the preview's
   // no-searches diagnosis must describe the run, not today's toggles.
   const [testToolsOn, setTestToolsOn] = useState(draft?.testToolsOn ?? false);
   // Same custody for the OUTPUTS that produced it: the result's cells
@@ -250,7 +250,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   const checklist = attempted !== null ? buildChecklist(attempted, missing) : null;
   const showChecklist = checklist !== null && checklist.some((item) => item.missing);
 
-  // The bench's inputs are the prompt's ROOT {{variables}} (grammar in
+  // The preview's inputs are the prompt's ROOT {{variables}} (grammar in
   // ./template), NOTHING FORCED: every tool derives its context from
   // the rendered prompt, so the variables are the whole input surface.
   const inputKeys = useMemo(() => promptVariables(prompt), [prompt]);
@@ -292,10 +292,10 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
     setTestToolsOn(Object.values(config.tools).some(Boolean));
     setTestOutputs(config.outputs);
     // PROMPT order, filled values only, bounded client-side: the
-    // server REFUSES a row past the bench bounds (never truncates),
+    // server REFUSES a row past the preview bounds (never truncates),
     // so the client cuts first, in prompt order (edit order would
     // drop a variable the user filled first but typed into last),
-    // and the bench diagnoses what the cut leaves out. Keys past the
+    // and the preview diagnoses what the cut leaves out. Keys past the
     // key bound are dropped too: a variable the server would refuse
     // must not make the whole test unrunnable.
     const row = Object.fromEntries(
@@ -384,7 +384,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
               onSourceList: setVariablesListId,
             }}
           />
-          <TestBench
+          <TestPreview
             inputKeys={inputKeys}
             lists={lists}
             listsLoading={listsLoading}
