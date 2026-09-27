@@ -34,9 +34,12 @@ class AgentOutputsInUse(Exception):
 
     def __init__(self, uses: list[AgentColumnUse]) -> None:
         self.uses = uses
-        sheets = ", ".join(use.label for use in uses)
+        # One sheet is named; more are counted. The user set the agent
+        # on those sheets and each column carries its label, so a list
+        # of names says nothing new and grows without bound in a toast.
+        where = uses[0].label if len(uses) == 1 else f"{len(uses)} sheets"
         super().__init__(
-            f"This agent fills columns on {sheets}. Its outputs can't change while those columns exist: "
+            f"This agent fills columns on {where}. Its outputs can't change while those columns exist: "
             "create a new agent with the outputs you need, or delete those columns first."
         )
 

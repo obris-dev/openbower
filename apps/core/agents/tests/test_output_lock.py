@@ -102,6 +102,21 @@ class OutputLockTests(TestCase):
         stored = [(o["key"], o["type"]) for o in Agent.objects.get(id=agent_id).outputs]
         self.assertEqual(stored, [("answer", "text"), ("email", "email")])
 
+    def test_two_or_more_sheets_are_counted_never_listed(self) -> None:
+        # One sheet is named (the base fixture's "Prospects"); two or
+        # more are a count, so the refusal stays one short sentence in a
+        # toast however many sheets use the agent. FAILS if the copy
+        # lists names.
+        agent_id = self._two_output_agent()
+        third = self.lists.create(owner_id=USER, label="Targets", columns=[], origin="manual")
+        AiColumnService(account_id=ACCOUNT, user_id=USER).add(str(third.id), agent_id=agent_id)
+        resp = self._patch_agent(agent_id, [OUTPUT])
+        self.assertEqual(resp.status_code, 409, resp.content)
+        detail = resp.json()["detail"]
+        self.assertIn("on 2 sheets.", detail)
+        self.assertNotIn("Accounts", detail)
+        self.assertNotIn("Targets", detail)
+
     def test_reordering_a_used_agents_outputs_is_allowed(self) -> None:
         # Order is not part of the columns' shape (a column is ordered
         # on its sheet). FAILS if the comparison is order-sensitive.
