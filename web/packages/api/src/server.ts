@@ -15,7 +15,7 @@ import {
   type AgentSummary,
   type FoldersList,
 } from "@bower/schema";
-import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage, TolerantListsPageSchema, TolerantListSummarySchema, type ListsPage, type ListSummary } from "./lists.ts";
+import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage, TolerantListsPageSchema, TolerantListDetailSchema, type ListsPage, type ListDetail } from "./lists.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 import {
@@ -100,8 +100,8 @@ export async function fetchFoldersWithCookie(cookieHeader: string): Promise<Serv
 }
 
 /** Server-side list detail; the page decides what each outcome renders. */
-export async function fetchListWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<ListSummary>> {
-  return fetchParsedWithCookie(apiRoutes.lists.detail(id), cookieHeader, TolerantListSummarySchema);
+export async function fetchListWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<ListDetail>> {
+  return fetchParsedWithCookie(apiRoutes.lists.detail(id), cookieHeader, TolerantListDetailSchema);
 }
 
 /** Server-side first rows page, so the sheet paints with data. */

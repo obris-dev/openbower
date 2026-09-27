@@ -17,8 +17,8 @@ export type GlanceCounts = { filling: number; failed: number };
  * A column counts as FILLING when its current run is on the live
  * page OR its summary status is live. That is deliberately WIDER
  * than the tracker cell, which renders live off the join alone: in
- * the status-only window (the round trip after Stop, the
- * admit-between-reads skew) the glance reports the server's last
+ * the status-only window (the round trip after Stop, a fill
+ * started between the two reads) the glance reports the server's last
  * word for the column while the cell, holding no envelope to draw
  * counters or a bar from, shows its header line alone. What the join
  * leg guarantees is the direction that would LIE: the column's own

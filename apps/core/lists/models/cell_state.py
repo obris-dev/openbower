@@ -30,13 +30,14 @@ class ListCellState(AccountScopedModel):
     that count every four seconds, so the scan is the wrong side of the
     trade: one narrow row per answered cell buys it back.
 
-    PENDING is deliberately absent. A queued NodeRun on a live fill IS
-    a pending cell, which is what lets admission write nothing to the
-    sheet and leaves a stopped fill with nothing to sweep.
+    PENDING is deliberately absent. An open run of the cell's node, from
+    whichever lane, IS a pending cell, which is what lets admission
+    write nothing to the sheet and leaves a stopped fill with nothing to
+    sweep.
 
-    A settled blank is history, not a gate: a refill targets every
-    blank in its columns, and the user's click is the consent to
-    re-spend on one."""
+    A record is also what makes a cell ATTEMPTED: whatever state it
+    holds, filled, the model's verdict, or an infrastructure failure,
+    no fill re-asks the row (re-asking is the user's gesture)."""
 
     list_id = models.CharField(_("list id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
@@ -65,8 +66,8 @@ class ListCellState(AccountScopedModel):
         indexes = [
             # THE poll's index: filled and attempted per column come off
             # ONE grouped read of this, with no sheet scan anywhere.
-            # Also refill targeting (settled under a config) and
-            # selective refill (re-run everything that failed with X).
+            # Also a fill's targeting (attempted in the judged columns)
+            # and a selective rerun (everything that failed with X).
             models.Index(fields=["list_id", "column_key", "state"], name="cell_state_column_idx"),
             # Sheet-wide by state ("show me every unverified cell"). A
             # distinct index because the one above leads with

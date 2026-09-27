@@ -19,7 +19,15 @@ import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { ColumnHeader, ColumnNameField, useColumnSensors } from "./column-header";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
-import { AiCellState, DegradedToolMark, FillTrackerCell, isDegradedFill, type LiveRun, type SearchProviderChoice } from "./fill";
+import {
+  AiCellState,
+  DegradedToolMark,
+  FillTrackerCell,
+  isDegradedFill,
+  startsFill,
+  type LiveRun,
+  type SearchProviderChoice,
+} from "./fill";
 import { WebhookCellState } from "./send-webhook";
 import type { ColumnOutcome } from "./use-columns";
 
@@ -38,8 +46,11 @@ export type SheetFills = {
   // loading cells hold still instead of claiming progress.
   pollTrouble: boolean;
   rowCount: number;
+  // The nodes a fill may start at (the sheet's ListDetail entry actions): a column
+  // behind a barrier offers no fill of its own.
+  entryActionIds: string[];
   onStop: (runId: string) => Promise<string | null>;
-  onRefill: (columnKey: string, opts?: { maxRowCount?: number; resumeId?: string }) => Promise<string | null>;
+  onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
 };
 
 function Cell({ column, value }: { column: ListColumn; value: string }) {
@@ -206,8 +217,9 @@ export function SheetTable({
                     pollTrouble={tracker.pollTrouble}
                     runs={tracker.runs}
                     rowCount={tracker.rowCount}
+                    startsFill={startsFill(column, tracker.entryActionIds)}
                     onStop={tracker.onStop}
-                    onRefill={tracker.onRefill}
+                    onFill={tracker.onFill}
                   />
                 )}
               </td>

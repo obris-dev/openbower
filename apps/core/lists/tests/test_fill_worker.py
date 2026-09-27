@@ -35,6 +35,7 @@ from agents.tools.registry import UnknownTool
 from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
+from openbower_schema.lists import AiColumn
 
 from ..constants import (
     AGENT_MISSING_MESSAGE,
@@ -45,12 +46,13 @@ from ..constants import (
     StoredCellState,
 )
 from ..models import List, ListCellState, ListRow, NodeRun
+from ..operations.append_rows import AppendRowsOperation
 from ..operations.consume_node_runs import handle_node_run
 from ..operations.provision import FillProvisionOperation
 from ..services.fill_admission import FillAdmissionService
 from ..services.fills import FillService, page_progress
 from ..services.lists import ListService
-from .fill_helpers import consent_of, fill_status, tick_fill, type_cells
+from .fill_helpers import consent_of, fill_status, start_fill, tick_fill, type_cells
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -150,11 +152,7 @@ class ManualFillTestCase(TransactionTestCase):
         )
         self.lists.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
         with patch("lists.services.runnable.model_for"):
-            self.fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(self.sheet.id),
-                config=quick_config(),
-                confirmed_row_count=2,
-            )
+            _, self.fill = start_fill(str(self.sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
         self.fill.refresh_from_db()
 
@@ -265,7 +263,7 @@ class ManualFillTestCase(TransactionTestCase):
     def test_exhausted_retries_land_a_diagnosed_terminal_blank(self) -> None:
         # One row burning every attempt is TERMINAL: the give-up at the
         # cap lands the last park's cause (TRANSIENT), so the cell reads
-        # transient and the counters reach the consented count.
+        # transient and the counters reach the target row count.
         FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
         with patch("lists.services.runnable.model_for"):
             solo = self.lists.create(
@@ -275,9 +273,7 @@ class ManualFillTestCase(TransactionTestCase):
                 origin="manual",
             )
             self.lists.add_rows(solo, [{"company": "acme.com"}])
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(solo.id), config=quick_config(), confirmed_row_count=1
-            )
+            _, fill = start_fill(str(solo.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
         self.run_fill(throttling_model(), fill=fill, passes=NODE_RUN_ATTEMPTS + 1)
         self.assertEqual(self.status(fill), "complete")
@@ -411,6 +407,39 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(statuses[str(gone.id)], NodeRunStatus.ROW_MISSING)
         self.assertEqual(set(statuses.values()), {NodeRunStatus.ROW_MISSING, NodeRunStatus.DONE})
         self.assertFalse(ListCellState.objects.filter(row_id=str(gone.id)).exists())
+
+    def test_no_lane_writes_a_column_no_output_backs(self) -> None:
+        # The one state the output lock's courtesy guard lets through (a
+        # save racing the create): the node holds a column no current
+        # output backs. Neither lane writes it, and the fill's consent
+        # does not name it: a run has nothing to say for that column,
+        # and a diagnosis it never produced must not land there. FAILS
+        # if the live lane reads the node's columns unfiltered (an
+        # arrival would record a false verdict on it) or if the fill's
+        # consent names it.
+        self.fill.refresh_from_db()
+        self.sheet.refresh_from_db()
+        node_id = next(column.node_id for column in self.sheet.columns if column.kind == "ai")
+        unbacked = AiColumn(key="ghost", label="Ghost", type="text", node_id=node_id)
+        self.sheet.columns = [*self.sheet.columns, unbacked]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        # The live lane: an arriving row, run through the consumer.
+        report = AppendRowsOperation(account_id=ACCOUNT, target_list=self.sheet, rows=[{"company": "late.io"}]).run()
+        (arrived,) = report.created
+        (run,) = list(NodeRun.objects.filter(row_id=str(arrived.id), fill_run_id=None))
+        with _patches(answering_model(lambda prompt: "found")):
+            handle_node_run(str(run.id), WORKER)
+        arrived.refresh_from_db()
+        self.assertEqual(arrived.data.get("answer"), "found")
+        self.assertNotIn("ghost", arrived.data)
+        self.assertFalse(ListCellState.objects.filter(row_id=str(arrived.id), column_key="ghost").exists())
+        # The fill lane: a new fill's consent names the backed column only.
+        FillService(account_id=ACCOUNT).cancel(str(self.fill.id))
+        with patch("lists.services.runnable.model_for"):
+            again = FillAdmissionService(account_id=ACCOUNT, user_id=USER).fill_column(
+                list_id=str(self.sheet.id), column_key="answer"
+            )
+        self.assertEqual(consent_of(str(again.id)).column_keys, ["answer"])
 
     def test_a_purged_list_cancels_the_fill(self) -> None:
         ListRow.objects.filter(list_id=str(self.sheet.id)).delete()

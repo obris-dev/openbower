@@ -21,7 +21,7 @@ urlpatterns = [
     ),
     api_path("<str:id>/column-order", views.ColumnOrderView.as_view(), name="lists_columns_order"),
     api_path("<str:id>/columns/<str:key>", views.ColumnDetailView.as_view(), name="lists_column_detail"),
-    api_path("<str:id>/columns/<str:key>/refill", views.ColumnRefillView.as_view(), name="lists_column_refill"),
+    api_path("<str:id>/columns/<str:key>/fill", views.ColumnFillView.as_view(), name="lists_column_fill"),
     api_path("<str:id>/columns/<str:key>/prompt", views.ColumnPromptView.as_view(), name="lists_column_prompt"),
     api_path(
         "<str:id>/columns/<str:key>/webhook",

@@ -3,10 +3,17 @@ scoped; cross-tenant access fails as not-found)."""
 
 from __future__ import annotations
 
-from openbower_schema.agents import AgentConfig
+from collections.abc import Sequence
+from functools import cached_property
+from typing import TYPE_CHECKING
 
-from ..constants import MAX_AGENTS
+from openbower_schema.agents import AgentConfig, AgentOutput
+
+from ..constants import MAX_AGENTS, AgentErrorCode
 from ..models import Agent
+
+if TYPE_CHECKING:
+    from lists.services.workflows import AgentColumnUse, WorkflowService
 
 
 class AgentsFull(Exception):
@@ -18,6 +25,29 @@ class AgentNotFound(Exception):
     """Missing OR foreign agent (cross-tenant reads as not-found)."""
 
 
+class AgentOutputsInUse(Exception):
+    """The save changes the output set (a key or a type added, removed,
+    or changed) of an agent whose columns are on a sheet: those columns
+    are the outputs' shape, fixed while they exist."""
+
+    code = AgentErrorCode.OUTPUTS_IN_USE
+
+    def __init__(self, uses: list[AgentColumnUse]) -> None:
+        self.uses = uses
+        sheets = ", ".join(use.label for use in uses)
+        super().__init__(
+            f"This agent fills columns on {sheets}. Its outputs can't change while those columns exist: "
+            "create a new agent with the outputs you need, or delete those columns first."
+        )
+
+
+def _output_shape(outputs: Sequence[AgentOutput]) -> set[tuple[str, str]]:
+    """The output set as its columns see it: each output's (key, type).
+    Order and labels are not part of it (a column is ordered and labeled
+    on its sheet)."""
+    return {(output.key, output.type) for output in outputs}
+
+
 class AgentService:
     """Account-scoped: every method reads or writes within one account.
     The owner-stamping ops (create, create_ephemeral) take the owner as an
@@ -26,6 +56,14 @@ class AgentService:
 
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
+
+    @cached_property
+    def workflows(self) -> WorkflowService:
+        # lists imports this module at load, so the edge back is deferred
+        # to first use; a module-level import here is a startup cycle.
+        from lists.services.workflows import WorkflowService
+
+        return WorkflowService(account_id=self.account_id)
 
     def _roster_count(self) -> int:
         return Agent.objects.filter(account_id=self.account_id, ephemeral=False).count()
@@ -102,7 +140,16 @@ class AgentService:
 
     def update(self, agent: Agent, *, label: str | None = None, config: AgentConfig | None = None) -> Agent:
         """Label and/or the whole config (per-field config patching
-        earns nothing over resending it)."""
+        earns nothing over resending it). Refuses a config that changes
+        the output set while the agent's columns are on a sheet
+        (AgentOutputsInUse); the prompt, model, tools, and output labels
+        stay editable.
+
+        A courtesy guard, not a ledger: a column create racing this save
+        can still bind the old outputs, whose damage is columns that stop
+        filling, so no lock is taken."""
+        if config is not None:
+            self._refuse_output_change(agent, config)
         updates: list[str] = []
         if label is not None:
             agent.label = label
@@ -118,6 +165,14 @@ class AgentService:
         if updates:
             agent.save(update_fields=[*updates, "updated_at"])
         return agent
+
+    def _refuse_output_change(self, agent: Agent, config: AgentConfig) -> None:
+        stored = agent.config()
+        if _output_shape(stored.outputs) == _output_shape(config.outputs):
+            return
+        uses = self.workflows.agent_column_uses(str(agent.id))
+        if uses:
+            raise AgentOutputsInUse(uses)
 
     def promote(self, agent: Agent, *, label: str) -> Agent:
         """Lift an ephemeral row onto the roster: flip the flag and name

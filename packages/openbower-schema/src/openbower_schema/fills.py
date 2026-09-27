@@ -1,9 +1,10 @@
 """Wire contract for column fills (the AI-columns domain).
 
-A fill RUN is a durable background walk of a sheet: one agent run
-per row, cells written where blank, every blank carrying its cause. The
-queue is materialized by the walk admission queues (one task per row in
-the consent range, landing within seconds of the click), and a cell
+A fill RUN is a durable background walk of a sheet: one agent run per
+row the agent has not yet attempted, every blank carrying its cause.
+The queue is materialized by the fill job's first slices (one run per
+row owed work in the consent range, queued within seconds of the
+click), and a cell
 reads PENDING because a queued task on a live fill says so, so the wire
 speaks fill run envelopes, per-cell states, and nothing about workers. Copy a user reads says "fill", the feature's own
 word; "run" names the record in type names and the page's `runs`
@@ -24,8 +25,9 @@ FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"
 
 # The SETTLED partition of WireCellState: the model's own verdicts (a
 # quiet word on the sheet rather than a warning), as opposed to
-# infrastructure's causes. Every blank re-runs on the next fill; the
-# partition is how the sheet SPEAKS, not what a refill targets. One
+# infrastructure's causes. No attempted cell, verdict or failure, is
+# re-run by a fill: the partition is how the sheet SPEAKS, not what a
+# fill targets (re-asking is the user's explicit gesture). One
 # server-side reader branches on it too: a webhook digest treats FILLED
 # plus this partition as a completed row (digest_payload.DONE_CELL_STATES),
 # so a member added here changes when webhooks fire. A wire fact
@@ -155,11 +157,11 @@ class FillRunWire(BaseModel):
     status: FillStatusWire
     column_keys: list[str] = Field(description="The columns this run owns, frozen at consent.")
     counters: FillCounters
-    confirmed_row_count: int = Field(
-        description="The progress denominator: the row count the user consented to when the run "
-        "opened, settled to the rows the walk actually targeted once `targeted_at` is set (only "
-        "ever downward: a row the user did not consent to is never targeted). The consent echo is "
-        "a REQUEST field of the same name; the run covers rows up to it and never past it."
+    target_row_count: int = Field(
+        description="The progress denominator: the sheet's row count at the click (or the fill's "
+        "Fill next N, when smaller), settled to the rows the walk actually targeted once "
+        "`targeted_at` is set (only ever downward: a row added after the click is never "
+        "targeted)."
     )
     targeted_at: str | None = Field(
         default=None,
@@ -188,9 +190,11 @@ class ColumnFillSummary(BaseModel):
     instead of reconstructing (a client sum over one PAGE of fills
     silently undercounts the moment history outgrows the page).
 
-    Deliberately NOT carrying how many rows a refill would target: that
-    is planning-grade math on a four-second progress poll. It is asked
-    once, on the consent path, where it has to be exact anyway."""
+    Deliberately NOT carrying how many rows a new fill would target: that
+    is planning-grade math on a four-second progress poll, and the fill
+    request only probes for the first owed row. A fill's own count is
+    known once it has targeted its rows (FillRunWire.target_row_count
+    after `targeted_at`)."""
 
     column_key: str
     current_fill_id: str = Field(

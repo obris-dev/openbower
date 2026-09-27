@@ -460,13 +460,21 @@ class ListService:
                 }
                 changed: list[ListRow] = []
                 now = timezone.now()
-                for row_id, cells in pending.items():
+                # EVERY held row, not only those with a value to land: a
+                # write with no value over a cell that holds one found it
+                # occupied as surely as an answer write-if-blank refused,
+                # and its record must say so rather than take the run's
+                # cause.
+                for row_id, writes in by_row.items():
+                    if row_id in gone:
+                        continue
                     row = rows[row_id]
                     # row.data is the row's stored cell values, keyed by
                     # column key. Work on a mutable copy: this call's writes
                     # merge in, keys outside it carry through, and the whole
                     # dict is persisted once.
                     row_cells = dict(row.data)
+                    cells = pending.get(row_id, {})
                     # Write-if-blank (a DB-state decision, not a shape one):
                     # only a cell whose column is currently blank is a
                     # candidate to write, so a user's value is never
@@ -481,14 +489,17 @@ class ListService:
                     written: list[str] = []
                     occupied: list[str] = []
                     mismatched: list[CellMismatch] = []
-                    for key in cells:  # column order for the verdicts
-                        if key not in candidates:
-                            occupied.append(key)
-                        elif key in why_by_key:
+                    for write in writes:  # column order for the verdicts
+                        key = write.key
+                        if key not in live_columns:
+                            continue
+                        if key in candidates and key in why_by_key:
                             mismatched.append(CellMismatch(key=key, why=why_by_key[key]))
-                        else:
+                        elif key in candidates:
                             row_cells[key] = stored[key]
                             written.append(key)
+                        elif str(row_cells.get(key, "") or "").strip():
+                            occupied.append(key)
                     if written:
                         row.data = row_cells
                         row.updated_at = now
@@ -579,11 +590,11 @@ class ListService:
             row.save(update_fields=["rank", "updated_at"])
             if len(row.rank) > RANK_REBALANCE_LENGTH:
                 # The kind imports this service; the edge back is local.
-                from ..jobs.rerank import Rerank
+                from ..jobs.rerank import RerankJob
 
                 jobs = JobService(account_id=self.account_id)
-                if not jobs.has_open(Rerank, target_id=str(locked.id)):
-                    jobs.enqueue_system(Rerank(list_id=str(locked.id)), target_id=str(locked.id))
+                if not jobs.has_open(RerankJob, target_id=str(locked.id)):
+                    jobs.enqueue_system(RerankJob(list_id=str(locked.id)), target_id=str(locked.id))
         return row
 
     def respace(self, list_id: str) -> None:
@@ -593,7 +604,7 @@ class ListService:
         sheet holds at most MAX_LIST_ROWS rows, so the lock is held for
         seconds at the worst. Refused (FillsOpen) while the list has an
         open fill, checked under the lock: a walk's cursor holds a key
-        of the old spacing. A fill admitted after that check reads its
+        of the old spacing. A fill started after that check reads its
         first page no earlier than this transaction, and its cursor
         cannot straddle the commit unless that page is read during the
         seconds the lock is held; the walk takes no lock by design.
@@ -652,7 +663,7 @@ class ListService:
                 return
             fills = fill_progress.fill_jobs().filter(target_id=str(target.id))
             # ROWS FIRST, then their truth, then the queue, because that
-            # is the order a landing takes them: write_cells locks the
+            # is the order a landing takes them: land_rows locks the
             # ListRow and writes its ListCellState records, then the
             # task settle writes the NodeRun, all in one transaction.
             # Deleting in another order is an ABBA deadlock against any

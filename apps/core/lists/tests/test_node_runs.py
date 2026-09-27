@@ -25,17 +25,18 @@ from django.utils import timezone
 from jobs.services import JobRunner
 from openbower_schema.lists import AiColumn
 
-from ..constants import NodeRunStatus
+from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..ingest.consumer import handle_ingest_event
 from ..ingest.events import IngestEvent
 from ..models import ListRow, NodeRun
 from ..nodes.registry import COLUMN_AGENT, WEBHOOK
 from ..operations.provision import AutofillProvisionOperation
-from ..services.fill_admission import FillAdmissionService
+from ..services import cell_truth
 from ..services.lists import ListService
 from ..services.node_runs import PROCESSING_STALE_SECONDS, NodeRunFlow
 from ..services.workflow_reactions import WorkflowReactions
 from ..services.workflows import WorkflowService
+from .fill_helpers import start_fill
 from .test_fill_worker import quick_config
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
@@ -67,9 +68,7 @@ class AutofillHarness(TransactionTestCase):
         )
         self.lists.add_rows(sheet, [{"company": f"seed{n}.com"} for n in range(rows)])
         with patch("lists.services.runnable.model_for"):
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(sheet.id), config=quick_config(), confirmed_row_count=rows
-            )
+            _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
         sheet.refresh_from_db()
         node_id = next(column.node_id for column in sheet.columns if isinstance(column, AiColumn))
@@ -144,12 +143,13 @@ class EnqueueTests(AutofillHarness):
         self.assertEqual(self._new_row_ids(sheet, before), set())
         self.assertFalse(self._null_run_tasks().exists())
 
-    def test_a_multi_column_agent_skips_only_when_every_column_is_filled(self) -> None:
-        # One node (an agent) owns TWO columns. A row that fills BOTH is skipped (no
-        # work left); a row that leaves one blank STILL enqueues. This pins
-        # the all() semantics a single-column fixture cannot (there
-        # all([x]) == any([x]) == x). A "0" counts as filled (it strips
-        # truthy), never blank.
+    def test_a_multi_column_agent_skips_a_row_any_of_its_columns_was_attempted_on(self) -> None:
+        # One node (an agent) owns TWO columns and answers both in one
+        # run. A row attempted on both is done, and so is a row attempted
+        # on one: that run already happened, and re-asking is the user's
+        # gesture. Only a row neither column was attempted on is owed.
+        # FAILS if the rule needs EVERY column settled, which re-runs a
+        # row for its one blank sibling.
         sheet = self.lists.create(
             owner_id=USER,
             label="Multi",
@@ -164,18 +164,27 @@ class EnqueueTests(AutofillHarness):
             {"key": "b", "label": "B", "type": "text", "kind": "ai", "node_id": node_id},
         ]
         sheet.save(update_fields=["columns", "updated_at"])
-        full, partial = self.lists.add_rows(sheet, [{"company": "full.co"}, {"company": "partial.co"}])
-        # The values a landing wrote: a recorded column's values never
-        # arrive with a row. Both of the node's columns valued ("0"
-        # counts) skips; b blank still owes the node.
-        for row, cells in ((full, {"a": "0", "b": "y"}), (partial, {"a": "x"})):
-            ListRow.objects.filter(id=str(row.id)).update(data={**row.data, **cells})
-            row.refresh_from_db()
-        sheet.refresh_from_db()
-        created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [full, partial])
-        self.assertEqual(created, 1)  # only the partial row's node has work
-        self.assertEqual(self._null_run_tasks().filter(row_id=str(partial.id)).count(), 1)
-        self.assertEqual(self._null_run_tasks().filter(row_id=str(full.id)).count(), 0)
+        both, one, neither = self.lists.add_rows(
+            sheet, [{"company": "both.co"}, {"company": "one.co"}, {"company": "neither.co"}]
+        )
+        attempted = (
+            (both, {"a": StoredCellState.FILLED, "b": StoredCellState.NO_ANSWER}),
+            (one, {"a": StoredCellState.FILLED}),
+        )
+        for row, states in attempted:
+            cell_truth.write(
+                account_id=ACCOUNT,
+                list_id=str(sheet.id),
+                row_id=str(row.id),
+                fill_run_id=None,
+                states=states,
+                tools={},
+                source=CellSource.NODE,
+            )
+        created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [both, one, neither])
+        self.assertEqual(created, 1)
+        self.assertEqual(self._null_run_tasks().filter(row_id=str(neither.id)).count(), 1)
+        self.assertFalse(self._null_run_tasks().filter(row_id__in=[str(both.id), str(one.id)]).exists())
 
     def test_a_push_to_a_two_node_sheet_enqueues_one_task_per_node_for_the_row(self) -> None:
         # Two distinct nodes on one sheet: the one shape where a row owes

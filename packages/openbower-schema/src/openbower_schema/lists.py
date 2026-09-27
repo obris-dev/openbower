@@ -192,6 +192,22 @@ class ListSummary(BaseModel):
     updated_at: str
 
 
+class ListDetail(ListSummary):
+    """One list as its SHEET holds it: the summary plus what only the
+    open sheet needs from its workflow. The detail door (GET and PATCH)
+    and every write to the columns array (add, AI create, webhook
+    create, rename, reorder, delete) answer with this; a column's own
+    config doors (prompt, webhook config) answer their config, and the
+    index, list create, CSV import, and a saved discover run stay on
+    the summary and read no workflow."""
+
+    entry_action_ids: list[str] = Field(
+        description="The sheet's entry actions: the workflow nodes an arriving row starts, each the "
+        "action right behind its path's entry marker. A column whose node_id is here is one a "
+        "fill may start at. Derived from the sheet's paths on every read, never stored.",
+    )
+
+
 # The per-cell state the rows page ships. `pending` is the ONE
 # non-terminal value (it is the queue state, and drives the shimmer);
 # the rest are terminal. `filled` travels ONLY when the run that
@@ -206,7 +222,7 @@ WireCellState = Literal[
     "no_evidence",
     # The model spent its request/tool budget without producing an
     # answer: the model's own verdict, so the sheet shows a quiet word
-    # rather than a warning (every blank re-runs on the next fill).
+    # rather than a warning.
     "no_answer",
     # An answer arrived but failed provenance verification (its
     # citations never confirmed it for THIS row): the model's own
@@ -218,9 +234,10 @@ WireCellState = Literal[
     "transient",
     # A tool's door did not serve this row. The SHEET keys on the base
     # code only (which tool, and the tool's own code, ride `tools`):
-    # not configured is written at once and re-runs on the next fill
-    # once set up; unavailable (rate limited, unreachable, or erroring past
-    # the row's retries) parks first and lands after the attempt cap.
+    # not configured is written at once; unavailable (rate limited,
+    # unreachable, or erroring past the row's retries) parks first and
+    # lands after the attempt cap. Either way the row was attempted, and
+    # no fill re-asks it.
     "tool_not_configured",
     "tool_unavailable",
     # A Send webhook column's cell (the column holds no value): the

@@ -24,16 +24,15 @@ from jobs.models import Job
 from jobs.services import JobRunner, TickReport
 from lists.cells import LandingContext, RowLanding, WebhookWrite
 from lists.constants import CellSource, NodeRunStatus, StoredCellState
-from lists.jobs.enqueue_runs import EnqueueRuns
+from lists.jobs.column_backfill import ColumnBackfillJob
 from lists.models import Node, NodeRun
 from lists.nodes.entry import Entry
 from lists.nodes.registry import COLUMN_AGENT, WEBHOOK
-from lists.processors import UnknownProcessor, processor_for
+from lists.processors import FillMode, FillScope, UnknownProcessor, processor_for
 from lists.processors.column_agent import AIColumnProcessor
 from lists.processors.webhook import WebhookProcessor, next_window
 from lists.services import cell_truth
 from lists.services.columns import ColumnService
-from lists.services.fill_admission import FillAdmissionService
 from lists.services.fills import FillService
 from lists.services.lists import ListService
 from lists.services.node_runs import NodeRunFlow
@@ -45,7 +44,7 @@ from openbower_schema.fills import CellRunResult
 from openbower_schema.lists import ListRowsPage
 from webhooks.services import WebhookDestinationService
 
-from .fill_helpers import settle
+from .fill_helpers import settle, start_fill
 from .test_fill_worker import quick_config
 
 AGENT = "01AGT" + "A" * 21
@@ -117,7 +116,7 @@ class _SheetHarness(TestCase):
 
     @staticmethod
     def _run_jobs(*, now: datetime = NOW) -> TickReport:
-        with patch("lists.jobs.enqueue_runs.timezone.now", return_value=now):
+        with patch("lists.jobs.column_backfill.timezone.now", return_value=now):
             return JobRunner(worker_id="test:1").tick()
 
     def _land(self, node: Node, cells: dict[str, str], *, now: datetime = NOW, keys: tuple[str, ...] = ()) -> None:
@@ -253,19 +252,36 @@ class ProcessorTests(_SheetHarness):
     def test_enqueue_runs_births_a_deferred_run_at_the_window_for_a_complete_row_only(self):
         node_id = self._add_webhook_column(["country"])
         processor = self._processor(node_id)
+        # The occasion is irrelevant to this kind: every mode judges by
+        # the barrier alone, so the three are cycled through the calls
+        # and the answers must not depend on which one asked. FAILS if
+        # the webhook grows a rule for one occasion.
+        # The queuing call below runs under the structural mode (the one
+        # an agent refuses); the per-mode block at the end queues under
+        # every mode, which is what holds a mode rule to red.
+        modes = [FillScope(mode=mode) for mode in (FillMode.MANUAL, FillMode.AUTOFILL, FillMode.BACKFILL)]
         # Never attempted: nothing owed. A retryable state: not complete.
-        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], scope=modes[0], now=NOW), 0)
         self._settle(self.row, {"country": StoredCellState.TRANSIENT})
-        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], scope=modes[1], now=NOW), 0)
         self._settle(self.row, {"country": StoredCellState.FILLED})
-        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 1)
+        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], scope=modes[2], now=NOW), 1)
         (run,) = list(self._webhook_runs())
         self.assertEqual(
             (run.status, run.kind, run.node_id, run.row_id), ("deferred", WEBHOOK, node_id, str(self.row.id))
         )
         self.assertEqual((run.not_before, run.rank), (next_window(NOW, INTERVAL), self.row.rank))
-        # Offered again for the same completion: covered, nothing queued.
-        self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], now=NOW), 0)
+        # Offered again for the same completion, under every mode:
+        # covered, nothing queued.
+        for scope in modes:
+            self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], scope=scope, now=NOW), 0)
+        # And every mode QUEUES on a fresh completion, one row each, so
+        # a rule returning nothing under any one mode goes red.
+        fresh = self.lists.add_rows(self.sheet, [{"company": f"m{n}.io"} for n in range(len(modes))])
+        for row, scope in zip(fresh, modes, strict=True):
+            self._settle(row, {"country": StoredCellState.FILLED})
+            with self.subTest(mode=scope.mode):
+                self.assertEqual(processor.enqueue_runs(self.sheet, [row], scope=scope, now=NOW), 1)
 
     def test_wait_ahead_of_is_the_paths_first_node_and_refuses_a_node_without_one(self):
         node_id = self._add_webhook_column(["country"])
@@ -306,13 +322,20 @@ class AdvanceTests(_SheetHarness):
         )
         return nodes
 
+    def _bind(self, node: Node, *, key: str, kind: str) -> None:
+        """Give a fixture node the column a real sheet would carry for
+        it: a node with no column fills nothing and is offered no rows."""
+        column = {"key": key, "label": key.title(), "type": "text", "kind": kind, "node_id": str(node.id)}
+        self.sheet.columns = [*self.sheet.columns, column]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+
     def _offers_from(self, node: Node, *, cells: dict[str, str], keys: tuple[str, ...] = ()) -> list[str]:
         """The kinds the landing offered, through the processors' factory."""
         offered: list[str] = []
 
-        def spy(*, account_id, node, scope=None):
+        def spy(*, account_id, node):
             offered.append(node.kind)
-            return processor_for(account_id=account_id, node=node, scope=scope)
+            return processor_for(account_id=account_id, node=node)
 
         with patch("lists.services.workflow_reactions.processor_for", side_effect=spy):
             self._land(node, cells, keys=keys)
@@ -336,9 +359,9 @@ class AdvanceTests(_SheetHarness):
         arrived = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
         offered: list[tuple[str, str]] = []
 
-        def spy(*, account_id, node, scope=None):
+        def spy(*, account_id, node):
             offered.append((node.kind, str(node.id)))
-            return processor_for(account_id=account_id, node=node, scope=scope)
+            return processor_for(account_id=account_id, node=node)
 
         with patch("lists.services.workflow_reactions.processor_for", side_effect=spy):
             WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, arrived)
@@ -395,9 +418,9 @@ class AdvanceTests(_SheetHarness):
         arrived = self.lists.add_rows(self.sheet, [{"company": "new.io"}])
         offered: list[str] = []
 
-        def spy(*, account_id, node, scope=None):
+        def spy(*, account_id, node):
             offered.append(node.kind)
-            return processor_for(account_id=account_id, node=node, scope=scope)
+            return processor_for(account_id=account_id, node=node)
 
         with (
             self.assertLogs("lists.services.workflow_reactions", level="ERROR"),
@@ -417,7 +440,8 @@ class AdvanceTests(_SheetHarness):
         # whole path again, or narrows to one kind.
         from lists.nodes.column_agent import ColumnAgent
 
-        self._chained_path()
+        _wait, chained, _webhook = self._chained_path()
+        self._bind(chained, key="chained", kind="ai")
         self.assertEqual(self._offers_from(self.first, cells={"answer": "yes", "score": "1"}), [ColumnAgent.KIND])
 
     def test_rule_two_an_uncleared_barrier_offers_nothing(self):
@@ -433,12 +457,13 @@ class AdvanceTests(_SheetHarness):
         # the next rank key (the webhook node) is offered, and no wait
         # is consulted. FAILS if the advance only ever walks through
         # waits.
-        _wait, chained, _webhook = self._chained_path()
+        _wait, chained, webhook = self._chained_path()
         self.sheet.columns = [
             *self.sheet.columns,
             {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
+        self._bind(webhook, key="crm_sync", kind="webhook")
         self.assertEqual(self._offers_from(chained, cells={"chained": "x"}), [WEBHOOK])
 
     def test_a_cleared_barrier_starts_the_agent_standing_behind_it(self):
@@ -513,9 +538,9 @@ class AdvanceTests(_SheetHarness):
         offers: list[list[str]] = []
         real = WebhookProcessor.enqueue_runs
 
-        def spy(processor, target_list, rows, *, now, limit=0):
+        def spy(processor, target_list, rows, *, scope, now, limit=0):
             offers.append([str(row.id) for row in rows])
-            return real(processor, target_list, rows, now=now, limit=limit)
+            return real(processor, target_list, rows, scope=scope, now=now, limit=limit)
 
         with patch.object(WebhookProcessor, "enqueue_runs", spy):
             WorkflowReactions(account_id=ACCOUNT).advance(
@@ -558,7 +583,7 @@ class AdvanceTests(_SheetHarness):
         self._add_webhook_column(["country", "answer"])
         self._land(self.first, {"answer": "yes"})
         self._land(self.second, {"country": "US"})
-        self._land(self.second, {"country": "US"})  # a refill re-landing the same row
+        self._land(self.second, {"country": "US"})  # a second fill re-landing the same row
         self.assertEqual(self._webhook_runs().count(), 1)
 
     def test_a_completion_after_a_settled_run_opens_a_new_one(self):
@@ -594,8 +619,8 @@ class AdvanceTests(_SheetHarness):
         self.assertEqual(self._webhook_runs().count(), 0)
 
     def test_a_fill_backed_landing_advances_too(self):
-        # The manual lane: a fill admitted the real way on a fresh sheet
-        # (admission mints the agent's node and its `answer` column),
+        # The manual lane: a fill started the real way on a fresh sheet
+        # (the create mints the agent's node and its `answer` column),
         # settled through the helper that restates land_row, completes
         # the row for a webhook column waiting on that column.
         sheet = self.lists.create(
@@ -606,9 +631,7 @@ class AdvanceTests(_SheetHarness):
         )
         (row,) = self.lists.add_rows(sheet, [{"company": "example.io"}])
         with patch("lists.services.runnable.model_for"):
-            fill = FillAdmissionService(account_id=ACCOUNT, user_id=USER).admit(
-                list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1
-            )
+            _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         self._run_jobs()
         WebhookColumnService(account_id=ACCOUNT, user_id=USER).add(
             str(sheet.id),
@@ -677,7 +700,7 @@ class BackfillTests(_BackfilledSheet):
             )
         node_id = next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
         (job,) = list(Job.objects.all())
-        self.assertEqual((job.kind, job.status, job.account_id), ("enqueue_runs", JobStatus.READY, ACCOUNT))
+        self.assertEqual((job.kind, job.status, job.account_id), ("column_backfill", JobStatus.READY, ACCOUNT))
         self.assertEqual(job.payload["list_id"], str(self.sheet.id))
         self.assertEqual(job.payload["node_id"], node_id)
         # The request inserted no run and read no cell state: the walk
@@ -705,7 +728,7 @@ class BackfillTests(_BackfilledSheet):
         # One row per page: three slices, each idempotent under the
         # open-run key. Rerunning the finished job's last cursor by hand
         # proves a reclaimed slice cannot double the runs.
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
+        with patch("lists.jobs.column_backfill.FILL_SCAN_CHUNK", 1):
             self._add_webhook_column(["country", "answer"])
         (job,) = list(Job.objects.all())
         self.assertEqual(
@@ -713,8 +736,8 @@ class BackfillTests(_BackfilledSheet):
             (JobStatus.DONE, {"after_id": str(self.third_row.id), "after_rank": self.third_row.rank}),
         )
         self.assertEqual(self._runs().count(), 2)
-        kind = EnqueueRuns.model_validate(job.payload)
-        with patch("lists.jobs.enqueue_runs.FILL_SCAN_CHUNK", 1):
+        kind = ColumnBackfillJob.model_validate(job.payload)
+        with patch("lists.jobs.column_backfill.FILL_SCAN_CHUNK", 1):
             cursor = kind.run(job, kind.Progress(after_id=""))
         self.assertEqual(cursor, kind.Progress(after_id=str(self.row.id), after_rank=self.row.rank))
         self.assertEqual(self._runs().count(), 2)
@@ -728,7 +751,7 @@ class BackfillTests(_BackfilledSheet):
         self.assertEqual(self._runs().count(), 2)
         self._runs().update(status=NodeRunStatus.DONE)
         (job,) = list(Job.objects.all())
-        kind = EnqueueRuns.model_validate(job.payload)
+        kind = ColumnBackfillJob.model_validate(job.payload)
         kind.run(job, kind.Progress(after_id=""))
         self.assertEqual(self._runs().count(), 2)
         # A LATER completion of the same row is new work: one new run.

@@ -24,7 +24,6 @@ from ..cells import Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..models import ListCellState, Node, NodeRun
 from ..nodes.registry import COLUMN_AGENT
-from ..processors import FillScope
 from ..processors.column_agent import AIColumnProcessor
 from ..services import fill_progress
 from ..services.fills import FillNotFound, FillService, page_progress
@@ -42,7 +41,7 @@ AGENT = "01AGENTAAAAAAAAAAAAAAAAAAA"
 
 
 def make_run(*, rows: int = 3, list_id: str = LIST, node_id: str = NODE) -> Job:
-    """A targeted fill job (its walk done) with its whole consented set
+    """A targeted fill job (its walk done) with its whole target set
     of tasks, born READY, so a lifecycle test starts from a fill that is
     polling its runs."""
     fill = open_fill_job(
@@ -52,7 +51,7 @@ def make_run(*, rows: int = 3, list_id: str = LIST, node_id: str = NODE) -> Job:
         node_id=node_id,
         agent_id=AGENT,
         column_keys=["answer"],
-        consented=rows,
+        target_row_count=rows,
     )
     now = timezone.now()
     for n, rank in enumerate(keys_between(None, None, rows)):
@@ -104,7 +103,7 @@ def land(fill: Job, task: NodeRun, *, worker: str = "test:1", state=None) -> boo
 
 
 def _land_claimed(fill: Job, claimed: NodeRun, run: CellRunResult, *, flow: NodeRunFlow) -> bool:
-    processor = AIColumnProcessor(account_id=ACCOUNT, node=Node(id=NODE, account_id=ACCOUNT), scope=FillScope())
+    processor = AIColumnProcessor(account_id=ACCOUNT, node=Node(id=NODE, account_id=ACCOUNT))
     writes = processor.on_run_landed(("answer",), run)
     lists = _SheetThatTakesEverything(account_id=ACCOUNT)
     try:

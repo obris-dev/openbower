@@ -17,12 +17,12 @@ import {
   fetchAgentCatalog,
   GENERIC_FAILURE,
   loginUrl,
-  postFillRefill,
+  postColumnFill,
   type ListColumn,
   type WebhookColumn,
   webRoutes,
   type RenderableListRowsPage,
-  type ListSummary,
+  type ListDetail,
   type WebhookColumnBody,
   type WebhookColumnPatchBody,
 } from "@bower/api";
@@ -31,7 +31,7 @@ import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { menuButtonId } from "./column-header";
-import { UseAiDrawer, type AiColumnPayload } from "./use-ai";
+import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
 import { downloadSheetCsv } from "./export";
@@ -53,7 +53,7 @@ import { useRows } from "./use-rows";
  * Three hooks own the three kinds of state (the summary and its
  * columns, the rows on screen, the fill attachment); this component
  * composes their reactions to each other and renders. */
-export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSummary; initialRows: RenderableListRowsPage }) {
+export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetail; initialRows: RenderableListRowsPage }) {
   const router = useRouter();
   const toast = useToast();
   const columns = useColumns(initialDetail);
@@ -211,35 +211,42 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
     return outcome;
   }
 
-  async function submitAiColumn(payload: AiColumnPayload): Promise<ColumnOutcome> {
-    const outcome = await columns.addAi(payload);
-    if (!outcome.ok) return outcome;
-    // The reconciles below are the SHEET's reactions; holding the
-    // drawer open through a second read would make the Save button
-    // claim work the server has already accepted. The poll loop's
-    // promise settles only when the fill ENDS, so the attach is
-    // fire-and-forget; the summary and the loaded rows are bounded
-    // reads, awaited.
+  // Two requests: the create, then the fill. A refused create keeps
+  // the drawer open on its refusal (the ask is what has to change).
+  // Once the columns exist the drawer's work is done, so it closes
+  // before the fill is asked for, and a refused fill is a toast on the
+  // sheet: the column stays, fillable from its tracker once the cause
+  // is fixed. A submission with no fill (a sheet with no rows) stops at
+  // the create; the new column's tracker still needs its summary read.
+  async function submitAiColumn({ body, fill: scope }: AiColumnSubmission): Promise<ColumnOutcome> {
+    const added = await columns.addAi(body);
+    if (!added.ok) return added;
     closeAddColumn();
-    void fill.refresh();
-    await columns.refreshDetail();
-    await refreshLoaded();
+    if (scope === null) {
+      void fill.refresh();
+      router.refresh();
+      return { ok: true };
+    }
+    const refusal = await fillColumn(added.key, { maxRowCount: scope.maxRowCount });
+    if (refusal) {
+      // The create gave the new columns their summaries; a refused fill
+      // re-attaches nothing, so read them here or the tracker holds its
+      // loading state until a reload.
+      void fill.refresh();
+      toast.error(refusal, "Fill not started");
+    }
     router.refresh();
-    return outcome;
+    return { ok: true };
   }
 
-  // Continue IS refill: a NEW run over the column's unanswered rows
-  // (all of them, the next `rows` when the scoped continue asked, or
-  // the stopped run's own remainder when resumeId names it, off the
-  // summary's current_fill_id). The COLUMN comes from the surface the
-  // user clicked: one run can map several columns, so deriving it
-  // from the run would refill a sibling. A refusal returns as the
-  // server's verbatim detail for the caller's error slot.
-  async function continueFill(columnKey: string, opts: { maxRowCount?: number; resumeId?: string } = {}): Promise<string | null> {
-    // An EMPTY resume id is a contract gap (the summary names no
-    // run), not a wider ask: refuse rather than widen the spend.
-    if (!columnKey || opts.resumeId === "") return GENERIC_FAILURE;
-    const res = await postFillRefill(detail.id, columnKey, { max_row_count: opts.maxRowCount, resumeFill: opts.resumeId });
+  // A fill is a NEW run over the rows its agent never attempted (all of
+  // them, or the next `rows` when the scoped ask named a count). The
+  // COLUMN comes from the surface the user clicked and names the agent,
+  // whose columns fill together. A refusal returns as the server's
+  // verbatim detail for the caller to render.
+  async function fillColumn(columnKey: string, opts: { maxRowCount?: number } = {}): Promise<string | null> {
+    if (!columnKey) return GENERIC_FAILURE;
+    const res = await postColumnFill(detail.id, columnKey, { max_row_count: opts.maxRowCount });
     if (redirectIfUnauthenticated(res)) return null;
     if (res.status !== "ok") return res.message;
     // The new run and its pending outcomes exist only server-side:
@@ -409,8 +416,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListSumma
             summaries: fill.summaries,
             pollTrouble: fill.pollTrouble,
             rowCount: detail.row_count,
+            entryActionIds: detail.entry_action_ids,
             onStop: fill.stop,
-            onRefill: continueFill,
+            onFill: fillColumn,
           }}
           onAddColumn={openAddColumn}
           onReorder={columns.reorder}

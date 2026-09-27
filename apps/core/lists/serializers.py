@@ -16,6 +16,7 @@ from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.lists import CellStateWire, IngestColumn, WorkflowColumn
 from openbower_schema.lists import FolderSummary as WireFolderSummary
 from openbower_schema.lists import IngestSchema as WireIngestSchema
+from openbower_schema.lists import ListDetail as WireListDetail
 from openbower_schema.lists import ListRowWire as WireListRow
 from openbower_schema.lists import ListSummary as WireListSummary
 from openbower_schema.runs import NodeRunWire as WireNodeRun
@@ -34,6 +35,7 @@ from .constants import (
     ColumnType,
 )
 from .models import Folder, List, ListRow, NodeRun
+from .services.workflows import WorkflowService
 
 if TYPE_CHECKING:
     from .services.fills import FillReadout
@@ -115,17 +117,12 @@ class AiColumnRequest(serializers.Serializer):
     (validated through the agents app's shared serializer, never
     retyped), the other tab sends `agent_id`; exactly one of the two.
     No column label rides the request: the OUTPUTS are the columns
-    (each output's key and label name what its cells land under).
-    `confirmed_row_count` echoes the count the user was shown: the
-    fill covers at most that many rows, top down (rows appended after
-    the click are outside the consent set either way)."""
+    (each output's key and label name what its cells land under). No
+    scope either: this creates the columns, and filling them is the
+    column's own request (POST .../columns/{key}/fill)."""
 
     config = AgentConfigRequest(required=False)
     agent_id = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
-    confirmed_row_count = serializers.IntegerField(min_value=0)
-    # Scope: fill at most this many rows, the FIRST N eligible in sheet
-    # order (0 = all, the absent default; a sent value must be positive).
-    max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if (attrs.get("config") is not None) == bool(attrs.get("agent_id")):
@@ -147,22 +144,12 @@ class PreviewRunRequest(serializers.Serializer):
     row = serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False))
 
 
-class ColumnRefillRequest(serializers.Serializer):
-    """POST /v1/lists/{id}/columns/{key}/refill: the column names
+class ColumnFillRequest(serializers.Serializer):
+    """POST /v1/lists/{id}/columns/{key}/fill: the column names
     everything except the optional scope, so the body carries at most
-    `max_row_count` (the first N eligible unanswered rows; absent = all)."""
-
-    # Continue's leg: bound the new fill to THIS stopped fill's own
-    # unresolved rows (resume, never widen).
-    resume_fill = serializers.CharField(required=False, allow_blank=True, default="", max_length=26)
+    `max_row_count` (the first N rows owed a run; absent = all)."""
 
     max_row_count = serializers.IntegerField(required=False, default=0, min_value=1, max_value=MAX_LIST_ROWS)
-
-    # The consent echo, as the admit lane has. OPTIONAL because resume
-    # spends what a previous consent already bought and the widening
-    # gestures are the ones that need a number in front of them; 0
-    # means the caller showed no count and is not echoing one.
-    confirmed_row_count = serializers.IntegerField(required=False, default=0, min_value=0, max_value=MAX_LIST_ROWS)
 
 
 class ColumnRenameRequest(serializers.Serializer):
@@ -216,6 +203,23 @@ class ColumnAddRequest(serializers.Serializer):
 
 
 def list_wire(target: List) -> dict[str, Any]:
+    """One list as the index and the other list-returning doors show it:
+    no workflow read."""
+    return _list_summary(target).model_dump()
+
+
+def list_detail_wire(target: List) -> dict[str, Any]:
+    """One list as its sheet holds it: the summary plus its entry actions
+    (where a fill may start), read for this sheet alone."""
+    workflows = WorkflowService(account_id=target.account_id)
+    actions = workflows.entry_action_ids(str(target.id))
+    summary = _list_summary(target)
+    fields = summary.model_dump()
+    detail = WireListDetail(**fields, entry_action_ids=actions)
+    return detail.model_dump()
+
+
+def _list_summary(target: List) -> WireListSummary:
     return WireListSummary(
         id=str(target.id),
         label=target.label,
@@ -226,7 +230,7 @@ def list_wire(target: List) -> dict[str, Any]:
         row_count=target.row_count,
         created_at=target.created_at.isoformat(),
         updated_at=target.updated_at.isoformat(),
-    ).model_dump()
+    )
 
 
 def ingest_schema_wire(target: List) -> dict[str, Any]:
@@ -342,7 +346,7 @@ def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
         status=status,
         column_keys=consent.column_keys,
         counters=progress.counters,
-        confirmed_row_count=cursor.targeted if cursor.targeted_at else consent.consented,
+        target_row_count=cursor.targeted if cursor.targeted_at else consent.target_row_count,
         targeted_at=cursor.targeted_at.isoformat() if cursor.targeted_at else None,
         # A fill is always asked for by a user (admission enqueues it
         # attributed), so the job's user is never NULL here; authorization
@@ -356,7 +360,7 @@ def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
 
 
 def fill_run_wire(fill: Job) -> dict[str, Any]:
-    """ONE run's wire, for the echo paths (admit/cancel/refill): the
+    """ONE run's wire, for the echo paths (fill/cancel): the
     page's reader with one fill, so there is one derivation."""
     return fill_runs_wire([fill])[0]
 

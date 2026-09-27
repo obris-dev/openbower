@@ -1059,7 +1059,7 @@ class AgenticLoopTests(TestCase):
     def test_a_capped_run_with_nothing_gathered_is_no_answer(self):
         # Nothing pooled means nothing to judge from: no verdict call
         # is bought, and the cap is the settled outcome (never
-        # model_error: refill must not re-buy the same refusal).
+        # model_error: a later fill must not re-buy the same refusal).
         serp_calls: list[str] = []
         behavior, _ = self._looping(serp_calls)
 

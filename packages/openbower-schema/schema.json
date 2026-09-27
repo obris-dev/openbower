@@ -486,7 +486,7 @@
       "type": "object"
     },
     "ColumnFillSummary": {
-      "description": "Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a refill would target: that\nis planning-grade math on a four-second progress poll. It is asked\nonce, on the consent path, where it has to be exact anyway.",
+      "description": "Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a new fill would target: that\nis planning-grade math on a four-second progress poll, and the fill\nrequest only probes for the first owed row. A fill's own count is\nknown once it has targeted its rows (FillRunWire.target_row_count\nafter `targeted_at`).",
       "properties": {
         "attempted": {
           "description": "Cells this column's fills have RESOLVED: filled plus diagnosed blanks. A targeted cell ends in exactly one of those two places, so their sum is what the column was asked to do. It is the honest denominator for filled; the sheet's row count is a different question.",
@@ -772,11 +772,6 @@
           "title": "Column Keys",
           "type": "array"
         },
-        "confirmed_row_count": {
-          "description": "The progress denominator: the row count the user consented to when the run opened, settled to the rows the walk actually targeted once `targeted_at` is set (only ever downward: a row the user did not consent to is never targeted). The consent echo is a REQUEST field of the same name; the run covers rows up to it and never past it.",
-          "title": "Confirmed Row Count",
-          "type": "integer"
-        },
         "counters": {
           "$ref": "#/$defs/FillCounters"
         },
@@ -825,6 +820,11 @@
           "title": "Status",
           "type": "string"
         },
+        "target_row_count": {
+          "description": "The progress denominator: the sheet's row count at the click (or the fill's Fill next N, when smaller), settled to the rows the walk actually targeted once `targeted_at` is set (only ever downward: a row added after the click is never targeted).",
+          "title": "Target Row Count",
+          "type": "integer"
+        },
         "targeted_at": {
           "anyOf": [
             {
@@ -851,7 +851,7 @@
         "status",
         "column_keys",
         "counters",
-        "confirmed_row_count",
+        "target_row_count",
         "started_by",
         "heartbeat_at",
         "created_at",
@@ -978,6 +978,82 @@
           "$ref": "#/$defs/WebhookColumn"
         }
       ]
+    },
+    "ListDetail": {
+      "description": "One list as its SHEET holds it: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, list create, CSV import, and a saved discover run stay on\nthe summary and read no workflow.",
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "Display order.",
+          "items": {
+            "$ref": "#/$defs/ListColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "entry_action_ids": {
+          "description": "The sheet's entry actions: the workflow nodes an arriving row starts, each the action right behind its path's entry marker. A column whose node_id is here is one a fill may start at. Derived from the sheet's paths on every read, never stored.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Entry Action Ids",
+          "type": "array"
+        },
+        "folder_id": {
+          "default": "",
+          "description": "The containing folder; empty = loose at the root.",
+          "title": "Folder Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "origin": {
+          "description": "How the list came to exist.",
+          "enum": [
+            "discover",
+            "csv",
+            "manual"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "origin_ref": {
+          "default": "",
+          "description": "e.g. the source run id for discover snapshots.",
+          "title": "Origin Ref",
+          "type": "string"
+        },
+        "row_count": {
+          "description": "Total rows (the sheet may page far beyond one response).",
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "origin",
+        "row_count",
+        "created_at",
+        "updated_at",
+        "entry_action_ids"
+      ],
+      "title": "ListDetail",
+      "type": "object"
     },
     "ListRowWire": {
       "description": "A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).",

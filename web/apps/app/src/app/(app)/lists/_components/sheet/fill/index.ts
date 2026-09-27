@@ -14,6 +14,7 @@ export {
   type SearchProviderChoice,
 } from "./cell-state";
 export { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, type ScopeChoice } from "./lib/fill-scope";
+export { startsFill } from "./lib/fill-start";
 export { FillsGlance } from "./fills-glance";
 export { isLiveStatus, type LiveRun } from "./lib/live-status";
 export { FillTrackerCell } from "./fill-tracker-cell";

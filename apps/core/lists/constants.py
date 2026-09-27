@@ -94,8 +94,9 @@ class ListOrigin(StrEnum):
 
 class ColumnType(StrEnum):
     """A column's sheet type: spreadsheet vocabulary a user already
-    knows. Types drive RENDERING only (url cells link, numbers align
-    right); no behavior branches on them."""
+    knows. Types drive rendering (url cells link, numbers align right)
+    and gate landing: a machine answer that does not fit its column's
+    type is flagged TYPE_MISMATCH rather than stored."""
 
     TEXT = "text"
     NUMBER = "number"
@@ -144,16 +145,17 @@ class FillErrorCode(StrEnum):
     COLUMN_REFUSED = "column_refused"
     FILL_ACTIVE = "fill_active"
     FILLS_FULL = "fills_full"
-    RESUME_NOT_FOUND = "resume_not_found"
     EMPTY_FILL = "empty_fill"
     NO_ELIGIBLE_ROWS = "no_eligible_rows"
-    REFILL_EMPTY = "refill_empty"
+    NOTHING_TO_FILL = "nothing_to_fill"
     # The column is on the sheet but its agent stopped declaring an
     # output that lands there.
     FILL_COLUMN_RETIRED = "fill_column_retired"
+    # The column's node is not an entry action (it stands downstream of
+    # a wait), so a fill cannot start there.
+    FILL_COLUMN_DOWNSTREAM = "fill_column_downstream"
     FREE_SEARCH_BUDGET = "free_search_budget"
     COLUMN_COLLISION = "column_collision"
-    COLUMN_TYPE_CHANGED = "column_type_changed"
     COLUMN_EXISTS = "column_exists"
     COLUMN_ORDER_STALE = "column_order_stale"
     COLUMN_KEYS_NOT_UNIQUE = "column_keys_not_unique"
@@ -237,6 +239,13 @@ FILL_WRITE_BATCH = 1000
 # later ticks; for the webhook kind each batch is one digest, its own
 # delivery.
 DEFERRED_FLUSH_BATCH = 256
+# The most rows one processor judgement takes (NodeProcessor.enqueue_runs
+# refuses more): its read and its insert run inside the caller's
+# transaction, which for the trigger is the append itself. Every door
+# pages within it (a walk's FILL_SCAN_CHUNK, an add's MAX_ROWS_PER_ADD,
+# a flush's DEFERRED_FLUSH_BATCH); a door that could hand more must page
+# before calling, since nothing pages for it here.
+MAX_JUDGED_ROWS = 1000
 
 
 # Stable codes for a fill that DIED, distinct from the admission
@@ -263,8 +272,8 @@ PROVIDER_RETIRED_MESSAGE = "This agent's provider is no longer supported; open t
 # a tick that kept dying): the stored cause stays on the job for the
 # operator, the user reads a next step.
 JOB_FAILURE_COPY: dict[str, str] = {
-    JobFailureCode.CRASHED: "The fill stopped unexpectedly. Fill remaining finishes what it left.",
-    JobFailureCode.EXHAUSTED: "The fill's worker stopped responding. Fill remaining finishes what it left.",
+    JobFailureCode.CRASHED: "The fill stopped unexpectedly. Fill all remaining finishes what it left.",
+    JobFailureCode.EXHAUSTED: "The fill's worker stopped responding. Fill all remaining finishes what it left.",
 }
 
 
@@ -289,14 +298,12 @@ class NodeRunStatus(StrEnum):
     a DEFERRED run is invisible to them by status alone.
 
     ABANDONED is the durable record of consent granted and NOT spent.
-    Cancel writes it over the fill's unclaimed tasks in one statement,
-    which is what lets a later resume ask what a stopped fill still
-    owed instead of reconstructing it.
+    Cancel writes it over the fill's unclaimed tasks in one statement;
+    the rows they named stay never attempted, so a new fill reaches them.
 
     ROW_MISSING is the one task outcome that has no cell to carry it:
     the row was gone when the task came up, so there is nothing to
-    diagnose and nothing a resume could owe (unlike ABANDONED, which a
-    resume re-targets). The fill goes on without it.
+    diagnose. The fill goes on without it.
 
     LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
     path: the whole list was gone when the task came up (deleted after
@@ -305,7 +312,7 @@ class NodeRunStatus(StrEnum):
     with the list); it is the autofill worker's way to retire an orphaned
     task instead of a delete-cascade off the list."""
 
-    # The non-terminal lifecycle, in order: READY (admitted, eligible,
+    # The non-terminal lifecycle, in order: READY (queued, eligible,
     # not yet handed to the transport), QUEUED (handed off / published,
     # not re-provisioned), PROCESSING (a consumer owns it and is
     # running), DEFERRED (owed, but to a later time and another
@@ -387,8 +394,9 @@ class StoredCellState(StrEnum):
     NO_EVIDENCE = "no_evidence"
     # Budget exhaustion: the model spent its request/tool budget
     # without producing an answer. SETTLED: the model's own verdict, a
-    # quiet word on the sheet (every blank re-runs on the next fill), unlike
-    # MODEL_ERROR, which is infrastructure and re-runs.
+    # quiet word on the sheet, unlike MODEL_ERROR, which is
+    # infrastructure's doing and keeps a warning dot. Either way the
+    # cell was attempted, and no fill re-asks it.
     NO_ANSWER = "no_answer"
     # An answer arrived but failed provenance verification (uncited,
     # a citation that resolved to nothing, or a contacts record that
@@ -406,12 +414,11 @@ class StoredCellState(StrEnum):
     # tool, and the tool's own code, ride the cell record's `tools`
     # map beside the state, so a tool can add a failure mode without
     # this vocabulary growing. NOT_CONFIGURED is written at once (no
-    # retry changes it) and re-runs on Continue once set up.
-    # UNAVAILABLE (rate limited, unreachable, or erroring) parks and
-    # retries up to the attempt cap ONLY when the whole row blanked; a
-    # row that answered its other columns lands it at once (a park
-    # would hold hostage cells the user can already read), and a later
-    # Continue re-targets it.
+    # retry changes it). UNAVAILABLE (rate limited, unreachable, or
+    # erroring) parks and retries up to the attempt cap ONLY when the
+    # whole row blanked; a row that answered its other columns lands it
+    # at once (a park would hold hostage cells the user can already
+    # read). Either way the row was attempted, and no fill re-asks it.
     TOOL_NOT_CONFIGURED = "tool_not_configured"
     TOOL_UNAVAILABLE = "tool_unavailable"
     # A column that holds no value (a Send webhook's) records its

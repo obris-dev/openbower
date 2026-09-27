@@ -20,11 +20,10 @@ from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of
 
 from ..constants import WebhookColumnErrorCode
-from ..jobs.enqueue_runs import EnqueueRuns
+from ..jobs.column_backfill import ColumnBackfillJob
 from ..models import List, ListRow, Node
 from ..nodes.wait_until import WaitUntil
 from ..nodes.webhook import Webhook
-from ..processors import FillScope
 from ..processors.webhook import WebhookProcessor
 from .cell_states import CellStateService
 from .columns import claim_key, locked_list
@@ -181,7 +180,7 @@ class WebhookColumnService:
         in this transaction so it can never see a column that was
         rolled back."""
         JobService(account_id=self.account_id).enqueue(
-            EnqueueRuns(list_id=str(target_list.id), node_id=str(webhook_node.id)),
+            ColumnBackfillJob(list_id=str(target_list.id), node_id=str(webhook_node.id)),
             user_id=self.user_id,
             target_id=str(target_list.id),
         )
@@ -361,7 +360,7 @@ class WebhookColumnService:
     def _wait_keys(self, target_list: List, webhook_node: Node) -> list[str]:
         """The columns a webhook column waits on, in sheet order: the
         processor's own answer, so the config read and the flush agree."""
-        return WebhookProcessor(account_id=self.account_id, node=webhook_node, scope=FillScope()).wait_keys(target_list)
+        return WebhookProcessor(account_id=self.account_id, node=webhook_node).wait_keys(target_list)
 
     def _wire(self, target_list: List, webhook_node: Node) -> WebhookColumnConfigWire:
         webhook = config_as(webhook_node, Webhook)

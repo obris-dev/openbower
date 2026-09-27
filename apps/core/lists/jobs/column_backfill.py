@@ -1,7 +1,8 @@
-"""The structural walker: for one node, over the whole sheet, queue a
-run for every row the node's processor says is owed one (a webhook
-column added or its wait set changed). The per-kind judgement is the
-processor's, so the walker knows no kind and no column. A fill's walk
+"""The column backfill: for one node, over the whole sheet, queue a run for
+every row the node's processor says is owed one, when a structural
+change (a webhook column added, or its wait set changed) makes rows
+owed work that no landing will ever offer. The per-kind judgement is
+the processor's, so the walker knows no kind and no column. A fill's walk
 is the fill job's own first slices (lists/jobs/fill.py); this job
 carries no consent and no range.
 
@@ -29,25 +30,25 @@ from jobs.kinds.registry import register
 from jobs.models import Job
 
 from ..constants import FILL_SCAN_CHUNK
-from ..processors import FillScope, processor_for
+from ..processors import FillMode, FillScope, processor_for
 from ..services.lists import ListNotFound, ListService, RowCursor
 from ..services.workflows import NodeNotFound, WorkflowService
 
 
-class BackfillProgress(BaseModel):
+class ColumnBackfillProgress(BaseModel):
     # The last row walked (its id, and the rank it had); the next slice
     # pages after it in sheet order.
     after_id: str = ""
     after_rank: str = ""
 
 
-class EnqueueRuns(JobKind[BackfillProgress]):
-    KIND: ClassVar[str] = "enqueue_runs"
-    Progress = BackfillProgress
+class ColumnBackfillJob(JobKind[ColumnBackfillProgress]):
+    KIND: ClassVar[str] = "column_backfill"
+    Progress = ColumnBackfillProgress
     list_id: str
     node_id: str
 
-    def run(self, job: Job, progress: BackfillProgress) -> BackfillProgress | None:
+    def run(self, job: Job, progress: ColumnBackfillProgress) -> ColumnBackfillProgress | None:
         """One page of rows after the cursor, offered to the node's
         processor as the sheet stands NOW. Done when the sheet is walked
         or the sheet or the node is gone."""
@@ -64,9 +65,11 @@ class EnqueueRuns(JobKind[BackfillProgress]):
         page = lists.rows_page(target_list, after=after, limit=FILL_SCAN_CHUNK)
         if not page:
             return None
-        processor = processor_for(account_id=job.account_id, node=node, scope=FillScope())
-        processor.enqueue_runs(target_list, page, now=timezone.now())
-        return BackfillProgress(after_id=str(page[-1].id), after_rank=page[-1].rank)
+        processor = processor_for(account_id=job.account_id, node=node)
+        scope = FillScope(mode=FillMode.BACKFILL)
+        now = timezone.now()
+        processor.enqueue_runs(target_list, page, scope=scope, now=now)
+        return ColumnBackfillProgress(after_id=str(page[-1].id), after_rank=page[-1].rank)
 
 
-register(EnqueueRuns)
+register(ColumnBackfillJob)

@@ -22,7 +22,7 @@ class RerankProgress(BaseModel):
     reclaimed job redoes it whole."""
 
 
-class Rerank(JobKind[RerankProgress]):
+class RerankJob(JobKind[RerankProgress]):
     KIND: ClassVar[str] = "rerank"
     Progress = RerankProgress
     list_id: str
@@ -37,4 +37,4 @@ class Rerank(JobKind[RerankProgress]):
         return None
 
 
-register(Rerank)
+register(RerankJob)

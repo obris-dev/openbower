@@ -24,9 +24,13 @@ from ..constants import (
     MAX_ACTIVE_FILLS,
     MAX_LIST_COLUMNS,
 )
-from ..jobs.rerank import Rerank
+from ..jobs.rerank import RerankJob
 from ..models import Node, NodeRun
+from ..nodes.column_agent import ColumnAgent
+from ..nodes.entry import Entry
 from ..services import fill_progress
+from ..services.ai_columns import AiColumnService
+from ..services.columns import ColumnExists, ColumnService
 from ..services.fill_admission import (
     AccountFillsFull,
     ColumnCollision,
@@ -34,6 +38,7 @@ from ..services.fill_admission import (
     DerivedKeyCollision,
     EmptyFill,
     FillAdmissionService,
+    FillColumnDownstream,
     FreeSearchBudget,
     ModelUnrunnable,
     NoEligibleRows,
@@ -42,7 +47,17 @@ from ..services.fill_admission import (
 )
 from ..services.fills import FillService
 from ..services.lists import ListService
-from .fill_helpers import confirmed_row_count, consent_of, fill_status, targeted, targeted_numbers, type_cells
+from ..services.workflows import WorkflowService
+from .fill_helpers import (
+    chain_behind,
+    consent_of,
+    fill_status,
+    start_fill,
+    target_row_count,
+    targeted,
+    targeted_numbers,
+    type_cells,
+)
 
 ACCOUNT = "01ACCOUNTAAAAAAAAAAAAAAAAA"
 USER = "01USERAAAAAAAAAAAAAAAAAAAA"
@@ -72,6 +87,7 @@ class AdmissionTestCase(TestCase):
     def setUp(self) -> None:
         self.lists = ListService(account_id=ACCOUNT)
         self.admission = FillAdmissionService(account_id=ACCOUNT, user_id=USER)
+        self.ai_columns = AiColumnService(account_id=ACCOUNT, user_id=USER)
         self.fills = FillService(account_id=ACCOUNT)
         self.sheet = self.lists.create(
             owner_id=USER,
@@ -84,22 +100,37 @@ class AdmissionTestCase(TestCase):
         self.model_for = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def admit(self, **overrides):
-        kwargs = {
-            "list_id": str(self.sheet.id),
-            "config": quick_config(),
-            "confirmed_row_count": 2,
-        }
-        kwargs.update(overrides)
-        fill = self.admission.admit(**kwargs)
+    def add_column(self, *, list_id: str = "", config: AgentConfig | None = None, agent_id: str = "") -> list[str]:
+        """The AI column create alone: the keys its outputs made, in order."""
+        target_id = list_id or str(self.sheet.id)
+        before = {column.key for column in self.lists.get(target_id).columns}
+        if config is None and not agent_id:
+            config = quick_config()
+        added = self.ai_columns.add(target_id, config=config, agent_id=agent_id)
+        return [column.key for column in added.columns if column.key not in before]
+
+    def add_and_fill(
+        self, *, list_id: str = "", config: AgentConfig | None = None, agent_id: str = "", max_row_count: int = 0
+    ) -> Job:
+        """The drawer's two requests on this sheet by default, walked."""
+        if config is None and not agent_id:
+            config = quick_config()
+        _, fill = start_fill(
+            list_id or str(self.sheet.id),
+            account_id=ACCOUNT,
+            user_id=USER,
+            config=config,
+            agent_id=agent_id,
+            max_row_count=max_row_count,
+        )
         tick_jobs()
         fill.refresh_from_db()
         return fill
 
 
 class QuickPathTests(AdmissionTestCase):
-    def test_admit_creates_ephemeral_column_run_and_queue(self) -> None:
-        fill = self.admit()
+    def test_the_drawer_creates_an_ephemeral_column_then_fills_it(self) -> None:
+        fill = self.add_and_fill()
         agent = Agent.objects.get(id=consent_of(str(fill.id)).agent_id)
         self.assertTrue(agent.ephemeral)
         # The ephemeral row's label is the FIRST output's.
@@ -130,7 +161,7 @@ class QuickPathTests(AdmissionTestCase):
     def test_the_stored_ai_column_lands_at_rest_as_the_wire_shape(self) -> None:
         # Read raw: what admission wrote to the jsonb is the AI member's
         # dump, key for key, so no wire key goes unwritten.
-        self.admit()
+        self.add_and_fill()
         with connection.cursor() as cursor:
             cursor.execute("SELECT columns FROM lists_list WHERE id = %s", [str(self.sheet.id)])
             [(raw,)] = cursor.fetchall()
@@ -146,7 +177,7 @@ class QuickPathTests(AdmissionTestCase):
                 AgentOutput(key="status", label="Status", type="text"),
             ]
         )
-        fill = self.admit(config=config)
+        fill = self.add_and_fill(config=config)
         self.assertEqual(consent_of(str(fill.id)).column_keys, ["email", "status"])
         self.sheet.refresh_from_db()
         keys = {c.key for c in self.sheet.columns}
@@ -167,19 +198,19 @@ class QuickPathTests(AdmissionTestCase):
         ]
         self.sheet.save(update_fields=["columns"])
         with self.assertRaises(ColumnCollision) as caught:
-            self.admit()
+            self.add_and_fill()
         self.assertIn("already has a answer column", str(caught.exception))
 
     def test_a_column_an_agent_fills_names_the_better_next_step(self) -> None:
         # Deleting is the wrong advice for a column an agent already
         # fills: re-running it from the column itself is right there,
         # and the answers under it are the user's.
-        fill = self.admit()
+        fill = self.add_and_fill()
         FillService(account_id=ACCOUNT).cancel(str(fill.id))
         self.sheet.refresh_from_db()
         with self.assertRaises(ColumnCollision) as caught:
-            self.admit()
-        self.assertIn("Fill remaining", str(caught.exception))
+            self.add_and_fill()
+        self.assertIn("Fill all remaining", str(caught.exception))
 
     def test_occupied_collision_refuses(self) -> None:
         self.sheet.columns = [
@@ -190,7 +221,7 @@ class QuickPathTests(AdmissionTestCase):
         rows = self.lists.rows_page(self.sheet, limit=1)
         type_cells(self.sheet, str(rows[0].id), {"answer": "taken"})
         with self.assertRaises(ColumnCollision):
-            self.admit()
+            self.add_and_fill()
         # Nothing committed: no fill, no ephemeral, no columns change.
         self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.assertEqual(Agent.objects.count(), 0)
@@ -207,7 +238,7 @@ class QuickPathTests(AdmissionTestCase):
             ]
         )
         with self.assertRaises(DerivedKeyCollision) as caught:
-            self.admit(config=config)
+            self.add_and_fill(config=config)
         # The copy names both outputs and the fix.
         self.assertIn("Email", str(caught.exception))
         self.assertIn("Backup email", str(caught.exception))
@@ -221,62 +252,82 @@ class QuickPathTests(AdmissionTestCase):
         # No cascades exist: delete() owns the fill custody's cleanup,
         # or a live orphaned fill holds an account fill slot forever
         # with nothing visible to cancel.
-        self.admit()
+        self.add_and_fill()
         # A job of another kind on the same list goes with it too.
-        JobService(account_id=ACCOUNT).enqueue_system(Rerank(list_id=str(self.sheet.id)), target_id=str(self.sheet.id))
+        JobService(account_id=ACCOUNT).enqueue_system(
+            RerankJob(list_id=str(self.sheet.id)), target_id=str(self.sheet.id)
+        )
         self.lists.delete(self.sheet)
         self.assertEqual(fill_progress.fill_jobs().count(), 0)
         self.assertEqual(Job.objects.filter(target_id=str(self.sheet.id)).count(), 0)
         self.assertEqual(NodeRun.objects.count(), 0)
 
-    def test_the_consent_range_is_the_echoed_count_never_the_grown_sheet(self) -> None:
-        # The user reviewed 1 row; a second landed before the click. The
-        # fill covers exactly what was reviewed, and the newcomer shows
-        # unfilled for the next refill: no refusal, no surprise spend.
-        fill = self.admit(confirmed_row_count=1)
-        self.assertEqual((confirmed_row_count(str(fill.id)), targeted_numbers(str(fill.id))), (1, [1]))
-
-    def test_the_probe_stops_where_the_walk_would(self) -> None:
-        # The only row the prompt can act on sits past the count the
-        # user was shown: the walk would never reach it, so admission
-        # refuses rather than opening a fill that targets nothing.
-        sheet = self.lists.create(
-            owner_id=USER,
-            label="Lagging",
-            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
-            origin="manual",
-        )
-        self.lists.add_rows(sheet, [{}, {"company": "acme.com"}])
-        with self.assertRaises(NoEligibleRows):
-            self.admit(list_id=str(sheet.id), confirmed_row_count=1)
-        fill = self.admit(list_id=str(sheet.id), confirmed_row_count=2)
-        self.assertEqual(targeted_numbers(str(fill.id)), [2])
-
-    def test_a_shrunken_sheet_admits_and_fills_less(self) -> None:
-        # Reviewed 99, the sheet has 2: fewer rows than consented is
-        # cheaper, never a betrayal; the denominator settles to what
-        # the walk found.
-        fill = self.admit(confirmed_row_count=99)
-        self.assertEqual(confirmed_row_count(str(fill.id)), 2)
-
-    def test_empty_sheet_refuses(self) -> None:
+    def test_an_empty_sheet_takes_the_column_and_refuses_the_fill(self) -> None:
+        # Creating a column needs no rows; a fill does. The column stays.
         empty = self.lists.create(owner_id=USER, label="Empty", columns=[], origin="manual")
+        keys = self.add_column(list_id=str(empty.id))
         with self.assertRaises(EmptyFill):
-            self.admit(list_id=str(empty.id), confirmed_row_count=0)
+            self.admission.fill_column(list_id=str(empty.id), column_key=keys[0])
+        empty.refresh_from_db()
+        self.assertEqual([column.key for column in empty.columns], ["answer"])
 
     def test_model_check_refuses_unrunnable(self) -> None:
+        # Refused at the create: a config that cannot run never becomes
+        # a column, nor an agent.
         self.model_for.side_effect = ModelUnavailable("no such model on this deploy")
         with self.assertRaises(ModelUnrunnable):
-            self.admit()
+            self.add_column()
+        self.sheet.refresh_from_db()
+        self.assertEqual([column.key for column in self.sheet.columns], ["company"])
+        self.assertEqual(Agent.objects.count(), 0)
 
 
 class GuardTests(AdmissionTestCase):
     def test_same_column_live_run_refuses(self) -> None:
-        self.admit()
-        # A second sheet column would collide with the first fill's
-        # target key while it is still live.
+        # One live fill per column: a second fill waits for the first.
+        self.add_and_fill()
         with self.assertRaises(SameColumnFillActive):
-            self.admit(confirmed_row_count=2)
+            self.admission.fill_column(list_id=str(self.sheet.id), column_key="answer")
+
+    def test_a_column_behind_a_barrier_refuses_and_queues_nothing(self) -> None:
+        # A fill starts where an arrival does, right behind an entry
+        # marker; a node behind a wait is the workflow's to reach.
+        # FAILS if the fill starts at any column a node fills.
+        self.add_column()
+        self.sheet.refresh_from_db()
+        first = next(column.node_id for column in self.sheet.columns if column.key == "answer")
+        chain_behind(self.sheet, upstream_node_id=first, key="later")
+        with self.assertRaises(FillColumnDownstream):
+            self.admission.fill_column(list_id=str(self.sheet.id), column_key="later")
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
+
+    def test_a_column_deeper_on_an_entry_path_refuses(self) -> None:
+        # The entry action is the FIRST action behind an entry marker; an
+        # action further down the same path is the workflow's to reach.
+        # FAILS if the check asks only whether the path is entry-headed.
+        first = self.admission.agents.create(owner_id=USER, label="First", config=quick_config())
+        deep_config = quick_config(outputs=[AgentOutput(key="deep", label="Deep", type="text")])
+        deep_agent = self.admission.agents.create(owner_id=USER, label="Deep", config=deep_config)
+        _, nodes = WorkflowService(account_id=ACCOUNT).create_path(
+            self.sheet,
+            [Entry(), ColumnAgent(agent_id=str(first.id)), ColumnAgent(agent_id=str(deep_agent.id))],
+        )
+        deep = AiColumn(key="deep", label="Deep", type="text", node_id=str(nodes[2].id))
+        self.sheet.columns = [*self.sheet.columns, deep]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        with self.assertRaises(FillColumnDownstream):
+            self.admission.fill_column(list_id=str(self.sheet.id), column_key="deep")
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
+
+    def test_the_fill_checks_the_model_too(self) -> None:
+        # A roster agent's model can change after its column exists, so
+        # the fill probes the config again and queues nothing when it
+        # cannot run. FAILS if the fill skips the check.
+        self.add_column()
+        self.model_for.side_effect = ModelUnavailable("no such model on this deploy")
+        with self.assertRaises(ModelUnrunnable):
+            self.admission.fill_column(list_id=str(self.sheet.id), column_key="answer")
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
 
     def test_the_cap_counts_fills_only(self) -> None:
         # The fills share one table with the other kinds: open system
@@ -284,17 +335,17 @@ class GuardTests(AdmissionTestCase):
         # take no slot. FAILS if the count loses its kind filter.
         for _ in range(MAX_ACTIVE_FILLS):
             JobService(account_id=ACCOUNT).enqueue_system(
-                Rerank(list_id=str(self.sheet.id)), target_id=str(self.sheet.id)
+                RerankJob(list_id=str(self.sheet.id)), target_id=str(self.sheet.id)
             )
-        self.admit()
+        self.add_and_fill()
 
     def test_account_cap_refuses(self) -> None:
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
-            self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+            self.add_and_fill(list_id=str(sheet.id))
         with self.assertRaises(AccountFillsFull):
-            self.admit()
+            self.add_and_fill()
 
     def test_a_finished_fill_frees_its_account_slot(self) -> None:
         # The cap counts LIVE fills only (the locked count path).
@@ -302,9 +353,9 @@ class GuardTests(AdmissionTestCase):
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
-            fills.append(self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1))
+            fills.append(self.add_and_fill(list_id=str(sheet.id)))
         Job.objects.filter(id=fills[0].id).update(status=JobStatus.DONE)
-        fill = self.admit()
+        fill = self.add_and_fill()
         self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
@@ -314,7 +365,7 @@ class GuardTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
         with self.assertRaises(FreeSearchBudget) as caught:
-            self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
+            self.add_and_fill(list_id=str(wide.id), config=config)
         # Rendered verbatim in the drawer: user words only (no internal
         # provider vocabulary), and the next step is the paid provider.
         self.assertEqual(
@@ -333,7 +384,7 @@ class GuardTests(AdmissionTestCase):
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
-        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
+        fill = self.add_and_fill(list_id=str(wide.id), config=config)
         self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(TOOL_VENDOR_KEYS={"serper": {"api_key": "secret"}})
@@ -346,7 +397,7 @@ class GuardTests(AdmissionTestCase):
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(find_contacts=True))
-        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
+        fill = self.add_and_fill(list_id=str(wide.id), config=config)
         self.assertEqual(fill_status(str(fill.id)), "pending")
 
     @override_settings(
@@ -364,7 +415,7 @@ class GuardTests(AdmissionTestCase):
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
         config = quick_config(tools=AgentTools(web_search=True))
         with self.assertRaises(FreeSearchBudget):
-            self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=rows)
+            self.add_and_fill(list_id=str(wide.id), config=config)
 
 
 class ScopedFillTests(AdmissionTestCase):
@@ -374,12 +425,12 @@ class ScopedFillTests(AdmissionTestCase):
         # then two more eligible rows (1-2 seeded by the base class).
         self.lists.add_rows(self.sheet, [{"company": ""}, {"company": "initech.com"}, {"company": "umbrella.io"}])
 
-    def test_scoped_admit_targets_the_first_n_eligible(self) -> None:
+    def test_a_scoped_fill_targets_the_first_n_eligible(self) -> None:
         # max_row_count=3 walks rows 1, 2, then SKIPS the variable-blank
         # row at 3 (it would render an empty ask) and takes row 4:
         # first N means first N usable.
-        fill = self.admit(max_row_count=3, confirmed_row_count=5)
-        self.assertEqual(confirmed_row_count(str(fill.id)), 3)
+        fill = self.add_and_fill(max_row_count=3)
+        self.assertEqual(target_row_count(str(fill.id)), 3)
         # The cutoff is the LAST TARGETED row, not the sheet size.
         self.assertEqual(targeted_numbers(str(fill.id)), [1, 2, 4])
 
@@ -387,19 +438,21 @@ class ScopedFillTests(AdmissionTestCase):
         # Not-attempted is the ABSENCE of an outcome row: row 5
         # (past the scoped cutoff) and row 3 (ineligible) never
         # materialize.
-        fill = self.admit(max_row_count=3, confirmed_row_count=5)
+        fill = self.add_and_fill(max_row_count=3)
         self.assertEqual(len(targeted_numbers(str(fill.id))), 3)
         self.assertNotIn(3, targeted_numbers(str(fill.id)))
         self.assertNotIn(5, targeted_numbers(str(fill.id)))
 
-    def test_a_scoped_admit_ranges_over_the_sheet_and_stops_at_n(self) -> None:
+    def test_a_scoped_fill_ranges_over_the_sheet_and_stops_at_n(self) -> None:
         # A scoped fill asked for the first N usable rows; the sheet
-        # total was never the number it consented to, so the range is
+        # total was never the number it asked for, so the range is
         # the sheet as it stands and N is the ceiling.
-        fill = self.admit(max_row_count=1, confirmed_row_count=1)
-        self.assertEqual(confirmed_row_count(str(fill.id)), 1)
+        fill = self.add_and_fill(max_row_count=1)
+        self.assertEqual(target_row_count(str(fill.id)), 1)
 
     def test_no_eligible_rows_refuses(self) -> None:
+        # The column is created (its prompt stays fixable from the
+        # tracker); the fill is refused and nothing is queued.
         bare = self.lists.create(
             owner_id=USER,
             label="Bare",
@@ -408,40 +461,39 @@ class ScopedFillTests(AdmissionTestCase):
         )
         self.lists.add_rows(bare, [{"company": ""}, {"other": "unrelated"}])
         with self.assertRaises(NoEligibleRows) as caught:
-            self.admission.admit(list_id=str(bare.id), config=quick_config(), confirmed_row_count=2)
+            self.add_and_fill(list_id=str(bare.id))
         self.assertEqual(str(caught.exception), "No rows have values for this prompt's variables.")
-        # Nothing committed: no fill, no ephemeral, no columns change.
         self.assertEqual(fill_progress.fill_jobs().count(), 0)
-        self.assertEqual(Agent.objects.count(), 0)
         bare.refresh_from_db()
-        self.assertEqual([c.key for c in bare.columns], ["company"])
+        self.assertEqual([c.key for c in bare.columns], ["company", "answer"])
 
     def test_variable_less_prompt_treats_every_row_as_eligible(self) -> None:
         # No {{tokens}} means the prompt asks the same question
         # everywhere; the variable-blank row is a target like any other.
-        fill = self.admit(config=quick_config(prompt="Name three colors."), confirmed_row_count=5)
-        self.assertEqual(confirmed_row_count(str(fill.id)), 5)
+        fill = self.add_and_fill(config=quick_config(prompt="Name three colors."))
+        self.assertEqual(target_row_count(str(fill.id)), 5)
         self.assertEqual(len(targeted(str(fill.id))), 5)
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_scope_bounds_the_free_search_budget(self) -> None:
         # The budget reads the TARGET count: a scoped fill on a sheet
-        # too wide to run free still admits when N fits the budget.
+        # too wide to run free still starts when N fits the budget.
         wide = self.lists.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         over = FREE_SEARCH_FILL_BUDGET // 4 + 1
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(over)])
-        config = quick_config(tools=AgentTools(web_search=True))
+        (key,) = self.add_column(list_id=str(wide.id), config=quick_config(tools=AgentTools(web_search=True)))
         with self.assertRaises(FreeSearchBudget):
-            self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over)
-        fill = self.admission.admit(list_id=str(wide.id), config=config, confirmed_row_count=over, max_row_count=4)
+            self.admission.fill_column(list_id=str(wide.id), column_key=key)
+        fill = self.admission.fill_column(list_id=str(wide.id), column_key=key, max_row_count=4)
         self.assertEqual(fill_status(str(fill.id)), "pending")
-        self.assertEqual(confirmed_row_count(str(fill.id)), 4)
+        tick_jobs()
+        self.assertEqual(target_row_count(str(fill.id)), 4)
 
 
 class RosterPathTests(AdmissionTestCase):
     def test_roster_agent_is_used_not_duplicated(self) -> None:
         agent = self.admission.agents.create(owner_id=USER, label="Finder", config=quick_config())
-        fill = self.admit(config=None, agent_id=str(agent.id))
+        fill = self.add_and_fill(config=None, agent_id=str(agent.id))
         self.assertEqual(consent_of(str(fill.id)).agent_id, str(agent.id))
         self.assertEqual(Agent.objects.count(), 1)
 
@@ -449,7 +501,65 @@ class RosterPathTests(AdmissionTestCase):
         agent = self.admission.agents.create(owner_id=USER, label="Old", config=quick_config())
         Agent.objects.filter(id=agent.id).update(provider="legacy_provider")
         with self.assertRaises(ProviderRetiredRefusal):
-            self.admit(config=None, agent_id=str(agent.id))
+            self.add_and_fill(config=None, agent_id=str(agent.id))
+
+
+class ConsentUnderLockTests(AdmissionTestCase):
+    """The column set a fill owns is frozen under the List lock, from
+    the locked copy, never from the unlocked read; and no columns
+    writer adds a column under a key an open fill still writes."""
+
+    TWO = None
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.TWO = quick_config(
+            outputs=[
+                AgentOutput(key="alpha", label="Alpha", type="text"),
+                AgentOutput(key="beta", label="Beta", type="text"),
+            ]
+        )
+        self.columns = ColumnService(account_id=ACCOUNT, user_id=USER)
+
+    def test_a_sibling_deleted_before_the_lock_is_not_in_the_consent(self) -> None:
+        # The delete lands between the fill's unlocked read and its lock:
+        # its cancel loop cannot see a fill not yet opened, so the fill
+        # must not open owning the deleted key. FAILS if the consent is
+        # frozen off the unlocked read.
+        self.add_column(config=self.TWO)
+        real = self.admission._list_or_raise
+        deleted = []
+
+        def delete_then_lock(list_id: str, *, lock: bool = False):
+            if lock and not deleted:
+                deleted.append(True)
+                self.columns.delete(list_id, key="beta")
+            return real(list_id, lock=lock)
+
+        with patch.object(self.admission, "_list_or_raise", side_effect=delete_then_lock):
+            fill = self.admission.fill_column(list_id=str(self.sheet.id), column_key="alpha")
+        self.assertEqual(consent_of(str(fill.id)).column_keys, ["alpha"])
+        self.sheet.refresh_from_db()
+        pointers = {column.key: column.current_fill_id for column in self.sheet.columns if column.kind == "ai"}
+        self.assertEqual(pointers, {"alpha": str(fill.id)})
+
+    def test_a_plain_or_ai_column_is_refused_under_a_live_fills_key(self) -> None:
+        # A live fill on alpha and beta; beta is deleted with the fill
+        # left open by construction (its consent still names beta), and
+        # both writers refuse beta. FAILS if either writer ignores open
+        # consents.
+        fill = self.add_and_fill(config=self.TWO)
+        self.assertEqual(fill_status(str(fill.id)), "pending")
+        # Take beta off the sheet WITHOUT the delete's cancel, the state
+        # the locked consent makes unreachable except by a fill already
+        # claimed: the columns array is edited directly.
+        self.sheet.refresh_from_db()
+        self.sheet.columns = [column for column in self.sheet.columns if column.key != "beta"]
+        self.sheet.save(update_fields=["columns", "updated_at"])
+        with self.assertRaises(ColumnExists):
+            self.columns.add_column(str(self.sheet.id), label="Beta", column_type="text")
+        with self.assertRaises(ColumnCollision):
+            self.add_column(config=quick_config(outputs=[AgentOutput(key="beta", label="Beta", type="text")]))
 
 
 class AdmissionLockSpanTests(AdmissionTestCase):
@@ -476,11 +586,12 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         return index
 
     def test_the_request_inserts_no_runs_and_locks_the_list_around_one_write(self) -> None:
-        # The walk is the job's: the request queues it and writes the
-        # column under the lock, nothing else. A 50,000 row consent
+        # The walk is the job's: the fill request queues it and writes
+        # the column under the lock, nothing else. A 50,000 row sheet
         # costs the request one probe page.
+        (key,) = self.add_column()
         with CaptureQueriesContext(connection) as captured:
-            self.admission.admit(list_id=str(self.sheet.id), config=quick_config(), confirmed_row_count=2)
+            self.admission.fill_column(list_id=str(self.sheet.id), column_key=key)
         sql = self.sql(captured)
         self.assertEqual([s for s in sql if s.startswith('INSERT INTO "LISTS_NODERUN"')], [])
         self.assertEqual(len([s for s in sql if s.startswith('INSERT INTO "JOBS_JOB"')]), 1)
@@ -495,23 +606,22 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
-            self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+            self.add_and_fill(list_id=str(sheet.id))
         queued_before = Job.objects.count()
         with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
-            self.admit()
+            self.add_and_fill()
         inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "JOBS_JOB"')]
         self.assertEqual(inserts, [], "the cap was knowable before the walk was queued")
         self.assertEqual(Job.objects.count(), queued_before)
 
-    def test_at_both_caps_the_fill_cap_wins(self) -> None:
-        # fills_full is a 409 whose fix is waiting; columns_full is a
-        # 400 whose fix is changing the sheet. An account at both must
-        # hear the one that waiting actually fixes, the same precedence
-        # the locked claim keeps.
+    def test_at_both_caps_the_column_add_refuses_first(self) -> None:
+        # The column is created before a fill is asked for, so a sheet at
+        # its column cap refuses the add whatever the fill cap says:
+        # without the column there is nothing to fill.
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.lists.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
             self.lists.add_rows(sheet, [{"company": "acme.com"}])
-            self.admission.admit(list_id=str(sheet.id), config=quick_config(), confirmed_row_count=1)
+            self.add_and_fill(list_id=str(sheet.id))
         wide = self.lists.create(
             owner_id=USER,
             label="Wide",
@@ -521,10 +631,10 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             origin="manual",
         )
         self.lists.add_rows(wide, [{"c0": "x"}])
-        with self.assertRaises(AccountFillsFull):
-            self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
+        with self.assertRaises(ColumnsFull):
+            self.add_column(list_id=str(wide.id))
 
-    def test_a_full_sheet_refuses_before_queuing_the_walk(self) -> None:
+    def test_a_full_sheet_refuses_before_anything_is_written(self) -> None:
         wide = self.lists.create(
             owner_id=USER,
             label="Wide",
@@ -534,16 +644,23 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             origin="manual",
         )
         self.lists.add_rows(wide, [{"c0": "x"}])
+        # The cap is judged under the lock before the agent or node is
+        # written, so the refusal inserts no row at all. FAILS if the
+        # cap check moves after any write.
         with CaptureQueriesContext(connection) as captured, self.assertRaises(ColumnsFull):
-            self.admission.admit(list_id=str(wide.id), config=quick_config(), confirmed_row_count=1)
-        inserts = [s for s in self.sql(captured) if s.startswith('INSERT INTO "JOBS_JOB"')]
-        self.assertEqual(inserts, [], "the column cap was knowable before the walk was queued")
+            self.add_column(list_id=str(wide.id))
+        inserts = [s for s in self.sql(captured) if s.startswith("INSERT")]
+        self.assertEqual(inserts, [], "the column cap was knowable before anything was written")
 
     def test_the_columns_array_is_written_ONCE(self) -> None:
-        # It used to be written twice: the append, then a separate
-        # current_fill_id stamp, with the queue insert in between.
-        # Those two writes are what forced the lock to span the insert.
-        with CaptureQueriesContext(connection) as captured:
-            self.admit()
-        writes = [s for s in self.sql(captured) if s.startswith('UPDATE "LISTS_LIST"')]
-        self.assertEqual(len(writes), 1, writes)
+        # Once by the create (the columns appended) and once by the fill
+        # (the columns pointed at it): each request's one write, so the
+        # lock never has to span the queue insert.
+        for step in ("create", "fill"):
+            with self.subTest(step=step), CaptureQueriesContext(connection) as captured:
+                if step == "create":
+                    (key,) = self.add_column()
+                else:
+                    self.admission.fill_column(list_id=str(self.sheet.id), column_key=key)
+            writes = [s for s in self.sql(captured) if s.startswith('UPDATE "LISTS_LIST"')]
+            self.assertEqual(len(writes), 1, writes)

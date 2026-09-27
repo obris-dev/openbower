@@ -1,4 +1,4 @@
-"""The fill endpoints: add-and-admit, the fills page, cancel, and the
+"""The fill endpoints: the AI column create, the column fill, the fills page, cancel, and the
 cell-states sidecar, through real cookie auth (the IdP mocked at its
 httpx boundary via the shared login helper). model_for is the one
 patched seam, per the admission tests' precedent; responses validate
@@ -26,14 +26,24 @@ from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
-from openbower_schema.lists import AiColumn, ListRowsPage
+from openbower_schema.lists import AiColumn, ListDetail, ListRowsPage
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, JOB_FAILURE_COPY, StoredCellState
 from ..models import NodeRun
 from ..services import fill_progress
 from ..services.lists import ListService
 from ..services.node_runs import NodeRunFlow
-from .fill_helpers import confirmed_row_count, fill_status, settle, targeted, tick_fill
+from .fill_helpers import (
+    created_keys,
+    fill_status,
+    post_ai_column,
+    post_column_fill,
+    settle,
+    target_row_count,
+    targeted,
+    tick_fill,
+    type_cells,
+)
 
 # Request-shaped config (the serializer derives the output key).
 CONFIG = {
@@ -99,28 +109,50 @@ class FillViewsTestCase(TestCase):
         self.addCleanup(patcher.stop)
 
     def post_ai(self, list_id: str = "", **overrides):
-        body: dict = {"config": CONFIG, "confirmed_row_count": 2}
+        """The AI column create alone."""
+        body: dict = {"config": CONFIG}
         body.update(overrides)
         body = {key: value for key, value in body.items() if value is not None}
-        resp = self.client.post(
-            reverse("lists_columns_ai", kwargs={"id": list_id or str(self.sheet.id)}),
-            body,
-            content_type="application/json",
-        )
+        return post_ai_column(self.client, list_id or str(self.sheet.id), body)
+
+    def post_fill(self, key: str = "answer", list_id: str = "", max_row_count: int = 0):
+        """The column fill, then its walk."""
+        resp = post_column_fill(self.client, list_id or str(self.sheet.id), key, max_row_count)
         tick_jobs()
         return resp
 
+    def add_and_fill(self, list_id: str = "", **overrides):
+        """The drawer's two requests: create the column set, then fill
+        its first column. Returns the fill response."""
+        target_id = list_id or str(self.sheet.id)
+        created = self.post_ai(list_id=target_id, **overrides)
+        self.assertEqual(created.status_code, 201, created.content)
+        keys = created_keys(created.json())
+        return self.post_fill(keys[0], list_id=target_id)
+
 
 class AiColumnPostTests(FillViewsTestCase):
-    def test_quick_config_admits_201_with_the_run_wire(self) -> None:
+    def test_the_create_returns_the_list_and_starts_no_fill(self) -> None:
+        # Creating a column and filling it are two requests: the create
+        # answers with the sheet, and nothing is queued until the fill.
         resp = self.post_ai()
+        self.assertEqual(resp.status_code, 201, resp.content)
+        summary = ListDetail(**resp.json())
+        added = next(column for column in summary.columns if column.key == "answer")
+        self.assertIsInstance(added, AiColumn)
+        self.assertEqual(added.current_fill_id, "")
+        self.assertEqual(fill_progress.fill_jobs().count(), 0)
+        self.assertEqual(NodeRun.objects.count(), 0)
+
+    def test_the_fill_answers_201_with_the_run_wire(self) -> None:
+        resp = self.add_and_fill()
         self.assertEqual(resp.status_code, 201, resp.content)
         body = resp.json()
         wire = FillRunWire(**body)
         self.assertEqual(wire.status, "pending")
         self.assertEqual(wire.list_id, str(self.sheet.id))
         self.assertEqual(wire.column_keys, ["answer"])
-        self.assertEqual(wire.confirmed_row_count, 2)
+        self.assertEqual(wire.target_row_count, 2)
         self.assertEqual(wire.started_by, TEST_IDENTITY["id"])
         self.assertIsNone(wire.error)
         # Counters default zeros before the worker writes any.
@@ -132,9 +164,10 @@ class AiColumnPostTests(FillViewsTestCase):
         agent = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
             owner_id=TEST_IDENTITY["id"], label="Finder", config=wire_config()
         )
-        resp = self.post_ai(config=None, agent_id=str(agent.id))
+        resp = self.add_and_fill(config=None, agent_id=str(agent.id))
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(resp.json()["agent_id"], str(agent.id))
+        self.assertEqual(Agent.objects.count(), 1)
 
     def test_config_and_agent_id_are_exclusive(self) -> None:
         agent = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
@@ -144,27 +177,26 @@ class AiColumnPostTests(FillViewsTestCase):
         self.assertEqual(self.post_ai(config=None).status_code, 400)
 
     def test_same_column_active_fill_is_409_with_the_envelope(self) -> None:
-        self.post_ai()
-        resp = self.post_ai()
+        self.add_and_fill()
+        resp = self.post_fill()
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json(), {"error": "fill_active", "detail": "A fill is already running on this column."})
 
     @override_settings(TOOL_WIRING={"web_search": "duckduckgo"})
     def test_free_search_budget_is_400_with_the_envelope(self) -> None:
         # A request-side refusal, not a conflict: the fix is a narrower
-        # ask or metered credentials, and waiting changes nothing.
+        # ask or metered credentials, and waiting changes nothing. The
+        # column is created either way; only the fill is refused.
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         wide = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Wide", columns=[], origin="manual")
         self.lists.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
-        resp = self.post_ai(
-            list_id=str(wide.id),
-            config={**CONFIG, "tools": {"web_search": True}},
-            confirmed_row_count=rows,
-        )
+        resp = self.add_and_fill(list_id=str(wide.id), config={**CONFIG, "tools": {"web_search": True}})
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body["error"], "free_search_budget")
         self.assertIn("Switch search to a metered vendor", body["detail"])
+        wide.refresh_from_db()
+        self.assertIn("answer", [column.key for column in wide.columns])
 
     def test_an_existing_column_is_400_with_the_envelope(self) -> None:
         # EXISTENCE, not occupancy: this column is empty and still
@@ -188,7 +220,7 @@ class AiColumnPostTests(FillViewsTestCase):
             owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
         foreign_lists.add_rows(foreign_sheet, [{"company": "acme.com"}])
-        self.assertEqual(self.post_ai(list_id=str(foreign_sheet.id), confirmed_row_count=1).status_code, 404)
+        self.assertEqual(self.post_ai(list_id=str(foreign_sheet.id)).status_code, 404)
         foreign_agent = AgentService(account_id="01AC" + "Z" * 22).create(
             owner_id=TEST_IDENTITY["id"], label="Theirs", config=wire_config()
         )
@@ -197,8 +229,8 @@ class AiColumnPostTests(FillViewsTestCase):
 
 class FillsPageTests(FillViewsTestCase):
     def test_keyset_pages_newest_first(self) -> None:
-        first = self.post_ai().json()["id"]
-        second = self.post_ai(config=config_with("Other")).json()["id"]
+        first = self.add_and_fill().json()["id"]
+        second = self.add_and_fill(config=config_with("Other")).json()["id"]
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
         page = self.client.get(url, {"limit": 1}).json()
         wire = FillRunPage(**page)
@@ -220,12 +252,12 @@ class FillsPageTests(FillViewsTestCase):
         # So the query count for one live run equals the count for three.
         # FAILS if the per-run reads return (the 3+4N walk on a 4s poll).
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
-        self.post_ai()  # one live fill
+        self.add_and_fill()  # one live fill
         self.client.get(url)  # warm any one-time caches so the compare isolates run-count
         with CaptureQueriesContext(connection) as one_run:
             self.assertEqual(self.client.get(url).status_code, 200)
-        self.post_ai(config=config_with("Second"))
-        self.post_ai(config=config_with("Third"))  # three live fills now
+        self.add_and_fill(config=config_with("Second"))
+        self.add_and_fill(config=config_with("Third"))  # three live fills now
         with CaptureQueriesContext(connection) as three_runs:
             resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
@@ -237,7 +269,7 @@ class FillWireTests(FillViewsTestCase):
     def test_the_heartbeat_is_the_fills_latest_movement_from_its_enqueue(self) -> None:
         # No run yet: the job's own stamp, so a walk still queuing is not
         # a dead worker. Once a run moves later than the job did, the run's.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
         job = Job.objects.get(id=fill_run_id)
         page = FillRunPage(**self.client.get(url).json())
@@ -251,7 +283,7 @@ class FillWireTests(FillViewsTestCase):
     def test_updated_at_moves_with_the_fills_transitions(self) -> None:
         # Every transition is a queryset update, which auto_now never
         # sees: the wire's updated_at is the last transition's stamp.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         url = reverse("lists_fills", kwargs={"id": str(self.sheet.id)})
         before = FillRunPage(**self.client.get(url).json()).runs[0].updated_at
         tick_fill(fill_run_id)  # the walk, then the park for its runs
@@ -277,11 +309,11 @@ class ColumnSummaryTests(FillViewsTestCase):
         # claimed) is asked of the open fill alone. FAILS if the question
         # names the settled id: that is a finished 50,000-row fill
         # re-read every four seconds forever.
-        settled_id = self.post_ai().json()["id"]
+        settled_id = self.add_and_fill().json()["id"]
         tick_fill(settled_id)  # its runs exist
         Job.objects.filter(id=settled_id).update(status=JobStatus.DONE)
         score = {**CONFIG, "outputs": [{"key": "score", "label": "Score", "type": "text"}]}
-        open_id = self.post_ai(config=score).json()["id"]
+        open_id = self.add_and_fill(config=score).json()["id"]
         # The seam is the pin (captured SQL carries placeholders, not ids).
         with patch.object(NodeRunFlow, "started_fills", wraps=NodeRunFlow.started_fills) as asked:
             _page, by_key = self._summaries()
@@ -292,7 +324,7 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertFalse(any(settled_id in ids for ids in asked_ids))
 
     def test_a_live_run_rides_the_page_and_names_its_status(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         page, by_key = self._summaries()
         self.assertEqual([run.id for run in page.runs], [fill_run_id])
         self.assertEqual(by_key["answer"].current_status, "pending")
@@ -305,7 +337,7 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertEqual((by_key["answer"].filled, by_key["answer"].attempted), (0, 0))
 
     def test_a_failed_run_leaves_the_page_and_lands_its_error(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         fill_progress.fail(fill_run_id, code="model_down", message="The model could not be reached.")
         page, by_key = self._summaries()
         # Live-only, proven from the failing side: the page is EMPTY,
@@ -319,7 +351,7 @@ class ColumnSummaryTests(FillViewsTestCase):
 
     def test_a_fill_the_runner_failed_reads_its_verdict_under_house_copy(self) -> None:
         # The stored cause is the operator's; the user reads a next step.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         Job.objects.filter(id=fill_run_id).update(
             status=JobStatus.FAILED, error_code=JobFailureCode.CRASHED, error="RuntimeError: slice exploded"
         )
@@ -332,13 +364,9 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertNotIn("RuntimeError", summary.last_error.message)
 
     def test_a_newer_clean_run_clears_the_failure(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         fill_progress.fail(fill_run_id, code="model_down", message="The model could not be reached.")
-        resp = self.client.post(
-            reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}),
-            {},
-            content_type="application/json",
-        )
+        resp = self.post_fill()
         self.assertEqual(resp.status_code, 201, resp.content)
         _, by_key = self._summaries()
         # Reading only the run the column currently names is what
@@ -347,10 +375,10 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertIsNone(by_key["answer"].last_error)
 
     def test_a_stopped_run_carries_its_status_and_no_error(self) -> None:
-        # The leg the Continue verb reads, and the pin on "None unless
+        # The leg the tracker's run status reads, and the pin on "None unless
         # that run FAILED": cancel must never ship an error, however
         # the shared terminal writer's defaults drift.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         resp = self.client.post(
             reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id})
         )
@@ -369,7 +397,7 @@ class ColumnSummaryTests(FillViewsTestCase):
         self.assertIsNone(by_key["answer"].last_error)
 
     def test_a_column_from_before_the_pointer_reads_as_never_run(self) -> None:
-        self.post_ai()
+        self.add_and_fill()
         self.sheet.refresh_from_db()
         # An AI column whose run has not opened: the pointer is blank.
         self.sheet.columns = [
@@ -384,7 +412,7 @@ class ColumnSummaryTests(FillViewsTestCase):
 
 class FillCancelTests(FillViewsTestCase):
     def test_cancel_flips_the_run_and_returns_the_wire(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         resp = self.client.post(
             reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id})
         )
@@ -397,7 +425,7 @@ class FillCancelTests(FillViewsTestCase):
         # both legs), proven from the failing side: a cancelled fill
         # wearing a stray code (no live writer produces one) ships no
         # error on its echo. Fails under a code-only gate.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         url = reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id})
         self.assertEqual(self.client.post(url).status_code, 200)
         Job.objects.filter(id=fill_run_id).update(error_code=STRAY_ERROR_CODE, error=STRAY_ERROR_MESSAGE)
@@ -413,7 +441,7 @@ class FillCancelTests(FillViewsTestCase):
         self.assertEqual(self.client.post(url).status_code, 404)
 
     def test_a_run_of_another_sheet_is_not_addressable_here(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         other = self.lists.create(owner_id=TEST_IDENTITY["id"], label="Other sheet", columns=[], origin="manual")
         url = reverse("lists_fill_cancel", kwargs={"id": str(other.id), "fill_run_id": fill_run_id})
         self.assertEqual(self.client.post(url).status_code, 404)
@@ -432,11 +460,11 @@ class CellStatesTests(FillViewsTestCase):
         return ListRowsPage(**resp.json())
 
     def test_pending_blank_filled_and_untouched_columns(self) -> None:
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         page = self._states_page()
         self.assertEqual([item.id for item in page.items], [str(row.id) for row in rows])
-        # Freshly admitted: every row pends on the AI column, and the
+        # Freshly started: every row pends on the AI column, and the
         # user's own company column never appears.
         self.assertEqual([words(item.states) for item in page.items], [{"answer": "pending"}, {"answer": "pending"}])
 
@@ -453,7 +481,7 @@ class CellStatesTests(FillViewsTestCase):
         # had a degraded tool travels as `filled` WITH the tool
         # statuses, so the value can carry its mark. A blank cell
         # carries its statuses the same way.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), None, tools={"web_search": "rate_limited", "find_contacts": "open"})
         settle(fill_run_id, str(rows[1].id), StoredCellState.TOOL_UNAVAILABLE, tools={"web_search": "unreachable"})
@@ -470,35 +498,32 @@ class CellStatesTests(FillViewsTestCase):
         # like a pre-tools filled row (empty map). FAILS if the
         # degraded test decays to bool(tools), which would put a mark
         # beside every value on every tool-using sheet.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), None, tools={"web_search": "open", "find_contacts": "open"})
         settle(fill_run_id, str(rows[1].id), None)
         page = self._states_page()
         self.assertEqual([dict(item.states) for item in page.items], [{}, {}])
 
-    def test_a_second_run_re_targets_a_tombstone(self) -> None:
-        # A refill targets every blank, settled or not, so a second
-        # run covers the old no-answer word with its own pending: the
-        # sidecar reads each row's latest outcome ACROSS the column's
-        # fills, and the newest fill's queue wins.
-        first = self.post_ai().json()
+    def test_a_new_fill_leaves_an_attempted_cells_word_and_runs_the_rest(self) -> None:
+        # A new fill never re-targets an attempted cell: row one keeps the
+        # first fill's no-answer word, and only row two, which the first
+        # fill never ran, reads the new fill's pending. Once that run
+        # fills it the cell ships nothing (a clean value is the absence
+        # of an entry). FAILS if a new fill re-asks an attempted row.
+        first = self.add_and_fill().json()
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(first["id"], str(rows[0].id), StoredCellState.NO_ANSWER)
-        settle(first["id"], str(rows[1].id), StoredCellState.MODEL_ERROR)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": first["id"]}))
-        refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
-        tick_jobs()
-        self.assertEqual(refill.status_code, 201, refill.content)
+        again = self.post_fill()
+        self.assertEqual(again.status_code, 201, again.content)
+        # The new fill owns the same columns (re-running a column goes
+        # through its fill, never a second column add).
+        self.assertEqual(again.json()["column_keys"], first["column_keys"])
         page = self._states_page()
-        # Both rows show the NEW fill's pending, the settled one included.
-        self.assertEqual(words(page.items[0].states), {"answer": "pending"})
+        self.assertEqual(words(page.items[0].states), {"answer": "no_answer"})
         self.assertEqual(words(page.items[1].states), {"answer": "pending"})
-        # And a newer FILL outranks an older error: the second run
-        # fills the retried row, so its old cause must not cover the
-        # value (FILLED votes in latest-wins, then drops).
-        refill_id = refill.json()["id"]
-        settle(refill_id, str(rows[1].id), None)
+        settle(again.json()["id"], str(rows[1].id), None)
         page = self._states_page()
         self.assertEqual(words(page.items[1].states), {})
 
@@ -506,8 +531,8 @@ class CellStatesTests(FillViewsTestCase):
         # Two fills on two columns: the newest fill overall covers only
         # its own column, so the fill walk must keep going until every
         # fill column has found its newest fill, then stop.
-        first = self.post_ai().json()
-        second = self.post_ai(config=config_with("Contact")).json()
+        first = self.add_and_fill().json()
+        second = self.add_and_fill(config=config_with("Contact")).json()
         first_key = first["column_keys"][0]
         second_key = second["column_keys"][0]
         self.assertNotEqual(first_key, second_key)
@@ -517,32 +542,9 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual(words(page.items[0].states), {first_key: "no_evidence", second_key: "pending"})
         self.assertEqual(words(page.items[1].states), {first_key: "pending", second_key: "pending"})
 
-    def test_a_columns_newer_run_supersedes_its_older_ones(self) -> None:
-        # Re-running a cancelled column goes through REFILL, not a
-        # second column add: the column exists, and adding it again is
-        # refused. States then come from the newest fill, and the walk
-        # stops without loading the older fill's history.
-        stale = self.post_ai().json()
-        rows = self.lists.rows_page(self.sheet, limit=10)
-        settle(stale["id"], str(rows[0].id), StoredCellState.NO_EVIDENCE)
-        self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": stale["id"]}))
-        # The settled blank re-targets once the prompt changes, which
-        # is what a user does after cancelling.
-        agents = AgentService(account_id=TEST_IDENTITY["account_id"])
-        agent = agents.get_for_fill(stale["agent_id"])
-        agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
-        refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
-        tick_jobs()
-        self.assertEqual(refill.status_code, 201, refill.content)
-        fresh = refill.json()
-        page = self._states_page()
-        self.assertEqual(words(page.items[0].states), {"answer": "pending"})
-        self.assertEqual(words(page.items[1].states), {"answer": "pending"})
-        self.assertEqual(fresh["column_keys"], stale["column_keys"])
-
     def test_pages_on_the_rows_keyset_by_row_id(self) -> None:
         self.lists.add_rows(self.sheet, [{"company": "initech.com"}])
-        self.post_ai(confirmed_row_count=3)
+        self.add_and_fill()
         rows = self.lists.rows_page(self.sheet, limit=10)
         first = self._states_page(limit=2)
         self.assertEqual([item.id for item in first.items], [str(rows[0].id), str(rows[1].id)])
@@ -556,7 +558,7 @@ class CellStatesTests(FillViewsTestCase):
         # storage, but a terminal fill's pending is rows it never ran,
         # so the sidecar ships nothing for them (no eternal shimmer);
         # a diagnosed blank from before the stop still ships.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), StoredCellState.NO_EVIDENCE)
         cancel = self.client.post(
@@ -571,24 +573,24 @@ class CellStatesTests(FillViewsTestCase):
         page = self._states_page()
         self.assertEqual([words(item.states) for item in page.items], [{}, {}])
 
-    def test_a_cancelled_refills_untouched_rows_revert_to_their_old_truth(self) -> None:
-        # A refill re-targets a retryable row (dot -> shimmer); if that
-        # refill stops before running it, the cell is NOT newly blank:
-        # the sweep restores the older fill's diagnosis, so the dot
-        # comes back instead of the cell going silent.
-        first = self.post_ai().json()
+    def test_a_cancelled_second_fills_untouched_rows_revert_to_their_old_truth(self) -> None:
+        # A second fill targets the row the first fill never ran (dot-less ->
+        # shimmer); if that fill stops before running it, nothing was
+        # written for it, so the cell goes back to never attempted, and
+        # the row the first fill did run keeps its diagnosis throughout.
+        first = self.add_and_fill().json()
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(first["id"], str(rows[0].id), StoredCellState.MODEL_ERROR)
-        settle(first["id"], str(rows[1].id), None)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": first["id"]}))
-        refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
-        tick_jobs()
-        self.assertEqual(refill.status_code, 201, refill.content)
-        self.assertEqual(words(self._states_page().items[0].states), {"answer": "pending"})
+        again = self.post_fill()
+        self.assertEqual(again.status_code, 201, again.content)
+        self.assertEqual(words(self._states_page().items[1].states), {"answer": "pending"})
         self.client.post(
-            reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": refill.json()["id"]})
+            reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": again.json()["id"]})
         )
-        self.assertEqual(words(self._states_page().items[0].states), {"answer": "model_error"})
+        page = self._states_page()
+        self.assertEqual(words(page.items[0].states), {"answer": "model_error"})
+        self.assertEqual(words(page.items[1].states), {})
 
 
 class ListDeleteTests(FillViewsTestCase):
@@ -604,7 +606,7 @@ class ListDeleteTests(FillViewsTestCase):
         # every test in one transaction, so this pins the ORDER the two
         # tables are written in instead. A reordering that reopens the
         # deadlock fails it.
-        self.post_ai()
+        self.add_and_fill()
         seen: list[str] = []
         with CaptureQueriesContext(connection) as ctx:
             self.lists.delete(self.sheet)
@@ -621,7 +623,7 @@ class ListDeleteTests(FillViewsTestCase):
         # An ephemeral agent belongs to one column: it is hidden from
         # the roster and excluded from its cap, so one surviving a
         # deleted sheet is litter no surface can ever show or count.
-        fill = self.post_ai().json()
+        fill = self.add_and_fill().json()
         self.assertTrue(Agent.objects.filter(id=fill["agent_id"], ephemeral=True).exists())
         self.lists.delete(self.sheet)
         self.assertFalse(Agent.objects.filter(id=fill["agent_id"]).exists())
@@ -632,35 +634,32 @@ class ListDeleteTests(FillViewsTestCase):
         roster = AgentService(account_id=TEST_IDENTITY["account_id"]).create(
             owner_id=TEST_IDENTITY["id"], label="Finder", config=wire_config()
         )
-        self.post_ai(config=None, agent_id=str(roster.id))
+        self.add_and_fill(config=None, agent_id=str(roster.id))
         self.lists.delete(self.sheet)
         self.assertTrue(Agent.objects.filter(id=roster.id).exists())
 
 
 class FillColumnSummaryTests(FillViewsTestCase):
-    def test_the_refill_a_column_invites_is_the_one_it_runs(self) -> None:
+    def test_the_fill_a_column_invites_is_the_one_it_runs(self) -> None:
         # The number the user acts on must not disagree with the fill
-        # that acting produces. It is asked on the CONSENT path now and
-        # not on the four-second progress poll: it is planning-grade
-        # math (a settled-rows query plus an eligibility pass per
-        # column) and it has to be exact only where it is spent.
-        fill_run_id = self.post_ai().json()["id"]
+        # that acting produces. It is asked on the CONSENT path, not the
+        # four-second progress poll, and has to be exact where it is
+        # spent: the row the stopped fill ran is done whatever came of
+        # it, so the new fill covers the one row it never ran.
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), StoredCellState.NO_EVIDENCE)
-        settle(fill_run_id, str(rows[1].id), StoredCellState.MODEL_ERROR)
         self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": fill_run_id}))
-        refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
-        tick_jobs()
-        self.assertEqual(refill.status_code, 201, refill.content)
-        # Every blank re-runs, settled or not: both rows.
-        self.assertEqual(confirmed_row_count(refill.json()["id"]), 2)
+        again = self.post_fill()
+        self.assertEqual(again.status_code, 201, again.content)
+        self.assertEqual(target_row_count(again.json()["id"]), 1)
 
     def test_the_fills_page_carries_per_column_coverage(self) -> None:
         # The tracker renders server truth: `filled` counts the cells
         # in the column that HOLD A VALUE, across every fill (a client
         # sum over one page of fills undercounts the moment history
         # outgrows the page).
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), None)
         resp = self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)}))
@@ -679,7 +678,7 @@ class FillColumnSummaryTests(FillViewsTestCase):
         # the column was asked to do. Pairing filled with the SHEET's
         # row count answers a different question and makes a scoped
         # fill read as a failure.
-        fill_run_id = self.post_ai().json()["id"]
+        fill_run_id = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(fill_run_id, str(rows[0].id), None)
         settle(fill_run_id, str(rows[1].id), StoredCellState.NO_EVIDENCE)
@@ -688,25 +687,22 @@ class FillColumnSummaryTests(FillViewsTestCase):
         self.assertEqual((summary.filled, summary.attempted), (1, 2))
 
     def test_answering_a_diagnosed_cell_moves_it_between_the_two_buckets(self) -> None:
-        # The invariant `attempted` rests on: a later fill that answers
-        # a cell DELETES its diagnosis, so the cell moves from one
-        # bucket to the other and the sum stays right. A diagnosis left
-        # behind would double-count it forever.
-        first = self.post_ai().json()["id"]
+        # The invariant `attempted` rests on: a later answer to a cell
+        # REPLACES its diagnosis, so the cell moves from one bucket to
+        # the other and the sum stays right. A fill never re-asks a
+        # diagnosed cell, so the answer here is a person's. A diagnosis
+        # left behind would double-count it forever.
+        first = self.add_and_fill().json()["id"]
         rows = self.lists.rows_page(self.sheet, limit=10)
         settle(first, str(rows[0].id), StoredCellState.MODEL_ERROR)
         settle(first, str(rows[1].id), StoredCellState.MODEL_ERROR)
-        self.client.post(reverse("lists_fill_cancel", kwargs={"id": str(self.sheet.id), "fill_run_id": first}))
 
         def counts():
             page = FillRunPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
             return (page.columns[0].filled, page.columns[0].attempted)
 
         self.assertEqual(counts(), (0, 2))
-        refill = self.client.post(reverse("lists_column_refill", kwargs={"id": str(self.sheet.id), "key": "answer"}))
-        tick_jobs()
-        self.assertEqual(refill.status_code, 201, refill.content)
-        settle(refill.json()["id"], str(rows[0].id), None)
+        type_cells(self.sheet, str(rows[0].id), {"answer": "found by hand"})
         # One moved buckets; the total is unchanged.
         self.assertEqual(counts(), (1, 2))
 

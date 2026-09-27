@@ -163,10 +163,8 @@ class NodeRun(AccountScopedModel):
             # queues nothing for that row. The accepted tradeoff is that
             # the winner is trusted to do the loser's work. A stopped
             # fill's run that parks or goes stale holds the row until
-            # the reclaim abandons it, and a refill in that window skips
-            # the row, leaving it for the next refill. A column a refill
-            # adds while an autofill run is in flight is not in that
-            # run's claimed set. A Fill holding a row swallows a later
+            # the reclaim abandons it, and a new fill in that window skips
+            # the row, leaving it for the fill after. A Fill holding a row swallows a later
             # autofill offer, which the Fill's Stop then abandons (no
             # path offers one today: autofill reaches only rows that
             # just arrived). A settled run is history: a row that

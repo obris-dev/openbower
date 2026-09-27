@@ -4,14 +4,14 @@ import { useState } from "react";
 import { Button, Input } from "@bower/ui";
 import { DEFAULT_SCOPE_ROWS, parseScopeRows } from "./lib/fill-scope";
 
-/** The tracker popover's scoped continue: refill the column's next N
- * unanswered rows, or all of them. N is an upper bound, not a promise
- * (the server excludes answered rows and admits the true eligible
- * count), so the copy says "next" and never claims a total. Renders
- * only beside a terminal run: one run per column is the invariant, so
- * a refill during a live walk could only be refused. A refusal
+/** The tracker popover's fill: the column's next N rows never tried,
+ * or all of them. N is an upper bound, not a promise (the server skips
+ * rows already tried and owns the true eligible count), so the copy
+ * says "next" and never claims a total. Renders only beside a terminal
+ * run: one run per column is the invariant, so a fill during a live
+ * walk could only be refused. A refusal
  * renders verbatim below (tier 1: the server wrote it). */
-export function RefillScope({ onRefill }: { onRefill: (maxRowCount?: number) => Promise<string | null> }) {
+export function FillColumnScope({ onFill }: { onFill: (maxRowCount?: number) => Promise<string | null> }) {
   const [rowsText, setRowsText] = useState(String(DEFAULT_SCOPE_ROWS));
   const [busy, setBusy] = useState<"next" | "all" | null>(null);
   const [refusal, setRefusal] = useState("");
@@ -21,7 +21,7 @@ export function RefillScope({ onRefill }: { onRefill: (maxRowCount?: number) => 
     if (busy) return;
     setBusy(which);
     setRefusal("");
-    const message = await onRefill(which === "next" ? (rows ?? undefined) : undefined);
+    const message = await onFill(which === "next" ? (rows ?? undefined) : undefined);
     setBusy(null);
     if (message) setRefusal(message);
   }

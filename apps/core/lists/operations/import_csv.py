@@ -167,6 +167,10 @@ class ImportCsvOperation:
         columns, rows, skipped = parse_csv(self.raw)
         service = ListService(account_id=self.account_id)
         target = service.create(owner_id=self.user_id, label=self.label, columns=columns, origin=ListOrigin.CSV)
+        # Every parsed row in one append is safe only because the list is
+        # new: it has no workflow, so the trigger judges nothing. An
+        # import into an existing sheet must page its append within
+        # MAX_JUDGED_ROWS.
         added = AppendRowsOperation(account_id=self.account_id, target_list=target, rows=rows).run().added
         target.refresh_from_db()
         logger.info("csv import: list=%s rows=%d skipped=%d", target.id, added, skipped)

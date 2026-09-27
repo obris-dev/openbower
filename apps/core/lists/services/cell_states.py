@@ -61,6 +61,16 @@ class CellStateService:
             )
         )
 
+    def attempted_row_ids(self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]) -> set[str]:
+        """The rows on this page that ANY of the columns has a record
+        for: a cell the landing has resolved once (filled, a model's
+        verdict, or an infrastructure failure) is attempted, and a node
+        that fills these columns owes such a row nothing until the user
+        asks again. One read per page, the record being the truth."""
+        records = self._scoped(list_id, row_ids=row_ids, column_keys=column_keys)
+        attempted = records.values_list("row_id", flat=True).distinct()
+        return {str(row_id) for row_id in attempted}
+
     def iter_recorded(
         self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
     ) -> Iterator[tuple[str, str, str, dict]]:

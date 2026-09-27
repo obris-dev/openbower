@@ -158,6 +158,15 @@ def cell_run_worst_case_seconds() -> int:
 DEFAULT_PEOPLE_SITE = "linkedin.com/in"
 
 
+# Stable error codes for the agents lane's refusals: the machine leg of
+# the {error, detail} envelope it answers with (the detail is
+# server-authored copy the client renders verbatim, tier 1).
+class AgentErrorCode(StrEnum):
+    # The save changes the output set of an agent whose columns are on
+    # a sheet; the user makes a new agent or deletes those columns (409).
+    OUTPUTS_IN_USE = "agent_outputs_in_use"
+
+
 class ToolStatus(StrEnum):
     """The BASE status codes a provider-backed tool reports for one
     call. A tool's failure vocabulary is its spec's failure_modes KEYS

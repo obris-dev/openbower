@@ -119,9 +119,8 @@ class NodeRunFlow:
     @staticmethod
     def abandon_queued_for_fill(fill_run_id: str) -> int:
         """READY | QUEUED -> ABANDONED for a stopped fill: consent
-        granted and not spent, recorded rather than deleted, the only
-        honest answer to what the fill still owed (a later resume reads
-        it). Deliberately NOT PROCESSING: a task a consumer already owns
+        granted and not spent, recorded rather than deleted.
+        Deliberately NOT PROCESSING: a task a consumer already owns
         runs to its own terminal CAS and LANDS its cell (the settle keys
         on the task's status, not the fill's), so in-flight spend is
         sunk cost and cancel granularity is between tasks; leaving it

@@ -15,7 +15,7 @@ from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from lists.constants import ListOrigin
-from lists.jobs.rerank import Rerank
+from lists.jobs.rerank import RerankJob
 from lists.models import List, ListRow
 from lists.services.lists import (
     ColumnNotWritable,
@@ -164,7 +164,7 @@ class ListServiceTests(TestCase):
         service.move_row(target, str(rows[2].id), after_id=None)
         jobs = JobService(account_id="01AC" + "A" * 22)
         for _round in range(2):
-            jobs.enqueue_system(Rerank(list_id=str(target.id)), target_id=str(target.id))
+            jobs.enqueue_system(RerankJob(list_id=str(target.id)), target_id=str(target.id))
             with patch("lists.services.lists.FILL_WRITE_BATCH", 2):
                 JobRunner(worker_id="test:1").tick()
             (job,) = list(Job.objects.filter(kind="rerank", status=JobStatus.DONE))
@@ -187,11 +187,11 @@ class ListServiceTests(TestCase):
             node_id="01ND" + "A" * 22,
             agent_id="01AG" + "A" * 22,
             column_keys=["name"],
-            consented=3,
+            target_row_count=3,
             status=JobStatus.PROCESSING,
         )
         jobs = JobService(account_id="01AC" + "A" * 22)
-        rerank = jobs.enqueue_system(Rerank(list_id=str(target.id)), target_id=str(target.id))
+        rerank = jobs.enqueue_system(RerankJob(list_id=str(target.id)), target_id=str(target.id))
         with patch("lists.jobs.rerank.RERANK_WAIT_SECONDS", 0):
             JobRunner(worker_id="test:1").tick()
             rerank.refresh_from_db()
