@@ -41,10 +41,7 @@ os.environ.setdefault("OPENBOWER_DATA_URL", "https://data.openbower.com")
 os.environ.setdefault("AUTH_COOKIE_DOMAIN", ".openbower.com")
 os.environ.setdefault("ALLOWED_HOSTS", "api.openbower.com")
 _ORIGINS = "https://app.openbower.com"
-# The marketing hosts post the public waitlist form cross-origin, so
-# they are CORS origins; they never carry a cookie, so not CSRF ones.
-_MARKETING_ORIGINS = "https://openbower.com,https://www.openbower.com"
-os.environ.setdefault("CORS_ALLOWED_ORIGINS", f"{_ORIGINS},{_MARKETING_ORIGINS}")
+os.environ.setdefault("CORS_ALLOWED_ORIGINS", _ORIGINS)
 os.environ.setdefault("CSRF_TRUSTED_ORIGINS", _ORIGINS)
 
 from openbower_kernel.env import env_bool, split_csv  # noqa: E402

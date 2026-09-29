@@ -48,7 +48,6 @@ from .lists import (
     WebhookColumn,
 )
 from .runs import NodeRunWire
-from .waitlist import WaitlistSignupWire
 from .webhooks import (
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
@@ -100,7 +99,6 @@ __all__ = [
     "NodeRunWire",
     "PlainColumn",
     "RowsAdded",
-    "WaitlistSignupWire",
     "WebhookColumn",
     "WebhookColumnConfigWire",
     "WebhookColumnPreviewResponse",

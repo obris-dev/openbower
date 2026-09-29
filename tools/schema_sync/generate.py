@@ -45,7 +45,6 @@ from openbower_schema import (
     LookalikeListResponse,
     NodeRunWire,
     RowsAdded,
-    WaitlistSignupWire,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
@@ -122,7 +121,6 @@ CONTRACT_MODELS: list[type[Any]] = [
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
-    WaitlistSignupWire,
     # Not response roots: the body a RECEIVER validates and the two
     # shapes its `data` takes, listed so the contract documents what it
     # sends.

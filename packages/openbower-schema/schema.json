@@ -1568,20 +1568,6 @@
       "title": "SearchToolCall",
       "type": "object"
     },
-    "WaitlistSignupWire": {
-      "description": "What a signup post answers: the address as stored (trimmed,\nlowercased), and nothing that distinguishes new from known.",
-      "properties": {
-        "email": {
-          "title": "Email",
-          "type": "string"
-        }
-      },
-      "required": [
-        "email"
-      ],
-      "title": "WaitlistSignupWire",
-      "type": "object"
-    },
     "WebhookColumn": {
       "description": "A Send webhook column. It IS the second node of its own path\n(the wait node before it names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
       "properties": {
