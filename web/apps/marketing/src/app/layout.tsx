@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono"
 export const metadata = {
   title: { template: "%s - OpenBower", default: "OpenBower" },
   description:
-    "Find the companies that look like your best customers. Open-source prospecting: look-alike discovery, lead lists, and agents that fill in the blanks.",
+    "Open-source sales intelligence. A spreadsheet that does its own research: agents dig up the details that matter on every row, and you focus on the close. Bring your own model, self-host it free.",
   metadataBase: new URL("https://openbower.ai"),
 };
 
