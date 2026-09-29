@@ -7,7 +7,6 @@ import os
 os.environ.setdefault("BASE_URL", "http://localhost:8002")
 # The web app dev server (web/apps/app runs `next dev -p 3003`).
 os.environ.setdefault("APP_BASE_URL", "http://localhost:3003")
-os.environ.setdefault("MARKETING_BASE_URL", "http://localhost:3004")
 # The local identity service (:8001 by suite convention).
 os.environ.setdefault("OPENBOWER_AUTH_URL", "http://localhost:8001")
 os.environ.setdefault("OPENBOWER_DATA_URL", "http://localhost:8003")
@@ -45,7 +44,5 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "core"]
 # CORS: explicit allowlist even in dev. Allow-all + credentials would let
 # any localhost page credentialed-fetch /v1/auth/me and read session-bearing
 # responses.
-# The marketing site is a CORS origin too (its public waitlist post),
-# never a CSRF-trusted one: nothing it sends carries a cookie.
-CORS_ALLOWED_ORIGINS = [os.environ["APP_BASE_URL"], os.environ["MARKETING_BASE_URL"]]
+CORS_ALLOWED_ORIGINS = [os.environ["APP_BASE_URL"]]
 CSRF_TRUSTED_ORIGINS = [os.environ["APP_BASE_URL"]]

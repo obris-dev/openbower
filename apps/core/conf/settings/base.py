@@ -47,7 +47,6 @@ LOCAL_APPS = [
     "agents",
     "webhooks",
     "jobs",
-    "waitlist",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -329,9 +328,6 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
     # Maps auth failures onto the stable {"error", "detail"} shape.
     "EXCEPTION_HANDLER": "auth_client.exception_handlers.auth_exception_handler",
-    # Throttling is opt-in per view by scope; only the public waitlist
-    # post declares one, so the open form is bounded per IP.
-    "DEFAULT_THROTTLE_RATES": {"waitlist": os.environ.get("WAITLIST_THROTTLE_RATE", "32/hour")},
 }
 
 # Cache. Django's db cache: zero deps, survives process restart. Holds the
