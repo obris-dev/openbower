@@ -1,23 +1,22 @@
+// The open-source block every self-hostable tool carries, under the
+// header the category uses: the code, the model, the environment, the
+// bill. The belief behind them opens pricing.
 const REASONS = [
   {
-    title: "Honest cutoffs.",
-    description:
-      "The list ends where the statistics say the resemblance does, per group, not at a round number chosen to look generous.",
+    title: "Read the source.",
+    body: "Everything that runs your sheet is on GitHub. Read it, run it or fork it for your needs.",
   },
   {
-    title: "Your examples are the spec.",
-    description:
-      "Similarity to companies you actually won, computed from what their websites say, not the industry-code proxies everyone else filters on.",
+    title: "Bring your own model.",
+    body: "Any OpenAI or Anthropic compatible endpoint: a model on your laptop, your own deployment, or the vendor itself.",
   },
   {
-    title: "Open source, your data.",
-    description:
-      "Self-host it, read it, extend it. Bring your own AI (local Ollama or your provider keys) and pay no per-row toll to work your own lists.",
+    title: "Your data stays yours.",
+    body: "Self-host it and your agents run in your environment. The only traffic out is the vendor calls you configured.",
   },
   {
-    title: "Agents that show their work.",
-    description:
-      "Research cells carry where the answer came from, and an agent that finds nothing leaves the cell empty instead of inventing one.",
+    title: "No credits.",
+    body: "You get as much research as your compute allows, at the vendor's price.",
   },
 ];
 
@@ -26,18 +25,19 @@ export function WhySection() {
     <section className="reveal px-6 py-16">
       <div className="mx-auto max-w-5xl">
         <h2 className="font-display text-4xl tracking-tight text-ink sm:text-5xl dark:text-paper">
-          Why teams pick OpenBower
+          Open source and self-hostable.
         </h2>
-        <div className="mt-12 grid gap-x-16 gap-y-10 sm:grid-cols-2">
+        <dl className="mt-12">
           {REASONS.map((reason) => (
-            <div key={reason.title}>
-              <h3 className="text-lg font-bold text-ink dark:text-paper">{reason.title}</h3>
-              <p className="mt-2 text-base leading-relaxed text-ink/60 dark:text-paper/60">
-                {reason.description}
-              </p>
+            <div
+              key={reason.title}
+              className="grid gap-2 border-t border-ink/10 py-6 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:gap-10 dark:border-paper/10"
+            >
+              <dt className="text-lg font-bold text-ink dark:text-paper">{reason.title}</dt>
+              <dd className="text-base leading-relaxed text-ink/60 dark:text-paper/60">{reason.body}</dd>
             </div>
           ))}
-        </div>
+        </dl>
       </div>
     </section>
   );

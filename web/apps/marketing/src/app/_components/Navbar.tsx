@@ -16,20 +16,15 @@ export async function Navbar() {
       Open app
     </a>
   ) : (
-    <>
-      <a
-        href={`${APP_URL}/login`}
-        className="rounded-md px-3 py-2 text-sm font-medium text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink md:px-0 md:py-0 md:hover:bg-transparent dark:text-paper/60 dark:hover:bg-paper/10 dark:hover:text-paper md:dark:hover:bg-transparent"
-      >
-        Log in
-      </a>
-      <a
-        href={`${APP_URL}/signup`}
-        className="rounded-md bg-signal px-4 py-2 text-center text-sm font-semibold text-paper transition-colors hover:bg-signal-600"
-      >
-        Get started
-      </a>
-    </>
+    // Hosted is not open, so a visitor's one action is the waitlist:
+    // an in-page anchor to the CTA's form, never a signup they cannot
+    // complete.
+    <a
+      href="#waitlist"
+      className="rounded-md bg-signal px-4 py-2 text-center text-sm font-semibold text-paper transition-colors hover:bg-signal-600"
+    >
+      Join the waitlist
+    </a>
   );
 
   return (

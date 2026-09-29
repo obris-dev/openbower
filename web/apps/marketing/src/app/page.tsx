@@ -1,11 +1,11 @@
 import { CtaSection } from "./_components/CtaSection";
 import { Footer } from "./_components/Footer";
 import { Hero } from "./_components/Hero";
-import { HowItWorksSection } from "./_components/HowItWorksSection";
 import { Navbar } from "./_components/Navbar";
-import { ProblemSection } from "./_components/ProblemSection";
-import { ProductPreview } from "./_components/ProductPreview";
+import { PricingSection } from "./_components/PricingSection";
+import { ProductPreview } from "./_components/product-preview";
 import { WhySection } from "./_components/WhySection";
+import { WorkflowSection } from "./_components/WorkflowSection";
 
 export default function Home() {
   return (
@@ -14,9 +14,9 @@ export default function Home() {
       <main>
         <Hero />
         <ProductPreview />
-        <ProblemSection />
-        <HowItWorksSection />
+        <WorkflowSection />
         <WhySection />
+        <PricingSection />
         <CtaSection />
       </main>
       <Footer />
