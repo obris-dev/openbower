@@ -27,7 +27,9 @@
 
 OpenBower is an open-source, self-hostable Clay alternative. Build agentic GTM workflows that turn raw signals into researched rows.
 
-<!-- PLACEHOLDER: a screenshot or GIF of a sheet mid-fill (a row lands, its cells resolve, the Send column delivers). Lands here, width 900, like the sibling projects' tours. -->
+<p align="center">
+  <img src="assets/sheet-tour.gif" alt="A sheet with two agent columns: four rows land, their cells resolve (the CEO and LinkedIn profile, what the company sells and to whom), and the sheet settles" width="900">
+</p>
 
 **Key capabilities**
 
