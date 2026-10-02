@@ -251,12 +251,12 @@ test("an unknown summary status claims nothing; known members and the empty stri
     globalThis.fetch = realFetch;
   });
   const columns = [
-    { column_key: "a", current_fill_id: "01A", current_status: "a_status_from_the_future", last_error: null, filled: 0, attempted: 0 },
-    { column_key: "b", current_fill_id: "", current_status: "", last_error: null, filled: 0, attempted: 0 },
-    { column_key: "c", current_fill_id: "01C", current_status: "failed", last_error: { code: "x", message: "y" }, filled: 1, attempted: 2 },
+    { column_key: "a", current_fill_id: "01A", current_status: "a_status_from_the_future", last_error: null, filled: 0, attempted: 0, pending: 0 },
+    { column_key: "b", current_fill_id: "", current_status: "", last_error: null, filled: 0, attempted: 0, pending: 0 },
+    { column_key: "c", current_fill_id: "01C", current_status: "failed", last_error: { code: "x", message: "y" }, filled: 1, attempted: 2, pending: 0 },
     // A server from before the two fields shipped omits them; absence
     // must read as the never-ran story, never fail the page.
-    { column_key: "d", current_fill_id: "", filled: 0, attempted: 0 },
+    { column_key: "d", current_fill_id: "", filled: 0, attempted: 0, pending: 0 },
   ];
   globalThis.fetch = (async () =>
     new Response(JSON.stringify({ runs: [], columns, next_cursor: null }), {
