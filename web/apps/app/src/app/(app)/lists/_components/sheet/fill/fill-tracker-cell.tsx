@@ -112,15 +112,18 @@ export function FillTrackerCell({
       >
         {/* The header rides ABOVE the run status, so the two never say
             the same thing: with no fill attached there is no status to
-            show and the header stands alone. */}
-        <span
-          className={cn(
-            "block truncate tabular-nums",
-            cell.kind === "none" ? "font-medium text-muted" : "text-[11px] text-faint",
-          )}
-        >
-          {progress}
-        </span>
+            show and the header stands alone. A settled column says
+            nothing at all; the column name is the whole header. */}
+        {progress !== null && (
+          <span
+            className={cn(
+              "block truncate tabular-nums",
+              cell.kind === "none" ? "font-medium text-muted" : "text-[11px] text-faint",
+            )}
+          >
+            {progress}
+          </span>
+        )}
         {cell.kind === "live" && (
           <span className="block truncate font-medium tabular-nums text-muted">{cell.text}</span>
         )}
@@ -146,7 +149,7 @@ export function FillTrackerCell({
           between read and edit. */}
       <PopoverPanel anchor="bottom start" className="py-0 motion-reduce:transition-none">
         <div className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-4">
-          <p className="text-xs text-muted">Column: {progress}</p>
+          {progress !== null && <p className="text-xs text-muted">Column: {progress}</p>}
           {run !== null && <FillProgress run={run} onStop={() => onStop(run.id)} />}
           {!live && summary.current_status === "failed" && (
             // Tier 1: the server wrote the failed run's copy; render

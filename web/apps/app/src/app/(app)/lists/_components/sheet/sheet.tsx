@@ -124,12 +124,15 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   // webhook waiting for its window) re-read on their own schedule,
   // backing off while the pending set holds still and restarting when
   // it moves; a live fill's poll already re-reads, so this stands down
-  // while one runs. Stops when nothing reads pending.
+  // while one runs. Stops when nothing reads pending. Each re-read
+  // also takes the column summaries (one idle read of the fills page),
+  // so a header's "filling" count moves with the cells it counts.
   // A read that keeps failing is surfaced the way the fill poll's is
   // (one line, the cells holding still), never swallowed: a cell would
   // otherwise shimmer with no sign the page has lost the server.
   const pending = pendingSignature(rows);
   const [pendingTrouble, setPendingTrouble] = useState(false);
+  const { refresh: refreshFills } = fill;
   useEffect(() => {
     if (!pending || anyLive) return;
     let attempt = 0;
@@ -140,6 +143,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
       timer = setTimeout(async () => {
         const read = await refreshLoaded();
         if (stopped) return;
+        void refreshFills();
         failures = read ? 0 : failures + 1;
         setPendingTrouble(readsAreTroubled(failures));
         attempt += 1;
@@ -151,7 +155,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
       stopped = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [pending, anyLive, refreshLoaded]);
+  }, [pending, anyLive, refreshLoaded, refreshFills]);
   // The page's ONE trouble fact, whichever loop saw it. The re-read
   // loop's trouble counts only while that loop runs (a pending cell,
   // no live fill): its last word is stale the moment it stands down.
