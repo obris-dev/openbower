@@ -537,6 +537,11 @@
             }
           ],
           "description": "The newest run's error, both legs (tier 1: the message renders verbatim); None unless that run FAILED, so a newer clean run clears it and a stopped run carries none."
+        },
+        "pending": {
+          "description": "Cells with an open run of this column's node right now, whichever lane queued it (a fill's walk, a pushed row's autofill, a cleared barrier's): the column is being worked on. Derived, never stored, the same rule that reads a cell as pending on the rows wire.",
+          "title": "Pending",
+          "type": "integer"
         }
       },
       "required": [
@@ -545,7 +550,8 @@
         "current_status",
         "last_error",
         "filled",
-        "attempted"
+        "attempted",
+        "pending"
       ],
       "title": "ColumnFillSummary",
       "type": "object"

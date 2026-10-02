@@ -21,6 +21,7 @@ function summary(overrides: Partial<ColumnFillSummary> = {}): ColumnFillSummary 
     last_error: null,
     filled: 0,
     attempted: 0,
+    pending: 0,
     ...overrides,
   };
 }
@@ -37,7 +38,8 @@ test("the column's run is the envelope behind the server's pointer", () => {
 });
 
 test("a column with nothing left says so, rather than showing a zero", () => {
-  assert.equal(columnProgress(summary({ filled: 1499, attempted: 2343 }), 2343), "all 2,343 rows run");
+  // A settled column has nothing to report: the cells carry what landed.
+  assert.equal(columnProgress(summary({ filled: 1499, attempted: 2343 }), 2343), null);
 });
 
 test("a live run speaks its filled count and its PROCESSED percent", () => {
@@ -85,9 +87,24 @@ test("the header answers is there work left, not how well it went", () => {
   // Only what is KNOWN: a remainder subtracted from the sheet total
   // is not what the button beneath would target, and claiming it
   // put a number in the tracker that the next click contradicted.
-  assert.equal(columnProgress(summary({ filled: 17, attempted: 32 }), 2568), "32 of 2,568 rows run");
+  assert.equal(columnProgress(summary({ filled: 17, attempted: 32 }), 2568), "2,536 rows to fill");
 });
 
 test("a column nothing has run yet names the work, not a zero", () => {
   assert.equal(columnProgress(summary({ filled: 0, attempted: 0 }), 2568), "2,568 rows to fill");
+  assert.equal(columnProgress(summary({ filled: 0, attempted: 0 }), 1), "1 row to fill");
+});
+
+test("a column being worked on says so, over anything owed", () => {
+  // The autofill case: no fill run to join, open runs on the node.
+  // FAILS if the header keeps saying "to fill" while cells shimmer.
+  assert.equal(columnProgress(summary({ pending: 4 }), 4), "filling 4 rows");
+  assert.equal(columnProgress(summary({ pending: 1, attempted: 3 }), 4), "filling 1 row");
+  // Rows no attempt and no run has reached are not counted as filling.
+  assert.equal(columnProgress(summary({ pending: 2, attempted: 1 }), 10), "filling 2 rows");
+});
+
+test("owed is what neither an attempt nor an open run has reached", () => {
+  assert.equal(columnProgress(summary({ attempted: 1 }), 4), "3 rows to fill");
+  assert.equal(columnProgress(summary({ attempted: 4 }), 4), null);
 });
