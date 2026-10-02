@@ -686,6 +686,20 @@ class FillColumnSummaryTests(FillViewsTestCase):
         summary = page.columns[0]
         self.assertEqual((summary.filled, summary.attempted), (1, 2))
 
+    def test_pending_is_the_open_runs_of_the_column(self) -> None:
+        # The header's "filling" word: a cell with an open run of the
+        # column's node, whichever lane queued it, counts as pending
+        # until the run settles, and never as attempted (nothing is
+        # stored for it). FAILS if the summary reports pending off the
+        # stored states, where pending does not exist.
+        fill_run_id = self.add_and_fill().json()["id"]
+        page = FillRunPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
+        self.assertEqual((page.columns[0].pending, page.columns[0].attempted), (2, 0))
+        rows = self.lists.rows_page(self.sheet, limit=10)
+        settle(fill_run_id, str(rows[0].id), None)
+        page = FillRunPage(**self.client.get(reverse("lists_fills", kwargs={"id": str(self.sheet.id)})).json())
+        self.assertEqual((page.columns[0].pending, page.columns[0].attempted), (1, 1))
+
     def test_answering_a_diagnosed_cell_moves_it_between_the_two_buckets(self) -> None:
         # The invariant `attempted` rests on: a later answer to a cell
         # REPLACES its diagnosis, so the cell moves from one bucket to

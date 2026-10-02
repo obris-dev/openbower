@@ -219,6 +219,11 @@ class ColumnFillSummary(BaseModel):
         "cell ends in exactly one of those two places, so their sum is what the column was asked to do. "
         "It is the honest denominator for filled; the sheet's row count is a different question."
     )
+    pending: int = Field(
+        description="Cells with an open run of this column's node right now, whichever lane queued it "
+        "(a fill's walk, a pushed row's autofill, a cleared barrier's): the column is being worked on. "
+        "Derived, never stored, the same rule that reads a cell as pending on the rows wire."
+    )
 
 
 class FillRunPage(BaseModel):

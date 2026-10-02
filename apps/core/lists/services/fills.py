@@ -218,7 +218,9 @@ class FillService:
         cell resolves to exactly one state, so their sum is what the
         column was asked to do. Pairing `filled` with the SHEET's row
         count answers a different question and makes a scoped fill read
-        as a failure."""
+        as a failure. `pending` is one more grouped read, of the open
+        runs by node, so a column being worked on by a lane no fill
+        reports (an autofill) says so in its header."""
         fill_columns = [column for column in target_list.columns if isinstance(column, AiColumn)]
         if not fill_columns:
             return []
@@ -230,6 +232,20 @@ class FillService:
             attempted[key] = attempted.get(key, 0) + count
             if state == StoredCellState.FILLED:
                 filled[key] = filled.get(key, 0) + count
+        # PENDING is the open runs of each column's node on this sheet,
+        # whichever lane queued them: the same rule that reads a cell as
+        # pending on the rows wire, grouped by node instead of by row.
+        pending_by_node: dict[str, int] = {
+            r["node_id"]: r["n"]
+            for r in NodeRun.objects.filter(
+                account_id=self.account_id,
+                list_id=str(target_list.id),
+                node_id__in=[column.node_id for column in fill_columns],
+                status__in=NON_TERMINAL_NODE_RUN_STATES,
+            )
+            .values("node_id")
+            .annotate(n=models.Count("id"))
+        }
         current_by_key = {column.key: column.current_fill_id for column in fill_columns}
         current_ids = [fill_run_id for fill_run_id in current_by_key.values() if fill_run_id]
         # The jobs FIRST, so the one question about runs is asked of the
@@ -264,6 +280,7 @@ class FillService:
                     last_error=error,
                     filled=filled.get(column.key, 0),
                     attempted=attempted.get(column.key, 0),
+                    pending=pending_by_node.get(column.node_id, 0),
                 )
             )
         return summaries

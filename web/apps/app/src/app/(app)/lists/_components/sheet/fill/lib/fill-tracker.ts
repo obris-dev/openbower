@@ -52,29 +52,19 @@ function count(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-/** THE COLUMN HEADER: how much of the sheet this column has been run
- * on.
- *
- * Attempted-versus-remaining, because that is the question an operator
- * has about a column: is there work left here. Filled-of-attempted is
- * a QUALITY number (how well did the model do), and it belongs in the
- * run status underneath, next to the run it describes.
- *
- * A column with nothing run names the WORK, because there the sheet
- * count and the target are the same question. Once a run has
- * happened they are not: a new fill skips every row already tried and
- * every row whose prompt variables are all blank, so a subtraction
- * from the sheet total is a different number from
- * the one the button beneath it would spend. So the mixed case
- * reports only what is KNOWN, run out of the sheet, and names no
- * remainder at all. The exact target is computed on the consent path,
- * where it is spent and where it has to be right.
- */
-export function columnProgress(summary: ColumnFillSummary, rowCount: number): string {
-  const remaining = Math.max(0, rowCount - summary.attempted);
-  if (summary.attempted === 0) return `${count(rowCount)} rows to fill`;
-  if (remaining === 0) return `all ${count(rowCount)} rows run`;
-  return `${count(summary.attempted)} of ${count(rowCount)} rows run`;
+/** The column header's one line, and only while there is something to
+ * say: the cells being worked on right now (an open run of the column's
+ * node, whichever lane queued it), else the rows no attempt has reached,
+ * else nothing. A settled column has nothing to report: its cells say
+ * what landed, and a count of the past standing where a status goes
+ * reads as a status. The exact target of a fill is computed on the
+ * consent path, where it is spent and where it has to be right; this
+ * line claims only what is known. */
+export function columnProgress(summary: ColumnFillSummary, rowCount: number): string | null {
+  if (summary.pending > 0) return `filling ${count(summary.pending)} ${summary.pending === 1 ? "row" : "rows"}`;
+  const owed = Math.max(0, rowCount - summary.attempted - summary.pending);
+  if (owed > 0) return `${count(owed)} ${owed === 1 ? "row" : "rows"} to fill`;
+  return null;
 }
 
 /** A joined run IS live (the page ships nothing else), so its cell is
