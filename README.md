@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <b><a href="https://openbower.com/">openbower.com</a></b> |
+  <b><a href="https://openbower.ai/">openbower.ai</a></b> |
   <a href="#quickstart">Quickstart</a> |
   <a href="#how-it-works">How it works</a> |
   <a href="CHANGELOG.md">Changelog</a> |
@@ -21,7 +21,7 @@
 ---
 
 > [!TIP]
-> **Don't want to run it yourself?** A hosted version is on the way: join the waitlist at [openbower.com](https://openbower.com/). Or run it on your own machine: `make up` on a clone, see [Quickstart](#quickstart).
+> **Don't want to run it yourself?** A hosted version is on the way: join the waitlist at [openbower.ai](https://openbower.ai/). Or run it on your own machine: `make up` on a clone, see [Quickstart](#quickstart).
 
 ## What it does
 
@@ -37,7 +37,7 @@ OpenBower is an open-source, self-hostable Clay alternative. Build agentic GTM w
 - **An agent per detail.** Build an agent once (a prompt, a model, the tools it may use) and reuse it on every sheet.
 - **Get notified.** A Send column waits for the required work to finish, then notifies you or syncs completed rows to your CRM, sequencer, or automation over signed webhooks.
 - **Bring your own model.** Any OpenAI or Anthropic compatible endpoint, including one on your laptop, so the whole pipeline runs for $0 while you prove your idea.
-- **Self-host free, or hosted.** Run it on your own machine forever, or [join the waitlist](https://openbower.com/) for the hosted version.
+- **Self-host free, or hosted.** Run it on your own machine forever, or [join the waitlist](https://openbower.ai/) for the hosted version.
 - **Everything before hello, automated.** A row lands, the agents research it, the finished row reaches your sequencer. The conversation is yours.
 
 ## Why OpenBower
@@ -132,7 +132,7 @@ Which signal would start a play for you? Open an issue and say.
 
 Self-hosting is free and stays free. A hosted version (we run the engine for you: always on, listening for your GTM signals) is in the works as the paid tier, a hosting fee rather than credits.
 
-Join the waitlist at [openbower.com](https://openbower.com/).
+Join the waitlist at [openbower.ai](https://openbower.ai/).
 
 ## Documentation
 
