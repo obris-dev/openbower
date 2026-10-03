@@ -24,7 +24,7 @@ def set_session_cookie(response: HttpResponse, value: str) -> None:
         samesite="Lax",
         # Empty = host-only (dev default). A deploy that wants sibling
         # origins to SEE the session (the marketing navbar's logged-in
-        # state) scopes it to the parent domain, e.g. ".openbower.com".
+        # state) scopes it to the parent domain, e.g. ".openbower.ai".
         domain=settings.AUTH_COOKIE_DOMAIN or None,
     )
 

@@ -149,7 +149,7 @@ DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"
 # itself (its /v1/auth/me userinfo, which the toolkit audience-checks) and
 # the data service (which enforces its own audience on introspection). Each
 # audience is that service's real base URL, so it matches per env (dev
-# localhost, cloud openbower.com); binding to only one would get the token
+# localhost, cloud openbower.ai); binding to only one would get the token
 # rejected at the other.
 OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 

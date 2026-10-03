@@ -71,7 +71,7 @@ class MachineTokenAuthTests(TestCase):
 
     def test_wrong_audience_is_401(self):
         # A token minted for a different service (its aud is not this core).
-        resp, _ = self._get_lists(claims=_claims(aud=["https://data.openbower.com"]))
+        resp, _ = self._get_lists(claims=_claims(aud=["https://data.openbower.ai"]))
         self.assertEqual(resp.status_code, 401)
 
     def test_inactive_token_is_401(self):

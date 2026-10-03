@@ -1,7 +1,7 @@
 """Cloud (hosted) settings. `DJANGO_ENV=cloud` -> `conf.settings.cloud`.
 
 The production counterpart to `local.py`. Extends `base.py` with
-production-safe values and the canonical openbower.com URLs, so a deploy
+production-safe values and the canonical openbower.ai URLs, so a deploy
 supplies only secrets and infra hosts, not a wall of config.
 
 DEPLOY CHECKLIST (set these in the cloud env; everything else has a sane
@@ -15,7 +15,7 @@ default here or in base.py). (S) = secret, store in the secret manager.
                                  token encryption; falls back to DJANGO_SECRET_KEY
                                  if unset (rotating either re-logs sessions in)
 
-Defaulted to the openbower.com deployment (override via env for another):
+Defaulted to the openbower.ai deployment (override via env for another):
     BASE_URL, APP_BASE_URL, OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL, ALLOWED_HOSTS,
     CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS.
 This instance's own IP is auto-added to ALLOWED_HOSTS at runtime for health
@@ -28,19 +28,19 @@ import contextlib
 import os
 import socket
 
-# Canonical openbower.com URLs, seeded BEFORE base.py reads them as required
+# Canonical openbower.ai URLs, seeded BEFORE base.py reads them as required
 # os.environ[...] (the same pattern local.py uses for its localhost
 # defaults). Override any via env for a different deployment.
-os.environ.setdefault("BASE_URL", "https://api.openbower.com")
-os.environ.setdefault("APP_BASE_URL", "https://app.openbower.com")
-os.environ.setdefault("OPENBOWER_AUTH_URL", "https://auth.openbower.com")
-os.environ.setdefault("OPENBOWER_DATA_URL", "https://data.openbower.com")
+os.environ.setdefault("BASE_URL", "https://api.openbower.ai")
+os.environ.setdefault("APP_BASE_URL", "https://app.openbower.ai")
+os.environ.setdefault("OPENBOWER_AUTH_URL", "https://auth.openbower.ai")
+os.environ.setdefault("OPENBOWER_DATA_URL", "https://data.openbower.ai")
 # Parent-domain cookie scope: the web app's middleware and server-side
 # guard read bwr_session on the APP origin, so a host-only cookie on the
 # api host would silently disable them (and loop login).
-os.environ.setdefault("AUTH_COOKIE_DOMAIN", ".openbower.com")
-os.environ.setdefault("ALLOWED_HOSTS", "api.openbower.com")
-_ORIGINS = "https://app.openbower.com"
+os.environ.setdefault("AUTH_COOKIE_DOMAIN", ".openbower.ai")
+os.environ.setdefault("ALLOWED_HOSTS", "api.openbower.ai")
+_ORIGINS = "https://app.openbower.ai"
 os.environ.setdefault("CORS_ALLOWED_ORIGINS", _ORIGINS)
 os.environ.setdefault("CSRF_TRUSTED_ORIGINS", _ORIGINS)
 

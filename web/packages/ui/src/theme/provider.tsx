@@ -56,7 +56,7 @@ export function BowerThemeProvider({
 
 // Persist an explicit theme choice to the cookie. Host-only by default (works
 // on any host, including a self-hosted deployment); set NEXT_PUBLIC_COOKIE_DOMAIN
-// to a registrable domain (e.g. ".openbower.com") only when you want sibling
+// to a registrable domain (e.g. ".openbower.ai") only when you want sibling
 // apps on that domain to share the choice. A hardcoded domain would make the
 // browser reject the cookie on any other host, so the theme silently would not
 // persist for self-hosters.
