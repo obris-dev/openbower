@@ -63,6 +63,12 @@ class OAuthClientGlobal:
                 "state": state,
                 "code_challenge": pkce.challenge(verifier),
                 "code_challenge_method": "S256",
+                # Where the IdP sends a browser that has no session there:
+                # THIS install's login page. The IdP honors it only for a
+                # loopback install (callback and page both on the user's
+                # own machine) and otherwise uses its configured page, so
+                # a hosted deployment sends it harmlessly.
+                "login_ui": f"{settings.APP_BASE_URL}/login",
             }
         )
         return url, state

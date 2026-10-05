@@ -60,8 +60,8 @@ make up
 
 `make up` builds the images, seeds `apps/core/.env`, `config/providers.toml` and `config/tools.toml` from their templates, and serves: the app on http://localhost:3003, the marketing site on http://localhost:3004, the API on :8002. The containers bind-mount the checkout, so edits hot-reload without a rebuild. `make logs` tails everything; `make stop` halts the stack in place and `make up` resumes it; `make reset` wipes the database for a clean start. `make help` lists every target. Every service in the stack, and the environment facts a deploy needs, are in [DEPLOY.md](DEPLOY.md).
 
-> [!WARNING]
-> **Signing in needs an identity provider**, which is a separate service: the hosted one, or a local instance of it in development. The app is an OAuth client of it, and the provider only completes a login for callback URLs it has registered, so a self-host on your own domain cannot sign in until the registration handshake on the roadmap lands (a device flow, or a pasted token). Until then a self-host is a local-development affair. The data service behind similar-companies discovery is a separate service in the same way, and optional. Both are reached by name over a docker network called `openbower-suite`, which `make up` creates.
+> [!NOTE]
+> **Signing in uses the hosted account hub, out of the box.** Accounts live at auth.openbower.ai; your install is an OAuth client of it, and the similar-companies feature reads the hosted company universe at data.openbower.ai with your account's token. A fresh clone points at both already: `make up`, then sign up or sign in from your own install's login page. Nothing else needs deploying, and everything but the login itself and that one lookup runs on your machine; an install keeps working through a hub outage for everyone already signed in. The repo-root `.env` that `make up` seeds carries a commented block for pointing the stack at locally run development copies of those two services instead, which only someone developing the hub itself needs. A self-host reached on its own domain rather than localhost is on the roadmap: it needs its callback registered at the hub.
 
 ### Prereq: a model
 

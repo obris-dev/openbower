@@ -38,6 +38,12 @@ apps/core/.env: | apps/core/.env.example
 	@cp $(firstword $|) $@
 	@echo "seeded $@ from .env.example (dev values; edit it for real credentials)"
 
+# The repo-root .env is compose's own: the identity URLs both core and the
+# web read. Same order-only rule, same reason.
+.env: | .env.example
+	@cp $(firstword $|) $@
+	@echo "seeded $@ from .env.example (signs in at the hosted hub; the commented block is for locally run development copies of it)"
+
 # Same order-only trick: a pull that touched the template must never
 # overwrite an operator's real sources and keys.
 config/providers.toml: | config/templates/providers.example.toml
@@ -66,7 +72,7 @@ suite-network:
 # A bound above that chain keeps a container stuck RESTARTING from
 # blocking the target forever, without failing a start that is merely
 # slow.
-up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
+up: .env apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
 	$(COMPOSE) up -d --wait --wait-timeout 900
 	@echo "up: api :8002, app :3003, marketing :3004, fill services + jobs + cron (make logs to tail, make stop to stop)"
 
@@ -77,7 +83,7 @@ up: apps/core/.env config/providers.toml config/tools.toml suite-network ## Star
 # --renew-anon-volumes: the anonymous .venv volume survives a recreate
 # otherwise, so a freshly built image's venv would be masked by the old
 # container's and the rebuild would deliver nothing.
-build: apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
+build: .env apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
 	$(COMPOSE) up --build -d --renew-anon-volumes --wait --wait-timeout 900
 
 # The receiver (make receiver) sits on the stack's network as a plain
