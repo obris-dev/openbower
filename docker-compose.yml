@@ -32,20 +32,28 @@ x-core-env: &core_env
   # here (authoritative over the env file) rather than trusting every .env
   # to say it.
   DJANGO_ENV: local
-  # The network topology, overriding local.py's localhost seeds. Identity
-  # URLs (OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL) are deliberately ABSENT
-  # here: they name the services for the browser and for the token's
-  # resource indicators, so they stay on localhost. Only transport moves.
+  # The network topology, overriding local.py's localhost seeds.
   POSTGRES_HOST: db
   POSTGRES_PORT: "5432"
+  # The identity URLs name the services for the browser and for the
+  # token's resource indicators. They default to the hosted hub, which is
+  # what a pulled copy of this repo can reach; the repo-root .env points
+  # them at locally run development copies of those services instead (one value,
+  # handed to core here and to the web below, so the two can never
+  # disagree). Deliberately NOT in apps/core/.env: that file does not
+  # reach the web container.
+  OPENBOWER_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
+  OPENBOWER_DATA_URL: ${OPENBOWER_DATA_URL:-https://data.openbower.ai}
   # By SERVICE NAME over the shared suite network, not through the host
   # gateway: a loopback-published port (which is how those services are
   # published, and should be) is unreachable from a container on Linux,
   # where the gateway is the bridge IP rather than the host's loopback.
-  # Overridable, so a deployment pointing at its own IdP is not stuck with
-  # the sibling dev stack's service names.
-  OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-http://auth:8001}
-  OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-http://data:8003}
+  # The transport this process dials, which follows the identity URL
+  # (the hub, by default). Locally run development copies of those
+  # services are sibling containers reached by service name, so that setup sets these
+  # two alongside the identity URLs (the root .env.example has the block).
+  OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}}
+  OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-${OPENBOWER_DATA_URL:-https://data.openbower.ai}}
   # The ingest bus, by service name over this stack's default network. Set
   # here (not in local.py's localhost seeds) because only the containers
   # reach the broker; a host-run process without it falls back to the
@@ -501,7 +509,9 @@ services:
     environment:
       # Browser-visible origins (NEXT_PUBLIC_* inlines at build/dev time).
       NEXT_PUBLIC_API_URL: http://localhost:8002
-      NEXT_PUBLIC_AUTH_URL: http://localhost:8001
+      # The same value core gets (x-core-env): the login form posts
+      # credentials to the IdP this names.
+      NEXT_PUBLIC_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
       NEXT_PUBLIC_APP_URL: http://localhost:3003
       # Server-side fetches cross the compose network instead; localhost
       # inside this container is this container. Read by @bower/api's
