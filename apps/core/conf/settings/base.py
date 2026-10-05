@@ -293,10 +293,12 @@ AUTH_COOKIE_MAX_AGE_SECONDS = int(os.environ.get("AUTH_COOKIE_MAX_AGE_SECONDS", 
 # frontend reads the same value; keep them in lockstep when bumping.
 API_VERSION_PREFIX = os.environ.get("API_VERSION_PREFIX", "v1")
 
-# Product version: version.txt at the repo root. Exposed on /healthz.
-# Best-effort (never crash settings import over a cosmetic string).
+# Product version: version.txt at the REPO root, the file the release
+# automation bumps; never this leaf's pyproject version and never the route
+# prefix. Exposed on /healthz so a client can see what the server is
+# running. Best-effort (never crash settings import over a cosmetic string).
 try:
-    PRODUCT_VERSION = (BASE_DIR / "version.txt").read_text(encoding="utf-8").strip() or "unknown"
+    PRODUCT_VERSION = (REPO_ROOT / "version.txt").read_text(encoding="utf-8").strip() or "unknown"
 except (OSError, UnicodeDecodeError):
     PRODUCT_VERSION = "unknown"
 

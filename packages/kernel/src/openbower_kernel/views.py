@@ -65,7 +65,7 @@ def healthz(request: HttpRequest) -> JsonResponse:
         "cache": _check_cache(),
     }
     ok = all(v == "ok" for v in checks.values())
-    # `version` is the running product version (the leaf's own version.txt), so a
+    # `version` is the running product version (the repo root's version.txt), so a
     # client can report what the server is on. Unauthenticated + always
     # present, even when degraded.
     return JsonResponse(

@@ -1,0 +1,75 @@
+name: release-please
+
+# Runs on every push to main, and "running" only means: recompute the
+# pending release and open or update the release PR. Nothing is released
+# until a human MERGES that PR; that merge creates the tag (v<x.y.z>) and
+# the GitHub Release. The config lives in release-please-config.json and
+# the current version in .release-please-manifest.json.
+#
+# TOKEN: a PR opened or updated with the default GITHUB_TOKEN gets its
+# pull_request workflow runs only in an approval-required state, so the
+# release PR's checks wait on a click every time. RELEASE_PLEASE_TOKEN (a
+# PAT or a GitHub App token with contents and pull requests) runs them
+# outright; the expression falls back to GITHUB_TOKEN when it is absent.
+# With the fallback, the repo setting "Allow GitHub Actions to create and
+# approve pull requests" must be on.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # The bump edits the pyproject versions but nothing can edit uv.lock
+      # for it (the lock is generated, so it carries no marker), and a
+      # lock that disagrees with the manifests fails `uv lock --check` in
+      # CI and dirties every developer's next sync. So the open release
+      # PR, whenever one exists, is re-locked here. It is looked up every
+      # run rather than taken from the action's output, which is set only
+      # when the action changed the PR: a re-lock that failed once would
+      # otherwise never be retried. release-please rewrites the branch on
+      # each main push, so the re-lock recurs; the one change it ever
+      # makes is the version lines. The uv is pinned to the one the images
+      # build with, so one uv owns the lock. Expect the first CI run after
+      # each rewrite to fail the lock check and the re-locked commit's run
+      # to pass; the PR's state is the newest commit's.
+      - id: release_pr
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          branch=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json headRefName -q '.[0].headRefName // ""')
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+      - if: ${{ steps.release_pr.outputs.branch != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release_pr.outputs.branch }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - if: ${{ steps.release_pr.outputs.branch != '' }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.x"
+      - if: ${{ steps.release_pr.outputs.branch != '' }}
+        run: |
+          uv lock
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already matches the release versions"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "chore: lock the release versions" -- uv.lock
+          git push

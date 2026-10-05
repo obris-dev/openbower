@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# One run per PR (or per branch): a new push cancels the run still in
+# flight for the previous commit, so only the newest commit is checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   branch-name:
     # Fork PRs run a fork's editable copy of the check, so it only means
@@ -36,6 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          # The uv the images build with, so one uv owns the lock.
+          version: "0.12.x"
+      # Before the sync, which would silently rewrite a stale lock: a
+      # release bump that missed its re-lock, or a hand-edited manifest,
+      # fails here instead.
+      - run: uv lock --check
       - run: uv sync --all-packages
       - run: uv run ruff check .
       - run: uv run ruff format --check .
