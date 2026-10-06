@@ -565,6 +565,26 @@ services:
       # the first SSR fetches eat connection-refused.
       core:
         condition: service_healthy
+    # Ready means both dev servers answer, not that the process started:
+    # `make up` waits on this, and the first run also sits through the
+    # dependency install and each route's first compile. The probe asks
+    # for the pages a first visit lands on, so by the time it passes
+    # those routes are compiled and the browser does not wait on them.
+    # Anything but a 5xx counts (the app's / is a redirect to login).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          const urls = ["http://127.0.0.1:3003/login", "http://127.0.0.1:3004/"];
+          Promise.all(urls.map((u) => fetch(u, { redirect: "manual" }).then((r) => {
+            if (r.status >= 500) throw new Error(u + " " + r.status);
+          }))).then(() => process.exit(0), () => process.exit(1));
+      interval: 10s
+      timeout: 120s
+      retries: 12
+      start_period: 600s
 
 # The cross-stack network: the identity provider and data service are a
 # SEPARATE stack (a private repo in dev, the hosted services otherwise),
