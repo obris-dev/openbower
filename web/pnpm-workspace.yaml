@@ -14,3 +14,8 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
   workerd: true
+
+# One sharp for the workspace: Next's image optimizer already resolves
+# the patched line, and the Workers dev runtime pins the one before it.
+overrides:
+  sharp: ">=0.35.5"
