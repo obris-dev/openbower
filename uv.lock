@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [manifest]
@@ -819,12 +819,12 @@ wheels = [
 
 [[package]]
 name = "openbower"
-version = "0.0.0"
+version = "0.0.1"
 source = { virtual = "." }
 
 [[package]]
 name = "openbower-core"
-version = "0.0.0"
+version = "0.0.1"
 source = { virtual = "apps/core" }
 dependencies = [
     { name = "confluent-kafka" },
