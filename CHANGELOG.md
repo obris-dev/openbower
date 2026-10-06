@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.2](https://github.com/obris-dev/openbower/compare/v0.0.1...v0.0.2) (2026-10-06)
+
+
+### Features
+
+* **web:** the marketing site deploys to Cloudflare Workers ([#76](https://github.com/obris-dev/openbower/issues/76)) ([7cc5747](https://github.com/obris-dev/openbower/commit/7cc57475c06a0953dfabb983acb6fe25f5d56143))
+
 ## 0.0.1 (2026-10-06)
 
 
