@@ -22,7 +22,7 @@ public issues.
 ## Branch naming
 
 Branches are **`<type>/<kebab-slug>`**: a Conventional-Commits type, a
-slash, and a short kebab-case description. `main` is exempt.
+slash, and a short kebab-case description. `main` and the release automation's `release-please--*` branches are exempt.
 
 ```
 feat/csv-import-quoting     fix/session-refresh-race     ci/branch-naming
@@ -58,9 +58,18 @@ Rename a branch with `git branch -m <new-name>`.
 
 ## Commit messages
 
-Use the same Conventional-Commits types for commit subjects, e.g.
-`feat(lists): add the csv import`. Not enforced, but it keeps the history
-scannable and feeds automated releases later.
+Use Conventional-Commits types for commit subjects, e.g.
+`feat(lists): add the csv import`. The subject of the commit that lands
+on `main` is what the release automation reads: on a squash merge that
+is the PR title when the PR has more than one commit, else that commit's
+own subject. It writes the CHANGELOG entry and decides the version bump.
+Before 1.0, any type with a changelog section (`feat`, `fix`, `perf`,
+`revert`) bumps the patch; a breaking change (`<type>!:` or a
+`BREAKING CHANGE:` footer) bumps the minor; `docs`, `chore`, `ci`,
+`refactor`, `test`, `build` and `style` alone release nothing. A subject that is not
+a Conventional Commit is left out of the changelog and bumps nothing.
+Nothing in CHANGELOG.md is written by hand; shipping is merging the
+release PR the automation keeps open.
 
 ## Running the checks
 

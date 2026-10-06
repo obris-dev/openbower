@@ -4,7 +4,7 @@
 
 [project]
 name = "openbower-core"
-version = "0.1.0"
+version = "0.0.0" # x-release-please-version
 description = "OpenBower core, the Django backend for the prospecting domain."
 requires-python = ">=3.13"
 dependencies = [

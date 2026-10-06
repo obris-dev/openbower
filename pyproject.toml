@@ -5,7 +5,7 @@
 # published.
 [project]
 name = "openbower"
-version = "0.1.0"
+version = "0.0.0" # x-release-please-version
 description = "OpenBower (uv workspace root; no code of its own)."
 requires-python = ">=3.13"
 
