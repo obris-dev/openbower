@@ -66,8 +66,10 @@ own subject. It writes the CHANGELOG entry and decides the version bump.
 Before 1.0, any type with a changelog section (`feat`, `fix`, `perf`,
 `revert`) bumps the patch; a breaking change (`<type>!:` or a
 `BREAKING CHANGE:` footer) bumps the minor; `docs`, `chore`, `ci`,
-`refactor`, `test`, `build` and `style` alone release nothing. A subject that is not
-a Conventional Commit is left out of the changelog and bumps nothing.
+`refactor`, `test`, `build` and `style` alone release nothing. Changes
+exclusive to `web/apps/marketing` do not trigger new releases or
+changelog updates. A subject that is not a Conventional Commit is left
+out of the changelog and bumps nothing.
 Nothing in CHANGELOG.md is written by hand; shipping is merging the
 release PR the automation keeps open.
 
