@@ -3,6 +3,6 @@
 // app-facing preset (next + next/typescript + the Core Web Vitals rules).
 import next from "eslint-config-next/core-web-vitals";
 
-const config = [{ ignores: [".next/**", "node_modules/**"] }, ...next];
+const config = [{ ignores: [".next/**", ".open-next/**", ".wrangler/**", "node_modules/**"] }, ...next];
 
 export default config;

@@ -1,0 +1,4 @@
+# OpenNext / wrangler (Cloudflare Workers) build output and generated types
+.open-next
+.wrangler
+cloudflare-env.d.ts
