@@ -1,0 +1,5 @@
+# Every file under /_next/static is named by a hash of its contents, so a
+# new build changes the URL and the old one is never served stale; the
+# document itself is rendered per request and is not under this path.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
