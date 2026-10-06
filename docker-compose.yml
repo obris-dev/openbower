@@ -146,6 +146,9 @@ services:
   core-setup:
     build: *core_build
     image: &core_image openbower-core:local
+    # The image exists only as this build, so compose must not ask the
+    # registry for it first (a failed pull is a warning, then a build).
+    pull_policy: build
     command: sh -c "uv run --frozen --package openbower-core python apps/core/manage.py migrate --no-input
       && uv run --frozen --package openbower-core python apps/core/manage.py createcachetable"
     env_file: *core_env_file
