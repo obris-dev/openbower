@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   branch-name:
-    # Fork PRs run a fork's editable copy of the check, so it only means
-    # something for branches in this repo.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Runs for every PR, a fork's included: a required check that never
+    # reports leaves the PR unmergeable, and the worst a fork can do by
+    # editing the script is pass its own branch name.
     runs-on: ubuntu-latest
     env:
       HEAD_REF: ${{ github.head_ref }}
