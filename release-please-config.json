@@ -64,6 +64,9 @@
         "pyproject.toml",
         "apps/core/pyproject.toml"
       ],
+      "exclude-paths": [
+        "web/apps/marketing"
+      ],
       "initial-version": "0.0.1"
     }
   }
