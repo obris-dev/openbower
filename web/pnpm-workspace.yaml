@@ -5,8 +5,12 @@ packages:
 # Dependency build scripts do NOT run by default since pnpm 10, so the
 # two that genuinely need theirs are named here: sharp is Next's image
 # optimizer and unrs-resolver backs the eslint import resolver, and each
-# ships a native binary its install script fetches or builds. A package
-# added without a line here fails at RUNTIME, not at install.
+# ships a native binary its install script fetches or builds; esbuild
+# and workerd are the OpenNext bundler and the local Workers runtime the
+# marketing site's Cloudflare deploy runs on. A package added without a
+# line here fails at RUNTIME, not at install.
 allowBuilds:
+  esbuild: true
   sharp: true
   unrs-resolver: true
+  workerd: true
