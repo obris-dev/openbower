@@ -8,11 +8,19 @@ COMPOSE := docker compose -p $(PROJECT)
 # sub-shell resolves to the same project.
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
+# A private deployments checkout beside this one (../deployments) carries
+# the hosted-operations targets (release, deploy, migrate, the cluster
+# logs). Its make fragments resolve their paths through DEPLOY_DIR, so
+# they work from here, and the leading `-` skips the include silently
+# when no such checkout exists: a clone of this repo alone is complete.
+DEPLOY_DIR ?= ../deployments
+-include $(DEPLOY_DIR)/make/*.mk
+
 .DEFAULT_GOAL := help
 .PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
 hooks: ## Install the git pre-commit hook (branch-name check)
 	@hooks_dir="$$(git rev-parse --git-path hooks)"; \
