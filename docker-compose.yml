@@ -158,11 +158,16 @@ services:
 
   core:
     # core-setup owns the `build:` and every other core service just names
-    # the image: five services declaring one build target would race to
-    # write the same tag. Every one of them depends on core-setup, so the
-    # image is always built before they start. Pre-start setup lives there too,
-    # so restarting/rolling core alone doesn't re-run it.
+    # the image: several services declaring one build target would race to
+    # write the same tag. Compose resolves every service's image up front,
+    # alongside the build, and `depends_on` orders only container start,
+    # so a service that names the image with the default pull policy asks
+    # the registry for it on a machine that has never built it and fails
+    # there. `pull_policy: never` on each of them makes the local build the
+    # only source. Pre-start setup lives in core-setup too, so restarting
+    # or rolling core alone doesn't re-run it.
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py runserver 0.0.0.0:8002
     # Loopback only: this is a DEBUG server holding the operator's sheets
     # and provider access, and ALLOWED_HOSTS is no defense (the Host
@@ -206,6 +211,7 @@ services:
   # poll wakes every few seconds so SIGTERM stops it promptly.
   fill-provisioner:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py provision_fill
     env_file: *core_env_file
     environment: *core_env
@@ -241,6 +247,7 @@ services:
   # its cause inside the tick, never the process's problem.
   jobs:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py run_jobs
     env_file: *core_env_file
     environment: *core_env
@@ -286,6 +293,7 @@ services:
   # therefore take minutes; that wait is the point.
   fill-consumer:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic manual
     env_file: *core_env_file
     environment: *core_env
@@ -321,6 +329,7 @@ services:
   # web startup on the bus.
   kafka-setup:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py provision_topics
     env_file: *core_env_file
     environment: *core_env
@@ -340,6 +349,7 @@ services:
   # The poll wakes every second, so SIGTERM stops it promptly (default grace).
   ingest-worker:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py ingest_worker
     env_file: *core_env_file
     environment: *core_env
@@ -375,6 +385,7 @@ services:
   # seconds so SIGTERM stops it promptly (default grace).
   autofill-provisioner:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py provision_autofill
     env_file: *core_env_file
     environment: *core_env
@@ -407,6 +418,7 @@ services:
   # poll wakes every second so SIGTERM stops it promptly (default grace).
   autofill-consumer:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic autofill
     env_file: *core_env_file
     environment: *core_env
@@ -446,6 +458,7 @@ services:
   # cost is one metered call on a throwaway diagnostic.
   preview-consumer:
     image: *core_image
+    pull_policy: never
     command: uv run --frozen --package openbower-core python apps/core/manage.py consume_node_runs --topic preview
     env_file: *core_env_file
     environment: *core_env
@@ -481,6 +494,7 @@ services:
   # crontab line is safe to miss (the file's own contract).
   cron:
     image: *core_image
+    pull_policy: never
     command: supercronic /app/apps/core/crontab
     env_file: *core_env_file
     environment: *core_env
