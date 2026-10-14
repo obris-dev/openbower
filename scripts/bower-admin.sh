@@ -642,7 +642,9 @@ setup_menu() {
                 _conc="$(ask "  Requests this server may run at once [1]: ")"
                 _conc="${_conc:-1}"
                 case "$_conc" in
-                    *[!0-9]*) say "a whole number from 1 to 64; try again"; continue ;;
+                    # TOML takes no leading zero; "08" would be refused
+                    # only after everything else was typed.
+                    *[!0-9]* | 0*) say "a whole number from 1 to 64, no leading zero; try again"; continue ;;
                 esac
                 if [ "$_conc" -ge 1 ] && [ "$_conc" -le 64 ]; then break; fi
                 say "a whole number from 1 to 64; try again"
