@@ -7,6 +7,9 @@
 # VM run covers them. Run: sh scripts/tests/bower-admin-functions.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The zsh case writes ${ZDOTDIR:-$HOME}/.zshrc; a developer's own ZDOTDIR
+# must not turn that into a write to their real rc file.
+unset ZDOTDIR
 # shellcheck disable=SC1091  # the file under test, linted on its own
 OPENBOWER_ROOT="$ROOT" BOWER_ADMIN_SOURCED=1 . "$ROOT/scripts/bower-admin.sh"
 # The script turns -e on; an assertion that fails must report, not abort.
@@ -24,8 +27,18 @@ fails=0
 expect() {
     if [ "$2" = "$3" ]; then printf '  + %s\n' "$1"; else printf '  - %s: got [%s] want [%s]\n' "$1" "$2" "$3"; fails=$((fails + 1)); fi
 }
-# A TOML file's fact, read by Python's own parser: $1 file, $2 expression over d.
-toml() { python3 -c "import tomllib,sys; d=tomllib.loads(open(sys.argv[1]).read()); print($2)" "$1" 2>&1 | tail -n1; }
+# A TOML file's fact, read by Python's own parser (tomllib, 3.11+): $1
+# file, $2 expression over d. Through uv where it exists (a stock Mac's
+# python3 predates tomllib); CI's runner python is new enough.
+if command -v uv >/dev/null 2>&1; then
+    PY="uv run --no-project --quiet python"
+elif python3 -c 'import tomllib' >/dev/null 2>&1; then
+    PY=python3
+else
+    printf '%s\n' "these tests parse TOML with Python 3.11+ (tomllib): install uv, the repo's Python toolchain, or a newer python3" >&2
+    exit 1
+fi
+toml() { $PY -c "import tomllib,sys; d=tomllib.loads(open(sys.argv[1]).read()); print($2)" "$1" 2>&1 | tail -n1; }
 
 echo "containerize_url"
 expect "localhost rewritten"      "$(containerize_url http://localhost:11434/v1)"   "http://host.docker.internal:11434/v1"
@@ -92,7 +105,8 @@ for tag in v0.0.9 v0.0.10 v0.1.0-rc1 cli-v9.9.9; do git -C "$R" tag "$tag"; done
 expect "numeric sort, prerelease and foreign tags skipped" "$(cd "$R" && newest_release_tag)" "v0.0.10"
 
 echo "lock_file"
-f="$T/secret"; : > "$f"; lock_file "$f"
+# Created unreadable first, so the assertion cannot pass on the umask alone.
+f="$T/secret"; : > "$f"; chmod 000 "$f"; lock_file "$f"
 case "$(uname -s)" in Darwin) want=600 ;; *) [ "$(id -u)" = 1000 ] && want=600 || want=644 ;; esac
 case "$(uname -s)" in Darwin) mode="$(stat -f %Lp "$f")" ;; *) mode="$(stat -c %a "$f")" ;; esac
 expect "mode for this host and uid" "$mode" "$want"
