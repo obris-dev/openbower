@@ -4,9 +4,10 @@ same way, so "did my config/tools.toml edit take" is one command
 instead of a fill attempt. Two vendor questions answer by exit code
 (management/probe.py) for the install's setup step: `--status
 <vendor>`, is it configured; `--probe <vendor>`, does ONE live query
-go through (metered: one credit on a prepaid vendor). The probe's
-states are the ones an operator acts on differently: rejected means
-the credentials, unreachable means the network, throttled means wait."""
+go through (metered on a prepaid vendor; a keyless one costs
+nothing). The probe's states are the ones an operator acts on
+differently: rejected means the credentials or the account,
+unreachable means the network, throttled means wait."""
 
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ class Command(BaseCommand):
         question.add_argument(
             "--probe",
             metavar="VENDOR",
-            help="Run one live query through this vendor to check its credentials (metered: one credit).",
+            help="Run one live query through this vendor: is it answering, and does it take the key (metered on a prepaid vendor).",
         )
 
     def handle(self, *args, **options) -> None:
