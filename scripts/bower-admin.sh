@@ -655,12 +655,35 @@ setup_menu() {
     esac
 }
 
-# Apply edits to the two config files: the services that read them do
-# so at start, so those (and only those) restart. What setup does
-# after a write; the hand-edit path is `bower-admin reload`.
+# Apply hand edits to the two config files: the services read them at
+# start, so those (and only those) restart, and only once both files
+# have booted in the one-off container, since a file the app refuses
+# would take every service down with no restart policy to bring it
+# back. Nothing metered: the probes list models and read config.
 cmd_reload() {
+    if ! core_running; then
+        info "the stack is not running; the next bower-admin up reads the files as they are"
+        return 0
+    fi
+    info "checking the files..."
+    probe_and_report
+    case "$PROBE_STATE" in
+        refused) warn "not applied: fix the file it names, then: bower-admin reload"; return 1 ;;
+        error) warn "not applied: the check could not run (see above)"; return 1 ;;
+    esac
+    _out="$(run_manage tools 2>&1)" && _rc=0 || _rc=$?
+    if [ "$_rc" != 0 ]; then
+        if [ "$_rc" = 1 ] && printf '%s\n' "$_out" | grep -q '^Traceback'; then
+            warn "not applied: $(boot_reason "$_out")"
+        else
+            warn "not applied: the check could not run (exit $_rc)"
+            printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
+        fi
+        return 1
+    fi
+    printf '%s\n' "$_out" | grep -E '^[a-z_]+: ' || true
     restart_core_services
-    ok "applied; bower-admin providers shows what each source serves now"
+    ok "applied; the matrix above is what the services now see"
 }
 
 restart_core_services() {
