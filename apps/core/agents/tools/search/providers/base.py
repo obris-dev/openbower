@@ -38,10 +38,12 @@ class AttemptThrottled(Exception):
 
 
 class AttemptUnreachable(Exception):
-    """ONE try could not reach the provider or heard nothing in time:
-    a connect or read timeout, a dropped connection. For providers
-    whose transport does not speak httpx (the harness reads httpx's
-    own transport errors directly)."""
+    """ONE try could not reach the provider, heard nothing in time, or
+    heard an answer too broken to read: a connect or read timeout, a
+    dropped connection, a non-JSON body from a proxy. Raised by a
+    provider whose transport does not speak httpx, and by any provider
+    for the broken-body case (the harness reads httpx's own transport
+    errors directly)."""
 
 
 def parse_retry_after(value: str) -> float | None:
