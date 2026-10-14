@@ -431,8 +431,11 @@ cmd_upgrade() {
             info "To move somewhere on purpose, name it: bower-admin upgrade main   (or a tag)"
             return 0
         fi
-    elif git merge-base --is-ancestor "$_target_sha" HEAD; then
-        warn "$_target is older than this checkout; the database was migrated by the newer code and is not rolled back."
+    elif ! git merge-base --is-ancestor HEAD "$_target_sha"; then
+        # The risk is migrations the target has never seen, which is
+        # "the target does not contain this commit": an older tag, and
+        # a diverged line (a backport, another branch) alike.
+        warn "$_target does not contain this checkout's commit; the database was migrated by code it may not know, and is not rolled back."
     fi
     step "Upgrading v$_current -> $_target"
     git checkout --quiet "$_target" || fail "git checkout $_target failed."
