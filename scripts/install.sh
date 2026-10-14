@@ -33,6 +33,9 @@ readonly REPO_SSH="git@github.com:obris-dev/openbower.git"
 readonly REPO_SLUG="obris-dev/openbower"
 OPENBOWER_DIR="${OPENBOWER_DIR:-}"
 OPENBOWER_BRANCH="${OPENBOWER_BRANCH:-}"
+# What the person pinned, before resolve_ref fills in the newest release:
+# an existing install is moved by name only when a name was given.
+PINNED_REF="$OPENBOWER_BRANCH"
 
 if [ -t 1 ]; then
     BOLD=$(printf '\033[1m'); RED=$(printf '\033[0;31m'); GREEN=$(printf '\033[0;32m'); NC=$(printf '\033[0m')
@@ -124,16 +127,12 @@ fetch_repo() {
     [ -n "${OPENBOWER_SSH:-}" ] && _url="$REPO_SSH"
     [ -n "${OPENBOWER_REPO:-}" ] && _url="$OPENBOWER_REPO"
     if [ -d "$OPENBOWER_DIR/.git" ]; then
-        info "Updating the existing checkout at $OPENBOWER_DIR"
-        git -C "$OPENBOWER_DIR" fetch --quiet --tags origin || fail "git fetch failed"
-        git -C "$OPENBOWER_DIR" checkout --quiet "$OPENBOWER_BRANCH" || fail "git checkout $OPENBOWER_BRANCH failed"
-        # A tag is an exact commit; a branch is brought to origin's tip,
-        # and a checkout that cannot fast-forward (local commits on it)
-        # stops here rather than installing stale code as if updated.
-        if git -C "$OPENBOWER_DIR" show-ref --verify --quiet "refs/remotes/origin/$OPENBOWER_BRANCH"; then
-            git -C "$OPENBOWER_DIR" merge --ff-only --quiet "origin/$OPENBOWER_BRANCH" \
-                || fail "$OPENBOWER_DIR has its own commits on $OPENBOWER_BRANCH and cannot fast-forward; resolve them there, or set OPENBOWER_DIR to a fresh path"
-        fi
+        # An existing install is moved by the operator command's own
+        # rules (forward only unless a target is named, a dirty tree
+        # refused, the new release building itself), never by a second
+        # checkout path here.
+        info "Existing install at $OPENBOWER_DIR; bringing it up to date with bower-admin upgrade"
+        sh "$OPENBOWER_DIR/scripts/bower-admin.sh" upgrade ${PINNED_REF:+"$PINNED_REF"} || fail "upgrade failed; fix what it said, then re-run"
     elif [ -d "$OPENBOWER_DIR" ] && [ -n "$(ls -A "$OPENBOWER_DIR" 2>/dev/null)" ]; then
         # Non-empty but not a checkout: the leftover of an attempt that
         # did not finish. A prior run may have started containers under
