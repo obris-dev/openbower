@@ -641,6 +641,31 @@ setup_menu() {
     esac
 }
 
+# When the running api last read its config: the start of its process
+# 1, as epoch seconds, asked INSIDE the container where stat is always
+# GNU. Empty when core is not running.
+core_started_at() {
+    compose exec -T core stat -c %Y /proc/1 2>/dev/null
+}
+
+# A file's modification time as epoch seconds, on either host.
+mtime() {
+    case "$(uname -s)" in
+        Darwin) stat -f %m "$1" ;;
+        *)      stat -c %Y "$1" ;;
+    esac
+}
+
+# A config file edited after the services started is one they have
+# not read: setup reloads for a hand edit it did not make. Compared in
+# whole seconds, which also covers the small clock skew between a Mac
+# and Docker Desktop's VM.
+config_edited_since_start() {
+    _started="$(core_started_at)"
+    [ -n "$_started" ] || return 1
+    [ "$(mtime "$PROVIDERS")" -gt "$_started" ] || [ "$(mtime "$TOOLS")" -gt "$_started" ]
+}
+
 # Apply edits to the two config files: the services that read them do
 # so at start, so those (and only those) restart. What setup does
 # after a write; the hand-edit path is `bower-admin reload`.
@@ -915,7 +940,11 @@ cmd_setup() {
         [ "$PROBE_STATE" != ready ] || ok "an inference source is ready; pick its model in the agent builder"
     fi
     tools_setup
-    if { [ -n "$_changed" ] || [ -n "$TOOLS_CHANGED" ]; } && core_running; then
+    core_running || return 0
+    if [ -n "$_changed" ] || [ -n "$TOOLS_CHANGED" ]; then
+        restart_core_services
+    elif config_edited_since_start; then
+        info "a config file changed since the services started"
         restart_core_services
     fi
 }
