@@ -1062,7 +1062,8 @@ adopt_docker_group() {
     id -nG 2>/dev/null | grep -qw docker && return 0
     getent group docker 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)" || return 0
     info "your docker group membership is new; using it for this run (no need to log out and in)"
-    _cmdline="sh $(shell_quote "$0")"
+    # $ROOT, not $0: the cd at the top makes a relative $0 point nowhere.
+    _cmdline="sh $(shell_quote "$ROOT/scripts/bower-admin.sh")"
     for _a in "$@"; do _cmdline="$_cmdline $(shell_quote "$_a")"; done
     OPENBOWER_SG=1 exec sg docker -c "$_cmdline"
 }
