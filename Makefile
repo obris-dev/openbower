@@ -123,8 +123,14 @@ reset-web-deps: ## Recreate the web dependency volumes (needed after a pnpm majo
 		| xargs -r docker volume rm >/dev/null
 	@echo "web dependency volumes removed; the next make up reinstalls them"
 
-prune-venvs: ## Remove the dangling anonymous venv volumes left by build/down cycles
-	@$(ADMIN) prune-venvs
+# Scoped by NAME SHAPE only (a 64-hex id, which is what anonymous
+# volumes are called), so a named volume can never match, but it IS
+# daemon-wide: another project's dangling anonymous volumes go too,
+# which is why this stays a developer target and not an operator verb.
+prune-venvs: ## Remove the dangling anonymous venv volumes left by build/down cycles (daemon-wide)
+	@vols="$$(docker volume ls -qf dangling=true -f 'name=^[0-9a-f]{64}$$')"; \
+	[ -n "$$vols" ] || { echo "nothing to reclaim"; exit 0; }; \
+	docker volume rm $$vols
 
 logs: ## Tail all container logs
 	@$(ADMIN) logs

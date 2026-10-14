@@ -14,7 +14,7 @@ The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bi
 | `stop` / `down` / `restart [service...]` | stop in place (a consumer finishes its row first; `up` resumes), stop and remove the containers (the database volume survives), restart in place |
 | `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild (an install ahead of every release, or on a line no release contains, is left alone and told to name a target); named: move to that tag or branch in either direction, with a one-line warning when it is a downgrade. Migrations run on the start, so your data comes along |
 | `status` / `logs [service]` / `version` | what is running, the logs (all or one service), the installed and newest versions |
-| `tools` / `dbshell` / `prune-venvs` | the tool matrix (which vendor serves each tool, and its readiness); a psql shell on the database; reclaim the stray dependency volumes build and down cycles leave |
+| `tools` / `dbshell` | the tool matrix (which vendor serves each tool, and its readiness); a psql shell on the database |
 | `doctor` | the prerequisites checklist on its own |
 | `reload` | apply a hand edit to `config/providers.toml` or `config/tools.toml`: restarts the services that read them (they read the files at start), and nothing else |
 | `setup` / `providers` | add an inference source to `config/providers.toml` when none answers, and the Serper key to `config/tools.toml` when it is missing, checked with one live query (asks only for what is missing; an entry that does not answer, or a key the vendor rejects, is not kept); `providers` is the matrix of what each source serves, or why it cannot |
@@ -38,7 +38,7 @@ A working deploy is the services below plus a one-shot migrator; `docker-compose
 | cron    | supercronic over `apps/core/crontab`: scheduled maintenance (the hourly prune of preview runs older than a day, the stale-run reclaim, the deferred flush and delivery prune) | `bower-admin logs cron` |
 | web     | the Next.js apps: the product app on :3003, the marketing site on :3004 | `bower-admin logs web` |
 
-The database and the web dependencies survive in named volumes; the Python venv is an anonymous volume the next start re-syncs (`bower-admin prune-venvs` clears the strays). SIGTERM or SIGINT lets a consumer's rows in flight finish before it exits, so stopping or restarting one is always safe and can take a while. `bower-admin up db` starts just the database, which is what the host-run test suite needs.
+The database and the web dependencies survive in named volumes; the Python venv is an anonymous volume the next start re-syncs; a stray one per upgrade is the only accumulation, and Docker's own `docker volume prune` reclaims them. SIGTERM or SIGINT lets a consumer's rows in flight finish before it exits, so stopping or restarting one is always safe and can take a while. `bower-admin up db` starts just the database, which is what the host-run test suite needs.
 
 Environment facts (`apps/core/.env.example` carries the full annotated list):
 
