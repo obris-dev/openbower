@@ -359,14 +359,12 @@ cmd_dbshell() { compose exec db psql -U openbower openbower; }
 # ---------------------------------------------------------------- version
 
 # THE rule for "the newest release", shared by version and upgrade: the
-# highest stable vMAJOR.MINOR.PATCH tag among the fetched ones. A
-# portable numeric sort on the three fields, not sort -V (a GNU/BSD
-# extension whose absence would fail silently inside the pipe), and
-# the anchor skips prereleases. Empty when there is no release tag or
-# the fetch failed. (The installer carries a pre-clone twin that reads
-# the releases API, since no checkout exists yet there.)
+# highest stable vMAJOR.MINOR.PATCH tag among the tags the caller has
+# fetched. A portable numeric sort on the three fields, not sort -V (a
+# GNU/BSD extension whose absence would fail silently inside the pipe),
+# and the anchor skips prereleases. Empty when there is no release tag.
+# (The installer carries a pre-clone twin over the remote's tags.)
 newest_release_tag() {
-    git fetch --quiet --tags origin 2>/dev/null || true
     _v="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' \
         | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
     [ -z "$_v" ] || printf 'v%s' "$_v"
@@ -375,6 +373,7 @@ newest_release_tag() {
 cmd_version() {
     _current="$(cat version.txt 2>/dev/null || echo '?')"
     info "installed: v$_current ($(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout'))"
+    git fetch --quiet --tags origin 2>/dev/null || true
     _latest="$(newest_release_tag)"
     if [ -n "$_latest" ]; then
         info "newest release: $_latest"
