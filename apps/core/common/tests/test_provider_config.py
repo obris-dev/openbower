@@ -10,6 +10,7 @@ Run: DJANGO_ENV=test uv run python manage.py test common
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from django.test import SimpleTestCase
@@ -23,19 +24,25 @@ from openbower_kernel.provider_config import (
 
 _TEMPLATE = Path(__file__).resolve().parents[4] / "config" / "templates" / "providers.example.toml"
 # The template's commented example entries: a line is one when its text
-# after the comment marker is a table header or one of the entry keys
+# after the comment marker is a table header or ANY `key = value` line
 # (prose comments never start that way), which is what an operator
-# uncomments by hand.
-_EXAMPLE_LINE_STARTS = ("[[", "name = ", "base_url = ", "api_key = ", "concurrency = ")
+# uncomments by hand. Every key is kept, not an allow-list of known
+# ones, so an example carrying a key the parser rejects reaches the
+# parser here instead of being skipped.
+_EXAMPLE_LINE = re.compile(r"^(\[\[|[A-Za-z_][A-Za-z0-9_]* = )")
 
 
 def _template_examples() -> str:
     lines = []
     for line in _TEMPLATE.read_text(encoding="utf-8").splitlines():
         body = line[2:] if line.startswith("# ") else line
-        if body.startswith(_EXAMPLE_LINE_STARTS):
+        if _EXAMPLE_LINE.match(body):
             lines.append(body)
     return "\n".join(lines) + "\n"
+
+
+def _template_section_count() -> int:
+    return sum(1 for line in _TEMPLATE.read_text(encoding="utf-8").splitlines() if line.startswith("# [["))
 
 
 class ProviderConfigTests(SimpleTestCase):
@@ -221,6 +228,8 @@ class ConcurrencyKeyTests(SimpleTestCase):
         # template and the parser must move together. The examples
         # ship commented, so they are uncommented here to parse them.
         sources = parse_provider_sources(_template_examples())
+        # Every commented section parsed: a dropped one cannot pass.
+        self.assertEqual(sum(len(entries) for entries in sources.values()), _template_section_count())
         self.assertEqual(sources["openai_compatible"]["ollama"]["concurrency"], 1)
         self.assertEqual(sources["openai_compatible"]["openai"]["concurrency"], 64)
         self.assertEqual(sources["anthropic_compatible"]["anthropic"]["concurrency"], 64)
