@@ -41,16 +41,18 @@ jobs:
   # `curl | sh` on a machine with no bash guarantee, and the operator
   # command rides the same path. The runner image ships shellcheck; the
   # install is the fallback for an image that does not.
-  shellcheck:
+  scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - name: Every script is POSIX sh
+        run: |
           command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
           find scripts -name '*.sh' -print0 | xargs -0 shellcheck -s sh
       # The operator command's helpers against known inputs (the file
       # writers parsed back as TOML, the rc append, the URL rewrite).
-      - run: sh scripts/tests/bower-admin-functions.sh
+      - name: The operator command's function tests
+        run: sh scripts/tests/bower-admin-functions.sh
 
   lint-python:
     runs-on: ubuntu-latest

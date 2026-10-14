@@ -1,5 +1,5 @@
-# Inference sources for agents: copy to config/providers.toml and
-# edit. This ONE file carries structure AND keys, inline (it is
+# Inference sources for agents, seeded to config/providers.toml by
+# `bower-admin setup`. This ONE file carries structure AND keys, inline (it is
 # gitignored, like ~/.aws/credentials); there is no env mirror. A
 # keyless source works when its base is a self-hosted server; the
 # canonical vendors need a key or they stay out of the catalog.

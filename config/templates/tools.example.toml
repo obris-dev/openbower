@@ -1,5 +1,5 @@
-# Tool vendors for agents: copy to config/tools.toml and edit. This
-# ONE file carries the wiring AND the credentials, inline (it is
+# Tool vendors for agents, seeded to config/tools.toml by the first
+# `bower-admin up`. This ONE file carries the wiring AND the credentials, inline (it is
 # gitignored, like ~/.aws/credentials); there is no env mirror.
 #
 # Without this file the defaults below still apply (`bower-admin up`

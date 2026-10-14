@@ -1,8 +1,9 @@
 # config/
 
 User-owned runtime configuration (gitignored; the templates/ directory
-and this README are the tracked parts). Copy a template up one level
-and edit:
+and this README are the tracked parts). `bower-admin setup` seeds each
+file from its template and writes what you give it; a hand edit is
+applied with `bower-admin reload`. The two files:
 
 - `providers.toml` (from templates/providers.example.toml): the named
   inference sources agents can run, structure AND keys in this ONE

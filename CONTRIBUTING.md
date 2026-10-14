@@ -93,7 +93,9 @@ change, then `make up`.
 The app RUNS in Docker (`make up`) and the checks RUN ON THE HOST:
 `make test` and `make schema` use the host's uv and pnpm against the
 compose database, which is what CI does too, so a green local check and a
-green CI run mean the same thing. Running a check inside a container
+green CI run mean the same thing. The operator command's own tests live
+in `scripts/tests/` (POSIX sh, one `expect` per assertion, a throwaway
+HOME and config directory) and run with `make test-scripts`. Running a check inside a container
 (`make local-exec`) is for diagnosing the container itself.
 
 ## House style

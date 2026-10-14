@@ -925,7 +925,7 @@ cmd_setup() {
             ready) ok "an inference source is ready; pick its model in the agent builder" ;;
             empty) pull_hint ;;
             rejected) warn "a source rejected its key or URL (see above); fix it in $PROVIDERS, then: bower-admin setup" ;;
-            refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
+            refused) warn "fix the file it names, then: bower-admin setup"; return 1 ;;
             error) warn "fix that, then: bower-admin setup"; return 1 ;;
             *) model_hint ;;
         esac
@@ -937,7 +937,7 @@ cmd_setup() {
         _cand="$PROVIDERS.candidate"
         while [ "$PROBE_STATE" != ready ]; do
             case "$PROBE_STATE" in
-                refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
+                refused) warn "fix the file it names, then: bower-admin setup"; return 1 ;;
                 error) warn "fix that, then: bower-admin setup"; return 1 ;;
                 empty) pull_hint ;;
             esac
@@ -1131,19 +1131,19 @@ bower-admin: operate a self-hosted OpenBower
 
   install              first-time setup: prerequisites, build, start, model setup, this command on PATH
   up [service...]      start the stack (seeds the config files when absent; runs setup until it has run)
-  build                rebuild the images and start (after an upgrade or a dependency change)
+  build                rebuild the images and start (after a dependency change; upgrade builds on its own)
   stop [service...]    stop in place (a consumer finishes its row first); up resumes
   down                 stop and remove the containers (the database volume survives)
   restart [service...] restart in place
   upgrade [tag|branch] move to the newest release (forward only) or to the named tag or branch; data preserved
   status               what is running
-  logs [service]       tail the logs (all services, or one: core, jobs, fill-consumer, web, ...)
+  logs [service...]    tail the logs (all services, or the ones named: core, jobs, fill-consumer, web, ...)
   version              the installed version and the newest release
   doctor               the prerequisites checklist
   setup                add an inference source ($PROVIDERS) and the Serper key ($TOOLS); asks only for what is missing
   reload               apply hand edits to $PROVIDERS or $TOOLS (restarts the services that read them)
   shim                 put bower-admin on the PATH for this checkout (install does this): the shim in
-                       ~/.local/bin and a guarded PATH line in your shell rc (OPENBOWER_NO_MODIFY_PATH=1 skips the rc)
+                       $(tilde "$BIN_DIR") and a guarded PATH line in your shell rc (OPENBOWER_NO_MODIFY_PATH=1 skips the rc)
   providers            the source matrix (what each inference source serves, or why not)
   tools                the tool matrix (which vendor serves web search and finding contacts, and its readiness)
   dbshell              a psql shell on the database
@@ -1195,6 +1195,9 @@ main() {
         down)      cmd_down "$@" ;;
         restart)   cmd_restart "$@" ;;
         upgrade)   cmd_upgrade "$@" ;;
+        # Internal, absent from help: the new release's half of upgrade,
+        # exec'd by the old one. A contract every release must keep, with
+        # OPENBOWER_UPGRADED_FROM as the one value crossing the exec.
         post-upgrade) cmd_post_upgrade "$@" ;;
         status)    cmd_status "$@" ;;
         logs)      cmd_logs "$@" ;;

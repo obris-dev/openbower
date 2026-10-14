@@ -1,8 +1,10 @@
 """What the operator probes (`manage.py providers`, `manage.py tools
---probe`) hand back to the shell that drives setup: an exit code per
-state, so the caller branches on `$?` and never on wording. The codes
-skip 1 (an uncaught boot failure, a traceback) and 2 (argparse usage),
-which the command runner owns."""
+--status` and `--probe`) hand back to the shell that drives setup: an
+exit code per state, so the caller branches on `$?` and never on
+wording. The codes skip 1 (the runner's own: an uncaught boot failure
+with a traceback, or a plain CommandError such as an unknown vendor)
+and 2 (argparse usage). The shell carries a twin PROBE_* line in
+scripts/bower-admin.sh, pinned to this enum by a test."""
 
 from __future__ import annotations
 

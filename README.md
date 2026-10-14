@@ -63,7 +63,7 @@ The install clones the newest release into a directory you choose, checks the pr
 | `bower-admin up` / `stop` | start the stack, or halt it in place (a running row finishes first) |
 | `bower-admin logs [service]` | tail every service, or one (`core`, `jobs`, `fill-consumer`, `web`) |
 | `bower-admin status` | what is running |
-| `bower-admin setup` | probe your inference sources, and add one when none answers |
+| `bower-admin setup` | add an inference source when none answers, and the Serper key when it is missing |
 | `bower-admin upgrade` | move to the newest release and rebuild; your data stays |
 | `bower-admin help` | everything else |
 
