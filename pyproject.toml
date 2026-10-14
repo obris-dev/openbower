@@ -7,7 +7,7 @@
 name = "openbower"
 version = "0.0.1" # x-release-please-version
 description = "OpenBower (uv workspace root; no code of its own)."
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 
 [tool.uv.workspace]
 members = ["apps/*", "packages/*"]
