@@ -596,30 +596,48 @@ model_hint() {
     host_bind_hint
 }
 
+# The exit codes the operator probes hand back (the app's
+# management/probe.py owns them; the shell branches on nothing else).
+PROBE_OK=0; PROBE_EMPTY=3; PROBE_NOT_CONFIGURED=4; PROBE_UNREACHABLE=5; PROBE_THROTTLED=6; PROBE_DOWN=7; PROBE_REJECTED=8
+
+# The traceback's last line carries the reason an app refused to
+# boot; the rest is the import chain that led there.
+boot_reason() {
+    printf '%s\n' "$1" | tail -n1 | sed -E 's/^[A-Za-z_.]*(Error|Configured|Exception): //'
+}
+
 # Probe through the one-off container and show the result. Sets
-# PROBE_STATE: ready; none (a valid file, nothing answers: the command
-# said so); refused (the app would not boot on this file: a Python
-# error came back instead); or error (the probe itself could not run,
-# a docker-level failure). Compose's own chatter is dropped; the
-# matrix and any error stay.
+# PROBE_STATE from the exit code: ready; empty (a source answered
+# with no models: configured right, waiting for a pull); unconfigured
+# (no source in the file); none (nothing answered); refused (the app
+# would not boot on this file, which is a 1 WITH a traceback); or
+# error (compose or docker never ran the app: any other code, or a 1
+# with no traceback, since compose reports its own failures as 1 too).
 probe_and_report() {
-    if _out="$(probe_sources 2>&1)"; then
-        PROBE_STATE=ready
-    elif printf '%s' "$_out" | grep -q 'CommandError:'; then
-        PROBE_STATE=none
-    elif printf '%s' "$_out" | grep -qE 'Traceback|Error'; then
-        PROBE_STATE=refused
-    else
-        PROBE_STATE=error
-    fi
-    if [ "$PROBE_STATE" = refused ]; then
-        # The traceback's last line carries the reason; the rest is
-        # the import chain that led to it.
-        _reason="$(printf '%s\n' "$_out" | grep -E 'Error|Configured' | tail -n1 | sed -E 's/^[A-Za-z_.]*(Error|Configured): //')"
-        warn "the app refused $PROVIDERS: $_reason"
-        return 0
-    fi
-    printf '%s\n' "$_out" | grep -vE '^\s*$|Container .* (Creat|Start|Running|Waiting|Healthy)|^\[\+\]|^ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✔]' || true
+    _out="$(probe_sources 2>&1)" && _rc=0 || _rc=$?
+    case $_rc in
+        "$PROBE_OK")             PROBE_STATE=ready ;;
+        "$PROBE_EMPTY")          PROBE_STATE=empty ;;
+        "$PROBE_NOT_CONFIGURED") PROBE_STATE=unconfigured ;;
+        "$PROBE_DOWN")           PROBE_STATE=none ;;
+        1) if printf '%s\n' "$_out" | grep -q '^Traceback'; then PROBE_STATE=refused; else PROBE_STATE=error; fi ;;
+        *) PROBE_STATE=error ;;
+    esac
+    case "$PROBE_STATE" in
+        refused)
+            warn "the app refused its configuration: $(boot_reason "$_out")"
+            return 0 ;;
+        error)
+            warn "the probe could not run (exit $_rc):"
+            printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
+            return 0 ;;
+    esac
+    printf '%s\n' "$_out" | grep -E '^[a-z_]+/[A-Za-z0-9_]+ \(' || true
+}
+
+pull_hint() {
+    info "A source answered but serves no model yet. Pull one there (Ollama: ${CYAN}ollama pull gemma4:12b${NC}),"
+    info "then ${CYAN}bower-admin setup${NC} probes again; or add another source."
 }
 
 # ---- tools
@@ -643,7 +661,7 @@ set_tool_wiring() {
 }
 
 # Append a vendor's credential table. The key lives inline, so the
-# file is locked owner-only.
+# file is locked as tightly as the containers can bear.
 add_vendor_key() {
     printf '\n[%s]\napi_key = "%s"\n' "$1" "$2" >> "$TOOLS"
     lock_file "$TOOLS"
@@ -652,18 +670,23 @@ add_vendor_key() {
 # The search step. Web search works keyless through DuckDuckGo, but
 # the results are weak and finding contacts has no keyless vendor at
 # all, so an install is not really set up until Serper has a key.
-# Asks once, when Serper is not ready; writes its table and wires web
-# search to it; validates through the one-off container, restoring
-# the file if the app refuses it. Sets TOOLS_CHANGED.
+# Asks once, when Serper is not configured (by exit code); writes its
+# table and wires web search to it; checks the file in the one-off
+# container, restoring it if the app refuses; checks the key with one
+# live query, keeping it only when the vendor took it or could not be
+# asked. Sets TOOLS_CHANGED.
 tools_setup() {
     TOOLS_CHANGED=""
     step "Tools"
     info "checking the search vendors..."
     _matrix="$(run_manage tools 2>&1)" || true
     printf '%s\n' "$_matrix" | grep -E '^[a-z_]+: ' || true
-    if ! printf '%s' "$_matrix" | grep -q 'serper (needs setup'; then
-        return 0
-    fi
+    run_manage tools --status serper >/dev/null 2>&1 && _rc=0 || _rc=$?
+    case $_rc in
+        "$PROBE_OK") return 0 ;;
+        "$PROBE_NOT_CONFIGURED") ;;
+        *) warn "could not check the search vendor (exit $_rc); fix that, then: bower-admin setup"; return 0 ;;
+    esac
     if ! has_tty; then
         info "Web search runs keyless through DuckDuckGo until Serper has a key; finding contacts needs one. Run: bower-admin setup"
         return 0
@@ -684,35 +707,45 @@ tools_setup() {
         add_vendor_key serper "$_key"
         set_tool_wiring web_search serper
         info "checking the file..."
-        if ! _matrix="$(run_manage tools 2>&1)"; then
+        _out="$(run_manage tools 2>&1)" && _rc=0 || _rc=$?
+        if [ "$_rc" != 0 ]; then
             cp "$_before" "$TOOLS"; rm -f "$_before"
-            _reason="$(printf '%s\n' "$_matrix" | grep -E 'Error|Configured' | tail -n1 | sed -E 's/^[A-Za-z_.]*(Error|Configured): //')"
-            warn "That entry was refused ($_reason), please try again."
-            continue
+            if [ "$_rc" = 1 ] && printf '%s\n' "$_out" | grep -q '^Traceback'; then
+                warn "That entry was refused ($(boot_reason "$_out")), please try again."
+                continue
+            fi
+            warn "the check could not run (exit $_rc); fix that, then: bower-admin setup"
+            printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
+            return 0
         fi
-        # One live query through the app's own client: a 403 is the
-        # key and nothing else, so that entry goes; a network failure
-        # keeps the key and says the check could not run.
+        # One live query through the app's own client. A rejection is
+        # the key and nothing else, so that entry goes; a vendor that
+        # could not be asked (down, throttled, unreachable) keeps the
+        # key with the honest reason; anything else is a failure of
+        # the check itself, and the file goes back as it was.
         info "checking the key..."
-        _check="$(run_manage tools --probe serper 2>&1)" || true
-        case "$_check" in
-            *"serper: ok"*)
+        _out="$(run_manage tools --probe serper 2>&1)" && _rc=0 || _rc=$?
+        _line="$(printf '%s\n' "$_out" | grep -E '^serper: ' | tail -n1)"
+        case $_rc in
+            "$PROBE_OK")
                 rm -f "$_before"
                 TOOLS_CHANGED=1
                 ok "Serper is wired for web search and finding contacts ($TOOLS)"
-                printf '%s\n' "$_matrix" | grep -E '^[a-z_]+: ' || true
-                return 0
-                ;;
-            *"serper: rejected"*)
+                run_manage tools 2>/dev/null | grep -E '^[a-z_]+: ' || true
+                return 0 ;;
+            "$PROBE_REJECTED")
                 cp "$_before" "$TOOLS"; rm -f "$_before"
-                warn "Serper rejected that key, please try again."
-                ;;
-            *)
+                warn "Serper rejected that key, please try again." ;;
+            "$PROBE_UNREACHABLE" | "$PROBE_THROTTLED")
                 rm -f "$_before"
                 TOOLS_CHANGED=1
-                warn "could not reach serper.dev to check the key; it is saved as given ($(printf '%s\n' "$_check" | tail -n1))"
-                return 0
-                ;;
+                warn "could not check the key with serper.dev right now (${_line#serper: }); it is saved as given"
+                return 0 ;;
+            *)
+                cp "$_before" "$TOOLS"; rm -f "$_before"
+                warn "the key check could not run (exit $_rc); the file is as it was. Fix that, then: bower-admin setup"
+                printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
+                return 0 ;;
         esac
     done
 }
@@ -721,11 +754,14 @@ tools_setup() {
 # per agent in the builder, so setup only has to leave the install with
 # at least one source that ANSWERS. Every probe runs in a one-off
 # container against the file as it is, so a bad edit is caught before
-# the running services read it; an entry that does not answer is
-# dropped again; then the search vendor is asked for; the services
-# restart ONCE at the end, when either file changed. The template ships no live source, so a source exists
-# only because the person added it AND it answered. Never runs a
-# completion; a roster listing is free.
+# the running services read it; a file that is already refused ends the
+# step with its reason rather than blaming each new entry; an entry
+# that does not answer is dropped again; one that answers with no model
+# yet stays, with the pull to run; then the search vendor is asked for;
+# the services restart ONCE at the end, when either file changed. The
+# template ships no live source, so a source exists only because the
+# person added it AND it answered. Never runs a completion; a roster
+# listing is free.
 cmd_setup() {
     step "Model setup"
     _changed=""
@@ -733,57 +769,58 @@ cmd_setup() {
         cp "$PROVIDERS_TEMPLATE" "$PROVIDERS"
         lock_file "$PROVIDERS"
         ok "seeded $PROVIDERS from the template (no source is live until one is added)"
-        _changed=1
     fi
     info "probing the configured sources..."
     probe_and_report
     if ! has_tty; then
         case "$PROBE_STATE" in
             ready) ok "an inference source is ready; pick its model in the agent builder" ;;
-            refused) warn "$PROVIDERS would be refused at start; fix it, then: bower-admin setup" ;;
-            error) warn "could not probe the sources (see above); fix that, then: bower-admin setup" ;;
+            empty) pull_hint ;;
+            refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
+            error) warn "fix that, then: bower-admin setup"; return 1 ;;
             *) model_hint ;;
         esac
     else
         while [ "$PROBE_STATE" != ready ]; do
-            if [ "$PROBE_STATE" = error ]; then
-                warn "could not probe the sources (see above); fix that, then: bower-admin setup"
-                break
-            fi
-            [ "$PROBE_STATE" != refused ] || warn "$PROVIDERS as it stands would be refused at start; fix it by hand, then: bower-admin setup"
+            case "$PROBE_STATE" in
+                refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
+                error) warn "fix that, then: bower-admin setup"; return 1 ;;
+                empty) pull_hint ;;
+            esac
+            _was="$PROBE_STATE"
             _before="$PROVIDERS.before.$$"
             cp "$PROVIDERS" "$_before"
             if ! setup_menu; then
                 rm -f "$_before"
-                model_hint
+                [ "$_was" = empty ] || model_hint
                 break
             fi
             info "probing the configured sources..."
             probe_and_report
             case "$PROBE_STATE" in
                 ready) _changed=1 ;;
+                empty)
+                    _changed=1
+                    pull_hint
+                    break ;;
                 refused)
                     cp "$_before" "$PROVIDERS"
                     warn "That entry was refused, please try again."
-                    PROBE_STATE=none
-                    ;;
+                    PROBE_STATE="$_was" ;;
                 error)
                     cp "$_before" "$PROVIDERS"
-                    ;;
-                none)
-                    # A source that does not answer is not a source:
-                    # the entry goes, and the file is as it was.
+                    rm -f "$_before"
+                    warn "the file is as it was. Fix that, then: bower-admin setup"
+                    return 1 ;;
+                *)
                     cp "$_before" "$PROVIDERS"
                     warn "That source did not answer, please try again."
-                    ;;
+                    PROBE_STATE="$_was" ;;
             esac
             rm -f "$_before"
         done
         [ "$PROBE_STATE" != ready ] || ok "an inference source is ready; pick its model in the agent builder"
     fi
-    # The tools matrix boots the same settings, so a file the app
-    # refuses has nothing to show here.
-    case "$PROBE_STATE" in refused | error) return 0 ;; esac
     tools_setup
     if { [ -n "$_changed" ] || [ -n "$TOOLS_CHANGED" ]; } && core_running; then
         restart_core_services

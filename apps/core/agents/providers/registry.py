@@ -116,7 +116,7 @@ def provider_names() -> list[str]:
     return list(_REGISTRY)
 
 
-def providers() -> list[InferenceProvider]:
+def all_providers() -> list[InferenceProvider]:
     """Every registered provider, in the same order as provider_names()."""
     return list(_REGISTRY.values())
 

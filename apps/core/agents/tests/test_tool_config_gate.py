@@ -43,65 +43,123 @@ class ToolsCommandTests(SimpleTestCase):
 
 
 class ToolsProbeTests(SimpleTestCase):
-    """manage.py tools --probe <vendor>: one live query, mocked at the
-    vendor's httpx seam, with the states an operator acts on."""
+    """manage.py tools --probe <vendor> and --status <vendor>: one live
+    query (mocked at the vendor's httpx seam) and a configured check,
+    each answering by the exit code the install's setup branches on."""
 
-    _KEYED = {"TOOL_WIRING": {"web_search": "serper"}, "TOOL_VENDOR_KEYS": {"serper": {"api_key": "k"}}}
+    _KEYED = {"TOOL_VENDOR_KEYS": {"serper": {"api_key": "k"}}}
 
-    def _probe(self, post) -> tuple[list[str], str]:
+    def _probe(self, post) -> tuple[list[str], int]:
         from io import StringIO
 
         from django.core.management import CommandError, call_command
 
         out = StringIO()
-        error = ""
+        code = 0
         with patch("agents.tools.search.providers.serper.httpx.post", side_effect=post), self.settings(**self._KEYED):
             try:
                 call_command("tools", probe="serper", stdout=out)
             except CommandError as e:
-                error = str(e)
-        return out.getvalue().splitlines(), error
+                code = e.returncode
+        return out.getvalue().splitlines(), code
 
     def test_a_working_key_is_ok(self):
+        from agents.management.probe import ProbeExit
         from common.testing import FakeResponse
 
-        lines, error = self._probe(
+        lines, code = self._probe(
             lambda *a, **kw: FakeResponse(
                 200, {"organic": [{"title": "t", "link": "https://acme.com", "snippet": "s"}]}
             )
         )
         self.assertEqual(lines, ["serper: ok | 1 hit(s) from one query"])
-        self.assertEqual(error, "")
+        self.assertEqual(code, ProbeExit.OK)
 
     def test_a_bad_key_is_rejected(self):
+        from agents.management.probe import ProbeExit
         from common.testing import FakeResponse
 
-        lines, error = self._probe(lambda *a, **kw: FakeResponse(403, {"message": "Unauthorized."}))
-        self.assertEqual(lines, ["serper: rejected | serper returned 403: Unauthorized."])
-        self.assertIn("rejected", error)
+        lines, code = self._probe(lambda *a, **kw: FakeResponse(403, {"message": "Unauthorized."}))
+        self.assertEqual(lines, ["serper: rejected | ValueError: serper returned 403: Unauthorized."])
+        self.assertEqual(code, ProbeExit.REJECTED)
 
     def test_a_network_failure_is_unreachable_not_rejected(self):
         import httpx
 
+        from agents.management.probe import ProbeExit
+
         def post(*a, **kw):
             raise httpx.ConnectError("connection refused")
 
-        lines, error = self._probe(post)
+        lines, code = self._probe(post)
         self.assertEqual(lines, ["serper: unreachable | ConnectError: connection refused"])
-        self.assertIn("reached", error)
+        self.assertEqual(code, ProbeExit.UNREACHABLE)
+
+    def test_a_429_is_throttled_not_unreachable(self):
+        from agents.management.probe import ProbeExit
+        from common.testing import FakeResponse
+
+        class Throttled(FakeResponse):
+            headers: dict = {}
+
+        lines, code = self._probe(lambda *a, **kw: Throttled(429, {}))
+        self.assertEqual(lines, ["serper: throttled | AttemptThrottled: serper returned 429"])
+        self.assertEqual(code, ProbeExit.THROTTLED)
+
+    def test_a_non_json_200_is_unreachable_not_rejected(self):
+        # A proxy page or a truncated body is a broken hop, not a
+        # decision about the key.
+        from agents.management.probe import ProbeExit
+
+        class Garbled:
+            status_code = 200
+            headers: dict = {}
+
+            def json(self):
+                raise ValueError("not json")
+
+        lines, code = self._probe(lambda *a, **kw: Garbled())
+        self.assertEqual(lines, ["serper: unreachable | AttemptUnreachable: serper answered with a non-JSON body"])
+        self.assertEqual(code, ProbeExit.UNREACHABLE)
 
     def test_an_unconfigured_vendor_is_refused_before_any_call(self):
         from io import StringIO
 
         from django.core.management import CommandError, call_command
 
+        from agents.management.probe import ProbeExit
+
         with (
             patch("agents.tools.search.providers.serper.httpx.post") as post,
-            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}),
-            self.assertRaisesMessage(CommandError, "needs setup"),
+            self.settings(TOOL_VENDOR_KEYS={}),
+            self.assertRaises(CommandError) as caught,
         ):
             call_command("tools", probe="serper", stdout=StringIO())
         post.assert_not_called()
+        self.assertEqual(caught.exception.returncode, ProbeExit.NOT_CONFIGURED)
+
+    def test_status_answers_by_exit_code(self):
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        from agents.management.probe import ProbeExit
+
+        with self.settings(**self._KEYED):
+            out = StringIO()
+            call_command("tools", status="serper", stdout=out)
+            self.assertEqual(out.getvalue().splitlines(), ["serper: ready"])
+        with self.settings(TOOL_VENDOR_KEYS={}), self.assertRaises(CommandError) as caught:
+            call_command("tools", status="serper", stdout=StringIO())
+        self.assertEqual(caught.exception.returncode, ProbeExit.NOT_CONFIGURED)
+
+    def test_an_unknown_vendor_names_the_roster(self):
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        with self.assertRaisesMessage(CommandError, "registered: duckduckgo, serper"):
+            call_command("tools", status="nope", stdout=StringIO())
 
 
 class ToolConfigGateTests(SimpleTestCase):

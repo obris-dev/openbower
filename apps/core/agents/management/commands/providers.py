@@ -1,15 +1,17 @@
 """The operator's source matrix: one line per inference source in
 config/providers.toml with what a LIVE probe says about it (ready
-with its roster, no models yet, unreachable with the reason, or closed
-for want of a key), so "can an agent run on this install" is one
-command instead of a fill attempt. Exits non-zero when no source is
-ready, which is what the install's setup step branches on."""
+with its roster, no models yet, unreachable, refused, or closed for
+want of a key), so "can an agent run on this install" is one command
+instead of a fill attempt. The exit code is the state the install's
+setup step branches on (management/probe.py)."""
 
 from __future__ import annotations
 
+import httpx
 from django.core.management.base import BaseCommand, CommandError
 
-from ...providers import providers
+from ...providers import all_providers
+from ..probe import ProbeExit, reason
 
 _CONFIG = "config/providers.toml"
 # A vendor roster runs to dozens of names; the matrix shows enough to
@@ -30,9 +32,10 @@ class Command(BaseCommand):
     help = f"Probe every inference source in {_CONFIG} and show which can run an agent."
 
     def handle(self, *args, **options) -> None:
-        ready = 0
         configured = 0
-        for provider in providers():
+        ready = 0
+        answered = 0
+        for provider in all_providers():
             open_names = set(provider.sources())
             for name, source in provider.configured_sources.items():
                 configured += 1
@@ -42,15 +45,30 @@ class Command(BaseCommand):
                     continue
                 try:
                     roster = provider.probe(name)
-                except Exception as e:
-                    self.stdout.write(f"{label}: unreachable | {type(e).__name__}: {e}")
+                except httpx.TransportError as e:
+                    # DNS, a refused connection, a timeout: nothing
+                    # answered.
+                    self.stdout.write(f"{label}: unreachable | {reason(e)}")
                     continue
+                except (httpx.HTTPError, ValueError) as e:
+                    # The server answered and declined (a 401 for a bad
+                    # key is the common one) or sent a body the roster
+                    # reader could not take. The key or the URL, not
+                    # the network.
+                    self.stdout.write(f"{label}: refused | {reason(e)}")
+                    continue
+                answered += 1
                 if not roster:
                     self.stdout.write(f"{label}: no models | the server answered with an empty roster")
                     continue
                 ready += 1
                 self.stdout.write(f"{label}: ready | {_roster_line(roster)}")
         if configured == 0:
-            raise CommandError(f"no inference sources configured ({_CONFIG} is absent or empty)")
-        if ready == 0:
-            raise CommandError("no inference source is ready")
+            raise CommandError(
+                f"no inference sources configured ({_CONFIG} is absent or empty)", returncode=ProbeExit.NOT_CONFIGURED
+            )
+        if ready:
+            return
+        if answered:
+            raise CommandError("no inference source offers a model yet", returncode=ProbeExit.EMPTY)
+        raise CommandError("no inference source answered", returncode=ProbeExit.DOWN)
