@@ -18,11 +18,27 @@ _TOKENS = {"access_token": "access-abc", "refresh_token": "refresh-abc", "expire
 
 
 class FakeResponse:
-    def __init__(self, status_code: int = 200, json_data: dict | None = None) -> None:
-        self.status_code = status_code
-        self._json = json_data or {}
+    """An httpx response at the boundary the tests mock: a status, a
+    body, and headers (a vendor's Retry-After rides there). `not_json`
+    is a response whose body is not JSON (a proxy page, a truncated
+    reply): json() raises as httpx's does."""
 
-    def json(self) -> dict:
+    def __init__(
+        self,
+        status_code: int = 200,
+        json_data: dict | list | None = None,
+        headers: dict | None = None,
+        *,
+        not_json: bool = False,
+    ) -> None:
+        self.status_code = status_code
+        self._json = {} if json_data is None else json_data
+        self.headers = headers or {}
+        self._not_json = not_json
+
+    def json(self) -> dict | list:
+        if self._not_json:
+            raise ValueError("body is not JSON")
         return self._json
 
 

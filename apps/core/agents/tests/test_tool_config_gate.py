@@ -99,10 +99,7 @@ class ToolsProbeTests(SimpleTestCase):
         from agents.management.probe import ProbeExit
         from common.testing import FakeResponse
 
-        class Throttled(FakeResponse):
-            headers: dict = {}
-
-        lines, code = self._probe(lambda *a, **kw: Throttled(429, {}))
+        lines, code = self._probe(lambda *a, **kw: FakeResponse(429, {}))
         self.assertEqual(lines, ["serper: throttled | AttemptThrottled: serper returned 429"])
         self.assertEqual(code, ProbeExit.THROTTLED)
 

@@ -595,13 +595,7 @@ class SerperBackoffTests(TestCase):
         # retry), not as the decided error a 4xx is.
         from agents.tools.search.providers.schedule import SearchUnreachable, search
 
-        class Garbled(FakeResponse):
-            headers: dict = {}
-
-            def json(self):
-                raise ValueError("not json")
-
-        self._serper([Garbled(200, {})])
+        self._serper([FakeResponse(200, not_json=True)])
         with self.assertRaises(SearchUnreachable) as caught:
             search("acme", provider="serper")
         self.assertEqual(caught.exception.attempts, 1)

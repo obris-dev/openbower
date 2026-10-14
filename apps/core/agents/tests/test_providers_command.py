@@ -108,11 +108,7 @@ class ProvidersCommandTests(SimpleTestCase):
         # A web page at a wrong port, or JSON that is not the list
         # envelope, is the operator's URL to fix; neither escapes as a
         # traceback the shell would read as a refused config.
-        class Page(FakeResponse):
-            def json(self):
-                raise ValueError("not json")
-
-        lines, code = self._lines({"openai_compatible": _LOCAL}, lambda url, **kw: Page(200, {}))
+        lines, code = self._lines({"openai_compatible": _LOCAL}, lambda url, **kw: FakeResponse(200, not_json=True))
         self.assertEqual(
             lines,
             [
