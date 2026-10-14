@@ -712,11 +712,29 @@ set_tool_wiring() {
     mv "$_tmp" "$TOOLS"
 }
 
-# Append a vendor's credential table. The key lives inline, so the
-# file is locked as tightly as the containers can bear.
+# Write a vendor's credential: into its existing table when the file
+# has one (the api_key line rewritten in place, or added under the
+# header; an uncommented template table with a blank key is the usual
+# case), otherwise as a new table at the end. A second [table] of the
+# same name would be a TOML error. Atomic through a temp file. The
+# key lives inline, so the file is locked as tightly as the
+# containers can bear.
 add_vendor_key() {
-    printf '\n[%s]\napi_key = "%s"\n' "$1" "$2" >> "$TOOLS"
-    lock_file "$TOOLS"
+    _tmp="$TOOLS.tmp.$$"
+    if grep -qx "\[$1\]" "$TOOLS"; then
+        awk -v tbl="[$1]" -v line="api_key = \"$2\"" '
+            $0 == tbl { print; intable = 1; done = 0; next }
+            /^\[/ { if (intable && !done) { print line; done = 1 } intable = 0 }
+            intable && /^api_key[ \t]*=/ { if (!done) { print line; done = 1 } next }
+            { print }
+            END { if (intable && !done) print line }
+        ' "$TOOLS" > "$_tmp"
+    else
+        cp "$TOOLS" "$_tmp"
+        printf '\n[%s]\napi_key = "%s"\n' "$1" "$2" >> "$_tmp"
+    fi
+    lock_file "$_tmp"
+    mv "$_tmp" "$TOOLS"
 }
 
 # The search step. Web search works keyless through DuckDuckGo, but
