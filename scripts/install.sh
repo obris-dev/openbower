@@ -127,7 +127,13 @@ fetch_repo() {
         info "Updating the existing checkout at $OPENBOWER_DIR"
         git -C "$OPENBOWER_DIR" fetch --quiet --tags origin || fail "git fetch failed"
         git -C "$OPENBOWER_DIR" checkout --quiet "$OPENBOWER_BRANCH" || fail "git checkout $OPENBOWER_BRANCH failed"
-        git -C "$OPENBOWER_DIR" pull --quiet --ff-only origin "$OPENBOWER_BRANCH" 2>/dev/null || true
+        # A tag is an exact commit; a branch is brought to origin's tip,
+        # and a checkout that cannot fast-forward (local commits on it)
+        # stops here rather than installing stale code as if updated.
+        if git -C "$OPENBOWER_DIR" show-ref --verify --quiet "refs/remotes/origin/$OPENBOWER_BRANCH"; then
+            git -C "$OPENBOWER_DIR" merge --ff-only --quiet "origin/$OPENBOWER_BRANCH" \
+                || fail "$OPENBOWER_DIR has its own commits on $OPENBOWER_BRANCH and cannot fast-forward; resolve them there, or set OPENBOWER_DIR to a fresh path"
+        fi
     elif [ -d "$OPENBOWER_DIR" ] && [ -n "$(ls -A "$OPENBOWER_DIR" 2>/dev/null)" ]; then
         # Non-empty but not a checkout: the leftover of an attempt that
         # did not finish. A prior run may have started containers under
