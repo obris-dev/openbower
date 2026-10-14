@@ -16,8 +16,8 @@
 # path is bash-free.
 #
 # Env:
-#   OPENBOWER_BRANCH   upgrade target: a branch or tag (default: the
-#                      newest published release tag, falling back to main)
+#   OPENBOWER_BRANCH   upgrade's default target when none is named (a
+#                      branch or tag; otherwise the newest release tag)
 #   OPENBOWER_BIN_DIR  where install writes the shim (default ~/.local/bin)
 #   OPENBOWER_NO_MODIFY_PATH=1
 #                      never touch a shell rc file; install prints the
@@ -32,7 +32,6 @@ cd "$ROOT"
 # into two projects with their own containers and volumes.
 PROJECT=openbower
 export COMPOSE_PROJECT_NAME="$PROJECT"
-REPO_SLUG="obris-dev/openbower"
 NETWORK=openbower-suite
 # The services built from the core image: every one reads
 # config/providers.toml at boot, so a setup edit restarts exactly these.
@@ -341,31 +340,39 @@ cmd_logs() { compose logs -f "$@"; }
 
 # ---------------------------------------------------------------- version
 
-latest_release_tag() {
-    # No jq on a fresh box: pull each tag_name onto its own line and keep
-    # the first clean vMAJOR.MINOR.PATCH (the list is newest first, and
-    # the anchor skips prereleases).
-    command -v curl >/dev/null 2>&1 || return 0
-    curl -fsSL "https://api.github.com/repos/$REPO_SLUG/releases?per_page=100" 2>/dev/null \
-        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
-        | sed -E 's/.*"([^"]+)"$/\1/' \
-        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-        | head -n1
+# THE rule for "the newest release", shared by version and upgrade: the
+# highest stable vMAJOR.MINOR.PATCH tag among the fetched ones. A
+# portable numeric sort on the three fields, not sort -V (a GNU/BSD
+# extension whose absence would fail silently inside the pipe), and
+# the anchor skips prereleases. Empty when there is no release tag or
+# the fetch failed. (The installer carries a pre-clone twin that reads
+# the releases API, since no checkout exists yet there.)
+newest_release_tag() {
+    git fetch --quiet --tags origin 2>/dev/null || true
+    _v="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' \
+        | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
+    [ -z "$_v" ] || printf 'v%s' "$_v"
 }
 
 cmd_version() {
     _current="$(cat version.txt 2>/dev/null || echo '?')"
     info "installed: v$_current ($(git rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout'))"
-    _latest="$(latest_release_tag)"
+    _latest="$(newest_release_tag)"
     if [ -n "$_latest" ]; then
         info "newest release: $_latest"
     else
-        info "newest release: (could not reach the releases list)"
+        info "newest release: (no release tag found)"
     fi
 }
 
 # ---------------------------------------------------------------- upgrade
 
+# upgrade [tag|branch]: bare, "the newest release", and FORWARD only:
+# the target must contain this checkout, so an install that is ahead
+# of every release (one from main), or on a line no release contains
+# (a developer's branch), is left where it is and told how to name a
+# target instead. Named, "put me on that", in either direction: a
+# downgrade is allowed once its one real risk has been said.
 cmd_upgrade() {
     command -v git >/dev/null 2>&1 || fail "git is required to upgrade."
     command -v docker >/dev/null 2>&1 || fail "Docker is required to upgrade."
@@ -378,26 +385,39 @@ cmd_upgrade() {
     _current="$(cat version.txt 2>/dev/null || echo '?')"
     info "Fetching releases..."
     git fetch --quiet --tags origin || fail "git fetch failed (check your network / remote)."
-    # Target: a pinned OPENBOWER_BRANCH, else the newest stable tag among
-    # the fetched ones, else main. A portable numeric sort on the three
-    # fields, not sort -V, which a bare POSIX sort lacks (and whose
-    # failure would be silent inside the pipe).
-    _target="${OPENBOWER_BRANCH:-}"
+    _target="${1:-${OPENBOWER_BRANCH:-}}"
+    _named="$_target"
     if [ -z "$_target" ]; then
-        _latest="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' \
-            | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
-        if [ -n "$_latest" ]; then _target="v$_latest"; else _target="main"; fi
+        _target="$(newest_release_tag)"
+        [ -n "$_target" ] || fail "No release tag found. Name a target: bower-admin upgrade main"
     fi
     # Compare COMMITS, not names: on a branch the name always equals the
     # target, and the fast-forward below would never run.
     if git show-ref --verify --quiet "refs/remotes/origin/$_target"; then
         _target_sha="$(git rev-parse "origin/$_target")"
     else
-        _target_sha="$(git rev-parse "refs/tags/$_target^{commit}" 2>/dev/null || echo '')"
+        # --verify: a plain rev-parse echoes an unknown name to stdout
+        # as it fails, which would read as a sha.
+        _target_sha="$(git rev-parse --verify --quiet "refs/tags/$_target^{commit}" 2>/dev/null || true)"
     fi
-    if [ -n "$_target_sha" ] && [ "$(git rev-parse HEAD)" = "$_target_sha" ]; then
+    [ -n "$_target_sha" ] || fail "Unknown target $_target (not a release tag or a branch on origin)."
+    if [ "$(git rev-parse HEAD)" = "$_target_sha" ]; then
         info "Already up to date (v$_current). Nothing to upgrade."
         return 0
+    fi
+    if [ -z "$_named" ]; then
+        # Forward means the target contains this commit.
+        if ! git merge-base --is-ancestor HEAD "$_target_sha"; then
+            if git merge-base --is-ancestor "$_target_sha" HEAD; then
+                info "This checkout is already ahead of $_target (v$_current). Nothing to upgrade."
+            else
+                info "This checkout is on a line $_target does not contain. Nothing to upgrade."
+            fi
+            info "To move somewhere on purpose, name it: bower-admin upgrade main   (or a tag)"
+            return 0
+        fi
+    elif git merge-base --is-ancestor "$_target_sha" HEAD; then
+        warn "$_target is older than this checkout; the database was migrated by the newer code and is not rolled back."
     fi
     step "Upgrading v$_current -> $_target"
     git checkout --quiet "$_target" || fail "git checkout $_target failed."
@@ -911,7 +931,7 @@ bower-admin: operate a self-hosted OpenBower
   stop [service...]    stop in place (a consumer finishes its row first); up resumes
   down                 stop and remove the containers (the database volume survives)
   restart [service...] restart in place
-  upgrade              advance the checkout to the newest release and rebuild; data preserved
+  upgrade [tag|branch] move to the newest release (forward only) or to the named tag or branch; data preserved
   status               what is running
   logs [service]       tail the logs (all services, or one: core, jobs, fill-consumer, web, ...)
   version              the installed version and the newest release
@@ -922,7 +942,7 @@ bower-admin: operate a self-hosted OpenBower
   providers            the source matrix (what each inference source serves, or why not)
   help                 this
 
-Env: OPENBOWER_BRANCH pins what upgrade moves to (a tag or branch); OPENBOWER_BIN_DIR is where install puts the shim;
+Env: OPENBOWER_BRANCH is the default target for upgrade (a tag or branch); OPENBOWER_BIN_DIR is where install puts the shim;
      OPENBOWER_NO_MODIFY_PATH=1 leaves your shell rc files alone.
 HELP
 }
