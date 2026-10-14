@@ -785,13 +785,19 @@ rc_append() {
 }
 
 # The rc files the person's login shell reads, so a new terminal has the
-# dir: zsh its .zshrc; bash both .bashrc and .bash_profile (macOS login
-# shells read only the latter); .profile for a plain sh login. Every
-# other shell gets the printed line instead.
+# dir: zsh its .zshrc; bash .bashrc and .profile, plus .bash_profile ONLY
+# when it already exists. A bash login shell reads the first of
+# .bash_profile, .bash_login, .profile that exists, so creating a
+# .bash_profile on a Debian or Ubuntu account (which ships .profile and
+# no .bash_profile) would shadow .profile and silently stop .bashrc from
+# being sourced. Every other shell gets the printed line instead.
 rc_files() {
     case "$(basename "${SHELL:-sh}")" in
-        zsh)  printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.profile" ;;
-        bash) printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" ;;
+        zsh)  printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+        bash)
+            printf '%s\n' "$HOME/.bashrc" "$HOME/.profile"
+            [ ! -e "$HOME/.bash_profile" ] || printf '%s\n' "$HOME/.bash_profile"
+            ;;
         sh | dash | ash) printf '%s\n' "$HOME/.profile" ;;
         *) ;;
     esac
