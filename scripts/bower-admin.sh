@@ -507,8 +507,9 @@ toml_safe() {
     esac
 }
 
+# Names compare without case, as the parser compares them.
 source_name_taken() {
-    grep -qE "^name = \"$1\"" "$PROVIDERS" 2>/dev/null
+    grep -iqE "^name = \"$1\"[[:space:]]*$" "$PROVIDERS" 2>/dev/null
 }
 
 # Append one source section. $1 spec, $2 name, $3 base_url, $4 api_key
@@ -530,14 +531,21 @@ append_source() {
 # it must reach the person, never the captured value.
 say() { printf '%s\n' "  $1" > /dev/tty; }
 
+# The source name, checked against the rule the kernel's config parser
+# enforces at boot (letters, digits, underscore; at most 64; unique
+# without case), so a name the file would refuse is caught here, before
+# the URL and key behind it are written and lost to a refused probe.
 ask_source_name() {
     while :; do
         _name="$(ask "  Name for this source [$1]: ")"
         _name="${_name:-$1}"
-        if ! toml_safe "$_name"; then
-            say "a name cannot contain quotes, backslashes, or line breaks"
+        case "$_name" in
+            *[!A-Za-z0-9_]*) say "letters, digits, and underscore only (my_ollama, not my-ollama); try again"; continue ;;
+        esac
+        if [ "${#_name}" -gt 64 ]; then
+            say "at most 64 characters; try again"
         elif source_name_taken "$_name"; then
-            say "a source named \"$_name\" already exists in $PROVIDERS"
+            say "a source named \"$_name\" already exists in $PROVIDERS (names ignore case)"
         else
             printf '%s' "$_name"
             return 0
