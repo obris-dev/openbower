@@ -878,7 +878,7 @@ tools_setup() {
                 return 0 ;;
             "$PROBE_REJECTED")
                 rm -f "$_cand"
-                warn "Serper rejected that key (${_line#serper: rejected | }), please try again." ;;
+                warn "Serper refused the query (${_line#serper: rejected | }): a wrong key, or an account out of credits. Try again, or Enter to skip." ;;
             "$PROBE_UNREACHABLE" | "$PROBE_THROTTLED")
                 mv "$_cand" "$TOOLS"
                 TOOLS_CHANGED=1
