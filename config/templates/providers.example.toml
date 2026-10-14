@@ -1,24 +1,31 @@
-# Inference sources for agents: copy to config/providers.toml and
-# edit. This ONE file carries structure AND keys, inline (it is
+# Inference sources for agents, seeded to config/providers.toml by
+# `bower-admin setup`. This ONE file carries structure AND keys, inline (it is
 # gitignored, like ~/.aws/credentials); there is no env mirror. A
 # keyless source works when its base is a self-hosted server; the
 # canonical vendors need a key or they stay out of the catalog.
 #
-# Without this file there are no sources at all (make up seeds it
-# from this template when absent). Section names are the registered
+# Without this file there are no sources at all (`bower-admin up` or
+# `setup` seeds it from this template when absent). Section names are the registered
 # provider SPECS (never companies): a local Ollama, a vLLM box, a
 # gateway, and the vendor itself are all named sources of the spec
 # they speak.
 
+# No entry is live as shipped: `bower-admin setup` probes what is here
+# and writes a section for you (a server you run, OpenAI, or
+# Anthropic), or uncomment and edit one of the examples below. The
+# services read this file at start, so after a hand edit run
+# `bower-admin reload`, then `bower-admin providers` to see what each
+# source serves.
+
 # SELF-HOSTED SERVERS: servers you run yourself (Ollama, vLLM, a
 # gateway). Keyless works, since a non-canonical base is open. The
-# live entry below reaches the HOST machine's Ollama from inside
+# Ollama example reaches the HOST machine's Ollama from inside
 # compose; a natively-run core wants localhost instead.
 
-[[openai_compatible]]
-name = "ollama"
-base_url = "http://host.docker.internal:11434/v1"
-concurrency = 1  # Ollama serves one request at a time by default; raise only if your server batches.
+# [[openai_compatible]]
+# name = "ollama"
+# base_url = "http://host.docker.internal:11434/v1"
+# concurrency = 1  # Ollama serves one request at a time by default; raise only if your server batches.
 
 # [[openai_compatible]]
 # name = "vllm"

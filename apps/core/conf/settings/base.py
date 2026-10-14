@@ -160,8 +160,8 @@ OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
 # config/templates/) is the ONE custody: structure AND keys, inline,
 # the aws-credentials norm. No env-key mirror and no no-file defaults
 # (two custodies for one fact was two places for it to drift); with
-# no file there are no sources, and `make up` seeds the file from the
-# template for the dev loop. A source is OPEN when its key is set or its base is
+# no file there are no sources, and `bower-admin setup` (or the first
+# `up`) seeds the file from the template. A source is OPEN when its key is set or its base is
 # non-canonical; a keyless canonical source is closed.
 # `or`, not get(default): PROVIDERS_CONFIG= (set but empty, the
 # uncommented .env.example line) must fall back, not become Path(".").
@@ -182,8 +182,8 @@ INFERENCE_SOURCES = _SOURCES
 # ONE custody, wiring AND credentials: [tools] names the vendor
 # serving each tool, and a table per vendor holds its keys inline,
 # the aws-credentials norm. No env mirror; with no file each tool
-# falls to its declared roster head, and `make up` seeds the file
-# from the template. Names are validated at boot by the agents
+# falls to its declared roster head, and the first `bower-admin up`
+# seeds the file from the template. Names are validated at boot by the agents
 # registry gate, where the vendor and tool rosters are known.
 # `or`, not get(default): TOOLS_CONFIG= (set but empty) must fall
 # back, not become Path(".").
@@ -334,8 +334,8 @@ REST_FRAMEWORK = {
 
 # Cache. Django's db cache: zero deps, survives process restart. Holds the
 # short-lived OAuth state -> PKCE-verifier bags during the login redirect.
-# Run `manage.py createcachetable` once on a cold db (the make targets do,
-# and it creates a table for EVERY alias below).
+# Run `manage.py createcachetable` once on a cold db (the core-setup
+# one-shot does on every start; it creates a table for EVERY alias below).
 CACHE_BACKEND = os.environ.get("CACHE_BACKEND", "django.core.cache.backends.db.DatabaseCache")
 CACHE_LOCATION = os.environ.get("CACHE_LOCATION", "openbower_cache")
 # MAX_ENTRIES is raised well above DatabaseCache's default 300 because this

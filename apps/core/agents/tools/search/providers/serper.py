@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .base import AttemptThrottled, ProviderSpec, SearchHit, parse_retry_after
+from .base import AttemptThrottled, AttemptUnreachable, ProviderSpec, SearchHit, parse_retry_after
 from .registry import register, vendor_table
 
 # Their result envelope: only ORGANIC rows are evidence, and the
@@ -70,7 +70,13 @@ def serper(query: str, count: int) -> list[SearchHit]:
         except ValueError:
             detail = ""
         raise ValueError(f"serper returned {response.status_code}" + (f": {detail}" if detail else ""))
-    organic = response.json().get(_ORGANIC) or []
+    try:
+        payload = response.json()
+    except ValueError as e:
+        # A 200 whose body is not JSON is a broken hop (a proxy page, a
+        # truncated response), never a decision about the key.
+        raise AttemptUnreachable("serper answered with a non-JSON body") from e
+    organic = payload.get(_ORGANIC) or []
     # No shape hedging on the rows: a malformed entry raises and
     # lands as ONE diagnosed error, the honest read of a broken
     # payload. Nulls guard on every field, since a null title would

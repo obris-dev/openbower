@@ -38,7 +38,7 @@ DEBUG = env_bool("DEBUG", "true")
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "core"]
 
 # No inference seeding here: config/providers.toml is the ONE custody
-# for sources (make up bootstraps it from the template when absent),
+# for sources (bower-admin setup seeds it from the template when absent),
 # so a profile default would be a second writer for the same fact.
 
 # CORS: explicit allowlist even in dev. Allow-all + credentials would let

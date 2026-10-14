@@ -8,6 +8,7 @@ SDK in or re-enters a half-initialized module."""
 
 from .registry import (
     ModelUnavailable,
+    all_providers,
     catalog_entries,
     model_for,
     model_timeout_exceptions,
@@ -18,6 +19,7 @@ from .registry import (
 
 __all__ = [
     "ModelUnavailable",
+    "all_providers",
     "catalog_entries",
     "model_for",
     "model_timeout_exceptions",

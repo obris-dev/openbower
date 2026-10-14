@@ -122,6 +122,28 @@ class InferenceProvider(ABC):
         """The provider's OPEN source names, in env order."""
         return [name for name, source in self.configured_sources.items() if self._is_open(source)]
 
+    def probe(self, source_name: str) -> list[str]:
+        """The LIVE roster of one OPEN source, uncached: what its list
+        endpoint serves right now. RAISES on an unknown or closed
+        source and on any transport or envelope failure, so a caller
+        that needs the reason (the operator's source matrix) has it;
+        models() is the request path's wrapper, which turns a failure
+        into an honest empty and caches a success."""
+        source = self.source_config(source_name)
+        if source is None or not self._is_open(source):
+            raise ValueError(f"source {source_name!r} is unknown or closed")
+        names = self._list_models(source)
+        oversize = [n for n in names if len(n) > MODEL_MAX_LENGTH]
+        if oversize:
+            # A name past the serializer's bound would be offered by
+            # the picker and then refused at Save; dropping it HERE
+            # keeps every offered address saveable.
+            logger.warning(
+                "%s: dropping %d oversize model name(s) from %s", type(self).__name__, len(oversize), source_name
+            )
+            names = [n for n in names if len(n) <= MODEL_MAX_LENGTH]
+        return names
+
     def models(self, source_name: str) -> list[str]:
         source = self.source_config(source_name)
         if source is None or not self._is_open(source):
@@ -136,21 +158,12 @@ class InferenceProvider(ABC):
             # costing a serial timeout on every request in between.
             return []
         try:
-            names = self._list_models(source)
+            names = self.probe(source_name)
         except Exception as e:
             logger.warning("%s models failed (%s, %s): %s", type(self).__name__, source_name, type(e).__name__, e)
             self._probe_failed_at[source_name] = time.monotonic()
             return []
         self._probe_failed_at.pop(source_name, None)
-        oversize = [n for n in names if len(n) > MODEL_MAX_LENGTH]
-        if oversize:
-            # A name past the serializer's bound would be offered by
-            # the picker and then refused at Save; dropping it HERE
-            # keeps every offered address saveable.
-            logger.warning(
-                "%s: dropping %d oversize model name(s) from %s", type(self).__name__, len(oversize), source_name
-            )
-            names = [n for n in names if len(n) <= MODEL_MAX_LENGTH]
         # NO fallback floor anywhere: the most common failed canonical listing is
         # a bad key, and a hardcoded floor would hide it behind models
         # that can never run. An empty roster is the honest answer.
@@ -168,7 +181,17 @@ class InferenceProvider(ABC):
         response = httpx.get(f"{source['base_url']}{path}", headers=self._headers(source), timeout=LIST_TIMEOUT_SECONDS)
         if response.status_code != 200:
             raise ValueError(f"roster probe returned {response.status_code}")
-        return response.json().get("data", [])
+        # The URL is the operator's: a page instead of JSON, or JSON
+        # that is not the list envelope, is a wrong address, said as
+        # such rather than as a traceback.
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise ValueError("roster probe returned a non-JSON body") from e
+        rows = payload.get("data", []) if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("roster probe returned an unexpected envelope")
+        return rows
 
     @staticmethod
     def _key_or_placeholder(source: SourceConfig) -> str:

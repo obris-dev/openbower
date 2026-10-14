@@ -2,7 +2,7 @@
 name = "openbower-schema"
 version = "0.1.0"
 description = "Shared OpenBower schema: the Pydantic-first contract, codegen'd to zod for the web."
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 dependencies = ["pydantic>=2"]
 
 [build-system]

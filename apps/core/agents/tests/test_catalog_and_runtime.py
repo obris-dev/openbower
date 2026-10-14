@@ -589,6 +589,17 @@ class SerperBackoffTests(TestCase):
         self.assertEqual(sleeps, [3, max(SEARCH_BACKOFF_SECONDS)])
         self.assertEqual([r["json"]["q"] for r in requests], ["acme"] * 3)
 
+    def test_a_non_json_200_is_unreachable_not_a_decided_error(self):
+        # A proxy page or a truncated body is a broken hop, never a
+        # decision about the key: it lands as unreachable (one try, no
+        # retry), not as the decided error a 4xx is.
+        from agents.tools.search.providers.schedule import SearchUnreachable, search
+
+        self._serper([FakeResponse(200, not_json=True)])
+        with self.assertRaises(SearchUnreachable) as caught:
+            search("acme", provider="serper")
+        self.assertEqual(caught.exception.attempts, 1)
+
     def test_a_hostile_retry_after_takes_the_schedule(self):
         # A negative, NaN, or non-numeric delay is a broken header,
         # not a schedule: NaN poisons min() and a negative wait raises
