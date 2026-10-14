@@ -14,7 +14,7 @@
 # and writes a section for you (a server you run, OpenAI, or
 # Anthropic), or uncomment and edit one of the examples below. The
 # services read this file at start, so after a hand edit run
-# `bower-admin restart`, then `bower-admin providers` to see what each
+# `bower-admin reload`, then `bower-admin providers` to see what each
 # source serves.
 
 # SELF-HOSTED SERVERS: servers you run yourself (Ollama, vLLM, a

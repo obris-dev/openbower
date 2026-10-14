@@ -15,6 +15,7 @@ The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bi
 | `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild (an install ahead of every release, or on a line no release contains, is left alone and told to name a target); named: move to that tag or branch in either direction, with a one-line warning when it is a downgrade. Migrations run on the start, so your data comes along |
 | `status` / `logs [service]` / `version` | what is running, the logs (all or one service), the installed and newest versions |
 | `doctor` | the prerequisites checklist on its own |
+| `reload` | apply a hand edit to `config/providers.toml` or `config/tools.toml`: restarts the services that read them (they read the files at start), and nothing else |
 | `setup` / `providers` | add an inference source to `config/providers.toml` when none answers, and the Serper key to `config/tools.toml` when it is missing, checked with one live query (asks only for what is missing; an entry that does not answer, or a key the vendor rejects, is not kept); `providers` is the matrix of what each source serves, or why it cannot |
 
 `setup` writes keys inline into `config/providers.toml` and `config/tools.toml` (both yours and gitignored), checks each change in a one-off container before the running services see it, and restarts those services once at the end. Developing on the repo itself goes through `make`, whose lifecycle targets call the same script.

@@ -641,8 +641,16 @@ setup_menu() {
     esac
 }
 
+# Apply edits to the two config files: the services that read them do
+# so at start, so those (and only those) restart. What setup does
+# after a write; the hand-edit path is `bower-admin reload`.
+cmd_reload() {
+    restart_core_services
+    ok "applied; bower-admin providers shows what each source serves now"
+}
+
 restart_core_services() {
-    info "restarting the services that read $PROVIDERS (waits for rows in flight)..."
+    info "restarting the services that read $PROVIDERS and $TOOLS (waits for rows in flight)..."
     # shellcheck disable=SC2086  # a space-separated service list, split on purpose
     compose restart $CORE_SERVICES
 }
@@ -1059,6 +1067,7 @@ bower-admin: operate a self-hosted OpenBower
   version              the installed version and the newest release
   doctor               the prerequisites checklist
   setup                add an inference source ($PROVIDERS) and the Serper key ($TOOLS); asks only for what is missing
+  reload               apply hand edits to $PROVIDERS or $TOOLS (restarts the services that read them)
   shim                 put bower-admin on the PATH for this checkout (install does this): the shim in
                        ~/.local/bin and a guarded PATH line in your shell rc (OPENBOWER_NO_MODIFY_PATH=1 skips the rc)
   providers            the source matrix (what each inference source serves, or why not)
@@ -1113,6 +1122,7 @@ main() {
         version)   cmd_version "$@" ;;
         doctor)    cmd_doctor "$@" ;;
         setup)     cmd_setup "$@" ;;
+        reload)    cmd_reload "$@" ;;
         shim)      cmd_shim "$@" ;;
         providers) cmd_providers "$@" ;;
         help | -h | --help) cmd_help ;;

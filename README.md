@@ -74,7 +74,7 @@ The install seeds `apps/core/.env` (with its own secret), `config/providers.toml
 
 ### Prereq: a model
 
-OpenBower is bring-your-own-model; the stack does not bundle one. Inference sources (their structure and their keys) live in one file, `config/providers.toml`, seeded from `config/templates/providers.example.toml`. The template ships no live source; the install's setup step probes what is there and offers to add one when none answers; `bower-admin setup` runs that again any time, and `bower-admin providers` prints what each source serves. A section names a registered provider spec, and any source that speaks it is a first-class entry:
+OpenBower is bring-your-own-model; the stack does not bundle one. Inference sources (their structure and their keys) live in one file, `config/providers.toml`, seeded from `config/templates/providers.example.toml`. The template ships no live source; the install's setup step probes what is there and offers to add one when none answers; `bower-admin setup` runs that again any time, `bower-admin providers` prints what each source serves, and `bower-admin reload` applies a hand edit. A section names a registered provider spec, and any source that speaks it is a first-class entry:
 
 - **On your laptop.** Install [Ollama](https://ollama.com/download), then `ollama pull gemma4:12b && ollama serve`; setup's first option defaults to its endpoint (reached from the containers at `http://host.docker.internal:11434/v1`), and you pick the model in the agent builder.
 - **Your own deployment.** A vLLM box, a gateway, or any server that speaks the OpenAI or Anthropic protocol: add a section with its `base_url`. Self-hosted servers work keyless.

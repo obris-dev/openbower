@@ -73,8 +73,8 @@ export function ModelPicker({
               framed so hosted users can tell it is not for them. */}
           <p className="text-xs text-faint">
             Self-hosting? Run bower-admin setup on the install: it asks for a server you run, an OpenAI key, or an
-            Anthropic key and writes config/providers.toml for you. Or edit that file by hand; it carries the
-            examples. If someone else runs this deployment, send them this note.
+            Anthropic key and writes config/providers.toml for you. Or edit that file by hand (it carries the
+            examples) and run bower-admin reload. If someone else runs this deployment, send them this note.
           </p>
         </>
       ) : (

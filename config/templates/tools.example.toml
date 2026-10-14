@@ -22,7 +22,8 @@ find_contacts = "serper"
 # (duckduckgo) needs no table; the others stay gated until their
 # table is filled in. `bower-admin setup` asks for the Serper key,
 # writes its table, and wires web_search to it (DuckDuckGo's results
-# are the keyless fallback, not the good path).
+# are the keyless fallback, not the good path). The services read this
+# file at start, so after a hand edit run `bower-admin reload`.
 
 # Serper (serper.dev): real Google SERPs on prepaid credits (2,500
 # free queries to start). Create the key at serper.dev/signup.
