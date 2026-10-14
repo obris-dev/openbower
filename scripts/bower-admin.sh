@@ -512,13 +512,15 @@ source_name_taken() {
 }
 
 # Append one source section. $1 spec, $2 name, $3 base_url, $4 api_key
-# (may be empty). Keys live inline, so the file is locked owner-only.
+# (may be empty), $5 concurrency (may be empty: undeclared). Keys live
+# inline, so the file is locked as tightly as the containers can bear.
 append_source() {
     {
         printf '\n[[%s]]\n' "$1"
         printf 'name = "%s"\n' "$2"
         printf 'base_url = "%s"\n' "$3"
         [ -z "$4" ] || printf 'api_key = "%s"\n' "$4"
+        [ -z "${5:-}" ] || printf 'concurrency = %s\n' "$5"
     } >> "$PROVIDERS"
     lock_file "$PROVIDERS"
     ok "added [[$1]] \"$2\" to $PROVIDERS"
@@ -600,7 +602,21 @@ setup_menu() {
                 say "a key cannot contain quotes, backslashes, or line breaks; try again"
             done
             _name="$(ask_source_name "$_default_name")"
-            append_source openai_compatible "$_name" "$_url" "$_key"
+            # The fill ceiling for this server: rows run in parallel up
+            # to it. The parser's bound is 1..MAX_FILL_CONCURRENCY (64);
+            # a vendor key needs no answer, its ceiling is adaptive.
+            info "Fills research rows in parallel, up to a ceiling you set for this server (1 to 64)."
+            info "  Ollama serves one request at a time unless you configured it to batch; a vLLM box takes 8 or more."
+            while :; do
+                _conc="$(ask "  Requests this server may run at once [1]: ")"
+                _conc="${_conc:-1}"
+                case "$_conc" in
+                    *[!0-9]*) say "a whole number from 1 to 64; try again"; continue ;;
+                esac
+                if [ "$_conc" -ge 1 ] && [ "$_conc" -le 64 ]; then break; fi
+                say "a whole number from 1 to 64; try again"
+            done
+            append_source openai_compatible "$_name" "$_url" "$_key" "$_conc"
             case "$_url" in *host.docker.internal*) host_bind_hint ;; esac
             ;;
         2)
