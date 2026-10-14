@@ -16,8 +16,11 @@
 # path is bash-free.
 #
 # Env:
-#   OPENBOWER_BRANCH   upgrade's default target when none is named (a
-#                      branch or tag; otherwise the newest release tag)
+#   OPENBOWER_BRANCH   a standing NAMED target for upgrade, used when no
+#                      argument is given: moves there in either direction,
+#                      as `upgrade <tag|branch>` does (the lab and a pinned
+#                      install set it; unset, bare upgrade means the newest
+#                      release, forward only)
 #   OPENBOWER_BIN_DIR  where install writes the shim (default ~/.local/bin)
 #   OPENBOWER_NO_MODIFY_PATH=1
 #                      never touch a shell rc file; install prints the
@@ -1146,7 +1149,7 @@ bower-admin: operate a self-hosted OpenBower
   dbshell              a psql shell on the database
   help                 this
 
-Env: OPENBOWER_BRANCH is the default target for upgrade (a tag or branch); OPENBOWER_BIN_DIR is where install puts the shim;
+Env: OPENBOWER_BRANCH is a standing named target for upgrade (either direction); OPENBOWER_BIN_DIR is where install puts the shim;
      OPENBOWER_NO_MODIFY_PATH=1 leaves your shell rc files alone.
 HELP
 }
