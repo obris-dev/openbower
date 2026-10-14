@@ -142,6 +142,20 @@ ask_secret() {
     printf '%s' "$_reply"
 }
 
+# Lock a config file that holds secrets as tightly as the containers can
+# bear: they run as uid 1000 and read these files through the bind
+# mount, so owner-only is right on Docker Desktop (which maps the user)
+# and when the installing user IS uid 1000, and would make the app
+# refuse to boot for any other Linux user. Those keep the umask's read
+# bits; the checkout sits in their own home directory.
+lock_file() {
+    if [ "$(uname -s)" = Darwin ] || [ "$(id -u)" = 1000 ]; then
+        chmod 600 "$1" 2>/dev/null || true
+    else
+        chmod 644 "$1" 2>/dev/null || true
+    fi
+}
+
 # Set KEY=$1 to VALUE=$2 in env file $3 through a temp file and one mv:
 # any existing uncommented assignment is dropped, a commented default
 # line stays. The file can hold secrets, so it is locked owner-only on
@@ -150,7 +164,7 @@ env_set() {
     _tmp="$3.tmp.$$"
     grep -v "^$1=" "$3" > "$_tmp" || true
     printf '%s=%s\n' "$1" "$2" >> "$_tmp"
-    chmod 600 "$_tmp" 2>/dev/null || true
+    lock_file "$_tmp"
     mv "$_tmp" "$3"
 }
 
@@ -459,7 +473,7 @@ append_source() {
         printf 'base_url = "%s"\n' "$3"
         [ -z "$4" ] || printf 'api_key = "%s"\n' "$4"
     } >> "$PROVIDERS"
-    chmod 600 "$PROVIDERS" 2>/dev/null || true
+    lock_file "$PROVIDERS"
     ok "added [[$1]] \"$2\" to $PROVIDERS"
 }
 
@@ -595,7 +609,7 @@ set_tool_wiring() {
         cp "$TOOLS" "$_tmp"
         printf '\n[tools]\n%s = "%s"\n' "$1" "$2" >> "$_tmp"
     fi
-    chmod 600 "$_tmp" 2>/dev/null || true
+    lock_file "$_tmp"
     mv "$_tmp" "$TOOLS"
 }
 
@@ -603,7 +617,7 @@ set_tool_wiring() {
 # file is locked owner-only.
 add_vendor_key() {
     printf '\n[%s]\napi_key = "%s"\n' "$1" "$2" >> "$TOOLS"
-    chmod 600 "$TOOLS" 2>/dev/null || true
+    lock_file "$TOOLS"
 }
 
 # The search step. Web search works keyless through DuckDuckGo, but
@@ -688,7 +702,7 @@ cmd_setup() {
     _changed=""
     if [ ! -e "$PROVIDERS" ]; then
         cp "$PROVIDERS_TEMPLATE" "$PROVIDERS"
-        chmod 600 "$PROVIDERS" 2>/dev/null || true
+        lock_file "$PROVIDERS"
         ok "seeded $PROVIDERS from the template (no source is live until one is added)"
         _changed=1
     fi
