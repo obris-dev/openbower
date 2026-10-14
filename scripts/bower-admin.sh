@@ -73,6 +73,24 @@ fail() { printf '\n%s\n\n' "  ${RED}x $1${NC}" >&2; exit 1; }
 
 compose() { docker compose -p "$PROJECT" "$@"; }
 
+# ONE signal handler, installed at main, driven by state the callers
+# set: a config file with an unverified entry pending (restored from
+# its backup), and a terminal left in raw mode by a secret prompt
+# (put back). Nested traps would otherwise undo each other.
+PENDING_BACKUP=""; PENDING_FILE=""; TTY_SAVED=""
+on_signal() {
+    [ -z "$TTY_SAVED" ] || stty "$TTY_SAVED" < /dev/tty 2>/dev/null
+    if [ -n "$PENDING_BACKUP" ] && [ -f "$PENDING_BACKUP" ]; then
+        cp "$PENDING_BACKUP" "$PENDING_FILE"
+        rm -f "$PENDING_BACKUP"
+        printf '\n  %s\n' "interrupted: $PENDING_FILE is as it was" > /dev/tty 2>/dev/null || true
+    fi
+    exit 130
+}
+# Mark $2 as holding an unverified entry, with $1 the copy to restore;
+# clear with no arguments once the verdict is in.
+pending() { PENDING_BACKUP="${1:-}"; PENDING_FILE="${2:-}"; }
+
 # Someone is plausibly watching: stdout is a terminal AND the controlling
 # tty is readable. Both, because a readable /dev/tty alone (CI with a pty,
 # a detached tmux) would block a read forever.
@@ -92,7 +110,7 @@ ask() {
 ask_secret() {
     printf '%s' "$1" > /dev/tty
     _saved="$(stty -g < /dev/tty)"
-    trap 'stty "$_saved" < /dev/tty; printf "\n" > /dev/tty; exit 130' INT
+    TTY_SAVED="$_saved"
     stty -echo -icanon min 1 time 0 < /dev/tty
     _reply=""
     while :; do
@@ -136,7 +154,7 @@ ask_secret() {
         esac
     done
     stty "$_saved" < /dev/tty
-    trap - INT
+    TTY_SAVED=""
     printf '\n' > /dev/tty
     printf '%s' "$_reply"
 }
@@ -722,12 +740,13 @@ tools_setup() {
         toml_safe "$_key" || { say "a key cannot contain quotes, backslashes, or line breaks"; continue; }
         _before="$TOOLS.before.$$"
         cp "$TOOLS" "$_before"
+        pending "$_before" "$TOOLS"
         add_vendor_key serper "$_key"
         set_tool_wiring web_search serper
         info "checking the file..."
         _out="$(run_manage tools 2>&1)" && _rc=0 || _rc=$?
         if [ "$_rc" != 0 ]; then
-            cp "$_before" "$TOOLS"; rm -f "$_before"
+            cp "$_before" "$TOOLS"; pending; rm -f "$_before"
             if [ "$_rc" = 1 ] && printf '%s\n' "$_out" | grep -q '^Traceback'; then
                 warn "That entry was refused ($(boot_reason "$_out")), please try again."
                 continue
@@ -746,21 +765,21 @@ tools_setup() {
         _line="$(printf '%s\n' "$_out" | grep -E '^serper: ' | tail -n1)"
         case $_rc in
             "$PROBE_OK")
-                rm -f "$_before"
+                pending; rm -f "$_before"
                 TOOLS_CHANGED=1
                 ok "Serper is wired for web search and finding contacts ($TOOLS)"
                 run_manage tools 2>/dev/null | grep -E '^[a-z_]+: ' || true
                 return 0 ;;
             "$PROBE_REJECTED")
-                cp "$_before" "$TOOLS"; rm -f "$_before"
+                cp "$_before" "$TOOLS"; pending; rm -f "$_before"
                 warn "Serper rejected that key, please try again." ;;
             "$PROBE_UNREACHABLE" | "$PROBE_THROTTLED")
-                rm -f "$_before"
+                pending; rm -f "$_before"
                 TOOLS_CHANGED=1
                 warn "could not check the key with serper.dev right now (${_line#serper: }); it is saved as given"
                 return 0 ;;
             *)
-                cp "$_before" "$TOOLS"; rm -f "$_before"
+                cp "$_before" "$TOOLS"; pending; rm -f "$_before"
                 warn "the key check could not run (exit $_rc); the file is as it was. Fix that, then: bower-admin setup"
                 printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
                 return 0 ;;
@@ -808,13 +827,14 @@ cmd_setup() {
             _was="$PROBE_STATE"
             _before="$PROVIDERS.before.$$"
             cp "$PROVIDERS" "$_before"
+            pending "$_before" "$PROVIDERS"
             setup_menu && _rc=0 || _rc=$?
             if [ "$_rc" = 2 ]; then
-                rm -f "$_before"
+                pending; rm -f "$_before"
                 continue
             fi
             if [ "$_rc" != 0 ]; then
-                rm -f "$_before"
+                pending; rm -f "$_before"
                 [ "$_was" = empty ] || model_hint
                 break
             fi
@@ -832,7 +852,7 @@ cmd_setup() {
                     PROBE_STATE="$_was" ;;
                 error)
                     cp "$_before" "$PROVIDERS"
-                    rm -f "$_before"
+                    pending; rm -f "$_before"
                     warn "the file is as it was. Fix that, then: bower-admin setup"
                     return 1 ;;
                 *)
@@ -840,7 +860,7 @@ cmd_setup() {
                     warn "That source did not answer, please try again."
                     PROBE_STATE="$_was" ;;
             esac
-            rm -f "$_before"
+            pending; rm -f "$_before"
         done
         [ "$PROBE_STATE" != ready ] || ok "an inference source is ready; pick its model in the agent builder"
     fi
@@ -1032,6 +1052,7 @@ adopt_docker_group() {
 }
 
 main() {
+    trap on_signal INT TERM HUP
     adopt_docker_group "$@"
     _cmd="${1:-help}"
     [ $# -eq 0 ] || shift
