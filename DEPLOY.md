@@ -12,7 +12,7 @@ The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bi
 | `up [service...]` | start the stack; seeds the config files when absent and runs `setup` until `config/providers.toml` exists |
 | `build` | rebuild the images and start (after a dependency change) |
 | `stop` / `down` / `restart [service...]` | stop in place (a consumer finishes its row first; `up` resumes), stop and remove the containers (the database volume survives), restart in place |
-| `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild (an install ahead of every release, or on a line no release contains, is left alone and told to name a target); named: move to that tag or branch in either direction, with a one-line warning when the target lacks this checkout's commit (`OPENBOWER_BRANCH` is a standing named target for a pinned install). Migrations run on the start, so your data comes along |
+| `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild (an install ahead of every release, or on a line no release contains, is left alone and told to name a target); named: move to that tag or branch in either direction, with a one-line warning when the target lacks this checkout's commit (`OPENBOWER_BRANCH`, when set, is what a bare `upgrade` moves to, as if you had typed it). Migrations run on the start, so your data comes along |
 | `status` / `logs [service...]` / `version` | what is running, the logs (all or one service), the installed and newest versions |
 | `tools` / `dbshell` | the tool matrix (which vendor serves each tool, and its readiness); a psql shell on the database |
 | `doctor` | the prerequisites checklist on its own |

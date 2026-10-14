@@ -1145,8 +1145,11 @@ bower-admin: operate a self-hosted OpenBower
   dbshell              a psql shell on the database
   help                 this
 
-Env: OPENBOWER_BRANCH is a standing named target for upgrade (either direction); OPENBOWER_BIN_DIR is where install puts the shim;
-     OPENBOWER_NO_MODIFY_PATH=1 leaves your shell rc files alone.
+Env:
+  OPENBOWER_BRANCH            what a bare \`upgrade\` moves to (a tag or branch, in either direction,
+                              as if you had typed it); unset, the newest release
+  OPENBOWER_BIN_DIR           where install writes the bower-admin shim (default $(tilde "$BIN_DIR"))
+  OPENBOWER_NO_MODIFY_PATH=1  never edit your shell rc files; the PATH line is printed instead
 HELP
 }
 

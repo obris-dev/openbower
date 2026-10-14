@@ -19,14 +19,14 @@
 # dispatches.
 #
 # Env:
-#   OPENBOWER_BRANCH   a standing NAMED target for upgrade, used when no
-#                      argument is given: moves there in either direction,
-#                      as `upgrade <tag|branch>` does (the lab and a pinned
-#                      install set it; unset, bare upgrade means the newest
-#                      release, forward only)
-#   OPENBOWER_BIN_DIR  where install writes the shim (default ~/.local/bin)
+#   OPENBOWER_BRANCH   what a bare `upgrade` moves to (a tag or branch, in
+#                      either direction, as if you had typed it); unset,
+#                      the newest release, forward only. The installer
+#                      reads it too, to choose what to clone.
+#   OPENBOWER_BIN_DIR  where install writes the bower-admin shim (default
+#                      ~/.local/bin)
 #   OPENBOWER_NO_MODIFY_PATH=1
-#                      never touch a shell rc file; install prints the
+#                      never edit a shell rc file; install prints the
 #                      PATH line to add by hand instead
 set -eu
 
