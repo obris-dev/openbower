@@ -155,8 +155,10 @@ class ToolsProbeTests(SimpleTestCase):
 
         from django.core.management import CommandError, call_command
 
+        # As argv, not keyword options: call_command's keywords bypass
+        # the parser, and the exclusion lives in the parser.
         with self.assertRaisesMessage(CommandError, "not allowed with"):
-            call_command("tools", status="serper", probe="serper", stdout=StringIO())
+            call_command("tools", "--status", "serper", "--probe", "serper", stdout=StringIO())
 
     def test_an_unknown_vendor_names_the_roster(self):
         from io import StringIO
