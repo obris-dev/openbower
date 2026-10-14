@@ -30,7 +30,6 @@ set -eu
 
 readonly REPO_HTTPS="https://github.com/obris-dev/openbower.git"
 readonly REPO_SSH="git@github.com:obris-dev/openbower.git"
-readonly REPO_SLUG="obris-dev/openbower"
 OPENBOWER_DIR="${OPENBOWER_DIR:-}"
 OPENBOWER_BRANCH="${OPENBOWER_BRANCH:-}"
 # What the person pinned, before resolve_ref fills in the newest release:
@@ -96,19 +95,22 @@ resolve_target_dir() {
     esac
 }
 
-# The newest stable release tag (vMAJOR.MINOR.PATCH, newest first in the
-# API's list, prereleases rejected by the anchor), so a fresh install
-# lands on a release while main keeps moving. No jq on a fresh box. Falls
-# back to main when there is no release yet or the lookup fails.
+# The newest stable release tag, read off the remote's own tags before
+# any clone exists (git is already required) with THE rule the operator
+# command uses after the clone: the highest vMAJOR.MINOR.PATCH by a
+# numeric sort on the three fields (not sort -V, a GNU/BSD extension),
+# prereleases rejected by the anchor. Falls back to main when there is
+# no release yet or the remote cannot be reached.
 resolve_ref() {
     [ -n "$OPENBOWER_BRANCH" ] && return 0
-    if command -v curl >/dev/null 2>&1; then
-        OPENBOWER_BRANCH="$(curl -fsSL "https://api.github.com/repos/$REPO_SLUG/releases?per_page=100" 2>/dev/null \
-            | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
-            | sed -E 's/.*"([^"]+)"$/\1/' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | head -n1)"
-    fi
+    _url="$REPO_HTTPS"
+    [ -n "${OPENBOWER_SSH:-}" ] && _url="$REPO_SSH"
+    [ -n "${OPENBOWER_REPO:-}" ] && _url="$OPENBOWER_REPO"
+    _v="$(git ls-remote --tags --refs "$_url" 'v*' 2>/dev/null \
+        | sed -E 's|.*refs/tags/||' \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' \
+        | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
+    [ -z "$_v" ] || OPENBOWER_BRANCH="v$_v"
     if [ -n "$OPENBOWER_BRANCH" ]; then
         info "Installing the newest release: $OPENBOWER_BRANCH"
     else
