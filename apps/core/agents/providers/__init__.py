@@ -12,6 +12,7 @@ from .registry import (
     model_for,
     model_timeout_exceptions,
     provider_names,
+    providers,
     register,
     source_config,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "model_for",
     "model_timeout_exceptions",
     "provider_names",
+    "providers",
     "register",
     "source_config",
 ]

@@ -21,6 +21,22 @@ from openbower_kernel.provider_config import (
     parse_provider_sources,
 )
 
+_TEMPLATE = Path(__file__).resolve().parents[4] / "config" / "templates" / "providers.example.toml"
+# The template's commented example entries: a line is one when its text
+# after the comment marker is a table header or one of the entry keys
+# (prose comments never start that way), which is what an operator
+# uncomments by hand.
+_EXAMPLE_LINE_STARTS = ("[[", "name = ", "base_url = ", "api_key = ", "concurrency = ")
+
+
+def _template_examples() -> str:
+    lines = []
+    for line in _TEMPLATE.read_text(encoding="utf-8").splitlines():
+        body = line[2:] if line.startswith("# ") else line
+        if body.startswith(_EXAMPLE_LINE_STARTS):
+            lines.append(body)
+    return "\n".join(lines) + "\n"
+
 
 class ProviderConfigTests(SimpleTestCase):
     def test_named_sources_parse_per_section(self):
@@ -193,15 +209,21 @@ class ConcurrencyKeyTests(SimpleTestCase):
             parse_provider_sources(self._entry("concurency = 4"))
         self.assertIn("concurency", str(caught.exception))
 
+    def test_the_example_template_ships_no_live_source(self):
+        # A source exists because the operator added it (the install's
+        # setup step writes one); a template that seeded a live entry
+        # would leave every install probing a server nobody configured.
+        self.assertEqual(parse_provider_sources(_TEMPLATE.read_text(encoding="utf-8")), {})
+
     def test_the_example_template_parses_with_its_ceilings(self):
         # The parser rejects unknown keys, so a template key it cannot
-        # parse would crash every copied config at boot; the template
-        # and the parser must move together. Only the self-hosted
-        # ollama entry ships live (the managed options are commented
-        # guidance).
-        template = Path(__file__).resolve().parents[4] / "config" / "templates" / "providers.example.toml"
-        sources = parse_provider_sources(template.read_text(encoding="utf-8"))
+        # parse would crash every config copied from it at boot; the
+        # template and the parser must move together. The examples
+        # ship commented, so they are uncommented here to parse them.
+        sources = parse_provider_sources(_template_examples())
         self.assertEqual(sources["openai_compatible"]["ollama"]["concurrency"], 1)
+        self.assertEqual(sources["openai_compatible"]["openai"]["concurrency"], 64)
+        self.assertEqual(sources["anthropic_compatible"]["anthropic"]["concurrency"], 64)
 
     def test_the_template_sections_are_registered_providers(self):
         # Sections are provider names now, validated at boot by the
@@ -210,8 +232,7 @@ class ConcurrencyKeyTests(SimpleTestCase):
         # equality: a template need not exercise every provider.
         from agents.providers.registry import provider_names
 
-        template = Path(__file__).resolve().parents[4] / "config" / "templates" / "providers.example.toml"
-        sources = parse_provider_sources(template.read_text(encoding="utf-8"))
+        sources = parse_provider_sources(_template_examples())
         self.assertLessEqual(set(sources), set(provider_names()))
 
 

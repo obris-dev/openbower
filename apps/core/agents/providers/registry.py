@@ -116,6 +116,11 @@ def provider_names() -> list[str]:
     return list(_REGISTRY)
 
 
+def providers() -> list[InferenceProvider]:
+    """Every registered provider, in the same order as provider_names()."""
+    return list(_REGISTRY.values())
+
+
 def model_timeout_exceptions() -> tuple[type[Exception], ...]:
     """Every type a model call can raise for running out of time, one
     declared per provider beside its implementation. A CALLED accessor,

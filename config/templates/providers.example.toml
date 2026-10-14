@@ -10,15 +10,22 @@
 # gateway, and the vendor itself are all named sources of the spec
 # they speak.
 
+# No entry is live as shipped: `bower-admin setup` probes what is here
+# and writes a section for you (a server you run, OpenAI, or
+# Anthropic), or uncomment and edit one of the examples below. The
+# services read this file at start, so after a hand edit run
+# `bower-admin restart`, then `bower-admin providers` to see what each
+# source serves.
+
 # SELF-HOSTED SERVERS: servers you run yourself (Ollama, vLLM, a
 # gateway). Keyless works, since a non-canonical base is open. The
-# live entry below reaches the HOST machine's Ollama from inside
+# Ollama example reaches the HOST machine's Ollama from inside
 # compose; a natively-run core wants localhost instead.
 
-[[openai_compatible]]
-name = "ollama"
-base_url = "http://host.docker.internal:11434/v1"
-concurrency = 1  # Ollama serves one request at a time by default; raise only if your server batches.
+# [[openai_compatible]]
+# name = "ollama"
+# base_url = "http://host.docker.internal:11434/v1"
+# concurrency = 1  # Ollama serves one request at a time by default; raise only if your server batches.
 
 # [[openai_compatible]]
 # name = "vllm"

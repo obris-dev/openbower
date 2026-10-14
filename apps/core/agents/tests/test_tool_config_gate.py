@@ -42,6 +42,68 @@ class ToolsCommandTests(SimpleTestCase):
         )
 
 
+class ToolsProbeTests(SimpleTestCase):
+    """manage.py tools --probe <vendor>: one live query, mocked at the
+    vendor's httpx seam, with the states an operator acts on."""
+
+    _KEYED = {"TOOL_WIRING": {"web_search": "serper"}, "TOOL_VENDOR_KEYS": {"serper": {"api_key": "k"}}}
+
+    def _probe(self, post) -> tuple[list[str], str]:
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        out = StringIO()
+        error = ""
+        with patch("agents.tools.search.providers.serper.httpx.post", side_effect=post), self.settings(**self._KEYED):
+            try:
+                call_command("tools", probe="serper", stdout=out)
+            except CommandError as e:
+                error = str(e)
+        return out.getvalue().splitlines(), error
+
+    def test_a_working_key_is_ok(self):
+        from common.testing import FakeResponse
+
+        lines, error = self._probe(
+            lambda *a, **kw: FakeResponse(
+                200, {"organic": [{"title": "t", "link": "https://acme.com", "snippet": "s"}]}
+            )
+        )
+        self.assertEqual(lines, ["serper: ok | 1 hit(s) from one query"])
+        self.assertEqual(error, "")
+
+    def test_a_bad_key_is_rejected(self):
+        from common.testing import FakeResponse
+
+        lines, error = self._probe(lambda *a, **kw: FakeResponse(403, {"message": "Unauthorized."}))
+        self.assertEqual(lines, ["serper: rejected | serper returned 403: Unauthorized."])
+        self.assertIn("rejected", error)
+
+    def test_a_network_failure_is_unreachable_not_rejected(self):
+        import httpx
+
+        def post(*a, **kw):
+            raise httpx.ConnectError("connection refused")
+
+        lines, error = self._probe(post)
+        self.assertEqual(lines, ["serper: unreachable | ConnectError: connection refused"])
+        self.assertIn("reached", error)
+
+    def test_an_unconfigured_vendor_is_refused_before_any_call(self):
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        with (
+            patch("agents.tools.search.providers.serper.httpx.post") as post,
+            self.settings(TOOL_WIRING={"web_search": "duckduckgo"}, TOOL_VENDOR_KEYS={}),
+            self.assertRaisesMessage(CommandError, "needs setup"),
+        ):
+            call_command("tools", probe="serper", stdout=StringIO())
+        post.assert_not_called()
+
+
 class ToolConfigGateTests(SimpleTestCase):
     def test_a_passing_config_is_silent(self):
         with self.settings(

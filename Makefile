@@ -8,6 +8,13 @@ COMPOSE := docker compose -p $(PROJECT)
 # sub-shell resolves to the same project.
 export COMPOSE_PROJECT_NAME := $(PROJECT)
 
+# The operator command owns the lifecycle (seeding the config files,
+# the suite network, up/stop/upgrade, the model setup); the targets
+# below delegate to it so that logic lives once, and a self-hoster
+# never needs make. Dev-only targets (the restarts, the prunes, the
+# tests, the schema) stay here.
+ADMIN := sh scripts/bower-admin.sh
+
 # A private deployments checkout beside this one (../deployments) carries
 # the hosted-operations targets (release, deploy, migrate, the cluster
 # logs). Its make fragments resolve their paths through DEPLOY_DIR, so
@@ -17,7 +24,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks suite-network db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers upgrade db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -33,87 +40,56 @@ hooks: ## Install the git pre-commit hook (branch-name check)
 	chmod +x "$$hook"; \
 	echo "pre-commit hook installed at $$hook"
 
-db-up: suite-network ## Start just the database (what host-run tests need)
-	$(COMPOSE) up -d --wait db
+install-admin: ## Put `bower-admin` on your PATH for this checkout (the installer does this for a self-hoster)
+	@$(ADMIN) shim
 
-# The .env seed as a file rule, so every target that starts the stack
-# gets it: without it core dies on the required DJANGO_SECRET_KEY, and
-# env_file is deliberately optional so compose itself will not say why.
-# ORDER-ONLY prerequisite (the `|`): seed only when the file is ABSENT.
-# A normal prerequisite rebuilds whenever the example is newer, so a pull
-# that touched .env.example would overwrite the operator's real keys.
-apps/core/.env: | apps/core/.env.example
-	@cp $(firstword $|) $@
-	@echo "seeded $@ from .env.example (dev values; edit it for real credentials)"
+doctor: ## The prerequisites checklist (OS, git, Docker + Compose, the daemon)
+	@$(ADMIN) doctor
 
-# The repo-root .env is compose's own: the identity URLs both core and the
-# web read. Same order-only rule, same reason.
-.env: | .env.example
-	@cp $(firstword $|) $@
-	@echo "seeded $@ from .env.example (signs in at the hosted hub; the commented block is for locally run development copies of it)"
+setup: ## Probe the inference sources in config/providers.toml and add one when none answers
+	@$(ADMIN) setup
 
-# Same order-only trick: a pull that touched the template must never
-# overwrite an operator's real sources and keys.
-config/providers.toml: | config/templates/providers.example.toml
-	@cp $(firstword $|) $@
-	@echo "seeded $@ from the template (a local Ollama entry; edit it for real sources and keys)"
+providers: ## The source matrix: what each inference source serves, or why not (needs the api running)
+	@$(ADMIN) providers
 
-config/tools.toml: | config/templates/tools.example.toml
-	@cp $(firstword $|) $@
-	@echo "seeded $@ from the template (default wiring; edit it to add vendor credentials or switch vendors)"
+upgrade: ## Move this checkout to the newest release and rebuild; data preserved
+	@$(ADMIN) upgrade
 
-# The cross-stack network the IdP and data service share with this stack
-# (see docker-compose.yml). Idempotent, and created by whichever stack
-# comes up first.
-suite-network:
-	@docker network inspect openbower-suite >/dev/null 2>&1 && exit 0; \
-	docker network create openbower-suite >/dev/null 2>&1 \
-		|| docker network inspect openbower-suite >/dev/null 2>&1 \
-		|| { echo "could not create the openbower-suite network:"; \
-		     docker network create openbower-suite >/dev/null; exit 1; }
+db-up: ## Start just the database (what host-run tests need)
+	@$(ADMIN) up db
 
-# --wait-timeout covers the SERIAL cold path, not one term of it:
-# core-setup syncs its own venv, then core and the fill services sync
-# theirs concurrently (separate anonymous volumes each; cron alone
-# never syncs, since supercronic is its command), and `build` renews
-# them by construction.
-# A bound above that chain keeps a container stuck RESTARTING from
-# blocking the target forever, without failing a start that is merely
-# slow.
-up: .env apps/core/.env config/providers.toml config/tools.toml suite-network ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
-	$(COMPOSE) up -d --wait --wait-timeout 900
-	@echo "up: api :8002, app :3003, marketing :3004, fill services + jobs + cron (make logs to tail, make stop to stop)"
+# Seeds the config files when absent (never overwrites), creates the
+# suite network, and runs `setup` once, until config/providers.toml
+# exists.
+up: ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
+	@$(ADMIN) up
 
 # Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
 # REMOVED with no policy to bring it back, and nothing else drains the
 # fill queue. Recover with `make up`.
-#
-# --renew-anon-volumes: the anonymous .venv volume survives a recreate
-# otherwise, so a freshly built image's venv would be masked by the old
-# container's and the rebuild would deliver nothing.
-build: .env apps/core/.env suite-network ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
-	$(COMPOSE) up --build -d --renew-anon-volumes --wait --wait-timeout 900
+build: ## Rebuild after Dockerfile/dependency changes (waits for rows in flight, which can take minutes)
+	@$(ADMIN) build
 
 # The receiver (make receiver) sits on the stack's network as a plain
 # container, and compose cannot remove a network with a foreign endpoint
 # still attached, so it goes first; its stop is idempotent.
 down: ## Stop and remove the stack's containers (the db's data and installed dependencies survive)
 	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
-	$(COMPOSE) down
+	@$(ADMIN) down
 
 reset: ## Remove the stack AND its volumes (wipes the dev database and the installed dependencies)
 	@./scripts/debug/webhook-receiver.sh stop >/dev/null 2>&1 || true
 	$(COMPOSE) down -v
 
 stop: ## Stop the stack in place; the fill consumer finishes the row in flight before its grace expires (make up resumes)
-	$(COMPOSE) stop
+	@$(ADMIN) stop
 
 # Compose-file edits are applied by RECREATING a service, which restart
 # does not do: docker compose up -d --no-deps <service>. Without
 # --no-deps that also re-runs core-setup, whose cold venv sync is what
 # core's start period is sized for.
 restart: ## Restart all services in place (compose-file edits need make up, which recreates)
-	$(COMPOSE) restart
+	@$(ADMIN) restart
 
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
@@ -150,29 +126,29 @@ prune-venvs: ## Remove the dangling anonymous venv volumes left by build/down cy
 	docker volume rm $$vols
 
 logs: ## Tail all container logs
-	$(COMPOSE) logs -f
+	@$(ADMIN) logs
 
 logs-core: ## Tail the api's logs
-	$(COMPOSE) logs -f core
+	@$(ADMIN) logs core
 
 logs-worker: ## Tail the fill provisioner + manual consumer logs
-	$(COMPOSE) logs -f fill-provisioner fill-consumer
+	@$(ADMIN) logs fill-provisioner fill-consumer
 
 logs-jobs: ## Tail the jobs service's logs (the walks that queue a fill's or a backfill's runs)
-	$(COMPOSE) logs -f jobs
+	@$(ADMIN) logs jobs
 
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
-	$(COMPOSE) logs -f ingest-worker
+	@$(ADMIN) logs ingest-worker
 
 logs-autofill: ## Tail the autofill provisioner + consumer logs (publish and run pushed rows' AI columns and the preview)
-	$(COMPOSE) logs -f autofill-provisioner autofill-consumer preview-consumer
+	@$(ADMIN) logs autofill-provisioner autofill-consumer preview-consumer
 
 logs-cron: ## Tail the maintenance cron's logs
-	$(COMPOSE) logs -f cron
+	@$(ADMIN) logs cron
 
 
 logs-web: ## Tail the web dev servers' logs (app + marketing)
-	$(COMPOSE) logs -f web
+	@$(ADMIN) logs web
 prune-preview-runs: ## Run the preview-run prune once, in the cron container (proves its environment)
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_preview_runs
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container

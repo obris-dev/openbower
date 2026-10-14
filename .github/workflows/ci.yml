@@ -37,6 +37,18 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config -q
 
+  # Every script under scripts/ is POSIX sh: the installer runs under
+  # `curl | sh` on a machine with no bash guarantee, and the operator
+  # command rides the same path. The runner image ships shellcheck; the
+  # install is the fallback for an image that does not.
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          find scripts -name '*.sh' -print0 | xargs -0 shellcheck -s sh
+
   lint-python:
     runs-on: ubuntu-latest
     steps:
