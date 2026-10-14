@@ -1,19 +1,19 @@
 #!/bin/sh
 #
-# The operator command's pure helpers, each against known inputs, in a
-# throwaway HOME and config directory: the file writers (parsed back
-# as TOML), the URL rewrite, the quoting, the rc append, the name rule,
-# the release-tag sort. The prompts need a terminal and stay out; the
-# VM run covers them. Run: sh scripts/tests/bower-admin-functions.sh
+# The operator command's library (scripts/lib/bower-admin.sh), each pure
+# helper against known inputs in a throwaway HOME and config directory:
+# the file writers (parsed back as TOML), the URL rewrite, the quoting,
+# the rc append, the name rule, the release-tag sort. The prompts need a
+# terminal and stay out; the VM run covers them.
+# Run: sh scripts/tests/bower-admin-functions.sh
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # The zsh case writes ${ZDOTDIR:-$HOME}/.zshrc; a developer's own ZDOTDIR
 # must not turn that into a write to their real rc file.
 unset ZDOTDIR
-# shellcheck disable=SC1091  # the file under test, linted on its own
-OPENBOWER_ROOT="$ROOT" BOWER_ADMIN_SOURCED=1 . "$ROOT/scripts/bower-admin.sh"
-# The script turns -e on; an assertion that fails must report, not abort.
-set +e
+cd "$ROOT" || exit 1
+# shellcheck source=scripts/lib/bower-admin.sh
+. "$ROOT/scripts/lib/bower-admin.sh"
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT

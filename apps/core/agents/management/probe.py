@@ -4,7 +4,7 @@ exit code per state, so the caller branches on `$?` and never on
 wording. The codes skip 1 (the runner's own: an uncaught boot failure
 with a traceback, or a plain CommandError such as an unknown vendor)
 and 2 (argparse usage). The shell carries a twin PROBE_* line in
-scripts/bower-admin.sh, pinned to this enum by a test."""
+scripts/lib/bower-admin.sh, pinned to this enum by a test."""
 
 from __future__ import annotations
 

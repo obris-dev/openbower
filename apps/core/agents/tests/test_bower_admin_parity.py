@@ -1,4 +1,4 @@
-"""The operator command (scripts/bower-admin.sh) carries two copies of
+"""The operator command's library (scripts/lib/bower-admin.sh) carries two copies of
 facts owned elsewhere, pinned here so a drift fails CI instead of
 misrouting a setup state or leaving a worker on stale config: the probe
 exit codes (owner: management/probe.py) and the long-running services
@@ -17,7 +17,7 @@ from django.test import SimpleTestCase
 from agents.management.probe import ProbeExit
 
 _REPO = Path(__file__).resolve().parents[4]
-_SCRIPT = _REPO / "scripts" / "bower-admin.sh"
+_SCRIPT = _REPO / "scripts" / "lib" / "bower-admin.sh"
 _COMPOSE = _REPO / "docker-compose.yml"
 
 
