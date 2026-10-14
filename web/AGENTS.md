@@ -118,11 +118,11 @@ violation shipped once and got caught).
   reference env files, internal jargon (doors, rosters), or
   code-level concepts in rendered copy. The ONE
   carve-out is a setup walkthrough whose purpose is configuring the
-  deployment (the tools card's vendor steps, the
-  picker's "Self-hosting?" note): the config/tools.toml pointer and
-  its table keys are the actual knobs there, but the
-  frame stays "this deployment" and names the hand-off ("if someone
-  else runs it, send them this step").
+  deployment (the tools card's vendor steps, the picker's setup
+  note): the operator's command (bower-admin) and config files are
+  the actual knobs there. It renders only when the catalog's
+  profile-owned `self_hosted` fact is true, so a hosted user never
+  sees a step they cannot take, and the copy needs no hand-off.
 - Copy names causes and next steps in active voice, never moods.
   Labels match the section titles they point at EXACTLY. Empty states
   are invitations with the concrete next step inline (no links to docs

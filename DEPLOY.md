@@ -4,7 +4,7 @@ The self-host footprint: what `docker-compose.yml` runs, how to operate it, wher
 
 ## Operating an install
 
-The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bin` that runs `scripts/bower-admin.sh` inside the checkout (so an upgrade of the checkout upgrades the command too), plus one guarded `export PATH` line appended to your shell's rc files when that directory is not on your PATH yet (zsh, bash, and `.profile`; never rewritten, never added twice; `OPENBOWER_NO_MODIFY_PATH=1` skips it and prints the line instead). There is no separate `bower` CLI yet. From a plain clone, `sh scripts/bower-admin.sh <command>` is the same thing.
+The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bin` that runs `scripts/bower-admin.sh` inside the checkout, plus one guarded `export PATH` line appended to your shell's rc files when that directory is not on your PATH yet (zsh, bash, and `.profile`; `OPENBOWER_NO_MODIFY_PATH=1` skips it and prints the line instead). From a plain clone, `sh scripts/bower-admin.sh <command>` is the same thing.
 
 | Command | Does |
 |---------|------|
@@ -12,14 +12,14 @@ The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bi
 | `up [service...]` | start the stack; seeds the config files when absent and runs `setup` until `config/providers.toml` exists |
 | `build` | rebuild the images and start (after a dependency change) |
 | `stop` / `down` / `restart [service...]` | stop in place (a consumer finishes its row first; `up` resumes), stop and remove the containers (the database volume survives), restart in place |
-| `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild (an install ahead of every release, or on a line no release contains, is left alone and told to name a target); named: move to that tag or branch in either direction, with a one-line warning when the target lacks this checkout's commit (`OPENBOWER_BRANCH`, when set, is what a bare `upgrade` moves to, as if you had typed it). Migrations run on the start, so your data comes along |
+| `upgrade [tag\|branch]` | bare: move forward to the newest release tag and rebuild; named: move to that tag or branch in either direction, with a one-line warning when the target lacks this checkout's commit |
 | `status` / `logs [service...]` / `version` | what is running, the logs (all or one service), the installed and newest versions |
 | `tools` / `dbshell` | the tool matrix (which vendor serves each tool, and its readiness); a psql shell on the database |
 | `doctor` | the prerequisites checklist on its own |
-| `reload` | apply a hand edit to `config/providers.toml` or `config/tools.toml`: restarts the services that read them (they read the files at start), and nothing else |
-| `setup` / `providers` | add an inference source to `config/providers.toml` when none answers, and the Serper key to `config/tools.toml` when it is missing, checked with one live query (asks only for what is missing; an entry that does not answer, or a key the vendor rejects, is not kept); `providers` is the matrix of what each source serves, or why it cannot |
+| `reload` | apply a hand edit to `config/providers.toml` or `config/tools.toml`: restarts the services that read them |
+| `setup` / `providers` | configure where models run (`config/providers.toml`) and the search vendor (`config/tools.toml`). `providers` prints what each source serves, or why it cannot |
 
-`setup` writes keys inline into `config/providers.toml` and `config/tools.toml` (both yours and gitignored), checks each change in a one-off container before the running services see it, and restarts those services once at the end. Developing on the repo itself goes through `make`, whose lifecycle targets call the same script.
+`setup` writes keys inline into `config/providers.toml` and `config/tools.toml`.
 
 ## The services
 

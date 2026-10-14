@@ -6,6 +6,7 @@ import { knownSearchProvider, SEARCH_PROVIDER_CHOICES, TolerantAgentCatalogSchem
 const CATALOG = {
   models: [],
   support_followup: "",
+  self_hosted: false,
   truncated: false,
   tools: { web_search: "open", find_contacts: "open" },
   search_provider: "searxng",

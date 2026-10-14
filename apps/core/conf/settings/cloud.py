@@ -86,6 +86,9 @@ WEBHOOK_BLOCK_PRIVATE_IPS = env_bool("WEBHOOK_BLOCK_PRIVATE_IPS", "true")
 # error messages, and a mid-URL truncation there would be worse than
 # this refusal.
 SUPPORT_FOLLOWUP = os.environ.get("SUPPORT_HINT") or "contact OpenBower support"
+# The hosted product: its users have no deployment to configure, so the
+# web never shows them the operator's setup walkthrough.
+SELF_HOSTED = False
 if len(SUPPORT_FOLLOWUP) > SUPPORT_FOLLOWUP_MAX_LENGTH:  # noqa: F405
     raise ImproperlyConfigured(  # noqa: F405
         f"SUPPORT_HINT must be at most {SUPPORT_FOLLOWUP_MAX_LENGTH} characters, got {len(SUPPORT_FOLLOWUP)}"  # noqa: F405

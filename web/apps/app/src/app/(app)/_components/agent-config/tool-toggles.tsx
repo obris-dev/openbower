@@ -89,27 +89,31 @@ export function ToolToggles({
           <p className="font-medium text-warning">
             {searchReady
               ? "Contact search isn't set up yet: finding contacts needs a metered search vendor."
-              : `Search is misconfigured on this deployment: the wired vendor is missing its credentials; ${catalog.support_followup}. For contact search, connect a metered vendor:`}
+              : `Search is misconfigured on this deployment: the wired vendor is missing its credentials; ${catalog.support_followup}.`}
           </p>
-          <ol className="list-decimal space-y-0.5 pl-4 text-muted">
-            <li>
-              Create a{" "}
-              <a
-                href="https://serper.dev/signup"
-                target="_blank"
-                rel="noreferrer"
-                className="text-signal hover:underline"
-              >
-                Serper account
-              </a>{" "}
-              (2,500 free queries, then prepaid credits).
-            </li>
-            <li>
-              Fill in that vendor&rsquo;s table in the deployment&rsquo;s config/tools.toml (the template names the
-              keys, and lists which vendors serve which tools); if someone else runs it, send them this step.
-            </li>
-            <li>Restart the deployment and reload this page.</li>
-          </ol>
+          {/* The setup walkthrough, under the copy rule's carve-out:
+              only on a deployment its user can configure. */}
+          {catalog.self_hosted && (
+            <ol className="list-decimal space-y-0.5 pl-4 text-muted">
+              <li>
+                Create a{" "}
+                <a
+                  href="https://serper.dev/signup"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-signal hover:underline"
+                >
+                  Serper account
+                </a>{" "}
+                (2,500 free queries, then prepaid credits).
+              </li>
+              <li>
+                Run bower-admin setup to add the key, or fill in that vendor&rsquo;s table in config/tools.toml by
+                hand and run bower-admin reload.
+              </li>
+              <li>Reload this page.</li>
+            </ol>
+          )}
         </div>
       )}
     </Card>

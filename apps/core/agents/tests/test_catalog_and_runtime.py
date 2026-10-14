@@ -229,6 +229,15 @@ class CatalogTests(TestCase):
             body = self.client.get(reverse("agents_catalog")).json()
         self.assertEqual(body["support_followup"], django_settings.SUPPORT_FOLLOWUP)
 
+    def test_the_catalog_says_whether_the_deployment_is_self_hosted(self):
+        # The profile owns the fact; the catalog carries it as is, so
+        # the hosted profile's False reaches the web and hides the
+        # operator walkthrough there.
+        with patch("agents.providers.base.httpx.get", side_effect=lambda url, **kw: FakeResponse(500, {})):
+            self.assertTrue(self.client.get(reverse("agents_catalog")).json()["self_hosted"])
+            with self.settings(SELF_HOSTED=False):
+                self.assertFalse(self.client.get(reverse("agents_catalog")).json()["self_hosted"])
+
     def test_an_oversize_model_name_never_reaches_the_picker(self):
         # Every address the catalog offers must be one Save accepts.
         def fake_get(url, **kwargs):
