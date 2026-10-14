@@ -181,7 +181,17 @@ class InferenceProvider(ABC):
         response = httpx.get(f"{source['base_url']}{path}", headers=self._headers(source), timeout=LIST_TIMEOUT_SECONDS)
         if response.status_code != 200:
             raise ValueError(f"roster probe returned {response.status_code}")
-        return response.json().get("data", [])
+        # The URL is the operator's: a page instead of JSON, or JSON
+        # that is not the list envelope, is a wrong address, said as
+        # such rather than as a traceback.
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise ValueError("roster probe returned a non-JSON body") from e
+        rows = payload.get("data", []) if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("roster probe returned an unexpected envelope")
+        return rows
 
     @staticmethod
     def _key_or_placeholder(source: SourceConfig) -> str:

@@ -48,16 +48,18 @@ class Command(BaseCommand):
                     continue
                 try:
                     roster = provider.probe(name)
-                except httpx.TransportError as e:
-                    # DNS, a refused connection, a timeout: nothing
+                except httpx.RequestError as e:
+                    # DNS, a refused connection, a timeout, a body the
+                    # transport could not decode: nothing usable
                     # answered.
                     self.stdout.write(f"{label}: unreachable | {reason(e)}")
                     continue
-                except (httpx.HTTPError, ValueError) as e:
-                    # The server answered and declined (a 401 for a bad
-                    # key is the common one) or sent a body the roster
-                    # reader could not take. The key or the URL, not
-                    # the network.
+                except ValueError as e:
+                    # The roster reader's own refusals: the server
+                    # answered and declined (a 401 for a bad key is the
+                    # common one), or answered with something that is
+                    # not a roster (a web page at a wrong port). The
+                    # key or the URL, not the network.
                     rejected += 1
                     self.stdout.write(f"{label}: rejected | {reason(e)}")
                     continue

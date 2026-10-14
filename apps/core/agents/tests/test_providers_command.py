@@ -104,6 +104,31 @@ class ProvidersCommandTests(SimpleTestCase):
         _, code = self._lines({"openai_compatible": {**_CANONICAL_KEYED, **_LOCAL}}, fake_get)
         self.assertEqual(code, ProbeExit.EMPTY)
 
+    def test_a_wrong_address_is_rejected_not_a_traceback(self):
+        # A web page at a wrong port, or JSON that is not the list
+        # envelope, is the operator's URL to fix; neither escapes as a
+        # traceback the shell would read as a refused config.
+        class Page(FakeResponse):
+            def json(self):
+                raise ValueError("not json")
+
+        lines, code = self._lines({"openai_compatible": _LOCAL}, lambda url, **kw: Page(200, {}))
+        self.assertEqual(
+            lines,
+            [
+                "openai_compatible/ollama (http://o.test/v1): rejected | ValueError: roster probe returned a non-JSON body"
+            ],
+        )
+        self.assertEqual(code, ProbeExit.REJECTED)
+        for body in ([1, 2], {"data": None}):
+            lines, code = self._lines(
+                {"openai_compatible": _LOCAL}, lambda url, body=body, **kw: FakeResponse(200, body)
+            )
+            self.assertTrue(
+                lines[0].endswith("rejected | ValueError: roster probe returned an unexpected envelope"), lines
+            )
+            self.assertEqual(code, ProbeExit.REJECTED)
+
     def test_a_keyless_canonical_source_is_closed_and_never_probed(self):
         lines, code = self._lines({"openai_compatible": _CANONICAL_KEYLESS})
         self.assertEqual(
