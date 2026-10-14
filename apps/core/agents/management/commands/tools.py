@@ -37,8 +37,13 @@ class Command(BaseCommand):
     help = f"Show each tool's wired vendor and status, plus the supported alternatives ({_CONFIG})."
 
     def add_arguments(self, parser) -> None:
-        parser.add_argument("--status", metavar="VENDOR", help="Exit 0 when this vendor is configured, 4 when not.")
-        parser.add_argument(
+        question = parser.add_mutually_exclusive_group()
+        question.add_argument(
+            "--status",
+            metavar="VENDOR",
+            help=f"Exit 0 when this vendor is configured, {ProbeExit.NOT_CONFIGURED.value} when not.",
+        )
+        question.add_argument(
             "--probe",
             metavar="VENDOR",
             help="Run one live query through this vendor to check its credentials (metered: one credit).",

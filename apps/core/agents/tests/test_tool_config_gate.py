@@ -153,6 +153,14 @@ class ToolsProbeTests(SimpleTestCase):
             call_command("tools", status="serper", stdout=StringIO())
         self.assertEqual(caught.exception.returncode, ProbeExit.NOT_CONFIGURED)
 
+    def test_status_and_probe_together_is_a_usage_error(self):
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        with self.assertRaisesMessage(CommandError, "not allowed with"):
+            call_command("tools", status="serper", probe="serper", stdout=StringIO())
+
     def test_an_unknown_vendor_names_the_roster(self):
         from io import StringIO
 
