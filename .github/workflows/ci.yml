@@ -48,6 +48,9 @@ jobs:
       - run: |
           command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
           find scripts -name '*.sh' -print0 | xargs -0 shellcheck -s sh
+      # The operator command's helpers against known inputs (the file
+      # writers parsed back as TOML, the rc append, the URL rewrite).
+      - run: sh scripts/tests/bower-admin-functions.sh
 
   lint-python:
     runs-on: ubuntu-latest

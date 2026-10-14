@@ -24,7 +24,9 @@
 #                      PATH line to add by hand instead
 set -eu
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# OPENBOWER_ROOT is for a harness that sources this file for its
+# functions ($0 is the sourcing shell then); the command never sets it.
+ROOT="${OPENBOWER_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$ROOT"
 
 # The compose project is PINNED, and passed as well as exported, so a
@@ -1159,8 +1161,7 @@ main() {
     esac
 }
 
-# Sourced for its functions (a test harness) when BOWER_ADMIN_SOURCED
-# is set; run as the command otherwise. A sourcing shell's $0 is the
-# shell, so ROOT above resolves wrong: a harness cds to the checkout
-# first and uses absolute config paths.
+# Sourced for its functions (scripts/tests/bower-admin-functions.sh)
+# when BOWER_ADMIN_SOURCED is set, with OPENBOWER_ROOT naming the
+# checkout; run as the command otherwise.
 [ -n "${BOWER_ADMIN_SOURCED:-}" ] || main "$@"

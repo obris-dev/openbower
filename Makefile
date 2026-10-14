@@ -24,7 +24,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers upgrade db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -183,7 +183,10 @@ test-core: db-up ## Run the app backend's suite (host-run, against the compose d
 test-web: ## Run the web workspace's node tests (what CI runs)
 	cd web && pnpm install --frozen-lockfile && pnpm -r test
 
-test: test-core test-web ## Run every suite
+test-scripts: ## Run the operator command's function tests (no Docker needed)
+	@sh scripts/tests/bower-admin-functions.sh
+
+test: test-core test-web test-scripts ## Run every suite
 
 schema: ## Regenerate the shared contract (schema.json, then the web zod)
 	uv sync --all-packages
