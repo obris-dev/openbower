@@ -404,12 +404,21 @@ cmd_upgrade() {
     if git show-ref --verify --quiet "refs/remotes/origin/$_target"; then
         git merge --ff-only --quiet "origin/$_target" || fail "Could not fast-forward $_target; resolve by hand."
     fi
-    # The named database volume survives the rebuild, and migrations run
-    # in the setup one-shot on every start, so the data comes along.
+    # The checkout just replaced this file, but the shell runs the
+    # definitions it read before, so the rest of the upgrade (the build
+    # flags, the seeding, the service list) would be the OLD release's.
+    # Hand off to the new script, which owns its own start-up.
+    OPENBOWER_UPGRADED_FROM="v$_current" exec sh "$ROOT/scripts/bower-admin.sh" post-upgrade
+}
+
+# The second half of upgrade, run by the NEW release's script: the named
+# database volume survives the rebuild, and migrations run in the setup
+# one-shot on every start, so the data comes along.
+cmd_post_upgrade() {
     info "Rebuilding the stack (waits for rows in flight)..."
     cmd_build
     _new="$(cat version.txt 2>/dev/null || echo '?')"
-    ok "Upgraded to v$_new."
+    ok "Upgraded to v$_new${OPENBOWER_UPGRADED_FROM:+ (from $OPENBOWER_UPGRADED_FROM)}."
 }
 
 # ---------------------------------------------------------------- setup
@@ -954,6 +963,7 @@ main() {
         down)      cmd_down "$@" ;;
         restart)   cmd_restart "$@" ;;
         upgrade)   cmd_upgrade "$@" ;;
+        post-upgrade) cmd_post_upgrade "$@" ;;
         status)    cmd_status "$@" ;;
         logs)      cmd_logs "$@" ;;
         version)   cmd_version "$@" ;;
