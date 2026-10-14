@@ -70,17 +70,39 @@ class ProvidersCommandTests(SimpleTestCase):
         )
         self.assertEqual(code, ProbeExit.DOWN)
 
-    def test_a_bad_key_is_refused_not_unreachable(self):
-        # A 401 is the vendor declining the key; the matrix must send
-        # the operator to the key, not the network.
+    def test_a_bad_key_is_rejected_not_unreachable(self):
+        # A 401 is the vendor declining the key; the matrix AND the exit
+        # code must send the operator to the key, not the network.
         lines, code = self._lines(
             {"openai_compatible": _CANONICAL_KEYED}, lambda url, **kw: FakeResponse(401, {"error": "bad key"})
         )
         self.assertEqual(
             lines,
-            ["openai_compatible/openai (https://api.openai.com/v1): refused | ValueError: roster probe returned 401"],
+            ["openai_compatible/openai (https://api.openai.com/v1): rejected | ValueError: roster probe returned 401"],
         )
-        self.assertEqual(code, ProbeExit.DOWN)
+        self.assertEqual(code, ProbeExit.REJECTED)
+
+    def test_a_rejection_beside_a_dead_source_exits_rejected(self):
+        # Something answered, so the next thing to fix is the key, not
+        # the network.
+        def fake_get(url, **kwargs):
+            if url.startswith("https://api.openai.com"):
+                return FakeResponse(401, {})
+            raise httpx.ConnectError("connection refused")
+
+        _, code = self._lines({"openai_compatible": {**_CANONICAL_KEYED, **_LOCAL}}, fake_get)
+        self.assertEqual(code, ProbeExit.REJECTED)
+
+    def test_an_empty_roster_beside_a_rejection_exits_empty(self):
+        # A working source with nothing pulled outranks a bad key: the
+        # pull is the shorter path to a model.
+        def fake_get(url, **kwargs):
+            if url.startswith("https://api.openai.com"):
+                return FakeResponse(401, {})
+            return FakeResponse(200, {"data": []})
+
+        _, code = self._lines({"openai_compatible": {**_CANONICAL_KEYED, **_LOCAL}}, fake_get)
+        self.assertEqual(code, ProbeExit.EMPTY)
 
     def test_a_keyless_canonical_source_is_closed_and_never_probed(self):
         lines, code = self._lines({"openai_compatible": _CANONICAL_KEYLESS})

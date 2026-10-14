@@ -700,7 +700,8 @@ boot_reason() {
 # Probe through the one-off container and show the result. Sets
 # PROBE_STATE from the exit code: ready; empty (a source answered
 # with no models: configured right, waiting for a pull); unconfigured
-# (no source in the file); none (nothing answered); refused (the app
+# (no source in the file); rejected (a source answered by declining: a
+# bad key or URL); none (nothing answered); refused (the app
 # would not boot on this file, which is a 1 WITH a traceback); or
 # error (compose or docker never ran the app: any other code, or a 1
 # with no traceback, since compose reports its own failures as 1 too).
@@ -711,6 +712,7 @@ probe_and_report() {
         "$PROBE_EMPTY")          PROBE_STATE=empty ;;
         "$PROBE_NOT_CONFIGURED") PROBE_STATE=unconfigured ;;
         "$PROBE_DOWN")           PROBE_STATE=none ;;
+        "$PROBE_REJECTED")       PROBE_STATE=rejected ;;
         1) if printf '%s\n' "$_out" | grep -q '^Traceback'; then PROBE_STATE=refused; else PROBE_STATE=error; fi ;;
         *) PROBE_STATE=error ;;
     esac
@@ -895,6 +897,7 @@ cmd_setup() {
         case "$PROBE_STATE" in
             ready) ok "an inference source is ready; pick its model in the agent builder" ;;
             empty) pull_hint ;;
+            rejected) warn "a source rejected its key or URL (see above); fix it in $PROVIDERS, then: bower-admin setup" ;;
             refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
             error) warn "fix that, then: bower-admin setup"; return 1 ;;
             *) model_hint ;;
@@ -943,6 +946,10 @@ cmd_setup() {
                     rm -f "$_cand"
                     warn "the file is as it was. Fix that, then: bower-admin setup"
                     return 1 ;;
+                rejected)
+                    rm -f "$_cand"
+                    warn "That key or URL was rejected, please try again."
+                    PROBE_STATE="$_was" ;;
                 *)
                     rm -f "$_cand"
                     warn "That source did not answer, please try again."

@@ -1,9 +1,11 @@
 """The operator's source matrix: one line per inference source in
 config/providers.toml with what a LIVE probe says about it (ready
-with its roster, no models yet, unreachable, refused, or closed for
+with its roster, no models yet, unreachable, rejected, or closed for
 want of a key), so "can an agent run on this install" is one command
 instead of a fill attempt. The exit code is the state the install's
-setup step branches on (management/probe.py)."""
+setup step branches on (management/probe.py): ready beats empty
+beats rejected beats down, so the code names the next thing to do
+(pick a model, pull one, fix a key or URL, fix the network)."""
 
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ class Command(BaseCommand):
         configured = 0
         ready = 0
         answered = 0
+        rejected = 0
         for provider in all_providers():
             open_names = set(provider.sources())
             for name, source in provider.configured_sources.items():
@@ -55,7 +58,8 @@ class Command(BaseCommand):
                     # key is the common one) or sent a body the roster
                     # reader could not take. The key or the URL, not
                     # the network.
-                    self.stdout.write(f"{label}: refused | {reason(e)}")
+                    rejected += 1
+                    self.stdout.write(f"{label}: rejected | {reason(e)}")
                     continue
                 answered += 1
                 if not roster:
@@ -71,4 +75,6 @@ class Command(BaseCommand):
             return
         if answered:
             raise CommandError("no inference source offers a model yet", returncode=ProbeExit.EMPTY)
+        if rejected:
+            raise CommandError("an inference source rejected its key or URL", returncode=ProbeExit.REJECTED)
         raise CommandError("no inference source answered", returncode=ProbeExit.DOWN)

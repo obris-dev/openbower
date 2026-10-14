@@ -22,11 +22,11 @@ class ProbeExit(IntEnum):
     # tools --probe: the vendor answered 429 or 5xx, reachable but not
     # usable right now.
     THROTTLED = 6
-    # providers: no source answered at all (every one unreachable or
-    # refused).
+    # providers: no source answered at all (every one unreachable, or
+    # closed for want of a key).
     DOWN = 7
-    # tools --probe: the vendor decided against the call (a 4xx: a bad
-    # key, a drained balance).
+    # Both commands: a vendor answered and decided against the call (a
+    # 4xx: a bad key, a wrong URL, a drained balance).
     REJECTED = 8
 
 
