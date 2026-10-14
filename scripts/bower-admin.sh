@@ -807,11 +807,18 @@ tools_setup() {
     info "checking the search vendors..."
     _matrix="$(run_manage tools 2>&1)" || true
     printf '%s\n' "$_matrix" | grep -E '^[a-z_]+: ' || true
-    run_manage tools --status serper >/dev/null 2>&1 && _rc=0 || _rc=$?
+    _out="$(run_manage tools --status serper 2>&1)" && _rc=0 || _rc=$?
     case $_rc in
         "$PROBE_OK") return 0 ;;
         "$PROBE_NOT_CONFIGURED") ;;
-        *) warn "could not check the search vendor (exit $_rc); fix that, then: bower-admin setup"; return 0 ;;
+        *)
+            if [ "$_rc" = 1 ] && printf '%s\n' "$_out" | grep -q '^Traceback'; then
+                warn "the app refused $TOOLS: $(boot_reason "$_out"); fix it, then: bower-admin setup"
+            else
+                warn "could not check the search vendor (exit $_rc); fix that, then: bower-admin setup"
+                printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
+            fi
+            return 0 ;;
     esac
     if ! has_tty; then
         info "Web search runs keyless through DuckDuckGo until Serper has a key; finding contacts needs one. Run: bower-admin setup"
