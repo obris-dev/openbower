@@ -56,8 +56,16 @@ CORE_ENV=apps/core/.env
 BIN_DIR="${OPENBOWER_BIN_DIR:-$HOME/.local/bin}"
 APP_URL="http://localhost:3003"
 # Ollama's default endpoint, the menu's first suggestion for a server
-# you run (rewritten to the host gateway for the containers).
+# you run (rewritten to the host gateway for the containers), and the
+# model the hints suggest pulling there.
 OLLAMA_URL="http://localhost:11434/v1"
+OLLAMA_MODEL="gemma4:12b"
+# The kernel parser's bounds, mirrored so a prompt refuses what the
+# parser would: a source's fill ceiling (MAX_FILL_CONCURRENCY) and a
+# source name's length (SOURCE_NAME_MAX_LENGTH), both in
+# packages/kernel/src/openbower_kernel/provider_config.py.
+MAX_FILL_CONCURRENCY=64
+SOURCE_NAME_MAX_LENGTH=64
 
 # Colors only when stdout is a terminal (curl | sh keeps stdout on the
 # tty). printf, not echo: echo mangles a message that starts with -n
@@ -162,7 +170,12 @@ ask_secret() {
 # mount, so owner-only is right on Docker Desktop (which maps the user)
 # and when the installing user IS uid 1000, and would make the app
 # refuse to boot for any other Linux user. Those keep the umask's read
-# bits; the checkout sits in their own home directory.
+# bits, which leaves the keys readable to other local users wherever
+# the home directory itself is world-readable (a 755 home: Debian,
+# Fedora, Ubuntu before 21.04). 640 cannot help: the container carries
+# gid 1000, which a non-1000 user cannot chgrp to. Closing this means
+# the containers running as the installing user, which is image and
+# compose work that belongs with the published-images change.
 lock_file() {
     if [ "$(uname -s)" = Darwin ] || [ "$(id -u)" = 1000 ]; then
         chmod 600 "$1" 2>/dev/null || true
@@ -558,8 +571,8 @@ ask_source_name() {
         case "$_name" in
             *[!A-Za-z0-9_]*) say "letters, digits, and underscore only (my_ollama, not my-ollama); try again"; continue ;;
         esac
-        if [ "${#_name}" -gt 64 ]; then
-            say "at most 64 characters; try again"
+        if [ "${#_name}" -gt "$SOURCE_NAME_MAX_LENGTH" ]; then
+            say "at most $SOURCE_NAME_MAX_LENGTH characters; try again"
         elif source_name_taken "$1" "$_name"; then
             say "a source named \"$_name\" already exists (names ignore case)"
         else
@@ -630,7 +643,7 @@ setup_menu() {
             # The fill ceiling for this server: rows run in parallel up
             # to it. The parser's bound is 1..MAX_FILL_CONCURRENCY (64);
             # a vendor key needs no answer, its ceiling is adaptive.
-            info "Fills research rows in parallel, up to a ceiling you set for this server (1 to 64)."
+            info "Fills research rows in parallel, up to a ceiling you set for this server (1 to $MAX_FILL_CONCURRENCY)."
             info "  Ollama serves one request at a time unless you configured it to batch; a vLLM box takes 8 or more."
             while :; do
                 _conc="$(ask "  Requests this server may run at once [1]: ")"
@@ -638,10 +651,10 @@ setup_menu() {
                 case "$_conc" in
                     # TOML takes no leading zero; "08" would be refused
                     # only after everything else was typed.
-                    *[!0-9]* | 0*) say "a whole number from 1 to 64, no leading zero; try again"; continue ;;
+                    *[!0-9]* | 0*) say "a whole number from 1 to $MAX_FILL_CONCURRENCY, no leading zero; try again"; continue ;;
                 esac
-                if [ "$_conc" -ge 1 ] && [ "$_conc" -le 64 ]; then break; fi
-                say "a whole number from 1 to 64; try again"
+                if [ "$_conc" -ge 1 ] && [ "$_conc" -le "$MAX_FILL_CONCURRENCY" ]; then break; fi
+                say "a whole number from 1 to $MAX_FILL_CONCURRENCY; try again"
             done
             append_source "$_file" openai_compatible "$_name" "$_url" "$_key" "$_conc"
             case "$_url" in *host.docker.internal*) host_bind_hint ;; esac
@@ -700,7 +713,7 @@ restart_core_services() {
 model_hint() {
     info "The stack needs at least one inference source to run an agent. Options:"
     info "  On this machine: install Ollama (https://ollama.com/download), then"
-    info "    ${CYAN}ollama pull gemma4:12b && ollama serve${NC}"
+    info "    ${CYAN}ollama pull $OLLAMA_MODEL && ollama serve${NC}"
     info "  Your own server, or an OpenAI or Anthropic key"
     info "Then: ${CYAN}bower-admin setup${NC}    (it asks which, and writes the section into $PROVIDERS for you)"
     host_bind_hint
@@ -748,7 +761,7 @@ probe_and_report() {
 }
 
 pull_hint() {
-    info "A source answered but serves no model yet. Pull one there (Ollama: ${CYAN}ollama pull gemma4:12b${NC}),"
+    info "A source answered but serves no model yet. Pull one there (Ollama: ${CYAN}ollama pull $OLLAMA_MODEL${NC}),"
     info "then ${CYAN}bower-admin setup${NC} probes again; or add another source."
 }
 
