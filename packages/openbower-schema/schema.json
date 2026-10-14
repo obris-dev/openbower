@@ -26,6 +26,11 @@
           "description": "The vendor serving web search on this deployment, only while it is READY to serve (registered, wired, credentialed); null otherwise, so client copy never names a vendor whose searches cannot run. Client copy composes it: a rate-limited cell names the metered door only where it is a remedy, never to someone already on it.",
           "title": "Search Provider"
         },
+        "self_hosted": {
+          "description": "Profile-owned: true everywhere but the hosted product. The client renders a setup walkthrough (the operator's own commands and files) only when it is true, since a hosted user has no deployment to configure.",
+          "title": "Self Hosted",
+          "type": "boolean"
+        },
         "support_followup": {
           "description": "The deployment's needs-attention follow-up, profile-owned server-side (check the logs locally; the operator's support channel hosted). Client copy composes it instead of hedging about an operator it cannot identify.",
           "title": "Support Followup",
@@ -48,6 +53,7 @@
       "required": [
         "models",
         "support_followup",
+        "self_hosted",
         "truncated",
         "tools",
         "search_provider"

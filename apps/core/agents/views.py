@@ -76,6 +76,7 @@ class AgentCatalogView(_ScopedView):
         wire = AgentCatalog(
             models=models,
             support_followup=settings.SUPPORT_FOLLOWUP,
+            self_hosted=settings.SELF_HOSTED,
             truncated=truncated,
             tools={tool.name: tool.availability().value for tool in tool_registry.all_tools()},
             # The vendor serving web search only when it is READY to

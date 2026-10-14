@@ -70,12 +70,12 @@ export function ModelPicker({
         <>
           <p className="text-sm text-muted">No models are available on this deployment; {catalog.support_followup}.</p>
           {/* The setup walkthrough, under the copy rule's carve-out:
-              framed so hosted users can tell it is not for them. */}
-          <p className="text-xs text-faint">
-            Self-hosting? Run bower-admin setup on the install: it asks for a server you run, an OpenAI key, or an
-            Anthropic key and writes config/providers.toml for you. Or edit that file by hand (it carries the
-            examples) and run bower-admin reload. If someone else runs this deployment, send them this note.
-          </p>
+              only on a deployment its user can configure. */}
+          {catalog.self_hosted && (
+            <p className="text-xs text-faint">
+              Run bower-admin setup, or edit config/providers.toml by hand and run bower-admin reload.
+            </p>
+          )}
         </>
       ) : (
         // ONE control across loading/failed/loaded (a text-line

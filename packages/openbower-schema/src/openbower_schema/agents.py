@@ -203,6 +203,11 @@ class AgentCatalog(BaseModel):
         "(check the logs locally; the operator's support channel hosted). Client copy composes "
         "it instead of hedging about an operator it cannot identify."
     )
+    self_hosted: bool = Field(
+        description="Profile-owned: true everywhere but the hosted product. The client renders "
+        "a setup walkthrough (the operator's own commands and files) only when it is true, since "
+        "a hosted user has no deployment to configure."
+    )
     truncated: bool = Field(
         description="True when the catalog cap cut the list: an address past the cap "
         "may still RUN (model_for validates against the full roster), it just is not shown."

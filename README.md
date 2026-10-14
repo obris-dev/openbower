@@ -54,29 +54,31 @@ On macOS or Linux with Docker (Compose v2.24 or newer) running:
 curl -fsSL https://openbower.ai | sh
 ```
 
-The install clones the newest release into a directory you choose, checks the prerequisites (and says how to get any that are missing), builds and starts the stack, walks you through pointing it at a model, and puts one command on your PATH: `bower-admin`. Then open http://localhost:3003. (Prefer to clone first? `git clone https://github.com/obris-dev/openbower.git && cd openbower && sh scripts/bower-admin.sh install` is the same flow.)
+Prefer to run it yourself?
 
-`bower-admin` is how you operate the install (there is no separate `bower` CLI yet):
+```bash
+git clone https://github.com/obris-dev/openbower.git && cd openbower && sh scripts/bower-admin.sh install
+```
+
+`bower-admin` is how you operate the install:
 
 | Command | Does |
 |---------|------|
 | `bower-admin up` / `stop` | start the stack, or halt it in place (a running row finishes first) |
 | `bower-admin logs [service]` | tail every service, or one (`core`, `jobs`, `fill-consumer`, `web`) |
 | `bower-admin status` | what is running |
-| `bower-admin setup` | add an inference source when none answers, and the Serper key when it is missing |
-| `bower-admin upgrade` | move to the newest release and rebuild; your data stays |
+| `bower-admin setup` | configure where models run, and the search vendor |
+| `bower-admin upgrade` | move to the newest release and rebuild |
 | `bower-admin help` | everything else |
-
-The install seeds `apps/core/.env` (with its own secret), `config/providers.toml` and `config/tools.toml` from their templates and never overwrites them afterwards. It serves the app on http://localhost:3003, the marketing site on http://localhost:3004, and the API on :8002. The containers bind-mount the checkout, so an edit hot-reloads without a rebuild. Every service in the stack, and the environment facts a deploy needs, are in [DEPLOY.md](DEPLOY.md); developing on the repo itself goes through `make` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 > [!NOTE]
 > **Signing in uses the hosted account hub, out of the box.** Accounts live at auth.openbower.ai; your install is an OAuth client of it, and the similar-companies feature reads the hosted company universe at data.openbower.ai with your account's token. A fresh install points at both already: sign up or sign in from your own install's login page. Nothing else needs deploying, and everything but the login itself and that one lookup runs on your machine; an install keeps working through a hub outage for everyone already signed in. The repo-root `.env` the install seeds carries a commented block for pointing the stack at locally run development copies of those two services instead, which only someone developing the hub itself needs. A self-host reached on its own domain rather than localhost is on the roadmap: it needs its callback registered at the hub.
 
 ### Prereq: a model
 
-OpenBower is bring-your-own-model; the stack does not bundle one. Inference sources (their structure and their keys) live in one file, `config/providers.toml`, seeded from `config/templates/providers.example.toml`. The template ships no live source; the install's setup step probes what is there and offers to add one when none answers; `bower-admin setup` runs that again any time, `bower-admin providers` prints what each source serves, and `bower-admin reload` applies a hand edit. A section names a registered provider spec, and any source that speaks it is a first-class entry:
+OpenBower is bring-your-own-model; the stack does not bundle one. Inference sources (their structure and their keys) live in one file, `config/providers.toml`, seeded from `config/templates/providers.example.toml`. A section names a registered provider spec, and any source that speaks it is a first-class entry:
 
-- **On your laptop.** Install [Ollama](https://ollama.com/download), then `ollama pull gemma4:12b && ollama serve`; setup's first option defaults to its endpoint (reached from the containers at `http://host.docker.internal:11434/v1`), and you pick the model in the agent builder.
+- **On your laptop.** To run models locally, install [Ollama](https://ollama.com/download) or [vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/#installation), then run `bower-admin setup` to point the stack at it.
 - **Your own deployment.** A vLLM box, a gateway, or any server that speaks the OpenAI or Anthropic protocol: add a section with its `base_url`. Self-hosted servers work keyless.
 - **The vendor itself.** OpenAI or Anthropic, with an `api_key` inline; the canonical vendors stay out of the catalog until a key is present.
 

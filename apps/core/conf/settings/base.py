@@ -311,6 +311,10 @@ except (OSError, UnicodeDecodeError):
 # operator config refuses at boot instead of truncating mid-URL.
 SUPPORT_FOLLOWUP_MAX_LENGTH = 128
 SUPPORT_FOLLOWUP = "check the API server's logs"
+# True everywhere but the hosted profile: the web shows the operator's
+# setup walkthrough (bower-admin, the config files) only on a deployment
+# its user can configure.
+SELF_HOSTED = True
 
 # CORS / CSRF for the web client. Empty by default so prod has to opt in
 # explicitly via env; `local.py` overrides with the dev web origin.
