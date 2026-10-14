@@ -525,7 +525,20 @@ ask_source_name() {
     done
 }
 
-# One round of the menu. Returns 0 when a section was written, 1 on skip.
+# Ask until the answer is a value the file can take; an empty answer
+# means "back to the menu" (exit 2 to the caller), so a wrong choice
+# has a way out without a key.
+ask_value() {
+    while :; do
+        if [ "$2" = secret ]; then _v="$(ask_secret "$1")"; else _v="$(ask "$1")"; fi
+        [ -n "$_v" ] || return 2
+        if toml_safe "$_v"; then printf '%s' "$_v"; return 0; fi
+        say "that cannot contain quotes, backslashes, or line breaks; try again (Enter to go back)"
+    done
+}
+
+# One round of the menu. Returns 0 when a section was written, 1 on
+# skip, 2 when the person backed out of an option.
 setup_menu() {
     printf '\n%s\n' "  Add an inference source:" > /dev/tty
     printf '%s\n' "    1) a server you run (any OpenAI-compatible endpoint: Ollama, vLLM, a gateway)" > /dev/tty
@@ -539,9 +552,12 @@ setup_menu() {
     done
     case "$_choice" in
         1)
-            _url="$(ask "  Base URL [$OLLAMA_URL]: ")"
-            _url="${_url:-$OLLAMA_URL}"
-            toml_safe "$_url" || { info "a URL cannot contain quotes, backslashes, or line breaks"; return 1; }
+            while :; do
+                _url="$(ask "  Base URL [$OLLAMA_URL]: ")"
+                _url="${_url:-$OLLAMA_URL}"
+                toml_safe "$_url" && break
+                say "a URL cannot contain quotes, backslashes, or line breaks; try again"
+            done
             # A bare host is plain http in practice (a box on the LAN);
             # the vendors, which need https, have their own options.
             case "$_url" in
@@ -559,21 +575,23 @@ setup_menu() {
                 _default_name=local
             fi
             _url="$_rewritten"
-            _key="$(ask_secret "  API key (Enter for none): ")"
-            [ -z "$_key" ] || toml_safe "$_key" || { info "a key cannot contain quotes, backslashes, or line breaks"; return 1; }
+            while :; do
+                _key="$(ask_secret "  API key (Enter for none): ")"
+                [ -z "$_key" ] && break
+                toml_safe "$_key" && break
+                say "a key cannot contain quotes, backslashes, or line breaks; try again"
+            done
             _name="$(ask_source_name "$_default_name")"
             append_source openai_compatible "$_name" "$_url" "$_key"
             case "$_url" in *host.docker.internal*) host_bind_hint ;; esac
             ;;
         2)
-            _key="$(ask_secret "  OpenAI API key from ${CYAN}https://platform.openai.com/api-keys${NC}: ")"
-            toml_safe "$_key" || { info "a key is required and cannot contain quotes or line breaks"; return 1; }
+            _key="$(ask_value "  OpenAI API key from ${CYAN}https://platform.openai.com/api-keys${NC} (Enter to go back): " secret)" || return 2
             _name="$(ask_source_name openai)"
             append_source openai_compatible "$_name" "https://api.openai.com/v1" "$_key"
             ;;
         3)
-            _key="$(ask_secret "  Anthropic API key from ${CYAN}https://console.anthropic.com/settings/keys${NC}: ")"
-            toml_safe "$_key" || { info "a key is required and cannot contain quotes or line breaks"; return 1; }
+            _key="$(ask_value "  Anthropic API key from ${CYAN}https://console.anthropic.com/settings/keys${NC} (Enter to go back): " secret)" || return 2
             _name="$(ask_source_name anthropic)"
             append_source anthropic_compatible "$_name" "https://api.anthropic.com" "$_key"
             ;;
@@ -790,7 +808,12 @@ cmd_setup() {
             _was="$PROBE_STATE"
             _before="$PROVIDERS.before.$$"
             cp "$PROVIDERS" "$_before"
-            if ! setup_menu; then
+            setup_menu && _rc=0 || _rc=$?
+            if [ "$_rc" = 2 ]; then
+                rm -f "$_before"
+                continue
+            fi
+            if [ "$_rc" != 0 ]; then
                 rm -f "$_before"
                 [ "$_was" = empty ] || model_hint
                 break
