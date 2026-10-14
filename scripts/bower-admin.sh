@@ -75,23 +75,13 @@ fail() { printf '\n%s\n\n' "  ${RED}x $1${NC}" >&2; exit 1; }
 
 compose() { docker compose -p "$PROJECT" "$@"; }
 
-# ONE signal handler, installed at main, driven by state the callers
-# set: a config file with an unverified entry pending (restored from
-# its backup), and a terminal left in raw mode by a secret prompt
-# (put back). Nested traps would otherwise undo each other.
-PENDING_BACKUP=""; PENDING_FILE=""; TTY_SAVED=""
-on_signal() {
-    [ -z "$TTY_SAVED" ] || stty "$TTY_SAVED" < /dev/tty 2>/dev/null
-    if [ -n "$PENDING_BACKUP" ] && [ -f "$PENDING_BACKUP" ]; then
-        cp "$PENDING_BACKUP" "$PENDING_FILE"
-        rm -f "$PENDING_BACKUP"
-        printf '\n  %s\n' "interrupted: $PENDING_FILE is as it was" > /dev/tty 2>/dev/null || true
-    fi
-    exit 130
-}
-# Mark $2 as holding an unverified entry, with $1 the copy to restore;
-# clear with no arguments once the verdict is in.
-pending() { PENDING_BACKUP="${1:-}"; PENDING_FILE="${2:-}"; }
+# The terminal's state as the command found it, saved once in the
+# parent shell, so a signal that lands while a secret prompt holds the
+# terminal in raw mode (inside a subshell, whose own trap cannot be
+# relied on to run first) is undone by the parent on its way out.
+TTY_SAVED=""
+restore_tty() { [ -z "$TTY_SAVED" ] || stty "$TTY_SAVED" < /dev/tty 2>/dev/null || true; }
+on_signal() { restore_tty; printf '\n' > /dev/tty 2>/dev/null || true; exit 130; }
 
 # Someone is plausibly watching: stdout is a terminal AND the controlling
 # tty is readable. Both, because a readable /dev/tty alone (CI with a pty,
@@ -108,11 +98,14 @@ ask() {
 
 # Same, for a key: echoes one * per character so a paste visibly
 # landed, handles backspace, and never shows the key. The terminal is
-# put in raw mode for the read and restored after, on Ctrl-C too.
+# put in raw mode for the read and restored after, on a signal too.
 ask_secret() {
     printf '%s' "$1" > /dev/tty
     _saved="$(stty -g < /dev/tty)"
-    TTY_SAVED="$_saved"
+    # Local to this subshell (every caller substitutes this function),
+    # so it can disturb nothing else; the parent gets the same signal
+    # and exits on its own.
+    trap 'stty "$_saved" < /dev/tty 2>/dev/null; printf "\n" > /dev/tty 2>/dev/null; exit 130' INT TERM HUP
     stty -echo -icanon min 1 time 0 < /dev/tty
     _reply=""
     while :; do
@@ -156,7 +149,7 @@ ask_secret() {
         esac
     done
     stty "$_saved" < /dev/tty
-    TTY_SAVED=""
+    trap - INT TERM HUP
     printf '\n' > /dev/tty
     printf '%s' "$_reply"
 }
@@ -482,14 +475,24 @@ cmd_post_upgrade() {
 # here instead, before they see it. --no-sync runs the image's own
 # venv as the image's command does (a fresh container's venv would
 # otherwise re-sync, noisily, on every call).
-run_manage() {
+run_manage() { run_manage_in "" "$@"; }
+
+# The same, with one VAR=VALUE handed to the container: how a probe is
+# pointed at a CANDIDATE config file (PROVIDERS_CONFIG, TOOLS_CONFIG are
+# the settings' own overrides) instead of the live one.
+run_manage_in() {
+    _env="$1"; shift
     docker image inspect "$CORE_IMAGE" >/dev/null 2>&1 || fail "the stack has never been built here; run bower-admin up first"
-    compose run --rm --no-deps -T --quiet-pull core \
+    compose run --rm --no-deps -T --quiet-pull ${_env:+-e "$_env"} core \
         uv run --frozen --no-sync --package openbower-core python apps/core/manage.py "$@"
 }
 
-# The source matrix; exit 0 when a source is ready.
-probe_sources() { run_manage providers; }
+# The source matrix for the live file, or for the file named in $1
+# (relative to the checkout, which the container sees under /app);
+# exit 0 when a source is ready.
+probe_sources() {
+    if [ -n "${1:-}" ]; then run_manage_in "PROVIDERS_CONFIG=/app/$1" providers; else run_manage providers; fi
+}
 
 cmd_providers() { probe_sources; }
 cmd_tools() { run_manage tools "$@"; }
@@ -523,24 +526,26 @@ toml_safe() {
     esac
 }
 
-# Names compare without case, as the parser compares them.
+# $1 file, $2 name. Names compare without case, as the parser compares
+# them.
 source_name_taken() {
-    grep -iqE "^name = \"$1\"[[:space:]]*$" "$PROVIDERS" 2>/dev/null
+    grep -iqE "^name = \"$2\"[[:space:]]*$" "$1" 2>/dev/null
 }
 
-# Append one source section. $1 spec, $2 name, $3 base_url, $4 api_key
-# (may be empty), $5 concurrency (may be empty: undeclared). Keys live
-# inline, so the file is locked as tightly as the containers can bear.
+# Append one source section to file $1: $2 spec, $3 name, $4 base_url,
+# $5 api_key (may be empty), $6 concurrency (may be empty: undeclared).
+# Keys live inline, so the file is locked as tightly as the containers
+# can bear.
 append_source() {
     {
-        printf '\n[[%s]]\n' "$1"
-        printf 'name = "%s"\n' "$2"
-        printf 'base_url = "%s"\n' "$3"
-        [ -z "$4" ] || printf 'api_key = "%s"\n' "$4"
-        [ -z "${5:-}" ] || printf 'concurrency = %s\n' "$5"
-    } >> "$PROVIDERS"
-    lock_file "$PROVIDERS"
-    ok "added [[$1]] \"$2\" to $PROVIDERS"
+        printf '\n[[%s]]\n' "$2"
+        printf 'name = "%s"\n' "$3"
+        printf 'base_url = "%s"\n' "$4"
+        [ -z "$5" ] || printf 'api_key = "%s"\n' "$5"
+        [ -z "${6:-}" ] || printf 'concurrency = %s\n' "$6"
+    } >> "$1"
+    lock_file "$1"
+    ok "added [[$2]] \"$3\""
 }
 
 # A message from inside a function whose stdout the caller CAPTURES:
@@ -551,17 +556,18 @@ say() { printf '%s\n' "  $1" > /dev/tty; }
 # enforces at boot (letters, digits, underscore; at most 64; unique
 # without case), so a name the file would refuse is caught here, before
 # the URL and key behind it are written and lost to a refused probe.
+# $1 the file the name must be new in, $2 the default.
 ask_source_name() {
     while :; do
-        _name="$(ask "  Name for this source [$1]: ")"
-        _name="${_name:-$1}"
+        _name="$(ask "  Name for this source [$2]: ")"
+        _name="${_name:-$2}"
         case "$_name" in
             *[!A-Za-z0-9_]*) say "letters, digits, and underscore only (my_ollama, not my-ollama); try again"; continue ;;
         esac
         if [ "${#_name}" -gt 64 ]; then
             say "at most 64 characters; try again"
-        elif source_name_taken "$_name"; then
-            say "a source named \"$_name\" already exists in $PROVIDERS (names ignore case)"
+        elif source_name_taken "$1" "$_name"; then
+            say "a source named \"$_name\" already exists (names ignore case)"
         else
             printf '%s' "$_name"
             return 0
@@ -581,9 +587,10 @@ ask_value() {
     done
 }
 
-# One round of the menu. Returns 0 when a section was written, 1 on
-# skip, 2 when the person backed out of an option.
+# One round of the menu, writing into file $1. Returns 0 when a section
+# was written, 1 on skip, 2 when the person backed out of an option.
 setup_menu() {
+    _file="$1"
     printf '\n%s\n' "  Add an inference source:" > /dev/tty
     printf '%s\n' "    1) a server you run (any OpenAI-compatible endpoint: Ollama, vLLM, a gateway)" > /dev/tty
     printf '%s\n' "    2) OpenAI (an API key)" > /dev/tty
@@ -625,7 +632,7 @@ setup_menu() {
                 toml_safe "$_key" && break
                 say "a key cannot contain quotes, backslashes, or line breaks; try again"
             done
-            _name="$(ask_source_name "$_default_name")"
+            _name="$(ask_source_name "$_file" "$_default_name")"
             # The fill ceiling for this server: rows run in parallel up
             # to it. The parser's bound is 1..MAX_FILL_CONCURRENCY (64);
             # a vendor key needs no answer, its ceiling is adaptive.
@@ -640,18 +647,18 @@ setup_menu() {
                 if [ "$_conc" -ge 1 ] && [ "$_conc" -le 64 ]; then break; fi
                 say "a whole number from 1 to 64; try again"
             done
-            append_source openai_compatible "$_name" "$_url" "$_key" "$_conc"
+            append_source "$_file" openai_compatible "$_name" "$_url" "$_key" "$_conc"
             case "$_url" in *host.docker.internal*) host_bind_hint ;; esac
             ;;
         2)
             _key="$(ask_value "  OpenAI API key from ${CYAN}https://platform.openai.com/api-keys${NC} (Enter to go back): " secret)" || return 2
-            _name="$(ask_source_name openai)"
-            append_source openai_compatible "$_name" "https://api.openai.com/v1" "$_key"
+            _name="$(ask_source_name "$_file" openai)"
+            append_source "$_file" openai_compatible "$_name" "https://api.openai.com/v1" "$_key"
             ;;
         3)
             _key="$(ask_value "  Anthropic API key from ${CYAN}https://console.anthropic.com/settings/keys${NC} (Enter to go back): " secret)" || return 2
-            _name="$(ask_source_name anthropic)"
-            append_source anthropic_compatible "$_name" "https://api.anthropic.com" "$_key"
+            _name="$(ask_source_name "$_file" anthropic)"
+            append_source "$_file" anthropic_compatible "$_name" "https://api.anthropic.com" "$_key"
             ;;
         4) return 1 ;;
     esac
@@ -723,7 +730,7 @@ boot_reason() {
 # error (compose or docker never ran the app: any other code, or a 1
 # with no traceback, since compose reports its own failures as 1 too).
 probe_and_report() {
-    _out="$(probe_sources 2>&1)" && _rc=0 || _rc=$?
+    _out="$(probe_sources "${1:-}" 2>&1)" && _rc=0 || _rc=$?
     case $_rc in
         "$PROBE_OK")             PROBE_STATE=ready ;;
         "$PROBE_EMPTY")          PROBE_STATE=empty ;;
@@ -751,47 +758,47 @@ pull_hint() {
 
 # ---- tools
 
-# Set `tool = "vendor"` in the [tools] table of config/tools.toml: the
-# existing line is rewritten in place, a missing one is added right
-# under the table header, and a file with no table gets one. Atomic
-# through a temp file, as every write to a config file here.
+# Set `$2 = "$3"` in the [tools] table of file $1: the existing line
+# is rewritten in place, a missing one is added right under the table
+# header, and a file with no table gets one. Atomic through a temp
+# file, as every write to a config file here.
 set_tool_wiring() {
-    _tmp="$TOOLS.tmp.$$"
-    if grep -qE "^$1 = " "$TOOLS"; then
-        sed -E "s|^$1 = \".*\"|$1 = \"$2\"|" "$TOOLS" > "$_tmp"
-    elif grep -qE '^\[tools\]' "$TOOLS"; then
-        awk -v line="$1 = \"$2\"" '{ print } /^\[tools\]/ { print line }' "$TOOLS" > "$_tmp"
+    _tmp="$1.tmp.$$"
+    if grep -qE "^$2 = " "$1"; then
+        sed -E "s|^$2 = \".*\"|$2 = \"$3\"|" "$1" > "$_tmp"
+    elif grep -qE '^\[tools\]' "$1"; then
+        awk -v line="$2 = \"$3\"" '{ print } /^\[tools\]/ { print line }' "$1" > "$_tmp"
     else
-        cp "$TOOLS" "$_tmp"
-        printf '\n[tools]\n%s = "%s"\n' "$1" "$2" >> "$_tmp"
+        cp "$1" "$_tmp"
+        printf '\n[tools]\n%s = "%s"\n' "$2" "$3" >> "$_tmp"
     fi
     lock_file "$_tmp"
-    mv "$_tmp" "$TOOLS"
+    mv "$_tmp" "$1"
 }
 
-# Write a vendor's credential: into its existing table when the file
-# has one (the api_key line rewritten in place, or added under the
+# Write vendor $2's credential $3 into file $1: into its existing table
+# when the file has one (the api_key line rewritten in place, or added under the
 # header; an uncommented template table with a blank key is the usual
 # case), otherwise as a new table at the end. A second [table] of the
 # same name would be a TOML error. Atomic through a temp file. The
 # key lives inline, so the file is locked as tightly as the
 # containers can bear.
 add_vendor_key() {
-    _tmp="$TOOLS.tmp.$$"
-    if grep -qx "\[$1\]" "$TOOLS"; then
-        awk -v tbl="[$1]" -v line="api_key = \"$2\"" '
+    _tmp="$1.tmp.$$"
+    if grep -qx "\[$2\]" "$1"; then
+        awk -v tbl="[$2]" -v line="api_key = \"$3\"" '
             $0 == tbl { print; intable = 1; done = 0; next }
             /^\[/ { if (intable && !done) { print line; done = 1 } intable = 0 }
             intable && /^api_key[ \t]*=/ { if (!done) { print line; done = 1 } next }
             { print }
             END { if (intable && !done) print line }
-        ' "$TOOLS" > "$_tmp"
+        ' "$1" > "$_tmp"
     else
-        cp "$TOOLS" "$_tmp"
-        printf '\n[%s]\napi_key = "%s"\n' "$1" "$2" >> "$_tmp"
+        cp "$1" "$_tmp"
+        printf '\n[%s]\napi_key = "%s"\n' "$2" "$3" >> "$_tmp"
     fi
     lock_file "$_tmp"
-    mv "$_tmp" "$TOOLS"
+    mv "$_tmp" "$1"
 }
 
 # The search step. Web search works keyless through DuckDuckGo, but
@@ -805,6 +812,7 @@ add_vendor_key() {
 tools_setup() {
     TOOLS_CHANGED=""
     step "Tools"
+    seed_file "$TOOLS" "$TOOLS_TEMPLATE" ""
     info "checking the search vendors..."
     _matrix="$(run_manage tools 2>&1)" || true
     printf '%s\n' "$_matrix" | grep -E '^[a-z_]+: ' || true
@@ -822,6 +830,11 @@ tools_setup() {
     info "  finding contacts is not available."
     info "  1. Sign up at ${CYAN}https://serper.dev/signup${NC} (free: 2,500 queries to start, no card needed)"
     info "  2. Copy the API key from ${CYAN}https://serper.dev/api-key${NC}"
+    # The key lands in a CANDIDATE copy; the live file changes only
+    # once the candidate has passed the file check and the vendor took
+    # the key (or could not be asked). Nothing ever edits the live
+    # file in place, so an interrupt anywhere leaves it as it was.
+    _cand="$TOOLS.candidate"
     while :; do
         _key="$(ask_secret "  Serper API key from ${CYAN}https://serper.dev/api-key${NC} (Enter to skip): ")"
         if [ -z "$_key" ]; then
@@ -829,15 +842,13 @@ tools_setup() {
             return 0
         fi
         toml_safe "$_key" || { say "a key cannot contain quotes, backslashes, or line breaks"; continue; }
-        _before="$TOOLS.before.$$"
-        cp "$TOOLS" "$_before"
-        pending "$_before" "$TOOLS"
-        add_vendor_key serper "$_key"
-        set_tool_wiring web_search serper
+        cp "$TOOLS" "$_cand"
+        add_vendor_key "$_cand" serper "$_key"
+        set_tool_wiring "$_cand" web_search serper
         info "checking the file..."
-        _out="$(run_manage tools 2>&1)" && _rc=0 || _rc=$?
+        _out="$(run_manage_in "TOOLS_CONFIG=/app/$_cand" tools 2>&1)" && _rc=0 || _rc=$?
         if [ "$_rc" != 0 ]; then
-            cp "$_before" "$TOOLS"; pending; rm -f "$_before"
+            rm -f "$_cand"
             if [ "$_rc" = 1 ] && printf '%s\n' "$_out" | grep -q '^Traceback'; then
                 warn "That entry was refused ($(boot_reason "$_out")), please try again."
                 continue
@@ -846,31 +857,31 @@ tools_setup() {
             printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
             return 0
         fi
-        # One live query through the app's own client. A rejection is
-        # the key and nothing else, so that entry goes; a vendor that
-        # could not be asked (down, throttled, unreachable) keeps the
-        # key with the honest reason; anything else is a failure of
-        # the check itself, and the file goes back as it was.
+        # One live query through the app's own client against the
+        # candidate. A rejection is the key and nothing else, so the
+        # candidate goes; a vendor that could not be asked (down,
+        # throttled, unreachable) keeps the key with the honest reason;
+        # anything else is a failure of the check itself.
         info "checking the key..."
-        _out="$(run_manage tools --probe serper 2>&1)" && _rc=0 || _rc=$?
+        _out="$(run_manage_in "TOOLS_CONFIG=/app/$_cand" tools --probe serper 2>&1)" && _rc=0 || _rc=$?
         _line="$(printf '%s\n' "$_out" | grep -E '^serper: ' | tail -n1)"
         case $_rc in
             "$PROBE_OK")
-                pending; rm -f "$_before"
+                mv "$_cand" "$TOOLS"
                 TOOLS_CHANGED=1
                 ok "Serper is wired for web search and finding contacts ($TOOLS)"
                 run_manage tools 2>/dev/null | grep -E '^[a-z_]+: ' || true
                 return 0 ;;
             "$PROBE_REJECTED")
-                cp "$_before" "$TOOLS"; pending; rm -f "$_before"
-                warn "Serper rejected that key, please try again." ;;
+                rm -f "$_cand"
+                warn "Serper rejected that key (${_line#serper: rejected | }), please try again." ;;
             "$PROBE_UNREACHABLE" | "$PROBE_THROTTLED")
-                pending; rm -f "$_before"
+                mv "$_cand" "$TOOLS"
                 TOOLS_CHANGED=1
                 warn "could not check the key with serper.dev right now (${_line#serper: }); it is saved as given"
                 return 0 ;;
             *)
-                cp "$_before" "$TOOLS"; pending; rm -f "$_before"
+                rm -f "$_cand"
                 warn "the key check could not run (exit $_rc); the file is as it was. Fix that, then: bower-admin setup"
                 printf '%s\n' "$_out" | grep -vE '^[[:space:]]*$' | tail -n 3 | sed 's/^/    /'
                 return 0 ;;
@@ -881,11 +892,12 @@ tools_setup() {
 # The model step. OpenBower is bring-your-own-model and a model is chosen
 # per agent in the builder, so setup only has to leave the install with
 # at least one source that ANSWERS. Every probe runs in a one-off
-# container against the file as it is, so a bad edit is caught before
-# the running services read it; a file that is already refused ends the
-# step with its reason rather than blaming each new entry; an entry
-# that does not answer is dropped again; one that answers with no model
-# yet stays, with the pull to run; then the search vendor is asked for;
+# container against a CANDIDATE copy of the file, so a bad edit never
+# reaches the live file, let alone the running services; a file that is
+# already refused ends the step with its reason rather than blaming
+# each new entry; an entry that does not answer is dropped with its
+# candidate; one that answers with no model yet stays, with the pull
+# to run; then the search vendor is asked for;
 # the services restart ONCE at the end, when either file changed. The
 # template ships no live source, so a source exists only because the
 # person added it AND it answered. Never runs a completion; a roster
@@ -893,6 +905,9 @@ tools_setup() {
 cmd_setup() {
     step "Model setup"
     _changed=""
+    # A candidate an earlier run left behind (an interrupt mid-probe)
+    # was never the live file; it only needs removing.
+    rm -f "$PROVIDERS.candidate" "$TOOLS.candidate"
     if [ ! -e "$PROVIDERS" ]; then
         cp "$PROVIDERS_TEMPLATE" "$PROVIDERS"
         lock_file "$PROVIDERS"
@@ -909,6 +924,11 @@ cmd_setup() {
             *) model_hint ;;
         esac
     else
+        # Each round writes into a CANDIDATE copy and probes that; the
+        # live file changes only by one rename of a candidate that
+        # answered. Nothing edits the live file in place, so an
+        # interrupt at any point leaves it as it was.
+        _cand="$PROVIDERS.candidate"
         while [ "$PROBE_STATE" != ready ]; do
             case "$PROBE_STATE" in
                 refused) warn "fix $PROVIDERS by hand, then: bower-admin setup"; return 1 ;;
@@ -916,42 +936,42 @@ cmd_setup() {
                 empty) pull_hint ;;
             esac
             _was="$PROBE_STATE"
-            _before="$PROVIDERS.before.$$"
-            cp "$PROVIDERS" "$_before"
-            pending "$_before" "$PROVIDERS"
-            setup_menu && _rc=0 || _rc=$?
+            cp "$PROVIDERS" "$_cand"
+            lock_file "$_cand"
+            setup_menu "$_cand" && _rc=0 || _rc=$?
             if [ "$_rc" = 2 ]; then
-                pending; rm -f "$_before"
+                rm -f "$_cand"
                 continue
             fi
             if [ "$_rc" != 0 ]; then
-                pending; rm -f "$_before"
+                rm -f "$_cand"
                 [ "$_was" = empty ] || model_hint
                 break
             fi
             info "probing the configured sources..."
-            probe_and_report
+            probe_and_report "$_cand"
             case "$PROBE_STATE" in
-                ready) _changed=1 ;;
+                ready)
+                    mv "$_cand" "$PROVIDERS"
+                    _changed=1 ;;
                 empty)
+                    mv "$_cand" "$PROVIDERS"
                     _changed=1
                     pull_hint
                     break ;;
                 refused)
-                    cp "$_before" "$PROVIDERS"
+                    rm -f "$_cand"
                     warn "That entry was refused, please try again."
                     PROBE_STATE="$_was" ;;
                 error)
-                    cp "$_before" "$PROVIDERS"
-                    pending; rm -f "$_before"
+                    rm -f "$_cand"
                     warn "the file is as it was. Fix that, then: bower-admin setup"
                     return 1 ;;
                 *)
-                    cp "$_before" "$PROVIDERS"
+                    rm -f "$_cand"
                     warn "That source did not answer, please try again."
                     PROBE_STATE="$_was" ;;
             esac
-            pending; rm -f "$_before"
         done
         [ "$PROBE_STATE" != ready ] || ok "an inference source is ready; pick its model in the agent builder"
     fi
@@ -1152,7 +1172,10 @@ adopt_docker_group() {
 }
 
 main() {
-    trap on_signal INT TERM HUP
+    if has_tty; then
+        TTY_SAVED="$(stty -g < /dev/tty 2>/dev/null || true)"
+        trap on_signal INT TERM HUP
+    fi
     adopt_docker_group "$@"
     _cmd="${1:-help}"
     [ $# -eq 0 ] || shift

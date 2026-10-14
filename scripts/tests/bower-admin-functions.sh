@@ -66,25 +66,25 @@ expect "the line as written" "$(tail -n1 "$HOME/.zshrc")" 'export PATH="$HOME/.l
 
 echo "set_tool_wiring + add_vendor_key"
 cp "$ROOT/config/templates/tools.example.toml" "$TOOLS"
-add_vendor_key serper K1; set_tool_wiring web_search serper
+add_vendor_key "$TOOLS" serper K1; set_tool_wiring "$TOOLS" web_search serper
 expect "template: wired + keyed"  "$(toml "$TOOLS" "d['tools']['web_search'], d['serper']['api_key']")" "serper K1"
-add_vendor_key serper K2
+add_vendor_key "$TOOLS" serper K2
 expect "rewritten in place, one table" "$(grep -c '^\[serper\]' "$TOOLS")|$(toml "$TOOLS" "d['serper']['api_key']")" "1|K2"
-printf '[tools]\nfind_contacts = "serper"\n' > "$TOOLS"; set_tool_wiring web_search serper
+printf '[tools]\nfind_contacts = "serper"\n' > "$TOOLS"; set_tool_wiring "$TOOLS" web_search serper
 expect "table without the line: added under it" "$(toml "$TOOLS" "d['tools']['web_search']")" "serper"
-printf '# empty\n' > "$TOOLS"; set_tool_wiring web_search serper; add_vendor_key serper k
+printf '# empty\n' > "$TOOLS"; set_tool_wiring "$TOOLS" web_search serper; add_vendor_key "$TOOLS" serper k
 expect "no table at all: both created" "$(toml "$TOOLS" "d['tools']['web_search'], d['serper']['api_key']")" "serper k"
-printf '[serper]\napi_key = ""\n\n[tools]\nweb_search = "duckduckgo"\n' > "$TOOLS"; add_vendor_key serper K3
+printf '[serper]\napi_key = ""\n\n[tools]\nweb_search = "duckduckgo"\n' > "$TOOLS"; add_vendor_key "$TOOLS" serper K3
 expect "blank uncommented table: key filled, tables intact" "$(toml "$TOOLS" "d['serper']['api_key'], d['tools']['web_search']")" "K3 duckduckgo"
 
 echo "append_source"
 cp "$ROOT/config/templates/providers.example.toml" "$PROVIDERS"
-append_source openai_compatible ollama http://host.docker.internal:11434/v1 "" 1 >/dev/null
-append_source anthropic_compatible anthropic https://api.anthropic.com sk-ant "" >/dev/null
+append_source "$PROVIDERS" openai_compatible ollama http://host.docker.internal:11434/v1 "" 1 >/dev/null
+append_source "$PROVIDERS" anthropic_compatible anthropic https://api.anthropic.com sk-ant "" >/dev/null
 expect "two sections parse" "$(toml "$PROVIDERS" "sorted(d), d['openai_compatible'][0]['concurrency'], d['anthropic_compatible'][0]['api_key']")" "['anthropic_compatible', 'openai_compatible'] 1 sk-ant"
-source_name_taken ollama;  expect "name taken"              "$?" 0
-source_name_taken Ollama;  expect "name taken without case" "$?" 0
-source_name_taken vllm;    expect "name free"               "$?" 1
+source_name_taken "$PROVIDERS" ollama;  expect "name taken"              "$?" 0
+source_name_taken "$PROVIDERS" Ollama;  expect "name taken without case" "$?" 0
+source_name_taken "$PROVIDERS" vllm;    expect "name free"               "$?" 1
 
 echo "newest_release_tag"
 R="$T/repo"; git init -q "$R" && git -C "$R" -c user.name=t -c user.email=t@example.io commit -q --allow-empty -m one
