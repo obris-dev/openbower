@@ -2,8 +2,8 @@
 # ONE file carries the wiring AND the credentials, inline (it is
 # gitignored, like ~/.aws/credentials); there is no env mirror.
 #
-# Without this file the defaults below still apply (make up seeds it
-# from this template when absent). Vendor section names are the
+# Without this file the defaults below still apply (`bower-admin up`
+# seeds it from this template when absent). Vendor section names are the
 # registered vendors; [tools] wires each tool to the vendor that
 # serves it.
 

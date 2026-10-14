@@ -84,7 +84,7 @@ A typo'd section refuses startup with the section named, so a broken config neve
 
 ### Prereq: search vendors
 
-Tool vendors and their wiring live in `config/tools.toml`, seeded from its template. The install's setup step asks for a [Serper](https://serper.dev) key (a free account starts with 2,500 queries), checks it with one query, writes it, and wires web search to it, which is the setup the product works well with: real Google results for web search, and the only vendor for finding contacts. Without a key, web search falls back to DuckDuckGo (free, keyless, weaker results) and finding contacts stays off; `bower-admin setup` asks again any time. On the free door a fill is budgeted: one whose search count would exceed the budget is refused before it spends, naming the metered next step. `manage.py tools` prints the live matrix.
+Tool vendors and their wiring live in `config/tools.toml`, seeded from its template. The install's setup step asks for a [Serper](https://serper.dev) key (a free account starts with 2,500 queries), checks it with one query, writes it, and wires web search to it, which is the setup the product works well with: real Google results for web search, and the only vendor for finding contacts. Without a key, web search falls back to DuckDuckGo (free, keyless, weaker results) and finding contacts stays off; `bower-admin setup` asks again any time. On the free door a fill is budgeted: one whose search count would exceed the budget is refused before it spends, naming the metered next step. `bower-admin tools` prints the live matrix.
 
 ### Use it
 

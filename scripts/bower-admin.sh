@@ -357,6 +357,19 @@ cmd_down() { compose down "$@"; }
 cmd_restart() { compose restart "$@"; }
 cmd_status() { compose ps; }
 cmd_logs() { compose logs -f "$@"; }
+cmd_dbshell() { compose exec db psql -U openbower openbower; }
+
+# The anonymous .venv volumes that build and down cycles strand, one per
+# container. Scoped by NAME SHAPE only (a 64-hex id), so a named volume
+# (this stack names every one that matters) can never match; it IS
+# daemon-wide, so another project's dangling anonymous volumes go too.
+cmd_prune_venvs() {
+    _vols="$(docker volume ls -qf dangling=true -f 'name=^[0-9a-f]{64}$')"
+    [ -n "$_vols" ] || { info "nothing to reclaim"; return 0; }
+    # shellcheck disable=SC2086  # one id per word, split on purpose
+    docker volume rm $_vols >/dev/null
+    ok "reclaimed $(printf '%s\n' "$_vols" | wc -l | tr -d ' ') volume(s)"
+}
 
 # ---------------------------------------------------------------- version
 
@@ -479,6 +492,7 @@ run_manage() {
 probe_sources() { run_manage providers; }
 
 cmd_providers() { probe_sources; }
+cmd_tools() { run_manage tools "$@"; }
 
 # Rewrite a loopback URL to the host gateway: inside a container,
 # localhost (and 127.0.0.1, and 0.0.0.0) is the container.
@@ -1102,6 +1116,9 @@ bower-admin: operate a self-hosted OpenBower
   shim                 put bower-admin on the PATH for this checkout (install does this): the shim in
                        ~/.local/bin and a guarded PATH line in your shell rc (OPENBOWER_NO_MODIFY_PATH=1 skips the rc)
   providers            the source matrix (what each inference source serves, or why not)
+  tools                the tool matrix (which vendor serves web search and finding contacts, and its readiness)
+  dbshell              a psql shell on the database
+  prune-venvs          reclaim the stray dependency volumes that build and down cycles leave behind
   help                 this
 
 Env: OPENBOWER_BRANCH is the default target for upgrade (a tag or branch); OPENBOWER_BIN_DIR is where install puts the shim;
@@ -1156,6 +1173,9 @@ main() {
         reload)    cmd_reload "$@" ;;
         shim)      cmd_shim "$@" ;;
         providers) cmd_providers "$@" ;;
+        tools)     cmd_tools "$@" ;;
+        dbshell)   cmd_dbshell "$@" ;;
+        prune-venvs) cmd_prune_venvs "$@" ;;
         help | -h | --help) cmd_help ;;
         *) printf '%s\n\n' "unknown command: $_cmd" >&2; cmd_help >&2; exit 2 ;;
     esac

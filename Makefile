@@ -24,7 +24,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -46,11 +46,14 @@ install-admin: ## Put `bower-admin` on your PATH for this checkout (the installe
 doctor: ## The prerequisites checklist (OS, git, Docker + Compose, the daemon)
 	@$(ADMIN) doctor
 
-setup: ## Probe the inference sources in config/providers.toml and add one when none answers
+setup: ## Add an inference source (config/providers.toml) and the Serper key (config/tools.toml); asks only for what is missing
 	@$(ADMIN) setup
 
-providers: ## The source matrix: what each inference source serves, or why not (needs the api running)
+providers: ## The source matrix: what each inference source serves, or why not (a one-off container; needs only the built image)
 	@$(ADMIN) providers
+
+tools: ## The tool matrix: which vendor serves each tool and its readiness
+	@$(ADMIN) tools
 
 upgrade: ## Move this checkout to the newest release and rebuild; data preserved
 	@$(ADMIN) upgrade
@@ -121,9 +124,7 @@ reset-web-deps: ## Recreate the web dependency volumes (needed after a pnpm majo
 	@echo "web dependency volumes removed; the next make up reinstalls them"
 
 prune-venvs: ## Remove the dangling anonymous venv volumes left by build/down cycles
-	@vols="$$(docker volume ls -qf dangling=true -f 'name=^[0-9a-f]{64}$$')"; \
-	[ -n "$$vols" ] || { echo "nothing to reclaim"; exit 0; }; \
-	docker volume rm $$vols
+	@$(ADMIN) prune-venvs
 
 logs: ## Tail all container logs
 	@$(ADMIN) logs
@@ -175,7 +176,7 @@ local-manage: ## Run a Django manage.py command in the api container (e.g. make 
 	$(COMPOSE) exec core uv run --frozen --package openbower-core python apps/core/manage.py $(CMD)
 
 local-dbshell: ## Open a psql shell on the db service
-	$(COMPOSE) exec db psql -U openbower openbower
+	@$(ADMIN) dbshell
 
 test-core: db-up ## Run the app backend's suite (host-run, against the compose db)
 	cd apps/core && DJANGO_ENV=test DJANGO_SECRET_KEY=test-only uv run python manage.py test

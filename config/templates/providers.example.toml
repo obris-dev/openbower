@@ -4,8 +4,8 @@
 # keyless source works when its base is a self-hosted server; the
 # canonical vendors need a key or they stay out of the catalog.
 #
-# Without this file there are no sources at all (make up seeds it
-# from this template when absent). Section names are the registered
+# Without this file there are no sources at all (`bower-admin up` or
+# `setup` seeds it from this template when absent). Section names are the registered
 # provider SPECS (never companies): a local Ollama, a vLLM box, a
 # gateway, and the vendor itself are all named sources of the spec
 # they speak.
