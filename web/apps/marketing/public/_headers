@@ -4,3 +4,8 @@
 
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The installer is copied from scripts/install.sh at build; a release's
+# script must be the one served, never a cached earlier one.
+/install.sh
+  Cache-Control: no-store
