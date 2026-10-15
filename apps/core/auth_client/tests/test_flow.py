@@ -53,12 +53,13 @@ class LoginLogoutFlowTests(TestCase):
         query = parse_qs(urlparse(resp["Location"]).query)
         return query["state"][0]
 
-    def test_login_names_this_installs_login_page(self):
-        # The IdP bounces a session-less browser to the page named here
-        # when the install is loopback; a hosted IdP ignores it.
+    def test_login_sends_no_login_page(self):
+        # The identity service has ONE login page for every client; an
+        # install naming its own would put a cross-site credential post
+        # in the flow, which browsers drop.
         resp = self.client.get(reverse("auth_login"))
         query = parse_qs(urlparse(resp["Location"]).query)
-        self.assertEqual(query["login_ui"], [f"{settings.APP_BASE_URL}/login"])
+        self.assertNotIn("login_ui", query)
 
     def test_login_me_logout_roundtrip(self):
         state = self._state_from_login()

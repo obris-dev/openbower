@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { webRoutes } from "@bower/api";
+import { loginUrl } from "@bower/api";
 
 import { COLLAPSED_COOKIE, Directory } from "./_components/directory";
 
@@ -17,7 +17,7 @@ export default async function Home() {
     fetchListsPageWithCookie(cookieHeader),
     fetchFoldersWithCookie(cookieHeader),
   ]);
-  if (listsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(webRoutes.login);
+  if (listsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(loginUrl());
   // The two legs fail separately: no lists is a full failure surface,
   // no folders means lists still render (flattened loose) UNDER a
   // banner saying so, never silently.
