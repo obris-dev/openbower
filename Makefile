@@ -24,7 +24,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -192,6 +192,16 @@ test-web: ## Run the web workspace's node tests (what CI runs)
 
 test-scripts: ## Run the operator command's function tests (no Docker needed)
 	@sh scripts/tests/bower-admin-functions.sh
+
+# The same values the publishing workflow bakes into the published web
+# image (the single-machine install's); the smoke asserts the first.
+WEB_BUILD_ARGS := --build-arg NEXT_PUBLIC_API_URL=http://localhost:8002 --build-arg NEXT_PUBLIC_AUTH_URL=https://auth.openbower.ai
+
+test-images: ## Build both production images from a clean context and start each (what CI's images job runs)
+	docker build -f apps/core/Dockerfile -t openbower-core:test .
+	sh scripts/tests/image-smoke.sh core openbower-core:test
+	docker build -f web/apps/app/Dockerfile $(WEB_BUILD_ARGS) -t openbower-web:test web
+	sh scripts/tests/image-smoke.sh web openbower-web:test 3303
 
 test: test-core test-web test-scripts ## Run every suite
 

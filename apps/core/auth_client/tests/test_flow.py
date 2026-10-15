@@ -93,6 +93,37 @@ class LoginLogoutFlowTests(TestCase):
         after = self.client.get(reverse("auth_me"))
         self.assertEqual(after.status_code, 401)
 
+    def _callback(self, identity: dict):
+        state = self._state_from_login()
+        with (
+            patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _TOKENS)),
+            patch("auth_client.services.oauth.transport.httpx.get", return_value=_Resp(200, identity)),
+        ):
+            return self.client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
+
+    def test_the_hosted_deployment_refuses_an_account_without_the_grant(self):
+        # The hosted profile only: no session minted, the web told why.
+        with self.settings(SELF_HOSTED=False):
+            cb = self._callback({**_IDENTITY, "hosted_access": False})
+        self.assertEqual(cb.status_code, 302)
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/?auth_error=hosted_access_required")
+        self.assertFalse(
+            self.client.cookies.get(SESSION_COOKIE_NAME, None) and self.client.cookies[SESSION_COOKIE_NAME].value
+        )
+        self.assertEqual(self.client.get(reverse("auth_me")).status_code, 401)
+
+    def test_the_hosted_deployment_signs_in_a_granted_account(self):
+        with self.settings(SELF_HOSTED=False):
+            cb = self._callback({**_IDENTITY, "hosted_access": True})
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/")
+        self.assertTrue(self.client.cookies[SESSION_COOKIE_NAME].value)
+
+    def test_a_self_hosted_install_never_checks_the_grant(self):
+        # An identity service that predates the field sends none at all.
+        cb = self._callback(_IDENTITY)
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/")
+        self.assertTrue(self.client.cookies[SESSION_COOKIE_NAME].value)
+
     def test_callback_without_state_cookie_is_rejected(self):
         # Login CSRF guard: a state that exists in the server-side bag but
         # arrives from a browser that never hit /login (no state cookie)

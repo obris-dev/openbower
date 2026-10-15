@@ -1,0 +1,274 @@
+# Build and push the core and web images to GHCR. Only on a merge to main
+# (PR-gated) or a manual run on main, never on tags or from a branch:
+# a sha-<short> on the public registry names reviewed code. Each build
+# publishes an immutable `sha-<short>`; `latest` then moves to it in a
+# last job that runs one at a time and only for the newest commit on
+# main, since two merges seconds apart build in parallel and the older
+# build could otherwise push last and roll a deployment that follows
+# `latest` back. Whatever runs a published image pins the tag it wants,
+# so the release gate is a review, not a tag. Every tag is a
+# multi-architecture manifest (linux/amd64 and linux/arm64, each built
+# on its own native runner), so a pull on a Mac and a pull on a server
+# get the same name.
+#
+# Each image rebuilds only when its inputs changed (the `changes` job,
+# reading .github/image-inputs.yml): a core-only merge skips the web
+# build and the reverse, and a merge that touches neither (docs, the
+# marketing site) builds nothing. A manual workflow_dispatch forces
+# both, the rebuild escape hatch.
+#
+# A RELEASE push (one whose version.txt sorts higher than the one main
+# carried before it, which only release-please's version bump does) also
+# tags the build with the version: v<x.y.z>, and the rolling v<x.y>
+# alias when the version is clean semver. The version tags ride on the
+# build of the commit that carries that version, so the tag and the
+# sha-<short> are one digest. The comparison is against the push's own
+# `before`, the same base the path filter diffs, so a release PR merged
+# as several commits is still one release. A push that moves the version
+# down (a revert) is not a release: its old version tag stays on the
+# build it was cut from. A manual run never is.
+name: images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only by default; the jobs that push to the registry claim write
+# for themselves, so the filter job (a third-party action on a floating
+# major tag) never holds a token that can publish.
+permissions:
+  contents: read
+
+jobs:
+  # Each image's inputs are listed once, in .github/image-inputs.yml,
+  # which the PR-time build in ci.yml reads too, so the two can never
+  # disagree about what a rebuild needs.
+  changes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      images: ${{ steps.set.outputs.images }}
+      release: ${{ steps.release.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        # `before` is all zeros on a branch's first push and unreachable
+        # after a force-push; both read as "no previous version", so
+        # neither is a release.
+        run: |
+          cur=$(tr -d '[:space:]' < version.txt)
+          prev=""
+          if [ "$EVENT" = "push" ] && printf '%s' "$BEFORE" | grep -Eq '^[0-9a-f]{40}$' && ! printf '%s' "$BEFORE" | grep -Eq '^0+$'; then
+            if git fetch --quiet --depth=1 origin "$BEFORE"; then
+              prev=$(git show "$BEFORE:version.txt" 2>/dev/null | tr -d '[:space:]' || true)
+            fi
+          fi
+          release=false
+          if [ -n "$prev" ] && [ "$prev" != "$cur" ] && [ "$(printf '%s\n%s\n' "$prev" "$cur" | sort -V | tail -n1)" = "$cur" ]; then
+            release=true
+          fi
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/image-inputs.yml
+      - id: set
+        # Two outputs: `images`, the names to build, and `matrix`, one
+        # entry per image and architecture carrying the runner that
+        # builds it natively (an emulated build of the web app or the
+        # Python wheels takes several times as long) and the build
+        # arguments the image takes: the web's browser-facing origins
+        # are inlined at build time, and the published build is the
+        # single-machine install's. Both on a manual
+        # run or a release commit, else the images whose filter matched.
+        # `[]` skips the build job entirely.
+        env:
+          BOTH: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.release == 'true' }}
+          CORE: ${{ steps.filter.outputs.core }}
+          WEB: ${{ steps.filter.outputs.web }}
+        run: |
+          core='{"image":"openbower-core","context":".","dockerfile":"apps/core/Dockerfile","build_args":""}'
+          web='{"image":"openbower-web","context":"web","dockerfile":"web/apps/app/Dockerfile","build_args":"NEXT_PUBLIC_API_URL=http://localhost:8002\nNEXT_PUBLIC_AUTH_URL=https://auth.openbower.ai"}'
+          items=()
+          if [ "$BOTH" = "true" ] || [ "$CORE" = "true" ]; then items+=("$core"); fi
+          if [ "$BOTH" = "true" ] || [ "$WEB" = "true" ]; then items+=("$web"); fi
+          images="[$(IFS=,; echo "${items[*]}")]"
+          matrix=$(printf '%s' "$images" | jq -c '[.[] as $i | ({arch:"amd64",runner:"ubuntu-latest"},{arch:"arm64",runner:"ubuntu-24.04-arm"}) | $i + .]')
+          echo "images=$(printf '%s' "$images" | jq -c '[.[].image]')" >> "$GITHUB_OUTPUT"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: changes
+    permissions:
+      contents: read
+      packages: write
+    if: needs.changes.outputs.matrix != '[]'
+    name: ${{ matrix.image }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+
+      # The build context is the image's workspace root (the repo for the
+      # uv workspace, web/ for the pnpm one: each holds its single lock
+      # and every member manifest); the Dockerfile is the member's own.
+      # Pushed by digest, untagged: the manifest job below joins the two
+      # architectures under the tags, so no tag ever names half an image.
+      # No provenance attestation: the action attaches one by default as
+      # an extra manifest the registry lists as platform unknown/unknown
+      # beside every image, and nothing here consumes it.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build_args }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
+
+      - env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One multi-architecture manifest per image, under every tag this
+  # push earns: sha-<short> always, the version tags on a release.
+  manifest:
+    needs: [changes, build]
+    permissions:
+      contents: read
+      packages: write
+    name: ${{ matrix.image }} manifest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.changes.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: version.txt
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The version this commit carries, for the release tags below. The
+      # rolling alias exists only for clean semver: a pre-release such as
+      # 0.2.0-rc.1 must never move v0.2.
+      - id: version
+        run: |
+          ver="v$(tr -d '[:space:]' < version.txt)"
+          echo "tag=${ver}" >> "$GITHUB_OUTPUT"
+          if printf '%s' "$ver" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "alias=${ver%.*}" >> "$GITHUB_OUTPUT"
+          else
+            echo "alias=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=sha
+            type=raw,value=${{ steps.version.outputs.tag }},enable=${{ needs.changes.outputs.release == 'true' }}
+            type=raw,value=${{ steps.version.outputs.alias }},enable=${{ needs.changes.outputs.release == 'true' && steps.version.outputs.alias != '' }}
+
+      - env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          # Two digest files, one per architecture; refusing on any other
+          # count keeps a half-built image from ever carrying a tag.
+          [ "$(ls | wc -l)" -eq 2 ] || { echo "expected 2 digests, found: $(ls)" >&2; exit 1; }
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+          docker buildx imagetools inspect "${IMAGE}:${DOCKER_METADATA_OUTPUT_VERSION}"
+
+  # A queued run of this job yields to a newer one (GitHub keeps one
+  # pending run per group), which is the right loser: `latest` must end
+  # on the newer commit. A run whose commit is no longer main's head
+  # leaves `latest` alone; the head's own run moves it. The sha and
+  # version tags above never wait on this.
+  latest:
+    needs: [changes, manifest]
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: images-latest
+      cancel-in-progress: false
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+          MATRIX: ${{ needs.changes.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          head=$(gh api "repos/${REPO}/branches/main" --jq .commit.sha)
+          if [ "$head" != "$SHA" ]; then
+            echo "main is at ${head}, not this run's ${SHA}; latest is that run's to move"
+            exit 0
+          fi
+          for image in $(printf '%s' "$MATRIX" | jq -r '.[].image'); do
+            docker buildx imagetools create --tag "ghcr.io/${owner}/${image}:latest" "ghcr.io/${owner}/${image}:sha-${SHA:0:7}"
+          done

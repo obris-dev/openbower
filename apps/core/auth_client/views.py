@@ -104,6 +104,14 @@ class CallbackView(APIView):
             logger.warning("login exchange failed: %s", e.detail)
             return fail(AuthErrorCode.LOGIN_FAILED)
 
+        # The hosted deployment opens by invitation: an account without
+        # the grant gets no session here and is told so by the web. A
+        # self-hosted install never checks (every account may use its
+        # own install).
+        if not settings.SELF_HOSTED and not user.hosted_access:
+            logger.info("hosted access refused for account %s", user.account_id)
+            return fail(AuthErrorCode.HOSTED_ACCESS_REQUIRED)
+
         try:
             _record, raw = AppSessionService.Global.create(user=user, tokens=tokens)
         except DatabaseError:

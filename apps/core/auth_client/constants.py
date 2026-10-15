@@ -32,3 +32,4 @@ class AuthErrorCode(StrEnum):
     LOGIN_FAILED = "login_failed"
     MISSING_PARAMS = "missing_params"
     STATE_MISMATCH = "state_mismatch"
+    HOSTED_ACCESS_REQUIRED = "hosted_access_required"

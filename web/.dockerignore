@@ -1,4 +1,5 @@
-# Build context for the web dev image is the web/ workspace. Exclude
+# Build context for both web images (the dev shell at web/Dockerfile,
+# the product app's at apps/app/Dockerfile) is the web/ workspace. Exclude
 # installed/built artifacts so the container does a clean `pnpm install` from
 # the lockfile (no host node_modules leaking in) and the context stays small.
 **/node_modules
@@ -6,3 +7,16 @@
 **/dist
 .DS_Store
 .idea
+
+# Secrets, mirroring .gitignore's env paths: the product app's image
+# runs `COPY . .` then `next build`, which would bake a developer's
+# .env.local into a layer. CI checkouts carry none; a local build must
+# not either.
+**/.env
+**/.env.*
+!**/.env.example
+
+# A host-side Workers build (OpenNext output, wrangler's state) must
+# never ride into the image context.
+**/.open-next
+**/.wrangler
