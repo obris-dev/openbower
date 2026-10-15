@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3004",
-    "build": "next build",
+    "copy-installer": "cp ../../../scripts/install.sh public/install.sh",
+    "build": "pnpm run copy-installer && next build",
     "start": "next start -p 3004",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

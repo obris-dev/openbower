@@ -2,3 +2,7 @@
 .open-next
 .wrangler
 cloudflare-env.d.ts
+
+# Copied from scripts/install.sh by the marketing build (copy-installer)
+# and served as the curl | sh installer.
+apps/marketing/public/install.sh
