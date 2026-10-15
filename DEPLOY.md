@@ -4,7 +4,7 @@ The self-host footprint: what `docker-compose.yml` runs, how to operate it, wher
 
 ## Operating an install
 
-The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bin` that runs `scripts/bower-admin.sh` inside the checkout, plus one guarded `export PATH` line appended to your shell's rc files when that directory is not on your PATH yet (zsh, bash, and `.profile`; `OPENBOWER_NO_MODIFY_PATH=1` skips it and prints the line instead). From a plain clone, `sh scripts/bower-admin.sh <command>` is the same thing. The installer the one-liner runs is `scripts/install.sh`, also served as a plain file at https://openbower.ai/install.sh for reading first.
+The install puts one command on your PATH, `bower-admin`: a shim in `~/.local/bin` that runs `scripts/bower-admin.sh` inside the checkout, plus one guarded `export PATH` line appended to your shell's rc files when that directory is not on your PATH yet (zsh, bash, and `.profile`; `OPENBOWER_NO_MODIFY_PATH=1` skips it and prints the line instead). From a plain clone, `sh scripts/bower-admin.sh <command>` is the same thing. Signing in sends the browser to the hub's login page (app.openbower.ai) and back to the install; the install hosts no credentials form of its own. The installer the one-liner runs is `scripts/install.sh`, also served as a plain file at https://openbower.ai/install.sh for reading first.
 
 | Command | Does |
 |---------|------|

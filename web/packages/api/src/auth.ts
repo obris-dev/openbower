@@ -154,6 +154,68 @@ export function idpResumeUrl(next: string | null): string {
   return `${authBase}/`;
 }
 
+// The browser's own cookie rule, stated once: a credential post stores
+// the identity session only when the page posting it is SAME-SITE with
+// the identity service (same host, both loopback, or one registrable
+// domain). A page that is not (a self-hosted install at localhost
+// against a hosted identity service) must send the browser to the
+// service's own login page instead of posting from a form of its own.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+function hostnameOnly(host: string): string {
+  // "host:port" or "[v6]:port"; a bare "[v6]" keeps its brackets.
+  const bracket = host.lastIndexOf("]");
+  const colon = host.lastIndexOf(":");
+  return colon > bracket ? host.slice(0, colon) : host;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
+function registrableDomain(hostname: string): string | null {
+  // The last two labels, an approximation that holds for every name
+  // this app is reached on; an IP literal or a single label has none.
+  const labels = hostname.toLowerCase().split(".");
+  if (labels.length < 2 || /^[\d.]+$/.test(hostname) || hostname.startsWith("[")) return null;
+  return labels.slice(-2).join(".");
+}
+
+export function credentialPostIsSameSite(pageHost: string, authUrl: string): boolean {
+  const page = hostnameOnly(pageHost).toLowerCase();
+  let auth: string;
+  try {
+    auth = new URL(authUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (page === "" || auth === "") return false;
+  if (page === auth) return true;
+  if (isLoopbackHost(page) && isLoopbackHost(auth)) return true;
+  const domain = registrableDomain(page);
+  return domain !== null && domain === registrableDomain(auth);
+}
+
+/** Whether an in-flight authorize (`next`) will send its code to a
+ * self-hosted install, read off its redirect_uri: the hosted login page
+ * says so, since the person arrived there from their own machine. */
+export function resumeTargetsLoopback(next: string | null): boolean {
+  if (!next) return false;
+  let resume: URL;
+  try {
+    resume = new URL(next, resolveAuthBase());
+  } catch {
+    return false;
+  }
+  const redirect = resume.searchParams.get("redirect_uri");
+  if (!redirect) return false;
+  try {
+    return isLoopbackHost(new URL(redirect).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * End the session (server-side revoke + cookie clear). Returns the IdP
  * logout URL the browser must then NAVIGATE to, which ends the identity

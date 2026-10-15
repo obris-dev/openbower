@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, Suspense } from "react";
 import { Card, ThemeToggle } from "@bower/ui";
 
 import { RedirectIfAuthed } from "./_components/redirect-if-authed";
@@ -8,7 +8,10 @@ import { RedirectIfAuthed } from "./_components/redirect-if-authed";
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <main className="grid min-h-dvh place-items-center bg-canvas p-6">
-      <RedirectIfAuthed />
+      {/* useSearchParams inside needs a Suspense boundary. */}
+      <Suspense fallback={null}>
+        <RedirectIfAuthed />
+      </Suspense>
       <div className="absolute right-4 top-4">
         <ThemeToggle />
       </div>

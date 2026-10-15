@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
-import { webRoutes } from "@bower/api";
+import { loginUrl } from "@bower/api";
 
 import { Detail } from "../_components";
 
@@ -11,7 +11,7 @@ export default async function WebhookDetailPage({ params }: { params: Promise<{ 
   const { fetchWebhookWithCookie } = await import("@bower/api/server");
   const destination = await fetchWebhookWithCookie(cookieHeader, id);
   if (destination.status === "missing") notFound();
-  if (destination.status === "unauthenticated") redirect(webRoutes.login);
+  if (destination.status === "unauthenticated") redirect(loginUrl());
   if (destination.status !== "ok") throw new Error("The destination could not be loaded.");
   return (
     <div className="p-6">

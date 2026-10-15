@@ -3,7 +3,7 @@
 import { type FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
-import { type CredentialFailure, idpResumeUrl, webRoutes, withNext } from "@bower/api";
+import { type CredentialFailure, idpResumeUrl, resumeTargetsLoopback, webRoutes, withNext } from "@bower/api";
 
 import { REMEMBER_EMAIL_COOKIE, REMEMBER_MAX_AGE_SECONDS } from "./constants";
 import { MODES } from "./modes";
@@ -49,6 +49,9 @@ export function CredentialsForm({
   // `next` is read straight off the URL (no mount effect + state, which
   // would setState within an effect and cascade a render).
   const next = useSearchParams().get("next");
+  // The person arrived from their own install, which sent them here
+  // for the credentials; say so, since the address bar is not theirs.
+  const fromSelfHost = resumeTargetsLoopback(next);
 
   const mismatch = confirmPassword && confirm.length > 0 && password !== confirm;
 
@@ -75,6 +78,11 @@ export function CredentialsForm({
   return (
     <>
       <p className="mb-6 mt-1 text-sm text-muted">{subtitle}</p>
+      {fromSelfHost && (
+        <p className="mb-4 rounded-md bg-surface px-3 py-2 text-xs text-muted">
+          Signing in to your self-hosted OpenBower. You go back to it afterwards.
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {error?.message && <ErrorMessage message={error.message} />}
         <div>
