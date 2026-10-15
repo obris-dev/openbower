@@ -373,7 +373,11 @@ cmd_version() {
     git fetch --quiet --tags origin 2>/dev/null || true
     _latest="$(newest_release_tag)"
     if [ -n "$_latest" ]; then
-        info "newest release: $_latest"
+        if [ "$_latest" = "v$_current" ]; then
+            ok "newest release: $_latest (up to date)"
+        else
+            info "newest release: $_latest (bower-admin upgrade moves you there)"
+        fi
     else
         info "newest release: (no release tag found)"
     fi
