@@ -72,7 +72,7 @@ git clone https://github.com/obris-dev/openbower.git && cd openbower && sh scrip
 | `bower-admin help` | everything else |
 
 > [!NOTE]
-> **Signing in uses the hosted account hub, out of the box.** Accounts live at auth.openbower.ai; your install is an OAuth client of it, and the similar-companies feature reads the hosted company universe at data.openbower.ai with your account's token. A fresh install points at both already: Sign in on your install sends the browser to the hub's login page at app.openbower.ai for the credentials and back to your install, signed in (the same account, when invited, signs into the hosted app). Nothing else needs deploying, and everything but the login itself and that one lookup runs on your machine; an install keeps working through a hub outage for everyone already signed in. The repo-root `.env` the install seeds carries a commented block for pointing the stack at locally run development copies of those two services instead, which only someone developing the hub itself needs. A self-host reached on its own domain rather than localhost is on the roadmap: it needs its callback registered at the hub.
+> **Signing in uses the hosted account hub, out of the box.** Sign in on your install sends the browser to the hub's login page at app.openbower.ai and back to your install, signed in. The same account unlocks the built-in data sources, such as the similar-companies source.
 
 ### Prereq: a model
 
