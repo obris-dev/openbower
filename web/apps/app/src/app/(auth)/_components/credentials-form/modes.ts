@@ -10,6 +10,7 @@ import type { Mode, ModeName } from "./types";
 export const MODES = {
   login: {
     subtitle: "Sign in to continue.",
+    selfHostSubtitle: "Sign in to your self-hosted OpenBower.",
     action: idpLogin,
     submitLabel: "Sign in",
     busyLabel: "Signing in…",
@@ -20,6 +21,7 @@ export const MODES = {
   },
   signup: {
     subtitle: "Create your account.",
+    selfHostSubtitle: "Create your account for your self-hosted OpenBower.",
     action: idpSignup,
     submitLabel: "Create account",
     busyLabel: "Creating account…",
