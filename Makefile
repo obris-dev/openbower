@@ -16,12 +16,14 @@ export COMPOSE_PROJECT_NAME := $(PROJECT)
 ADMIN := sh scripts/bower-admin.sh
 
 # A private deployments checkout beside this one (../deployments) carries
-# the hosted-operations targets (release, deploy, migrate, the cluster
-# logs). Its make fragments resolve their paths through DEPLOY_DIR, so
-# they work from here, and the leading `-` skips the include silently
-# when no such checkout exists: a clone of this repo alone is complete.
+# the hosted-operations targets for this app's leaf (app-release,
+# app-deploy, app-migrate, the cluster logs), one module directory per
+# leaf plus the shared secrets flow. Its make fragments resolve their
+# paths through DEPLOY_DIR, so they work from here, and the leading `-`
+# skips the include silently when no such checkout exists: a clone of
+# this repo alone is complete.
 DEPLOY_DIR ?= ../deployments
--include $(DEPLOY_DIR)/make/*.mk
+-include $(DEPLOY_DIR)/make/common.mk $(DEPLOY_DIR)/make/app/*.mk
 
 .DEFAULT_GOAL := help
 .PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test schema schema-check
