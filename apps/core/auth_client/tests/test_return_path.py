@@ -20,8 +20,8 @@ class CleanReturnPathTests(SimpleTestCase):
             "evil.example/lists",
             "//evil.example/lists",
             "/\\evil.example",
-            "/lists/42\n",
-            "/lists 42",
+            "/lists/42\r\nSet-Cookie: x",
+            "/lists/42\x00",
             "lists/42",
         ):
             with self.subTest(raw=raw):

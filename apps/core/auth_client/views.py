@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponseRedirect
+from django.utils.encoding import iri_to_uri
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -129,8 +130,9 @@ class CallbackView(APIView):
             return fail(AuthErrorCode.LOGIN_FAILED)
 
         # The origin is this install's own setting; only the path came
-        # from the kickoff, already cleaned there.
-        response = HttpResponseRedirect(f"{settings.APP_BASE_URL}{return_path}")
+        # from the kickoff, already cleaned there and re-encoded here
+        # (it arrived decoded, so a query with a space is a real case).
+        response = HttpResponseRedirect(iri_to_uri(f"{settings.APP_BASE_URL}{return_path}"))
         set_session_cookie(response, raw)
         # The handshake is over; the state cookie has no further business.
         delete_state_cookie(response)

@@ -116,6 +116,10 @@ class LoginLogoutFlowTests(TestCase):
         self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/lists/42?after=abc")
         self.assertTrue(self.client.cookies[SESSION_COOKIE_NAME].value)
 
+    def test_a_next_with_a_space_lands_there_re_encoded(self):
+        cb = self._callback_for(self._state_from_login_to("/discover?q=acme corp"))
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/discover?q=acme%20corp")
+
     def test_login_without_a_next_lands_on_home(self):
         cb = self._callback_for(self._state_from_login())
         self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/")
