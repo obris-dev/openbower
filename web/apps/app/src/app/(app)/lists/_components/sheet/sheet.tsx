@@ -16,7 +16,7 @@ import {
   deleteList,
   fetchAgentCatalog,
   GENERIC_FAILURE,
-  loginUrl,
+  loginUrl, returnPath,
   postColumnFill,
   type ListColumn,
   type WebhookColumn,
@@ -290,7 +290,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   async function exportCsv() {
     setExporting(true);
     try {
-      await downloadSheetCsv(detail, { onUnauthenticated: () => (window.location.href = loginUrl()) });
+      await downloadSheetCsv(detail, { onUnauthenticated: () => (window.location.href = loginUrl(returnPath())) });
       toast.success("CSV downloaded.", detail.label);
     } catch {
       toast.error("Download failed part-way. Try again.");

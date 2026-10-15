@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { loginUrl } from "@bower/api";
+import { loginUrl, webRoutes } from "@bower/api";
 
 import { Roster } from "./_components/roster";
 
@@ -11,7 +11,7 @@ export default async function AgentsPage() {
   const cookieHeader = (await cookies()).toString();
   const { fetchAgentsWithCookie } = await import("@bower/api/server");
   const agents = await fetchAgentsWithCookie(cookieHeader);
-  if (agents.status === "unauthenticated") redirect(loginUrl());
+  if (agents.status === "unauthenticated") redirect(loginUrl(webRoutes.agents));
   if (agents.status !== "ok") throw new Error("Agents could not be loaded.");
   return (
     <div className="p-6">

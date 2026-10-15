@@ -93,6 +93,45 @@ class LoginLogoutFlowTests(TestCase):
         after = self.client.get(reverse("auth_me"))
         self.assertEqual(after.status_code, 401)
 
+    def _state_from_login_to(self, next_path: str) -> str:
+        resp = self.client.get(reverse("auth_login"), {"next": next_path})
+        self.assertEqual(resp.status_code, 302)
+        return parse_qs(urlparse(resp["Location"]).query)["state"][0]
+
+    def _callback_for(self, state: str, identity: dict = _IDENTITY):
+        with (
+            patch("auth_client.services.oauth.transport.httpx.post", return_value=_Resp(200, _TOKENS)),
+            patch("auth_client.services.oauth.transport.httpx.get", return_value=_Resp(200, identity)),
+        ):
+            return self.client.get(reverse("auth_callback"), {"code": "the-code", "state": state})
+
+    def test_login_lands_where_it_started(self):
+        # The path rides in the server-side bag, never through the
+        # identity service: the authorize URL carries no trace of it.
+        resp = self.client.get(reverse("auth_login"), {"next": "/lists/42?after=abc"})
+        self.assertNotIn("next", parse_qs(urlparse(resp["Location"]).query))
+        self.assertNotIn("lists", resp["Location"])
+        state = parse_qs(urlparse(resp["Location"]).query)["state"][0]
+        cb = self._callback_for(state)
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/lists/42?after=abc")
+        self.assertTrue(self.client.cookies[SESSION_COOKIE_NAME].value)
+
+    def test_login_without_a_next_lands_on_home(self):
+        cb = self._callback_for(self._state_from_login())
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/")
+
+    def test_a_next_that_could_leave_the_origin_lands_on_home(self):
+        for raw in ("https://evil.example/", "//evil.example/x", "/\\evil.example"):
+            with self.subTest(raw=raw):
+                cb = self._callback_for(self._state_from_login_to(raw))
+                self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/")
+
+    def test_a_failed_login_lands_on_home_with_the_error_whatever_the_next(self):
+        state = self._state_from_login_to("/lists/42")
+        with self.settings(SELF_HOSTED=False):
+            cb = self._callback_for(state, {**_IDENTITY, "hosted_access": False})
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/?auth_error=hosted_access_required")
+
     def _callback(self, identity: dict):
         state = self._state_from_login()
         with (

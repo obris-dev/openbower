@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { fetchMeResult, loginUrl } from "@bower/api";
+import { fetchMeResult, loginUrl, returnPath } from "@bower/api";
 
 import { useAuthStore } from "./store";
 
@@ -71,10 +71,9 @@ export function useUser() {
  *
  * It navigates to `loginUrl()` (the app backend's OAuth kickoff, which 302s to
  * the IdP), NOT the web /login page: an unauthenticated app user has no
- * authorize context to hand a credential form. It does not carry a return-to
- * for the specific page, the callback lands on "/"; returning the user to a
- * deep page is a future feature that needs a return-to threaded through the
- * callback (do not reuse the login page's `next`, which is an IdP authorize
+ * authorize context to hand a credential form. The current path rides
+ * along as the kickoff's `next`, so the callback lands back on this page
+ * (the login page's own `next` is a different thing: an IdP authorize
  * path, not an app path).
  */
 const noopSubscribe = () => () => {};
@@ -105,7 +104,7 @@ export function useRequireAuth() {
     // renders the failure instead.
     if (authError !== null) return;
     if (loading || error || user !== null) return;
-    window.location.href = loginUrl();
+    window.location.href = loginUrl(returnPath());
   }, [user, loading, error, authError]);
 
   return { user, loading, error, authError };

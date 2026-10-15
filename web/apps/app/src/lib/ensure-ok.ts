@@ -1,6 +1,6 @@
 "use client";
 
-import { GENERIC_FAILURE, loginUrl } from "@bower/api";
+import { GENERIC_FAILURE, loginUrl, returnPath } from "@bower/api";
 
 type Toast = { error: (message: string, title?: string) => void };
 
@@ -24,7 +24,7 @@ export function ensureOk<R extends Outcome>(
   opts?: { title?: string },
 ): res is Extract<R, { status: "ok" }> {
   if (res.status === "unauthenticated") {
-    window.location.href = loginUrl();
+    window.location.href = loginUrl(returnPath());
     return false;
   }
   if (res.status !== "ok") {
@@ -44,6 +44,6 @@ export function redirectIfUnauthenticated<R extends Outcome>(
   res: R,
 ): res is Extract<R, { status: "unauthenticated" }> {
   if (res.status !== "unauthenticated") return false;
-  window.location.href = loginUrl();
+  window.location.href = loginUrl(returnPath());
   return true;
 }

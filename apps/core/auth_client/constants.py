@@ -33,3 +33,8 @@ class AuthErrorCode(StrEnum):
     MISSING_PARAMS = "missing_params"
     STATE_MISMATCH = "state_mismatch"
     HOSTED_ACCESS_REQUIRED = "hosted_access_required"
+
+
+# The longest same-origin path a login may carry back to the web app
+# (the kickoff's `next`); longer is refused and the login lands on "/".
+RETURN_PATH_MAX_LENGTH = 2048

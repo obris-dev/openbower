@@ -5,7 +5,7 @@ import {
   cancelLookalikeRun,
   fetchLookalikeRunResult,
   fetchLookalikesResult,
-  loginUrl,
+  loginUrl, returnPath,
   LOOKALIKE_PAGE_LIMIT,
   type LookalikeListResponse,
   type LookalikeQuery,
@@ -111,7 +111,7 @@ function settle(generation: number, res: LookalikesResult | null): void {
   } else if (res.status === "unauthenticated" || res.status === "reauth") {
     // Signed out mid-run, or the session predates data access: only a
     // fresh login fixes either.
-    window.location.href = loginUrl();
+    window.location.href = loginUrl(returnPath());
   } else {
     set({
       phase: SearchPhase.Idle,
@@ -208,7 +208,7 @@ export function cancelSearch(): void {
     // auth failure here resolves, with a fresh login.
     void (async () => {
       const { needsLogin } = await cancelLookalikeRun(runId);
-      if (needsLogin) window.location.href = loginUrl();
+      if (needsLogin) window.location.href = loginUrl(returnPath());
     })();
   }
   rememberActive(null);
