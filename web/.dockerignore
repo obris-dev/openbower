@@ -15,3 +15,8 @@
 **/.env
 **/.env.*
 !**/.env.example
+
+# A host-side Workers build (OpenNext output, wrangler's state) must
+# never ride into the image context.
+**/.open-next
+**/.wrangler
