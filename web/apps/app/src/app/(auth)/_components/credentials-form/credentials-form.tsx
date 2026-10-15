@@ -80,7 +80,7 @@ export function CredentialsForm({
       <p className="mb-6 mt-1 text-sm text-muted">{subtitle}</p>
       {fromSelfHost && (
         <p className="mb-4 rounded-md bg-surface px-3 py-2 text-xs text-muted">
-          Signing in to your self-hosted OpenBower. You go back to it afterwards.
+          Signing in to your self-hosted OpenBower.
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
