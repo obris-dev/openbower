@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.2](https://github.com/obris-dev/openbower/compare/v0.0.1...v0.0.2) (2026-10-15)
+
+
+### Features
+
+* one-command install and the bower-admin operator command ([#87](https://github.com/obris-dev/openbower/issues/87)) ([cbea14d](https://github.com/obris-dev/openbower/commit/cbea14dfbed72e801abb4f0485f49efd38ea88a6))
+* the site serves the installer to curl at the root URL ([#89](https://github.com/obris-dev/openbower/issues/89)) ([afcd464](https://github.com/obris-dev/openbower/commit/afcd46449e85da745fa91e1850b737888e803b46))
+* **web:** the marketing site deploys to Cloudflare Workers ([#76](https://github.com/obris-dev/openbower/issues/76)) ([7cc5747](https://github.com/obris-dev/openbower/commit/7cc57475c06a0953dfabb983acb6fe25f5d56143))
+
+
+### Bug fixes
+
+* a fresh clone's make up builds the core image instead of pulling it ([#83](https://github.com/obris-dev/openbower/issues/83)) ([7fbc4a2](https://github.com/obris-dev/openbower/commit/7fbc4a2f4eaf2af9ce5558f821c49dfaea003c5c))
+* a fresh clone's make up no longer warns about pulling the core image ([#84](https://github.com/obris-dev/openbower/issues/84)) ([14c39a6](https://github.com/obris-dev/openbower/commit/14c39a60119422538310a5ae4e121c522e3fa8ab))
+* **deps:** the open dependency alerts ([#82](https://github.com/obris-dev/openbower/issues/82)) ([66fbe97](https://github.com/obris-dev/openbower/commit/66fbe97e9995af6c3deb873db4e75286db33a0b4))
+* make up waits until the web dev servers answer ([#85](https://github.com/obris-dev/openbower/issues/85)) ([a40b553](https://github.com/obris-dev/openbower/commit/a40b5535eae8ce3b90513aed2fa9d113b448eda4))
+* the setup walkthroughs show only on a self-hosted deployment ([#88](https://github.com/obris-dev/openbower/issues/88)) ([74a7969](https://github.com/obris-dev/openbower/commit/74a796914fbf1408eaef38a147dbcb15c34be5cb))
+
 ## 0.0.1 (2026-10-06)
 
 
