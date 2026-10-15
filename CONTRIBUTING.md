@@ -95,7 +95,9 @@ The app RUNS in Docker (`make up`) and the checks RUN ON THE HOST:
 compose database, which is what CI does too, so a green local check and a
 green CI run mean the same thing. The operator command's own tests live
 in `scripts/tests/` (POSIX sh, one `expect` per assertion, a throwaway
-HOME and config directory) and run with `make test-scripts`. Running a check inside a container
+HOME and config directory) and run with `make test-scripts`. The production
+images build and start with `make test-images`, the one check that needs
+Docker on the host. Running a check inside a container
 (`make local-exec`) is for diagnosing the container itself.
 
 ## House style

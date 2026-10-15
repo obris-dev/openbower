@@ -156,7 +156,8 @@ ask_secret() {
 # Fedora, Ubuntu before 21.04). 640 cannot help: the container carries
 # gid 1000, which a non-1000 user cannot chgrp to. Closing this means
 # the containers running as the installing user, which is image and
-# compose work that belongs with the published-images change.
+# compose work that belongs with the change that runs the published
+# images in compose instead of building them here.
 lock_file() {
     if [ "$(uname -s)" = Darwin ] || [ "$(id -u)" = 1000 ]; then
         chmod 600 "$1" 2>/dev/null || true
