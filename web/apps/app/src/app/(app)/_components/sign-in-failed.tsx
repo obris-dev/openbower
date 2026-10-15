@@ -1,7 +1,7 @@
 "use client";
 
 import { ShieldAlert } from "lucide-react";
-import { Button, Card } from "@bower/ui";
+import { Button, Card, CopyButton } from "@bower/ui";
 import { loginUrl } from "@bower/api";
 
 /** Terminal full-page state for a failed OAuth callback (?auth_error=).
@@ -33,7 +33,12 @@ export function SignInFailed({ code }: { code: string }) {
           <p className="mt-2 text-sm text-muted">
             Your account is on the list for the hosted app. Until your invite, OpenBower runs on your own machine:
           </p>
-          <code className="mt-4 block rounded-md bg-surface px-3 py-2 text-left text-xs text-foreground">{INSTALL_LINE}</code>
+          <div className="mt-4 flex items-center gap-2 rounded-md bg-surface py-1.5 pl-3 pr-1.5">
+            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-left text-xs text-foreground">
+              {INSTALL_LINE}
+            </code>
+            <CopyButton value={INSTALL_LINE} />
+          </div>
         </Card>
       </main>
     );
