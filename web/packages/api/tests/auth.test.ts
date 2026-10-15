@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { credentialPostIsSameSite, idpResumeUrl, resumeTargetsLoopback } from "../src/auth.ts";
+import { credentialPostIsSameSite, idpResumeUrl, loginUrl, resumeTargetsLoopback } from "../src/auth.ts";
 
 const HOSTED_AUTH = "https://auth.example.io";
 
@@ -38,4 +38,10 @@ test("a resume stays on the identity service: relative kept, its own origin kept
   assert.equal(idpResumeUrl("https://evil.example/anything"), `${base}/`);
   assert.equal(idpResumeUrl("//evil.example/anything"), `${base}/`);
   assert.equal(idpResumeUrl(null), `${base}/`);
+});
+
+test("the login kickoff carries the page to come back to as an encoded next, or nothing", () => {
+  assert.equal(loginUrl(), "http://localhost:8002/v1/auth/login");
+  assert.equal(loginUrl("/lists/42?after=abc"), "http://localhost:8002/v1/auth/login?next=%2Flists%2F42%3Fafter%3Dabc");
+  assert.equal(loginUrl(""), "http://localhost:8002/v1/auth/login");
 });

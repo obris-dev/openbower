@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getFills,
-  loginUrl,
+  loginUrl, returnPath,
   postFillCancel,
   type ColumnFillSummary,
 } from "@bower/api";
@@ -86,7 +86,7 @@ export function useFill(
       const outcome = await tick(generation);
       if (generationRef.current !== generation || outcome === "superseded") return;
       if (outcome === "unauthenticated") {
-        window.location.href = loginUrl();
+        window.location.href = loginUrl(returnPath());
         return;
       }
       if (outcome === "blip") {

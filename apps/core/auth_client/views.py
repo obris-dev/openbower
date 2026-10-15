@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponseRedirect
+from django.utils.encoding import iri_to_uri
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,6 +29,7 @@ from .constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME, AuthErrorCode
 from .cookies import delete_session_cookie, delete_state_cookie, set_session_cookie, set_state_cookie
 from .services import AppSessionService, OAuthClientService, StateMismatch
 from .services.oauth import AuthUpstreamError
+from .services.return_path import clean_return_path
 
 logger = logging.getLogger("auth_client")
 
@@ -44,7 +46,12 @@ class LoginRedirectView(APIView):
     permission_classes: list = []
 
     def get(self, request: HttpRequest) -> HttpResponseRedirect:
-        url, state = OAuthClientService.Global.begin_login()
+        # `next`: the same-origin path the browser lands on once signed
+        # in, so a sheet opened signed out is the sheet signed in. Kept
+        # server-side for the round trip; anything but a plain path
+        # lands on "/".
+        return_path = clean_return_path(request.GET.get("next"))
+        url, state = OAuthClientService.Global.begin_login(return_path=return_path)
         response = HttpResponseRedirect(url)
         # Pin the flow to THIS browser: the callback requires this cookie
         # to echo the state it receives (see CallbackView).
@@ -97,7 +104,7 @@ class CallbackView(APIView):
         if not hmac.compare_digest(request.COOKIES.get(STATE_COOKIE_NAME, ""), state):
             return fail(AuthErrorCode.STATE_MISMATCH)
         try:
-            tokens, user = OAuthClientService.Global.complete_login(state=state, code=code)
+            tokens, user, return_path = OAuthClientService.Global.complete_login(state=state, code=code)
         except StateMismatch:
             return fail(AuthErrorCode.STATE_MISMATCH)
         except AuthUpstreamError as e:
@@ -122,7 +129,10 @@ class CallbackView(APIView):
             logger.exception("failed to persist session after successful login")
             return fail(AuthErrorCode.LOGIN_FAILED)
 
-        response = HttpResponseRedirect(f"{settings.APP_BASE_URL}/")
+        # The origin is this install's own setting; only the path came
+        # from the kickoff, already cleaned there and re-encoded here
+        # (it arrived decoded, so a query with a space is a real case).
+        response = HttpResponseRedirect(iri_to_uri(f"{settings.APP_BASE_URL}{return_path}"))
         set_session_cookie(response, raw)
         # The handshake is over; the state cookie has no further business.
         delete_state_cookie(response)

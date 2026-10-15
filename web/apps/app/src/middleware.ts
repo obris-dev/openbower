@@ -11,7 +11,7 @@ export function middleware(request: NextRequest) {
   // terminal state; bouncing it to login would rebuild the redirect
   // loop that page exists to break.
   if (request.nextUrl.searchParams.has("auth_error")) return NextResponse.next();
-  return NextResponse.redirect(loginUrl());
+  return NextResponse.redirect(loginUrl(`${request.nextUrl.pathname}${request.nextUrl.search}`));
 }
 
 export const config = {

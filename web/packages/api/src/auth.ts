@@ -48,9 +48,21 @@ export async function fetchMe(): Promise<Me | null> {
   return result.status === "ok" ? result.user : null;
 }
 
-/** Where the Log in button navigates: the backend starts the OAuth flow. */
-export function loginUrl(): string {
-  return buildApiUrl(apiRoutes.auth.login);
+/** Where a signed-out browser is sent: the backend starts the OAuth
+ * flow. `next` is the same-origin path to land on once signed in (a
+ * sheet opened signed out is the sheet signed in); the backend keeps it
+ * server-side for the round trip and refuses anything but a plain path.
+ * Without it the login lands on the home page. */
+export function loginUrl(next?: string): string {
+  const base = buildApiUrl(apiRoutes.auth.login);
+  return next ? `${base}?${new URLSearchParams({ next }).toString()}` : base;
+}
+
+/** The browser's current path and query, the `next` a client-side
+ * bounce hands to loginUrl. Browser-only: the server pages know their
+ * own path and pass it directly. */
+export function returnPath(): string {
+  return `${window.location.pathname}${window.location.search}`;
 }
 
 // A credential failure, shaped for the error taxonomy: `fields` carries

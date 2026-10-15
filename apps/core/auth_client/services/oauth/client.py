@@ -37,15 +37,17 @@ class OAuthClientGlobal:
     account context; the browser session is user-scoped)."""
 
     @staticmethod
-    def begin_login() -> tuple[str, str]:
-        """Mint state + PKCE verifier, stash the bag, and return
-        `(authorize_url, state)`. The state goes back to the caller so
-        the view can ALSO pin it to the browser in a cookie: the cache
-        bag alone is server-global and cannot say which browser started
-        the flow."""
+    def begin_login(*, return_path: str) -> tuple[str, str]:
+        """Mint state + PKCE verifier, stash the bag (the verifier and
+        the same-origin path the browser lands on afterwards), and
+        return `(authorize_url, state)`. The state goes back to the
+        caller so the view can ALSO pin it to the browser in a cookie:
+        the cache bag alone is server-global and cannot say which
+        browser started the flow. The return path never reaches the
+        identity service: it rides in the bag, keyed by the state."""
         state = pkce.new_state()
         verifier = pkce.new_verifier()
-        OAuthStateStore.put(state=state, verifier=verifier)
+        OAuthStateStore.put(state=state, verifier=verifier, return_path=return_path)
         url = idp_urls.authorize_url(
             {
                 "response_type": "code",
@@ -68,17 +70,19 @@ class OAuthClientGlobal:
         return url, state
 
     @staticmethod
-    def complete_login(*, state: str, code: str) -> tuple[TokenResponse, AuthUser]:
-        """Exchange the callback's code for tokens and resolve identity.
+    def complete_login(*, state: str, code: str) -> tuple[TokenResponse, AuthUser, str]:
+        """Exchange the callback's code for tokens and resolve identity;
+        the third value is the path the login started from.
 
         Raises StateMismatch on an unknown/expired state, AuthUpstreamError
         on any IdP failure. The state bag is consumed by the pop BEFORE the
         exchange so a replayed callback can't race a second exchange with
         the same verifier.
         """
-        verifier = OAuthStateStore.pop(state=state)
-        if verifier is None:
+        bag = OAuthStateStore.pop(state=state)
+        if bag is None:
             raise StateMismatch(state)
+        verifier = bag.verifier
         tokens = transport.post_token(
             {
                 "grant_type": "authorization_code",
@@ -92,7 +96,7 @@ class OAuthClientGlobal:
                 "resource": settings.OAUTH_RESOURCES,
             }
         )
-        return tokens, transport.fetch_identity(tokens.access_token)
+        return tokens, transport.fetch_identity(tokens.access_token), bag.return_path
 
     @staticmethod
     def refresh(*, refresh_token: str) -> TokenResponse:

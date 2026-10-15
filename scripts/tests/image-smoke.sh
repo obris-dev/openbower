@@ -37,8 +37,10 @@ web)
         echo "/login answered '${code}'" >&2
         exit 1
     fi
+    # The bounce carries the page to come back to (`next`), so the exact
+    # value also proves that the return path reaches the kickoff.
     kickoff=$(curl -s -o /dev/null -w '%{redirect_url}' "http://127.0.0.1:${port}/")
-    if [ "$kickoff" != "http://localhost:8002/v1/auth/login" ]; then
+    if [ "$kickoff" != "http://localhost:8002/v1/auth/login?next=%2F" ]; then
         docker logs "$name"
         echo "signed-out / went to '${kickoff}'" >&2
         exit 1

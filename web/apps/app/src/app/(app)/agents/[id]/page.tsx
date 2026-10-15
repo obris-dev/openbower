@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
-import { loginUrl } from "@bower/api";
+import { loginUrl, webRoutes } from "@bower/api";
 
 import { Builder } from "../_components/builder";
 
@@ -11,7 +11,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const { fetchAgentWithCookie } = await import("@bower/api/server");
   const agent = await fetchAgentWithCookie(cookieHeader, id);
   if (agent.status === "missing") notFound();
-  if (agent.status === "unauthenticated") redirect(loginUrl());
+  if (agent.status === "unauthenticated") redirect(loginUrl(webRoutes.agent(id)));
   if (agent.status !== "ok") throw new Error("The agent could not be loaded.");
   return (
     <div className="p-6">

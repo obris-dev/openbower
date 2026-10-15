@@ -54,7 +54,8 @@ export function SignInFailed({ code }: { code: string }) {
           className="mt-5"
           onClick={() => {
             // Full document load on purpose: restarting the OAuth flow
-            // crosses the auth boundary (see the navigation rule).
+            // crosses the auth boundary (see the navigation rule). No
+            // return path: this page's own URL carries the error.
             window.location.href = loginUrl();
           }}
         >
