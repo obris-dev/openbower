@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.3](https://github.com/obris-dev/openbower/compare/v0.0.2...v0.0.3) (2026-10-15)
+
+
+### Features
+
+* published core and web images, built and started on every PR ([#96](https://github.com/obris-dev/openbower/issues/96)) ([a532679](https://github.com/obris-dev/openbower/commit/a5326799df333cab8dacecde792cf63280bfd2f1))
+* sign-in returns to the page it started from ([#94](https://github.com/obris-dev/openbower/issues/94)) ([9627e82](https://github.com/obris-dev/openbower/commit/9627e8257f5977dc28fb279cc00cc945dfb2dcd5))
+* the hosted deployment refuses an account without the grant ([#92](https://github.com/obris-dev/openbower/issues/92)) ([874d3c5](https://github.com/obris-dev/openbower/commit/874d3c5f0f6b0f41bdcf3ef3e8ac05209b4a3303))
+* the on-the-list page's install line copies with one click ([#100](https://github.com/obris-dev/openbower/issues/100)) ([308ae93](https://github.com/obris-dev/openbower/commit/308ae9315ec0be34a490b95220011f3aa664c5b1))
+* the product app builds for Cloudflare Workers ([#98](https://github.com/obris-dev/openbower/issues/98)) ([d907228](https://github.com/obris-dev/openbower/commit/d90722855e2c7993f152d9992e1d1cef4d221a3e))
+
+
+### Bug fixes
+
+* an install signs in at the one login page, never on its own ([#93](https://github.com/obris-dev/openbower/issues/93)) ([63d482a](https://github.com/obris-dev/openbower/commit/63d482a1076b047be9de035d9a31ed03f2d0a04e))
+* the deployment include takes this app's leaf, not a moved path ([#99](https://github.com/obris-dev/openbower/issues/99)) ([335d22a](https://github.com/obris-dev/openbower/commit/335d22af8ad53f7c9e58af9b135418da8f0ab742))
+* the hosted login card says it is signing in a self-hosted install in its one line, not a third ([#101](https://github.com/obris-dev/openbower/issues/101)) ([5d2f14e](https://github.com/obris-dev/openbower/commit/5d2f14edb1202df11fcb199b354b6c3f67091263))
+* the published builds carry no provenance manifest, the unknown/unknown entry on the package page ([#97](https://github.com/obris-dev/openbower/issues/97)) ([fad4206](https://github.com/obris-dev/openbower/commit/fad4206cdc23a287a63528ce5164b98b4652c688))
+* version says whether the install is up to date ([#90](https://github.com/obris-dev/openbower/issues/90)) ([f8f327d](https://github.com/obris-dev/openbower/commit/f8f327df6038d7e7274b89f141d5c5e34d456eb6))
+
 ## [0.0.2](https://github.com/obris-dev/openbower/compare/v0.0.1...v0.0.2) (2026-10-15)
 
 
