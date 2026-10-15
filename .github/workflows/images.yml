@@ -135,12 +135,16 @@ jobs:
       # and every member manifest); the Dockerfile is the member's own.
       # Pushed by digest, untagged: the manifest job below joins the two
       # architectures under the tags, so no tag ever names half an image.
+      # No provenance attestation: the action attaches one by default as
+      # an extra manifest the registry lists as platform unknown/unknown
+      # beside every image, and nothing here consumes it.
       - id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.arch }}
+          provenance: false
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ matrix.build_args }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
