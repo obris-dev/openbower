@@ -17,7 +17,27 @@ const DETAILS: Record<string, string> = {
   login_failed: "The identity service couldn't complete the sign-in.",
 };
 
+// The hosted deployment opens by invitation. This landing is not a
+// failure to retry (the identity session is fine; a retry refuses the
+// same way), so it names the way to run OpenBower now.
+const HOSTED_ACCESS_REQUIRED = "hosted_access_required";
+const INSTALL_LINE = "curl -fsSL https://openbower.ai | sh";
+
 export function SignInFailed({ code }: { code: string }) {
+  if (code === HOSTED_ACCESS_REQUIRED) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-canvas p-6">
+        <Card className="w-full max-w-sm p-8 text-center" role="status">
+          <ShieldAlert aria-hidden className="mx-auto h-10 w-10 text-faint" />
+          <h1 className="mt-4 text-lg font-semibold text-foreground">You&apos;re on the list</h1>
+          <p className="mt-2 text-sm text-muted">
+            Your account is on the list for the hosted app. Until your invite, OpenBower runs on your own machine:
+          </p>
+          <code className="mt-4 block rounded-md bg-surface px-3 py-2 text-left text-xs text-foreground">{INSTALL_LINE}</code>
+        </Card>
+      </main>
+    );
+  }
   return (
     <main className="grid min-h-dvh place-items-center bg-canvas p-6">
       <Card className="w-full max-w-sm p-8 text-center" role="alert">

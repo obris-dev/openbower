@@ -333,6 +333,12 @@
           "title": "Email",
           "type": "string"
         },
+        "hosted_access": {
+          "default": false,
+          "description": "Whether the account may sign into the hosted app. Checked by the hosted deployment at login only; a self-hosted install ignores it. Defaulted so an identity service that predates the field still validates.",
+          "title": "Hosted Access",
+          "type": "boolean"
+        },
         "id": {
           "description": "The user's cloud-issued ULID.",
           "title": "Id",
