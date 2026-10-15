@@ -109,8 +109,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # No version pin: action-setup reads packageManager from
-      # web/package.json, which is the one home for it (the web image
-      # does the same via corepack).
+      # web/package.json, which is the one home for it (both web images
+      # do the same via corepack).
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: web/package.json
@@ -134,3 +134,84 @@ jobs:
       # scripts/install.sh into public/ first, so a moved or missing
       # installer fails here and not in the site's deploy.
       - run: cd web && pnpm --filter @bower/marketing run build
+
+  # Both images build from a clean context and each one starts: the core
+  # answers Django's system check, the web serves its login page. The
+  # dev compose flow never exercises either Dockerfile's COPY list (it
+  # mounts the source over the image), so a file the production build
+  # lacks would otherwise surface on main, after the merge. Once per
+  # architecture the published images carry, each on its native runner,
+  # so a Mac self-hoster's build is proven here and not at pull time.
+  # Same Dockerfiles, contexts, and cache scopes as the publishing
+  # workflow, nothing pushed. Each build step skips when its image's
+  # inputs did not change. The legs report under the one `images` gate
+  # below, which is the required check: a leg that never reports would
+  # leave a PR unmergeable, and two legs would be two checks to require.
+  image:
+    name: images / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    # The path filter lists the PR's changed files through the API,
+    # which a public repo serves to anyone; claimed here so the job
+    # does not depend on that.
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/image-inputs.yml
+      - uses: docker/setup-buildx-action@v3
+        if: steps.filter.outputs.core == 'true' || steps.filter.outputs.web == 'true'
+
+      - uses: docker/build-push-action@v6
+        if: steps.filter.outputs.core == 'true'
+        with:
+          context: .
+          file: apps/core/Dockerfile
+          load: true
+          tags: openbower-core:ci
+          cache-from: type=gha,scope=openbower-core-${{ matrix.arch }}
+          cache-to: type=gha,scope=openbower-core-${{ matrix.arch }},mode=max
+      - name: The core image starts
+        if: steps.filter.outputs.core == 'true'
+        run: sh scripts/tests/image-smoke.sh core openbower-core:ci
+
+      - uses: docker/build-push-action@v6
+        if: steps.filter.outputs.web == 'true'
+        with:
+          context: web
+          file: web/apps/app/Dockerfile
+          load: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost:8002
+            NEXT_PUBLIC_AUTH_URL=https://auth.openbower.ai
+          tags: openbower-web:ci
+          cache-from: type=gha,scope=openbower-web-${{ matrix.arch }}
+          cache-to: type=gha,scope=openbower-web-${{ matrix.arch }},mode=max
+      - name: The web image serves its login page and sends a signed-out browser to its backend
+        if: steps.filter.outputs.web == 'true'
+        run: sh scripts/tests/image-smoke.sh web openbower-web:ci
+
+  # The one check to require for the images: green only when every leg
+  # succeeded. `always()` so it reports when a leg failed or was
+  # cancelled, instead of being skipped with it.
+  images:
+    needs: image
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.image.result }}
+        run: |
+          echo "image legs: ${RESULT}"
+          [ "$RESULT" = "success" ]

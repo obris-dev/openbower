@@ -1,0 +1,27 @@
+# What each published image is built from, read by the path filter in
+# ci.yml and images.yml: a change here or in any listed path rebuilds
+# that image. Everything a Dockerfile's COPY reaches has to be listed,
+# including the files that shape its context, or the published image
+# goes stale without anyone noticing.
+core:
+  - 'apps/core/**'
+  - 'packages/**'
+  - 'config/templates/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - 'version.txt'
+  - '.dockerignore'
+  - '.github/image-inputs.yml'
+  - '.github/workflows/images.yml'
+  - '.github/workflows/ci.yml'
+web:
+  - 'web/apps/app/**'
+  - 'web/packages/**'
+  - 'web/package.json'
+  - 'web/pnpm-lock.yaml'
+  - 'web/pnpm-workspace.yaml'
+  - 'web/tsconfig.base.json'
+  - 'web/.dockerignore'
+  - '.github/image-inputs.yml'
+  - '.github/workflows/images.yml'
+  - '.github/workflows/ci.yml'
