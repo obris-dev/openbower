@@ -13,6 +13,10 @@ export type CredentialsFooter = {
 
 export type Mode = {
   subtitle: string;
+  /** The one line under the brand when a self-hosted install sent the
+   * browser here: it replaces `subtitle`, so the card says why the
+   * address bar is not the install's without a third line. */
+  selfHostSubtitle: string;
   action: (email: string, password: string) => Promise<CredentialFailure | null>;
   submitLabel: string;
   busyLabel: string;
