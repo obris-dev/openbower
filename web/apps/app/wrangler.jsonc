@@ -1,0 +1,20 @@
+{
+  // Cloudflare Workers deploy for the product app (OpenNext). Generic
+  // and deployment-agnostic: no account id, no routes or custom domains,
+  // no secrets. The operator supplies those out of band: `wrangler login`
+  // (or CLOUDFLARE_ACCOUNT_ID), and the custom domain in the Cloudflare
+  // dashboard. A self-hoster overrides `name` and brings their own
+  // domain. The browser-facing origins are inlined at build time from
+  // .env.production, so a worker is built for one backend.
+  "main": ".open-next/worker.js",
+  "name": "openbower-app",
+  // Served only on the configured custom domain; the *.workers.dev URL
+  // stays off. Applies on the next deploy.
+  "workers_dev": false,
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}
