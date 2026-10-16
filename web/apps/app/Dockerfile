@@ -32,8 +32,12 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 FROM deps AS build
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_AUTH_URL
+# The sign-in providers to offer; none unless the build says so, since
+# only an identity service holding provider credentials can honor them.
+ARG NEXT_PUBLIC_AUTH_PROVIDERS=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_AUTH_URL=$NEXT_PUBLIC_AUTH_URL \
+    NEXT_PUBLIC_AUTH_PROVIDERS=$NEXT_PUBLIC_AUTH_PROVIDERS \
     NEXT_TELEMETRY_DISABLED=1
 COPY . .
 # Offline: everything was fetched above, this only links the app and

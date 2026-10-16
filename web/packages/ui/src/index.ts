@@ -25,6 +25,7 @@ export { Switch } from "./switch";
 export { Textarea } from "./textarea";
 export { Spinner } from "./spinner";
 export { BrandMark } from "./brand-mark";
+export { GitHubMark, GoogleMark } from "./provider-marks";
 export { ToastProvider, useToast } from "./toast";
 export * from "./sidebar";
 export * from "./theme";

@@ -65,6 +65,40 @@ export function returnPath(): string {
   return `${window.location.pathname}${window.location.search}`;
 }
 
+// The upstream identity providers the IdP may offer. Which ones THIS
+// build shows is NEXT_PUBLIC_AUTH_PROVIDERS (a comma list, inlined at
+// build time like the origins); the IdP refuses a provider it has no
+// credentials for, so a mismatch is a banner on the login page, never
+// a dead button. The record is the roster: a name off the env that is
+// not here is dropped.
+export type AuthProvider = "google" | "github";
+
+export const AUTH_PROVIDERS: Record<AuthProvider, { label: string }> = {
+  google: { label: "Continue with Google" },
+  github: { label: "Continue with GitHub" },
+};
+
+export function parseAuthProviders(raw: string | undefined): AuthProvider[] {
+  const seen = new Set<AuthProvider>();
+  for (const part of (raw ?? "").split(",")) {
+    const name = part.trim();
+    if (name in AUTH_PROVIDERS) seen.add(name as AuthProvider);
+  }
+  return [...seen];
+}
+
+/** The providers this build offers, in the env's order. */
+export function authProviders(): AuthProvider[] {
+  return parseAuthProviders(process.env.NEXT_PUBLIC_AUTH_PROVIDERS);
+}
+
+/** Where a provider button navigates: the IdP's start endpoint, carrying
+ * the in-flight authorize (`next`) so the round trip resumes it. */
+export function providerStartUrl(provider: AuthProvider, next: string | null): string {
+  const base = buildAuthUrl(authRoutes.socialStart(provider));
+  return next ? `${base}?${new URLSearchParams({ next }).toString()}` : base;
+}
+
 // A credential failure, shaped for the error taxonomy: `fields` carries
 // per-input messages (tier a, rendered AT the inputs) when the IdP's
 // validation response provides them; `message` is the form-level banner

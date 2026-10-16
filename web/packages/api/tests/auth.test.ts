@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { credentialPostIsSameSite, idpResumeUrl, loginUrl, resumeTargetsLoopback } from "../src/auth.ts";
+import {
+  credentialPostIsSameSite,
+  idpResumeUrl,
+  loginUrl,
+  parseAuthProviders,
+  providerStartUrl,
+  resumeTargetsLoopback,
+} from "../src/auth.ts";
 
 const HOSTED_AUTH = "https://auth.example.io";
 
@@ -44,4 +51,20 @@ test("the login kickoff carries the page to come back to as an encoded next, or 
   assert.equal(loginUrl(), "http://localhost:8002/v1/auth/login");
   assert.equal(loginUrl("/lists/42?after=abc"), "http://localhost:8002/v1/auth/login?next=%2Flists%2F42%3Fafter%3Dabc");
   assert.equal(loginUrl(""), "http://localhost:8002/v1/auth/login");
+});
+
+test("the providers a build offers come off the env, known names only, in order, once", () => {
+  assert.deepEqual(parseAuthProviders(undefined), []);
+  assert.deepEqual(parseAuthProviders(""), []);
+  assert.deepEqual(parseAuthProviders("github"), ["github"]);
+  assert.deepEqual(parseAuthProviders("github, google"), ["github", "google"]);
+  assert.deepEqual(parseAuthProviders("google,facebook,google"), ["google"]);
+});
+
+test("a provider button starts the identity service's round trip, carrying the authorize to resume", () => {
+  assert.equal(providerStartUrl("google", null), "http://localhost:8001/social/google/start");
+  assert.equal(
+    providerStartUrl("github", "/oauth/authorize/?client_id=x"),
+    "http://localhost:8001/social/github/start?next=%2Foauth%2Fauthorize%2F%3Fclient_id%3Dx",
+  );
 });

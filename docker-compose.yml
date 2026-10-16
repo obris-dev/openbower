@@ -529,6 +529,10 @@ services:
       # The same value core gets (x-core-env): the login form posts
       # credentials to the IdP this names.
       NEXT_PUBLIC_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
+      # The sign-in providers to offer, a comma list the identity service
+      # named above has credentials for (none by default: a locally run
+      # hub has none until its operator registers provider apps).
+      NEXT_PUBLIC_AUTH_PROVIDERS: ${NEXT_PUBLIC_AUTH_PROVIDERS:-}
       NEXT_PUBLIC_APP_URL: http://localhost:3003
       # Server-side fetches cross the compose network instead; localhost
       # inside this container is this container. Read by @bower/api's
