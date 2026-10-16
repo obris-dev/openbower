@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/obris-dev/openbower/compare/v0.0.3...v0.0.4) (2026-10-16)
+
+
+### Features
+
+* sign in with Google and GitHub from the hosted card ([#102](https://github.com/obris-dev/openbower/issues/102)) ([a3aabcf](https://github.com/obris-dev/openbower/commit/a3aabcfa970ccaafb9ace9bb4dd50acca165241e))
+
 ## [0.0.3](https://github.com/obris-dev/openbower/compare/v0.0.2...v0.0.3) (2026-10-15)
 
 
