@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { Button, ErrorMessage, FieldError, Input, Label, PasswordInput } from "@bower/ui";
 import { type CredentialFailure, idpResumeUrl, webRoutes, withNext } from "@bower/api";
 
+import { ProviderButtons } from "../provider-buttons";
+import type { ProviderErrorLine } from "../provider-errors";
 import { REMEMBER_EMAIL_COOKIE, REMEMBER_MAX_AGE_SECONDS } from "./constants";
 import { MODES } from "./modes";
 import type { ModeName } from "./types";
@@ -30,12 +32,17 @@ export function CredentialsForm({
   mode,
   rememberedEmail = null,
   selfHost = false,
+  initialError = null,
 }: {
   mode: ModeName;
   rememberedEmail?: string | null;
   /** Decided by the server page from ?next (a loopback redirect_uri),
    * so the first paint already carries the right line. */
   selfHost?: boolean;
+  /** A line the page arrived with (a provider sign-in that failed, from
+   * ?auth_error=), shown as the banner until the next submit, with a
+   * link when the fix lives elsewhere. */
+  initialError?: ProviderErrorLine | null;
 }) {
   const {
     subtitle,
@@ -58,6 +65,9 @@ export function CredentialsForm({
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<CredentialFailure | null>(null);
+  // The line the page arrived with sits above the provider buttons it is
+  // about, until the first submit: the form's own outcome replaces it.
+  const [arrivalShown, setArrivalShown] = useState(initialError !== null);
   const [submitting, setSubmitting] = useState(false);
   // `next` is read straight off the URL (no mount effect + state, which
   // would setState within an effect and cascade a render).
@@ -73,6 +83,7 @@ export function CredentialsForm({
     }
     setSubmitting(true);
     setError(null);
+    setArrivalShown(false);
     const failure = await action(email, password);
     if (failure) {
       setError(failure);
@@ -88,6 +99,30 @@ export function CredentialsForm({
   return (
     <>
       <p className="mb-6 mt-1 text-sm text-muted">{selfHost ? selfHostSubtitle : subtitle}</p>
+      {arrivalShown && initialError && (
+        <ErrorMessage
+          className="mb-5"
+          message={
+            initialError.action ? (
+              <>
+                {initialError.message}
+                <a
+                  className="font-medium underline underline-offset-2"
+                  href={initialError.action.href}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {initialError.action.label}
+                </a>
+                {initialError.action.after}
+              </>
+            ) : (
+              initialError.message
+            )
+          }
+        />
+      )}
+      <ProviderButtons next={next} />
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {error?.message && <ErrorMessage message={error.message} />}
         <div>

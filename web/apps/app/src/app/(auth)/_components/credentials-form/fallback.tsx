@@ -1,5 +1,7 @@
+import { authProviders } from "@bower/api";
 import { Skeleton } from "@bower/ui";
 
+import { ProviderDivider } from "../provider-buttons";
 import { MODES } from "./modes";
 import type { ModeName } from "./types";
 
@@ -10,9 +12,20 @@ import type { ModeName } from "./types";
 export function CredentialsFormFallback({ mode }: { mode: ModeName }) {
   const { confirmPassword, rememberEmail } = MODES[mode];
   const fields = confirmPassword ? 3 : 2;
+  const providers = authProviders();
   return (
     <div aria-hidden>
       <Skeleton className="mb-6 mt-1 h-5 w-40" />
+      {providers.length > 0 && (
+        <>
+          <div className="space-y-3">
+            {providers.map((provider) => (
+              <Skeleton key={provider} className="h-9 w-full" />
+            ))}
+          </div>
+          <ProviderDivider />
+        </>
+      )}
       <div className="space-y-4">
         {Array.from({ length: fields }, (_, i) => (
           <div key={i}>

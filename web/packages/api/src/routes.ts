@@ -114,6 +114,11 @@ export const authRoutes = {
   login: `/${AUTH_API_VERSION}/auth/login`,
   // POST: create the account + mint the session (the signup form posts here).
   signup: `/${AUTH_API_VERSION}/auth/signup`,
+  // GET (a full navigation): start a sign-in through an upstream
+  // provider; the IdP does the round trip and resumes `next`. At the
+  // IdP's root like its other navigation targets, not under the API
+  // version: the matching callback is registered at the providers.
+  socialStart: (provider: string) => `/social/${provider}/start`,
 } as const;
 
 const LIST_PREFIX = "/lists";
