@@ -72,7 +72,7 @@ git clone https://github.com/obris-dev/openbower.git && cd openbower && sh scrip
 | `bower-admin help` | everything else |
 
 > [!NOTE]
-> **Signing in uses the hosted account hub, out of the box.** Sign in on your install sends the browser to the hub's login page at app.openbower.ai and back to your install, signed in. The same account unlocks the built-in data sources, such as the similar-companies source.
+> **Signing in uses the hosted account hub, out of the box.** Sign in on your install sends the browser to the hub's login page at app.openbower.ai, where you sign in with Google, GitHub, or an email and password, and back to your install, signed in. The same account unlocks the built-in data sources, such as the similar-companies source.
 
 ### Prereq: a model
 
