@@ -138,9 +138,11 @@ export function SheetTable({
     if (keys) onReorder?.(keys);
   }
 
-  if (rows.length === 0) {
-    return <p className="p-6 text-sm text-muted">This sheet has no rows.</p>;
-  }
+  // The header renders whatever the row count: a column is named in
+  // the header before it exists, so a sheet with no rows yet (one just
+  // created) still has to show the editor, or its first column could
+  // never be added. The row count's message lives in the body.
+  const headerCells = 1 + columns.length + (pendingColumn && onNamePending ? 1 : 0) + (onAddColumn ? 1 : 0);
   // The tracker row exists only once an AI column does: a sheet of
   // plain columns has no fill state to track, and an all-empty row
   // would be dead height between header and rows.
@@ -229,6 +231,13 @@ export function SheetTable({
         )}
       </thead>
       <tbody className="divide-y divide-hairline">
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={headerCells} className="p-6 text-sm text-muted">
+              This sheet has no rows.
+            </td>
+          </tr>
+        )}
         {rows.map((row, index) => (
           <tr key={row.id} className="align-top">
             {/* The row number is counted here: the page's array IS the
