@@ -278,12 +278,12 @@ export function Directory({
             Import CSV
           </Button>
           <Dropdown>
-            <DropdownButton as={Button} variant="secondary" aria-label="New">
+            <DropdownButton as={Button} variant="secondary" aria-label="Create list or folder">
               <Plus aria-hidden className="h-4 w-4" />
             </DropdownButton>
             <DropdownMenu anchor="bottom end">
-              <DropdownItem onClick={() => void quickAdd("list")}>New list</DropdownItem>
-              <DropdownItem onClick={() => void quickAdd("folder")}>New folder</DropdownItem>
+              <DropdownItem onClick={() => void quickAdd("list")}>Create list</DropdownItem>
+              <DropdownItem onClick={() => void quickAdd("folder")}>Create folder</DropdownItem>
             </DropdownMenu>
           </Dropdown>
         </div>

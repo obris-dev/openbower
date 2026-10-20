@@ -7,4 +7,6 @@ urlpatterns = [
     api_path("callback", views.CallbackView.as_view(), name="auth_callback"),
     api_path("logout", views.LogoutView.as_view(), name="auth_logout"),
     api_path("me", views.MeView.as_view(), name="auth_me"),
+    api_path("api-keys", views.ApiKeysView.as_view(), name="auth_api_keys"),
+    api_path("api-keys/<str:id>", views.ApiKeyDetailView.as_view(), name="auth_api_key_detail"),
 ]

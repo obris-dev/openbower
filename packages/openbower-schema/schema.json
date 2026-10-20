@@ -320,6 +320,88 @@
       "title": "AiColumn",
       "type": "object"
     },
+    "ApiKeyMinted": {
+      "description": "The mint response: the ONE time the token is on the wire. No later\nread returns it; a lost token is replaced by minting another.",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ApiKeyWire"
+        },
+        "token": {
+          "description": "The bearer value a script sends as Authorization: Bearer; shown this once.",
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "key"
+      ],
+      "title": "ApiKeyMinted",
+      "type": "object"
+    },
+    "ApiKeyWire": {
+      "description": "One machine API key as its owner's list shows it. The raw token is\nunrecoverable by design, so a key is known by its name and the last\nfour characters of the token.",
+      "properties": {
+        "created_at": {
+          "description": "ISO 8601, when the key was created.",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "description": "The key's ULID; a revoke names it.",
+          "title": "Id",
+          "type": "string"
+        },
+        "last_four": {
+          "description": "The token's last four characters, for recognition only.",
+          "title": "Last Four",
+          "type": "string"
+        },
+        "name": {
+          "description": "The owner's label for the script that uses the key.",
+          "title": "Name",
+          "type": "string"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the key stopped working; null while it works.",
+          "title": "Revoked At"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "last_four",
+        "created_at"
+      ],
+      "title": "ApiKeyWire",
+      "type": "object"
+    },
+    "ApiKeysList": {
+      "description": "The owner's live keys, newest first; a revoked key is absent.\nUnpaged: MAX_API_KEYS bounds it.",
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/ApiKeyWire"
+          },
+          "title": "Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "ApiKeysList",
+      "type": "object"
+    },
     "AuthUser": {
       "description": "The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.",
       "properties": {
@@ -973,6 +1055,59 @@
         "accepted"
       ],
       "title": "IngestAccepted",
+      "type": "object"
+    },
+    "IngestColumn": {
+      "description": "One column of the push schema: the key a row dict keys on and the\nvalue's type. Only the columns a producer OWNS appear: a column the\nsystem fills is written with its own record of what filled it, and\na push writes rows alone, so such a column is absent here and its\nkey is refused on append.",
+      "properties": {
+        "key": {
+          "description": "Row data dicts key on this.",
+          "maxLength": 40,
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display label.",
+          "maxLength": 80,
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "description": "The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, and date carry shape rules), so send values of this type.",
+          "enum": [
+            "text",
+            "number",
+            "currency",
+            "date",
+            "url",
+            "email"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "type"
+      ],
+      "title": "IngestColumn",
+      "type": "object"
+    },
+    "IngestSchema": {
+      "description": "The pushable row shape for POST /v1/lists/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "Columns of the push schema, in display order; the ones a producer owns.",
+          "items": {
+            "$ref": "#/$defs/IngestColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        }
+      },
+      "title": "IngestSchema",
       "type": "object"
     },
     "ListColumn": {
@@ -2255,8 +2390,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
   "x-constants": {
+    "API_KEY_NAME_MAX_LENGTH": 80,
     "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
     "FREE_SEARCH_FILL_BUDGET": 768,
+    "MAX_API_KEYS": 50,
     "MAX_TOOL_CALLS": 6,
     "MAX_WEBHOOK_DESTINATIONS": 32,
     "MAX_WEBHOOK_HEADERS": 8,

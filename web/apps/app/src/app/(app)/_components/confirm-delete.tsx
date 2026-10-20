@@ -23,7 +23,10 @@ export function ConfirmDelete({
   question: string;
   consequence?: string;
   busy?: boolean;
-  /** Row layout (a footer bar) instead of the stacked panel form. */
+  /** Row layout instead of the stacked panel form, for a bar the
+   * ritual has to itself (a page footer, a toolbar's action slot): it
+   * never shares a flex line with the content it confirms. A roster
+   * row hangs the stacked form off its verb in an anchored panel. */
   inline?: boolean;
   verb?: string;
   refusal?: string | null;

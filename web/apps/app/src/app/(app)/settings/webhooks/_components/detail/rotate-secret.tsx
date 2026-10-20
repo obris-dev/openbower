@@ -6,7 +6,7 @@ import { ROTATION_IN_PROGRESS_CODE, rotateWebhook, type RenderableDestination } 
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
-import { DONE, ROTATE_CONSEQUENCE, ROTATE_QUESTION, ROTATE_SECRET, SECRET_ROTATED_NOTE, rotatedLede } from "../copy";
+import { CLOSE, ROTATE_CONSEQUENCE, ROTATE_QUESTION, ROTATE_SECRET, SECRET_ROTATED_NOTE, rotatedLede } from "../copy";
 import { SecretReveal } from "../secret-reveal";
 
 /** Rotate the signing secret: a ghost verb, the confirm ritual (it
@@ -47,7 +47,7 @@ export function RotateSecret({
       <div className="space-y-3">
         <SecretReveal label={label} secret={revealed} lede={rotatedLede(label)} note={SECRET_ROTATED_NOTE} guide={false} />
         <Button type="button" variant="ghost" size="sm" onClick={() => setRevealed(null)}>
-          {DONE}
+          {CLOSE}
         </Button>
       </div>
     );

@@ -154,7 +154,7 @@ function MenuBody({
                 ? containedCount === 1
                   ? "Its list moves back to Home."
                   : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`
-                : undefined
+                : "This can't be undone."
             }
             onCancel={() => setView("root")}
             onDelete={() => {

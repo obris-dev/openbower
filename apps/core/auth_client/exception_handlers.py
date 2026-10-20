@@ -13,7 +13,7 @@ Everything else passes through DRF's default handling.
 
 from __future__ import annotations
 
-from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated, PermissionDenied, ValidationError
 from rest_framework.views import exception_handler as drf_exception_handler
 
 from .constants import AuthErrorCode
@@ -51,6 +51,10 @@ def auth_exception_handler(exc, context):
         return response
     if isinstance(exc, NotAuthenticated | AuthenticationFailed):
         response.data = {"error": str(AuthErrorCode.NOT_AUTHENTICATED), "detail": str(exc.detail)}
+    elif isinstance(exc, PermissionDenied):
+        # The credential is valid but not permitted; the code names why
+        # (hosted_access_required, or DRF's own permission_denied).
+        response.data = {"error": str(exc.get_codes()), "detail": str(exc.detail)}
     elif isinstance(exc, ValidationError):
         detail, fields = _validation_payload(exc.detail)
         response.data = {

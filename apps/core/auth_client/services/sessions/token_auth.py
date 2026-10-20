@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import httpx
 
-from auth_client.services.sessions import AppSessionService
+from .service import AppSessionService
 
 
 class SessionTokenAuth(httpx.Auth):

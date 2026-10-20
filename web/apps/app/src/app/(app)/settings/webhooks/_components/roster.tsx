@@ -54,7 +54,7 @@ export function Roster({ initialDestinations }: { initialDestinations: Renderabl
       {destinations.length === 0 ? (
         <EmptyState title={EMPTY_TITLE} subtitle={EMPTY_SUBTITLE}>
           <Button size="sm" onClick={() => setDrawerOpen(true)}>
-            Add your first destination
+            Add destination
           </Button>
         </EmptyState>
       ) : (

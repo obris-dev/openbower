@@ -10,7 +10,8 @@ import { type ChecklistItem, ReadinessChecklist } from "../../../_components/age
 
 /** The builder's pinned actions: the readiness checklist (its own
  * centered row on mobile), the delete confirm tier (owned here), and
- * Clear | Test | Save with the responsive split. */
+ * Clear | Test | the primary with the responsive split. The primary
+ * names the result: Create agent while none is saved, Save after. */
 export function BuilderFooter({
   checklist,
   showDelete,
@@ -20,6 +21,7 @@ export function BuilderFooter({
   onClearDraft,
   onTest,
   onSave,
+  saveLabel,
 }: {
   checklist: ChecklistItem[] | null;
   showDelete: boolean;
@@ -29,6 +31,7 @@ export function BuilderFooter({
   onClearDraft: () => void;
   onTest: () => void;
   onSave: () => void;
+  saveLabel: string;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -61,7 +64,7 @@ export function BuilderFooter({
         Test
       </Button>
       <Button onClick={onSave} loading={busy}>
-        Save
+        {saveLabel}
       </Button>
     </PageFooter>
   );

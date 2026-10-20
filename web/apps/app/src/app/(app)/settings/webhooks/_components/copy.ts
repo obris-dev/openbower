@@ -36,7 +36,7 @@ export const SECRET_ROTATED_NOTE = `This is the only time this secret will be sh
 export function rotatedLede(label: string): string {
   return `${label} has a new signing secret.`;
 }
-export const DONE = "Done";
+export const CLOSE = "Close";
 /** "Used by 1 column" | "Used by N columns" | null when none. */
 export function usageLine(count: number | null): string | null {
   // Null is a read that does not carry the count (the roster); zero is

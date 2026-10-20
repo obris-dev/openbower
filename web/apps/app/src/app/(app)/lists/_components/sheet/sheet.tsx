@@ -34,6 +34,7 @@ import { menuButtonId } from "./column-header";
 import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
+import { AddRowsDrawer } from "./add-rows-drawer";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { SheetTable } from "./sheet-table";
@@ -76,6 +77,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     null,
   );
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
+  const [addRowsOpen, setAddRowsOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
   // deployment's search provider into its popover (the paid-provider nudge
@@ -348,6 +350,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
             <ConfirmDelete
               inline
               question="Delete this list?"
+              consequence="This can't be undone."
               onCancel={() => setConfirmingDelete(false)}
               onDelete={() => void remove()}
             />
@@ -357,6 +360,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
                   exist; the discover seed lives in the menu and its
                   disclosure opens here when summoned. */}
               <FindLookalikes detail={detail} open={lookalikesOpen} onOpenChange={setLookalikesOpen} />
+              <AddRowsDrawer listId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
               {/* A MENU button: the kind is chosen at
                   the gesture, so the drawer opens already knowing
                   what it is; new column kinds land here later. */}
@@ -384,6 +388,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
                   >
                     Find lookalikes
                   </DropdownItem>
+                  <DropdownItem onClick={() => setAddRowsOpen(true)}>Add rows via API</DropdownItem>
                   <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
                     {exporting ? "Exporting…" : "Export CSV"}
                   </DropdownItem>

@@ -12,6 +12,12 @@ export type AgentTools = z.infer<typeof AgentToolsSchema>;
 export const AiColumnSchema = z.object({ "current_fill_id": z.string().describe("The fill run that speaks for this column, stored here when it opens and served back as ColumnFillSummary.current_fill_id: the tracker follows THIS run, never the newest by time; \"\" when the column has never run.").default(""), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("ai").default("ai"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "node_id": z.string().describe("The workflow node whose runs write this column's cells."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A column an agent fills. The column binds to the NODE that fills\nit; the agent, and its ephemeral-vs-roster custody, hangs off the\nnode, so editing what fills a column goes through the column,\nnever this id.");
 export type AiColumn = z.infer<typeof AiColumnSchema>;
 
+export const ApiKeyWireSchema = z.object({ "created_at": z.string().describe("ISO 8601, when the key was created."), "id": z.string().describe("The key's ULID; a revoke names it."), "last_four": z.string().describe("The token's last four characters, for recognition only."), "name": z.string().describe("The owner's label for the script that uses the key."), "revoked_at": z.union([z.string(), z.null()]).describe("When the key stopped working; null while it works.").default(null) }).describe("One machine API key as its owner's list shows it. The raw token is\nunrecoverable by design, so a key is known by its name and the last\nfour characters of the token.");
+export type ApiKeyWire = z.infer<typeof ApiKeyWireSchema>;
+
+export const ApiKeysListSchema = z.object({ "keys": z.array(z.lazy(() => ApiKeyWireSchema)) }).describe("The owner's live keys, newest first; a revoked key is absent.\nUnpaged: MAX_API_KEYS bounds it.");
+export type ApiKeysList = z.infer<typeof ApiKeysListSchema>;
+
 export const AuthUserSchema = z.object({ "account_id": z.string().describe("The user's primary account ULID."), "email": z.string().describe("The user's email address."), "hosted_access": z.boolean().describe("Whether the account may sign into the hosted app. Checked by the hosted deployment at login only; a self-hosted install ignores it. Defaulted so an identity service that predates the field still validates.").default(false), "id": z.string().describe("The user's cloud-issued ULID.") }).describe("The authenticated user the app's /v1/auth/me returns (and the identity\nthe IdP resolves). Char-pointer ULIDs, so plain strings on the wire.");
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 
@@ -47,6 +53,12 @@ export type FoldersList = z.infer<typeof FoldersListSchema>;
 
 export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "event_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.");
 export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
+
+export const IngestColumnSchema = z.object({ "key": z.string().max(40).describe("Row data dicts key on this."), "label": z.string().max(80).describe("Display label."), "type": z.enum(["text","number","currency","date","url","email"]).describe("The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, and date carry shape rules), so send values of this type.") }).describe("One column of the push schema: the key a row dict keys on and the\nvalue's type. Only the columns a producer OWNS appear: a column the\nsystem fills is written with its own record of what filled it, and\na push writes rows alone, so such a column is absent here and its\nkey is refused on append.");
+export type IngestColumn = z.infer<typeof IngestColumnSchema>;
+
+export const IngestSchemaSchema = z.object({ "columns": z.array(z.lazy(() => IngestColumnSchema)).describe("Columns of the push schema, in display order; the ones a producer owns.").default([]) }).describe("The pushable row shape for POST /v1/lists/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.");
+export type IngestSchema = z.infer<typeof IngestSchemaSchema>;
 
 export const ListRowWireSchema = z.object({ "data": z.record(z.string(), z.string()).describe("Cell values keyed by column key.").default({}), "id": z.string(), "states": z.record(z.string(), z.lazy(() => CellStateWireSchema)).describe("Cell states keyed by column key, for every node column (AI and Send webhook alike): every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean; never-attempted (an AI cell no fill reached, a webhook cell whose row was never due) is likewise an absence.").default({}) }).describe("A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).");
 export type ListRowWire = z.infer<typeof ListRowWireSchema>;
@@ -114,6 +126,9 @@ export type AgentSummary = z.infer<typeof AgentSummarySchema>;
 export const AgentsListSchema = z.object({ "items": z.array(z.lazy(() => AgentListItemSchema)) });
 export type AgentsList = z.infer<typeof AgentsListSchema>;
 
+export const ApiKeyMintedSchema = z.object({ "key": z.lazy(() => ApiKeyWireSchema), "token": z.string().describe("The bearer value a script sends as Authorization: Bearer; shown this once.") }).describe("The mint response: the ONE time the token is on the wire. No later\nread returns it; a lost token is replaced by minting another.");
+export type ApiKeyMinted = z.infer<typeof ApiKeyMintedSchema>;
+
 export const CellRunResultSchema = z.object({ "assessments": z.record(z.string(), z.lazy(() => CellAssessmentSchema)).default({}), "blamed_tool": z.string().default(""), "cells": z.record(z.string(), z.string()).default({}), "declined_cause": z.string().default(""), "evidence": z.array(z.string()).default([]), "tool_calls": z.array(z.lazy(() => SearchToolCallSchema)).default([]), "tools": z.record(z.string(), z.string()).default({}) }).describe("What ONE row's run produced, stored verbatim on the task that\nran it: the cells it would write ({} = nothing, honestly), the\nevidence the model saw, each tool call's diagnosis, and the causes\nbehind any blank.\n\nONE shape for both landings. A sheet row's answers land in its\ncolumns; a preview run lands on itself; both store this record, so a\nreader that had to ask which landing produced it would be reading\ntwo contracts through one field. The preview reads it VERBATIM off\nthe run wire (NodeRunWire carries it whole), so there is no second\nprojection to drift.\n\nWhat LANDED is the sheet row plus its cell states; the difference\nbetween the two is the audit story (an answer write-if-blank\nrefused, a value the confidence floor dropped, a shape the column\nwould not take), which is why this is stored whole rather than\nreduced to what survived.");
 export type CellRunResult = z.infer<typeof CellRunResultSchema>;
 
@@ -178,6 +193,14 @@ export const WIRE_BOUNDS = {
     }
   },
   "AiColumn": {
+    "key": {
+      "maxLength": 40
+    },
+    "label": {
+      "maxLength": 80
+    }
+  },
+  "IngestColumn": {
     "key": {
       "maxLength": 40
     },
@@ -272,8 +295,10 @@ export const RESERVED_OUTPUT_KEYS = [
 ] as const;
 
 export const WIRE_CONSTANTS = {
+  "API_KEY_NAME_MAX_LENGTH": 80,
   "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
   "FREE_SEARCH_FILL_BUDGET": 768,
+  "MAX_API_KEYS": 50,
   "MAX_TOOL_CALLS": 6,
   "MAX_WEBHOOK_DESTINATIONS": 32,
   "MAX_WEBHOOK_HEADERS": 8,

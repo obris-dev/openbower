@@ -121,7 +121,7 @@ OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "openbower-app")
 # browser's. OPENBOWER_AUTH_URL stays the service's IDENTITY everywhere it
 # names the service (resource indicators, browser navigation); this base
 # carries only the HTTP calls this process makes itself (token exchange,
-# revocation, /me). Defaults to the canonical URL, so host runs set nothing.
+# revocation, /me, api-keys). Defaults to the canonical URL, so host runs set nothing.
 # `or`, not get(default): a set-but-empty `NAME=` must fall back, not
 # become a relative URL that fails every call to this service.
 OPENBOWER_AUTH_INTERNAL_URL = (os.environ.get("OPENBOWER_AUTH_INTERNAL_URL") or OPENBOWER_AUTH_URL).rstrip("/")
@@ -200,7 +200,7 @@ TOOL_WIRING = _TOOL_CONFIG.wiring
 
 
 # Timeout (seconds) for every server-to-IdP HTTP call (token exchange,
-# /me, refresh, revoke), so a hung IdP can't pin a worker.
+# /me, refresh, revoke, api-keys), so a hung IdP can't pin a worker.
 AUTH_HTTP_TIMEOUT_SECONDS = int(os.environ.get("AUTH_HTTP_TIMEOUT_SECONDS", "10"))
 
 # Outbound webhooks POST to a user-supplied URL. The timeout bounds each

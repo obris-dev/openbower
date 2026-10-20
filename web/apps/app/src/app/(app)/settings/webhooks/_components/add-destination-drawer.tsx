@@ -156,7 +156,7 @@ function DrawerContent({
 
   const footer = revealed ? (
     <Button type="button" fullWidth onClick={onClose}>
-      Done
+      Close
     </Button>
   ) : (
     <>

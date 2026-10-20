@@ -1,5 +1,5 @@
 """The openbower-auth (IdP) URLs the BROWSER/SESSION flow uses (authorize,
-token, revoke, logout, /me).
+token, revoke, logout, /me, api-keys).
 
 One module owns these upstream URL shapes, so a path change on the IdP is
 a one-place edit here, and no call site in the session flow hand-builds an
@@ -10,7 +10,7 @@ data client packages its own (discover/services/index_client/urls.py).
 TWO bases, by who dials the URL. OPENBOWER_AUTH_URL is the IdP's
 identity, the origin the BROWSER navigates to (authorize, logout) and the
 one the token names as its audience. OPENBOWER_AUTH_INTERNAL_URL carries
-the calls THIS PROCESS makes (token exchange, revocation, /me) and
+the calls THIS PROCESS makes (token exchange, revocation, /me, api-keys) and
 defaults to the identity, so the two differ only where the network path
 does (a containerized app reaching the IdP through a gateway alias).
 
@@ -22,7 +22,7 @@ configuration.
 
 from __future__ import annotations
 
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from django.conf import settings
 
@@ -57,6 +57,20 @@ def token_url() -> str:
 def revoke_token_url() -> str:
     """POST: token revocation."""
     return f"{_internal_base()}/oauth/revoke_token/"
+
+
+def api_keys_url() -> str:
+    """GET / POST with a Bearer access token: the user's machine API keys
+    (list, mint). Versioned by the IdP's own prefix, like me_url."""
+    return f"{_internal_base()}/{settings.OPENBOWER_AUTH_API_VERSION}/auth/api-keys"
+
+
+def api_key_url(key_id: str) -> str:
+    """DELETE with a Bearer access token: revoke one of the user's keys.
+    The id is percent-encoded: Django decodes %XX before routing, so a
+    <str:id> can hold ? & # and would otherwise inject query parameters
+    into the token-bearing upstream request."""
+    return f"{api_keys_url()}/{quote(key_id, safe='')}"
 
 
 def me_url() -> str:

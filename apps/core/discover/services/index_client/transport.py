@@ -3,7 +3,8 @@ and protocol failures normalized into the package's named errors and
 bodies validated into the SHARED contract models (openbower_schema)
 before anyone downstream touches them, so this consumer cannot drift from
 what the data service serializes. Addresses come from the package's urls;
-credentials come from the client's auth flow (auth.py); this module owns
+credentials come from the shared session flow
+(auth_client.services.sessions.SessionTokenAuth); this module owns
 only the calls and their outcome mapping.
 """
 
@@ -16,10 +17,10 @@ from django.conf import settings
 from pydantic import BaseModel, ValidationError
 
 from auth_client.downstream import DownstreamTokenRejected
+from auth_client.services.sessions import SessionTokenAuth
 from openbower_schema import LookalikeListResponse
 
 from . import urls
-from .auth import SessionTokenAuth
 from .errors import IndexAccessDenied, IndexClientRequestError, IndexUpstreamError, IndexUpstreamUnavailable
 
 

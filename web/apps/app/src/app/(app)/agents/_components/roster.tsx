@@ -45,7 +45,7 @@ export function Roster({ initialAgents }: { initialAgents: AgentListItem[] }) {
             <p className="mt-1 text-sm text-muted">Reusable research prompts you test once and point at sheets.</p>
           )}
         </div>
-        <LinkButton href={webRoutes.agentNew}>New agent</LinkButton>
+        <LinkButton href={webRoutes.agentNew}>Create agent</LinkButton>
       </div>
 
       {agents.length === 0 ? (
@@ -54,7 +54,7 @@ export function Roster({ initialAgents }: { initialAgents: AgentListItem[] }) {
           subtitle="An agent is a prompt that runs per row: build one, test it on a single row, then reuse it across sheets."
         >
           <LinkButton size="sm" href={webRoutes.agentNew}>
-            Build your first agent
+            Create agent
           </LinkButton>
         </EmptyState>
       ) : (

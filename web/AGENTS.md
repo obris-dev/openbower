@@ -129,7 +129,73 @@ violation shipped once and got caught).
   that do not exist).
 - Destructive verbs get one confirm ritual everywhere (swap-in tier,
   focus lands on Cancel, consequence copy), shared, not re-derived per
-  surface.
+  surface. The ritual never reflows the thing it confirms: a roster
+  row's verb opens an ANCHORED PANEL (Popover, focus landing on Cancel)
+  holding the stacked form, so the row keeps its shape (the agents and
+  directory rows via their menu, the API keys row off its Revoke
+  button); the inline form takes the destructive verb's own place in a
+  bar (a page footer, the sheet toolbar's action slot) and the bar's
+  other actions stay where they are. Polaris opens a modal
+  for the same decision; the anchored panel keeps what the modal is for
+  (one decision, nothing else moving) without the overlay.
+
+## Action verbs
+
+The base is Shopify Polaris's "Actionable language" guidance (the
+archived page: Shopify/polaris at 24ad69af64,
+`polaris.shopify.com/content/content/actionable-language.mdx`), adopted
+whole except where a rule below says otherwise. The point is one verb
+per action across the product, so a person learns the vocabulary once.
+
+- Buttons and menu actions lead with a verb and name the object:
+  {verb} + {noun}, sentence case, no articles ("Add column", never
+  "Add a column", never "New column"). The one-word exceptions: the
+  shared closers (Save, Cancel, Close, Done), the confirm's own verb
+  (Delete, Revoke, Rotate), and a lone verb whose object is the row or
+  page it sits on (Edit, Rename, Delete in a row menu; Test, Retry in a
+  footer). A tab or mode label is not an action ("New prompt" names a
+  mode), so the verb rules do not reach it.
+- **Create** makes something from nothing that then has its own
+  identity: Create API key, Create agent, Create list, Create folder,
+  Create account. **Add** brings in something that already exists, or
+  attaches a part to a parent: Add destination (the receiver exists
+  before we know it), Add column, Add rows, Add AI column. "New",
+  "Mint", "Generate", "Build" and "Make" are never the action verb.
+- The verb holds through the flow: the button, the drawer title, its
+  primary action and the empty state's invitation all say Create agent
+  (never "your first agent"); a row's timestamp says Created or Revoked
+  to match. A drawer or page that creates or adds names the result on
+  its primary ("Add destination", "Create agent"), not Save: nothing is
+  being kept for later. Save is for an edit of something that exists.
+- **Delete** destroys an object (Delete list, Delete agent, Delete
+  column, Delete destination); **Remove** takes a part away from a
+  parent and leaves it existing elsewhere. **Revoke** is a key's own
+  verb. The confirm ritual asks a {verb} + {noun} question ("Revoke this
+  key?"), says the consequence in one line, and offers Cancel beside the
+  one-word verb.
+- **Save** persists an edit of something that already exists, alone
+  inside a drawer ("Save"), with a noun only where the context is gone.
+  **Done** closes a drawer whose choices apply as unsaved changes to the
+  page behind it (a deferred save). **Close** dismisses something the
+  person only had to read: a one-time token or secret reveal, a
+  walkthrough. **Cancel** backs out of changes and discards them.
+- **Edit** changes a field's input; **Manage** opens a surface where
+  several actions are possible. **Change** replaces an option without
+  editing it; **Switch** moves between accounts, modes or locations.
+- **View** goes to a page or reveals detail (View details); **see** is
+  for prose only. **Select** picks from a short, defined list; **Choose**
+  is for open-ended or weighty decisions.
+- **Export** converts data out of the product (Export CSV); **Download**
+  copies a file as is. **Import** converts data in (Import CSV);
+  **Upload** copies a file in as is.
+- Links say where they go in a {verb} + {noun} phrase or link the key
+  words of a sentence, never "here" or "click here", never a whole
+  sentence. No directional language ("above", "on the right"): put the
+  action beside the thing it acts on.
+- Where this product departs from Polaris: it says Sign in and Sign
+  out (Polaris has no rule, and the hub's screens say Sign in), `|`
+  separates facts in a line, and the house writing rules in the root
+  AGENTS.md (no em dashes, no middots) win over Polaris's punctuation.
 
 ## Accessibility and platform
 
