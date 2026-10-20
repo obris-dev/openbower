@@ -1,8 +1,10 @@
 "use client";
 
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, UserCheck } from "lucide-react";
 import { Button, Card, CopyButton } from "@bower/ui";
 import { loginUrl } from "@bower/api";
+
+import { signOut } from "./sign-out";
 
 /** Terminal full-page state for a failed OAuth callback (?auth_error=).
  * Deliberately NOT an auto-redirect: the IdP session usually survives
@@ -19,7 +21,11 @@ const DETAILS: Record<string, string> = {
 
 // The hosted deployment opens by invitation. This landing is not a
 // failure to retry (the identity session is fine; a retry refuses the
-// same way), so it names the way to run OpenBower now.
+// same way), so it names the way to run OpenBower now. The sign-out
+// line is the one escape hatch: the identity session outlives the
+// refusal, so someone who signed in with the wrong account could not
+// otherwise switch. It stays a footnote so the install command keeps
+// the page.
 const HOSTED_ACCESS_REQUIRED = "hosted_access_required";
 const INSTALL_LINE = "curl -fsSL https://openbower.ai | sh";
 
@@ -28,7 +34,7 @@ export function SignInFailed({ code }: { code: string }) {
     return (
       <main className="grid min-h-dvh place-items-center bg-canvas p-6">
         <Card className="w-full max-w-sm p-8 text-center" role="status">
-          <ShieldAlert aria-hidden className="mx-auto h-10 w-10 text-faint" />
+          <UserCheck aria-hidden className="mx-auto h-10 w-10 text-faint" />
           <h1 className="mt-4 text-lg font-semibold text-foreground">You&apos;re on the list</h1>
           <p className="mt-2 text-sm text-muted">
             Your account is on the list for the hosted app. Until your invite, OpenBower runs on your own machine:
@@ -39,6 +45,16 @@ export function SignInFailed({ code }: { code: string }) {
             </code>
             <CopyButton value={INSTALL_LINE} iconOnly />
           </div>
+          <p className="mt-6 text-xs text-faint">
+            Signed in with the wrong account?{" "}
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="rounded underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal"
+            >
+              Sign out
+            </button>
+          </p>
         </Card>
       </main>
     );
