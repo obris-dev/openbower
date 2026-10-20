@@ -76,15 +76,13 @@ export function Roster({ initialKeys }: { initialKeys: ApiKeyWire[] }) {
                 </PopoverButton>
                 <PopoverPanel focus>
                   {({ close }) => (
-                    <div className="w-64 px-4 py-1.5">
-                      <ConfirmDelete
-                        verb="Revoke"
-                        question={REVOKE_QUESTION}
-                        busy={revokingId === key.id}
-                        onCancel={close}
-                        onDelete={() => void revoke(key.id)}
-                      />
-                    </div>
+                    <ConfirmDelete
+                      verb="Revoke"
+                      question={REVOKE_QUESTION}
+                      busy={revokingId === key.id}
+                      onCancel={close}
+                      onDelete={() => void revoke(key.id)}
+                    />
                   )}
                 </PopoverPanel>
               </Popover>

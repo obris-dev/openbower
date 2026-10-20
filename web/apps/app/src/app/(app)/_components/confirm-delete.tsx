@@ -55,13 +55,17 @@ export function ConfirmDelete({
       </div>
     );
   }
+  // The stacked form owns its width and padding, so every panel that
+  // hosts it (a row's menu, a column header, a key's Revoke) reads the
+  // same: a question card, not menu rows. The buttons sit as a footer
+  // at the trailing edge, the one red verb where the eye lands last.
   return (
-    <div>
-      <p className="text-sm text-foreground">{question}</p>
+    <div className="w-64 px-4 py-3">
+      <p className="text-sm font-medium text-foreground">{question}</p>
       {consequence && (
         // The consequence gets its own quiet line, so the question
         // never wraps mid-thought.
-        <p className="mt-0.5 text-xs text-muted">{consequence}</p>
+        <p className="mt-1 text-xs text-muted">{consequence}</p>
       )}
       {/* The answer reads before the choice, and is announced: it
           appears after a click with focus still on the verb. */}
@@ -70,7 +74,7 @@ export function ConfirmDelete({
           <ErrorMessage message={refusal} />
         </div>
       )}
-      <div className="flex gap-1.5 pt-2">{buttons}</div>
+      <div className="mt-3 flex justify-end gap-2">{buttons}</div>
     </div>
   );
 }

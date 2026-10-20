@@ -69,7 +69,7 @@ function MenuBody({
   }, [view]);
 
   return (
-    <div ref={tierRef} className={view === "delete" ? "w-60" : "w-48"}>
+    <div ref={tierRef} className={view === "delete" ? undefined : "w-48"}>
       {view === "root" && (
         <>
           <PopoverItem
@@ -146,23 +146,21 @@ function MenuBody({
         </>
       )}
       {view === "delete" && (
-        <div className="px-4 py-1.5">
-          <ConfirmDelete
-            question={kind === "folder" ? "Delete this folder?" : "Delete this list?"}
-            consequence={
-              kind === "folder"
-                ? containedCount === 1
-                  ? "Its list moves back to Home."
-                  : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`
-                : "This can't be undone."
-            }
-            onCancel={() => setView("root")}
-            onDelete={() => {
-              close();
-              onDelete();
-            }}
-          />
-        </div>
+        <ConfirmDelete
+          question={kind === "folder" ? "Delete this folder?" : "Delete this list?"}
+          consequence={
+            kind === "folder"
+              ? containedCount === 1
+                ? "Its list moves back to Home."
+                : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`
+              : "This can't be undone."
+          }
+          onCancel={() => setView("root")}
+          onDelete={() => {
+            close();
+            onDelete();
+          }}
+        />
       )}
     </div>
   );

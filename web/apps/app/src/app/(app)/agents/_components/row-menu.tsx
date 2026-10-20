@@ -30,17 +30,15 @@ function MenuBody({ editHref, onDelete, close }: { editHref: string; onDelete: (
 
   if (confirming) {
     return (
-      <div className="w-60 px-4 py-1.5">
-        <ConfirmDelete
-          question={DELETE_AGENT_QUESTION}
-          consequence={DELETE_AGENT_CONSEQUENCE}
-          onCancel={() => setConfirming(false)}
-          onDelete={() => {
-            close();
-            onDelete();
-          }}
-        />
-      </div>
+      <ConfirmDelete
+        question={DELETE_AGENT_QUESTION}
+        consequence={DELETE_AGENT_CONSEQUENCE}
+        onCancel={() => setConfirming(false)}
+        onDelete={() => {
+          close();
+          onDelete();
+        }}
+      />
     );
   }
   return (

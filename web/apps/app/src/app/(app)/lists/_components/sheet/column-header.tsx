@@ -94,19 +94,17 @@ function ColumnMenu({
 
   if (confirming && onDelete) {
     return (
-      <div className="w-64 px-4 py-1.5">
-        <ConfirmDelete
-          question={`Delete the ${column.label} column?`}
-          // No cell count: it is a sheet-wide fact the client cannot
-          // know from paged rows, and a number we cannot stand behind
-          // is worse than none.
-          consequence={column.kind === "webhook" ? DELETE_WEBHOOK_COLUMN_CONSEQUENCE : "This deletes the column and everything in it."}
-          busy={deleting}
-          refusal={refusal}
-          onCancel={() => setConfirming(false)}
-          onDelete={() => void confirmDelete()}
-        />
-      </div>
+      <ConfirmDelete
+        question={`Delete the ${column.label} column?`}
+        // No cell count: it is a sheet-wide fact the client cannot
+        // know from paged rows, and a number we cannot stand behind
+        // is worse than none.
+        consequence={column.kind === "webhook" ? DELETE_WEBHOOK_COLUMN_CONSEQUENCE : "This deletes the column and everything in it."}
+        busy={deleting}
+        refusal={refusal}
+        onCancel={() => setConfirming(false)}
+        onDelete={() => void confirmDelete()}
+      />
     );
   }
   // Rename leads (it is what the menu is most often opened for), the
