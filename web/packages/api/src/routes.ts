@@ -27,6 +27,11 @@ export const apiRoutes = {
     logout: `/${API_VERSION}/auth/logout`,
     // GET: the signed-in user projection.
     me: `/${API_VERSION}/auth/me`,
+    // GET the user's machine API keys / POST {name}: mint one (the token
+    // rides the response once). Proxied to the identity service.
+    apiKeys: `/${API_VERSION}/auth/api-keys`,
+    // DELETE: revoke one key.
+    apiKey: (id: string) => `/${API_VERSION}/auth/api-keys/${id}`,
   },
   discover: {
     // POST: the look-alike query (202 + run for cold cohorts, 200 cached).
@@ -83,6 +88,9 @@ export const apiRoutes = {
     detail: (id: string) => `/${API_VERSION}/lists/${id}`,
     // GET: keyset rows in sheet order (?after=<the page's next_cursor, verbatim>&limit=). POST: append rows.
     rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
+    // GET: the push schema (the columns a producer may send). POST {rows, event_id?}
+    // with a machine API key: the webhook push; 202, rows land off the bus.
+    ingest: (id: string) => `/${API_VERSION}/lists/${id}/ingest`,
     // POST: append one blank column (no fill attached).
     columns: (id: string) => `/${API_VERSION}/lists/${id}/columns`,
     // PATCH {keys}: reorder the sheet's columns (the whole order; the
@@ -145,6 +153,7 @@ export const webRoutes = {
   settingsAccount: `${SETTINGS_PREFIX}/account`,
   settingsWebhooks: `${SETTINGS_PREFIX}/webhooks`,
   settingsWebhook: (id: string) => `${SETTINGS_PREFIX}/webhooks/${id}`,
+  settingsApiKeys: `${SETTINGS_PREFIX}/api-keys`,
   login: "/login",
   signup: "/signup",
 } as const;

@@ -1,3 +1,4 @@
+from .api_keys import ApiKeyRefused, ApiKeyService
 from .oauth import (
     AuthUpstreamError,
     AuthUpstreamUnavailable,
@@ -8,6 +9,8 @@ from .oauth import (
 from .sessions import AppSessionService
 
 __all__ = [
+    "ApiKeyRefused",
+    "ApiKeyService",
     "AppSessionService",
     "AuthUpstreamError",
     "AuthUpstreamUnavailable",

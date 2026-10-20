@@ -15,7 +15,7 @@ export const CADENCE_HINT = "Rows that complete are batched and sent on this sch
 export const ENABLED_LABEL = "Sending";
 export const ENABLED_HINT = "Paused keeps the column and its settings; nothing is sent until it is resumed.";
 export const ADD_COLUMN_ACTION = "Add column";
-export const SAVE_ACTION = "Save changes";
+export const SAVE_ACTION = "Save";
 export const SEND_TEST_ACTION = "Send test";
 export const CONFIG_FAILED_LINE = "This webhook's settings did not load.";
 export const RETRY = "Retry";
@@ -45,7 +45,7 @@ export const INCLUDE_COLUMN = "Include column";
 export const EDIT_PAYLOAD = "Edit payload";
 
 export const NO_AI_COLUMNS_LINE = "A webhook sends a row once its AI columns complete, and this sheet has none yet.";
-export const ADD_AI_COLUMN = "Add an AI column";
+export const ADD_AI_COLUMN = "Add AI column";
 export const NO_DESTINATIONS_LINE = "No destinations yet. Add one in Settings, then press Refresh.";
 export const DESTINATIONS_LOADING_LINE = "Loading destinations…";
 export const DESTINATIONS_FAILED_LINE = "Destinations did not load.";

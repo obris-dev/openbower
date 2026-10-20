@@ -2,7 +2,7 @@
 
 All views are DRF APIViews. The browser-navigated redirect endpoints
 (login, callback) opt OUT of authentication (a dead cookie must not 401
-the navigation that replaces it); the JSON endpoints (me, logout) ride
+the navigation that replaces it); the JSON endpoints (me, logout, api-keys) ride
 the app session cookie. The app backend is the BFF: it drives the OAuth
 handshake, holds the IdP tokens server-side, and gives the browser only
 the opaque `bwr_session` cookie.
@@ -18,17 +18,28 @@ from django.conf import settings
 from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponseRedirect
 from django.utils.encoding import iri_to_uri
-from rest_framework import permissions
+from rest_framework import permissions, serializers
+from rest_framework.exceptions import AuthenticationFailed, NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import AuthUser
+from openbower_schema.auth import API_KEY_NAME_MAX_LENGTH
+from resource_server.claims_cache import forget_machine_key
 
 from . import idp_urls
 from .constants import SESSION_COOKIE_NAME, STATE_COOKIE_NAME, AuthErrorCode
 from .cookies import delete_session_cookie, delete_state_cookie, set_session_cookie, set_state_cookie
-from .services import AppSessionService, OAuthClientService, StateMismatch
-from .services.oauth import AuthUpstreamError
+from .downstream import DownstreamTokenRejected
+from .services import (
+    ApiKeyRefused,
+    ApiKeyService,
+    AppSessionService,
+    OAuthClientService,
+    StateMismatch,
+)
+from .services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from .services.return_path import clean_return_path
 
 logger = logging.getLogger("auth_client")
@@ -186,3 +197,77 @@ class LogoutView(APIView):
         )
         delete_session_cookie(response)
         return response
+
+
+class ApiKeyNameRequest(serializers.Serializer):
+    name = serializers.CharField(max_length=API_KEY_NAME_MAX_LENGTH)
+
+
+def _relay_api_keys(call):
+    """Run one proxied call and answer as the identity service did: its
+    refusals verbatim (the web renders a 400 or 409 detail as is), a
+    session it no longer honors as 401 (sign in again), and a service
+    that is down or answering nonsense as 503 (nothing to fix here)."""
+    try:
+        return call()
+    except ApiKeyRefused as e:
+        return Response({"error": e.error, "detail": e.detail}, status=e.status)
+    except DownstreamTokenRejected as e:
+        raise AuthenticationFailed("session expired or revoked") from e
+    except (AuthUpstreamUnavailable, AuthUpstreamError) as e:
+        logger.warning("api keys: identity service unavailable (%s)", type(e).__name__)
+        return Response(
+            {"error": str(AuthErrorCode.IDENTITY_UNAVAILABLE), "detail": "identity service unavailable"},
+            status=503,
+        )
+
+
+class ApiKeysView(APIView):
+    """GET / POST /v1/auth/api-keys: the signed-in user's machine API keys
+    (the credential of the push endpoints and other machine callers),
+    proxied to the identity service with the session's token. The browser
+    lane only: a machine key cannot list or mint keys."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        def list_keys():
+            keys = ApiKeyService(request.auth).list()
+            return Response(keys.model_dump())
+
+        return _relay_api_keys(list_keys)
+
+    def post(self, request):
+        body = ApiKeyNameRequest(data=request.data)
+        body.is_valid(raise_exception=True)
+        name = body.validated_data["name"]
+
+        def mint():
+            minted = ApiKeyService(request.auth).mint(name)
+            response = Response(minted.model_dump(), status=201)
+            # The only copy of the token: never cached by anything between.
+            response["Cache-Control"] = "no-store"
+            return response
+
+        return _relay_api_keys(mint)
+
+
+class ApiKeyDetailView(APIView):
+    """DELETE /v1/auth/api-keys/{id}: revoke one of the user's keys."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, id: str):
+        # A malformed id never reaches the identity service: it is a 404
+        # here, so nothing but a ULID rides the token-bearing request.
+        if not is_valid_ulid(id):
+            raise NotFound("no such api key")
+
+        def revoke():
+            ApiKeyService(request.auth).revoke(id)
+            # The claims cache on this install forgets the key at once;
+            # the identity service already refuses the token itself.
+            forget_machine_key(id)
+            return Response(status=204)
+
+        return _relay_api_keys(revoke)

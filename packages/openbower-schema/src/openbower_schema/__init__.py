@@ -15,7 +15,7 @@ from .agents import (
     AgentTools,
     CatalogModel,
 )
-from .auth import AuthUser
+from .auth import API_KEY_NAME_MAX_LENGTH, MAX_API_KEYS, ApiKeyMinted, ApiKeysList, ApiKeyWire, AuthUser
 from .discover import (
     Company,
     LookalikeGroup,
@@ -37,6 +37,8 @@ from .lists import (
     FolderSummary,
     ImportResult,
     IngestAccepted,
+    IngestColumn,
+    IngestSchema,
     ListColumn,
     ListDetail,
     ListRowsPage,
@@ -67,6 +69,8 @@ from .webhooks import (
 )
 
 __all__ = [
+    "API_KEY_NAME_MAX_LENGTH",
+    "MAX_API_KEYS",
     "AgentCatalog",
     "AgentConfig",
     "AgentListItem",
@@ -75,6 +79,9 @@ __all__ = [
     "AgentTools",
     "AgentsList",
     "AiColumn",
+    "ApiKeyMinted",
+    "ApiKeyWire",
+    "ApiKeysList",
     "AuthUser",
     "CatalogModel",
     "CellRunResult",
@@ -89,6 +96,8 @@ __all__ = [
     "FoldersList",
     "ImportResult",
     "IngestAccepted",
+    "IngestColumn",
+    "IngestSchema",
     "ListColumn",
     "ListDetail",
     "ListRowWire",

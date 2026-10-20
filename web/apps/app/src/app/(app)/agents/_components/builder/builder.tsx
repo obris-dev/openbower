@@ -342,7 +342,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
     <>
       <div className="min-w-0">
         <Breadcrumbs trail={[{ label: "Agents", href: webRoutes.agents }]} />
-        <h1 className="mt-1 text-2xl font-bold text-foreground">{agent ? agent.label : "New agent"}</h1>
+        <h1 className="mt-1 text-2xl font-bold text-foreground">{agent ? agent.label : "Create agent"}</h1>
         {agent && unsaved && (
           // The form is showing MORE than the saved row: say so, with
           // both exits named (a silent draft masking the server row
@@ -369,7 +369,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Decision-maker finder"
             />
-            {problems.label && <FieldError tone="warning">Name the agent to save it.</FieldError>}
+            {problems.label && <FieldError tone="warning">{agent ? "Name the agent to save it." : "Name the agent to create it."}</FieldError>}
           </div>
           <PromptEditor
             prompt={prompt}
@@ -447,6 +447,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
         onClearDraft={clearDraft}
         onTest={() => void test()}
         onSave={() => void save()}
+        saveLabel={agent ? "Save" : "Create agent"}
       />
     </>
   );

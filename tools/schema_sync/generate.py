@@ -27,9 +27,13 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
+    API_KEY_NAME_MAX_LENGTH,
+    MAX_API_KEYS,
     AgentCatalog,
     AgentsList,
     AgentSummary,
+    ApiKeyMinted,
+    ApiKeysList,
     AuthUser,
     ColumnPromptWire,
     FillRunPage,
@@ -38,6 +42,7 @@ from openbower_schema import (
     FolderSummary,
     ImportResult,
     IngestAccepted,
+    IngestSchema,
     ListDetail,
     ListRowsPage,
     ListsPage,
@@ -101,6 +106,8 @@ CONTRACT_MODELS: list[type[Any]] = [
     AgentCatalog,
     AgentsList,
     AgentSummary,
+    ApiKeyMinted,
+    ApiKeysList,
     AuthUser,
     ColumnPromptWire,
     FillRunPage,
@@ -109,6 +116,7 @@ CONTRACT_MODELS: list[type[Any]] = [
     FolderSummary,
     ImportResult,
     IngestAccepted,
+    IngestSchema,
     ListRowsPage,
     ListsPage,
     ListDetail,
@@ -164,6 +172,8 @@ def build_schema() -> dict[str, Any]:
         # WIRE_CONSTANTS): scalars, plus the settled partition of
         # CellState so the client derives it instead of retyping it.
         "x-constants": {
+            "API_KEY_NAME_MAX_LENGTH": API_KEY_NAME_MAX_LENGTH,
+            "MAX_API_KEYS": MAX_API_KEYS,
             "NODE_RUN_ATTEMPTS": NODE_RUN_ATTEMPTS,
             "FREE_SEARCH_FILL_BUDGET": FREE_SEARCH_FILL_BUDGET,
             "MAX_TOOL_CALLS": MAX_TOOL_CALLS,

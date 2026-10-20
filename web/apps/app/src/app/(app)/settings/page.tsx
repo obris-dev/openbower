@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, CircleUser, Webhook } from "lucide-react";
+import { ChevronRight, CircleUser, KeyRound, Webhook } from "lucide-react";
 import { Card } from "@bower/ui";
 import { webRoutes } from "@bower/api";
 
@@ -15,6 +15,12 @@ const SECTIONS = [
     description: "Destinations that receive signed deliveries from your sheets.",
     href: webRoutes.settingsWebhooks,
     icon: Webhook,
+  },
+  {
+    title: "API keys",
+    description: "Authenticate your own scripts and tools with the API.",
+    href: webRoutes.settingsApiKeys,
+    icon: KeyRound,
   },
 ];
 

@@ -13,8 +13,8 @@ the lists collection) never runs the machine lane at all, so a Bearer
 token there is simply unauthenticated under the cookie-only default, not
 audience-checked.
 
-Verified results cache (a dedicated cache alias, keyed by token
-fingerprint) for TOKENINFO_CACHE_SECONDS bounded by the token's expiry,
+Verified claims cache (resource_server/claims_cache owns every key
+in it) for TOKENINFO_CACHE_SECONDS bounded by the token's expiry,
 so a burst costs one upstream round-trip; negative results cache briefly
 so a dead token cannot make core a verify amplifier, and a per-IP
 miss-budget guards the pre-auth flood the DRF throttles run too late to
@@ -32,26 +32,19 @@ import logging
 import time
 
 from django.conf import settings
-from django.core.cache import caches
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied, Throttled
 from rest_framework.request import Request
 
 from auth_client.authentication import AppUser
-from openbower_kernel.hashing import hash_token
+from auth_client.constants import AuthErrorCode
 
+from .claims_cache import count_miss, get_claims, remember_claims
 from .idp import verify_token
 from .idp.transport import TokeninfoUnavailable
 
 logger = logging.getLogger(__name__)
 
-# A dedicated cache alias (its own table): verify churn must never cull the
-# default cache's pending OAuth login states.
-_cache = caches["tokeninfo"]
-
-_CACHE_PREFIX = "tokeninfo:"
-_MISS_PREFIX = "tokeninfo-miss:"
-_MISS_WINDOW_SECONDS = 60
 _NEGATIVE_TTL_SECONDS = 30
 
 
@@ -101,6 +94,13 @@ class MachineTokenAuthentication(BaseAuthentication):
             # legitimately has no account), and a 401 would send a client
             # into a refresh that cannot help.
             raise PermissionDenied("token subject has no account")
+        # The hosted deployment opens by invitation, and the machine lane
+        # honors the same gate the login does: an account never granted
+        # is refused here too, so a key minted elsewhere cannot reach the
+        # hosted API. A self-hosted install never checks. A token from an
+        # identity service that predates the claim is taken as granted.
+        if not settings.SELF_HOSTED and claims.get("hosted_access") is False:
+            raise PermissionDenied("this account has no hosted access", code=str(AuthErrorCode.HOSTED_ACCESS_REQUIRED))
         return AppUser.from_tokeninfo(claims), token
 
     def authenticate_header(self, request: Request) -> str:
@@ -122,20 +122,13 @@ class MachineTokenAuthentication(BaseAuthentication):
         direction to fail, and edge rate-limiting is the real per-client
         control."""
         ip = request.META.get("REMOTE_ADDR", "") or "unknown"
-        key = f"{_MISS_PREFIX}{ip}"
-        try:
-            count = _cache.incr(key)
-        except ValueError:
-            _cache.add(key, 1, timeout=_MISS_WINDOW_SECONDS)
-            count = 1
-        if count > settings.TOKENINFO_MISS_LIMIT_PER_MINUTE:
+        if count_miss(ip) > settings.TOKENINFO_MISS_LIMIT_PER_MINUTE:
             logger.warning("tokeninfo miss budget exceeded for %s", ip)
             raise Throttled(detail="too many unverified tokens")
 
     @staticmethod
     def _verify_cached(token: str, request: Request) -> dict:
-        cache_key = f"{_CACHE_PREFIX}{hash_token(token)}"
-        cached = _cache.get(cache_key)
+        cached = get_claims(token)
         if cached is not None:
             return cached
         MachineTokenAuthentication._check_miss_budget(request)
@@ -148,5 +141,5 @@ class MachineTokenAuthentication(BaseAuthentication):
         else:
             ttl = _NEGATIVE_TTL_SECONDS
         if ttl > 0:
-            _cache.set(cache_key, claims, timeout=ttl)
+            remember_claims(token, claims, ttl=ttl)
         return claims

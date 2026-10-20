@@ -33,6 +33,7 @@ class AuthErrorCode(StrEnum):
     MISSING_PARAMS = "missing_params"
     STATE_MISMATCH = "state_mismatch"
     HOSTED_ACCESS_REQUIRED = "hosted_access_required"
+    IDENTITY_UNAVAILABLE = "identity_unavailable"
 
 
 # The longest same-origin path a login may carry back to the web app

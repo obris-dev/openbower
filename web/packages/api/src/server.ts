@@ -10,9 +10,11 @@ import { classifyMe, type MeResult } from "./auth.ts";
 import {
   AgentsListSchema,
   AgentSummarySchema,
+  ApiKeysListSchema,
   FoldersListSchema,
   type AgentsList,
   type AgentSummary,
+  type ApiKeysList,
   type FoldersList,
 } from "@bower/schema";
 import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage, TolerantListsPageSchema, TolerantListDetailSchema, type ListsPage, type ListDetail } from "./lists.ts";
@@ -79,6 +81,12 @@ export async function fetchWebhooksWithCookie(
   cookieHeader: string,
 ): Promise<ServerFetchResult<{ items: RenderableDestination[] }>> {
   return fetchParsedWithCookie(apiRoutes.webhooks.index, cookieHeader, TolerantWebhookDestinationsListSchema);
+}
+
+/** Server-side machine API keys (unpaged; bounded by the identity
+ * service's per-user cap). */
+export async function fetchApiKeysWithCookie(cookieHeader: string): Promise<ServerFetchResult<ApiKeysList>> {
+  return fetchParsedWithCookie(apiRoutes.auth.apiKeys, cookieHeader, ApiKeysListSchema);
 }
 
 /** Server-side one destination (the detail page's first paint). */

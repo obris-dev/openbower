@@ -1,7 +1,6 @@
 "use client";
 
-import { CopyButton, Input, Label } from "@bower/ui";
-
+import { SecretField } from "../../../_components/secret-field";
 import { SECRET_REVEAL_NOTE } from "./copy";
 import { VerifyGuide } from "./verify-guide";
 
@@ -33,21 +32,7 @@ export function SecretReveal({
           </>
         )}
       </p>
-      <div>
-        <Label htmlFor={SECRET_ID}>Signing secret</Label>
-        <div className="mt-1 flex items-center gap-2">
-          <Input
-            id={SECRET_ID}
-            readOnly
-            value={secret}
-            onFocus={(e) => e.currentTarget.select()}
-            className="font-mono text-xs"
-            autoFocus
-          />
-          <CopyButton value={secret} />
-        </div>
-        <p className="mt-2 text-xs text-warning">{note}</p>
-      </div>
+      <SecretField id={SECRET_ID} label="Signing secret" value={secret} note={note} />
       {guide && <VerifyGuide />}
     </div>
   );

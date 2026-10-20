@@ -14,6 +14,7 @@ import {
   FoldersListSchema,
   FolderSummarySchema,
   ImportResultSchema,
+  IngestColumnSchema,
   ListColumnSchema,
   ListDetailSchema,
   PlainColumnSchema,
@@ -27,6 +28,8 @@ import {
   WIRE_BOUNDS,
   WIRE_CONSTANTS,
   type AgentConfig,
+  type IngestColumn,
+  type IngestSchema,
   type ColumnFillSummary,
   type ColumnPromptWire,
   type FillRunPage,
@@ -621,4 +624,25 @@ export async function postColumnWebhookPreview(
   body: WebhookColumnTestBody,
 ): Promise<ApiResult<WebhookColumnPreview>> {
   return http.post(apiRoutes.lists.columnWebhookPreview(id), TolerantWebhookColumnPreviewResponseSchema, body);
+}
+
+export type { IngestColumn, IngestSchema };
+
+// The server owns the type enum, so the read is tolerant like the
+// sheet's: a type this bundle has not heard of renders as text.
+const KNOWN_INGEST_TYPES = new Set<string>(IngestColumnSchema.shape.type.options);
+const TolerantIngestSchemaSchema = z.object({
+  columns: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      type: z.string().transform((type) => (KNOWN_INGEST_TYPES.has(type) ? type : "text") as ColumnType),
+    }),
+  ),
+});
+
+/** The push schema: the columns a machine push may set on this sheet,
+ * with the keys its rows are keyed on. System-filled columns are absent. */
+export async function fetchIngestSchema(id: string): Promise<ApiResult<IngestSchema>> {
+  return http.get(apiRoutes.lists.ingest(id), TolerantIngestSchemaSchema);
 }

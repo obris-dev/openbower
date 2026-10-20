@@ -15,6 +15,8 @@ from django.core.cache import caches
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from resource_server.claims_cache import forget_machine_key
+
 _CORE_AUD = "openbower-core"
 
 
@@ -56,6 +58,37 @@ class MachineTokenAuthTests(TestCase):
         ) as get:
             resp = self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION=f"Bearer {token}")
         return resp, get
+
+    @override_settings(SELF_HOSTED=False)
+    def test_an_ungranted_account_is_refused_on_the_hosted_machine_lane(self):
+        resp, _ = self._get_lists(claims=_claims(hosted_access=False))
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"], "hosted_access_required")
+        resp, _ = self._get_lists(token="obw_granted", claims=_claims(hosted_access=True))
+        self.assertNotEqual(resp.status_code, 403)
+        # An identity service that predates the claim: taken as granted.
+        resp, _ = self._get_lists(token="obw_older", claims=_claims())
+        self.assertNotEqual(resp.status_code, 403)
+
+    @override_settings(SELF_HOSTED=True)
+    def test_a_self_hosted_install_never_checks_the_gate(self):
+        resp, _ = self._get_lists(claims=_claims(hosted_access=False))
+        self.assertNotEqual(resp.status_code, 403)
+
+    def test_a_forgotten_key_is_verified_again_at_once(self):
+        # Cached claims serve until they expire; forgetting the key
+        # (a revoke) makes the next request ask the identity service,
+        # which now says inactive.
+        key_id = "01JQ" + "C" * 22
+        resp, _ = self._get_lists(claims=_claims(key_id=key_id))
+        self.assertNotEqual(resp.status_code, 401)
+        resp, get = self._get_lists(claims={"active": False})
+        self.assertNotEqual(resp.status_code, 401)
+        self.assertEqual(get.call_count, 0)
+        forget_machine_key(key_id)
+        resp, get = self._get_lists(claims={"active": False})
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(get.call_count, 1)
 
     def test_a_valid_bound_token_authenticates(self):
         resp, _ = self._get_lists()
