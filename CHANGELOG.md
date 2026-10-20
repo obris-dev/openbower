@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/obris-dev/openbower/compare/v0.0.4...v0.0.5) (2026-10-20)
+
+
+### Features
+
+* API keys in settings and a Push rows panel on every sheet ([#108](https://github.com/obris-dev/openbower/issues/108)) ([18fa6e9](https://github.com/obris-dev/openbower/commit/18fa6e918955169062b744f85878140d4ccd0ee0))
+
 ## [0.0.4](https://github.com/obris-dev/openbower/compare/v0.0.3...v0.0.4) (2026-10-20)
 
 
