@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.4](https://github.com/obris-dev/openbower/compare/v0.0.3...v0.0.4) (2026-10-20)
+
+
+### Features
+
+* sign in with Google and GitHub from the hosted card ([#102](https://github.com/obris-dev/openbower/issues/102)) ([a3aabcf](https://github.com/obris-dev/openbower/commit/a3aabcfa970ccaafb9ace9bb4dd50acca165241e))
+* sign out from the hosted-access gate ([#106](https://github.com/obris-dev/openbower/issues/106)) ([e117ebe](https://github.com/obris-dev/openbower/commit/e117ebe169736e159f7069d81414daabf566ee92))
+* test a webhook destination from the add form, before it is saved ([#107](https://github.com/obris-dev/openbower/issues/107)) ([ce99716](https://github.com/obris-dev/openbower/commit/ce9971671a06a41c0619b4f0cd5a32a74b8053ed))
+
 ## [0.0.3](https://github.com/obris-dev/openbower/compare/v0.0.2...v0.0.3) (2026-10-15)
 
 
