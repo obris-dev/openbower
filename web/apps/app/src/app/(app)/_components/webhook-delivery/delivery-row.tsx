@@ -1,16 +1,17 @@
 import type { ReactNode } from "react";
-import { WEBHOOK_ID_HEADER, type RenderableDelivery } from "@bower/api";
+import { WEBHOOK_ID_HEADER, type RenderableAttempt } from "@bower/api";
 
 import { deliveryFacts, deliveryWord, TONE_CLASS } from "./lib/delivery-read";
 import { formatTime } from "./lib/format-time";
 
-/** One delivery, the way every surface shows one: the outcome word in
+/** One attempt (a logged delivery, or the add form's unsaved test),
+ * the way every surface shows one: the outcome word in
  * its tone, what it carried, the receiver's status and timing, the
  * time; then the error and the receiver's answer when there is one
  * (text, never markup), anything the caller folds under it, and the
  * id the receiver saw. Element-agnostic, so a log wraps it in a list
  * item and a panel in a box. */
-export function DeliveryRow({ delivery, children }: { delivery: RenderableDelivery; children?: ReactNode }) {
+export function DeliveryRow({ delivery, children }: { delivery: RenderableAttempt; children?: ReactNode }) {
   const word = deliveryWord(delivery);
   const facts = deliveryFacts(delivery);
   return (

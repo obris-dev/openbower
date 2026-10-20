@@ -78,11 +78,15 @@ DeliveryStatusWire = Literal["ok", "transient", "rejected", "blocked"]
 
 
 class WebhookPingData(BaseModel):
-    """A destination's Test button: nothing from a sheet, just proof
-    that a signed delivery reaches the receiver."""
+    """A Test button: nothing from a sheet, just proof that a delivery
+    reaches the receiver."""
 
     type: Literal["ping"] = "ping"
-    destination_id: str
+    destination_id: str | None = Field(
+        default=None,
+        description="The destination the ping came from; null when it was sent from the add form before "
+        "the destination was saved (signed with a secret kept nowhere, so it cannot be verified).",
+    )
     label: str
 
 
@@ -165,13 +169,13 @@ class WebhookEnvelope(BaseModel):
         return self
 
 
-class WebhookDeliveryWire(BaseModel):
-    """One attempt to POST to a destination, whatever it answered. `id`
-    is the `webhook-id` header that request carried; `type` and `test`
-    are the envelope's own, recorded on our side."""
+class WebhookAttemptWire(BaseModel):
+    """One POST and what it got back, whether or not a log keeps it:
+    the add form's test of a URL before the destination exists answers
+    with this alone. `id` is the `webhook-id` header the request
+    carried; `type` and `test` are the envelope's own."""
 
     id: str
-    destination_id: str
     type: WebhookEnvelopeTypeWire
     test: bool = False
     status: DeliveryStatusWire
@@ -184,6 +188,13 @@ class WebhookDeliveryWire(BaseModel):
         description="The head of the receiver's answer, kept only when it was not a 2xx.",
     )
     created_at: str
+
+
+class WebhookDeliveryWire(WebhookAttemptWire):
+    """An attempt on record: the log's row, and by the newest row per
+    destination, its health."""
+
+    destination_id: str
 
 
 class WebhookDestinationWire(BaseModel):
@@ -229,6 +240,15 @@ class WebhookDestinationCreated(BaseModel):
 class WebhookDeliveriesPage(BaseModel):
     items: list[WebhookDeliveryWire]
     next_cursor: str | None = None
+
+
+class WebhookProbeResponse(BaseModel):
+    """The add form's test of a URL before the destination exists: the
+    attempt (stored nowhere), and the envelope exactly as the receiver
+    got it, so the form can show the body a receiver has to parse."""
+
+    attempt: WebhookAttemptWire
+    envelope: WebhookEnvelope
 
 
 class WebhookColumnTestResponse(BaseModel):

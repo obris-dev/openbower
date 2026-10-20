@@ -53,8 +53,14 @@ export function deliveryRead(destination: Facts): DeliveryRead {
  * surface that lists a delivery. */
 export function deliveryFacts(delivery: Pick<RenderableDelivery, "type" | "test" | "http_status" | "duration_ms">): string[] {
   const label = deliveryLabel(delivery);
+  return [label || null, ...receiverFacts(delivery)].filter((fact): fact is string => fact !== null);
+}
+
+/** The receiver's side of the facts alone, for a surface where what
+ * was sent goes without saying (the add form's test is always a test
+ * ping): the status when an answer came, and the timing. */
+export function receiverFacts(delivery: Pick<RenderableDelivery, "http_status" | "duration_ms">): string[] {
   return [
-    label || null,
     delivery.http_status === null ? null : `HTTP ${delivery.http_status}`,
     `${delivery.duration_ms.toLocaleString("en-US")} ms`,
   ].filter((fact): fact is string => fact !== null);

@@ -31,6 +31,7 @@ from openbower_schema.webhooks import (
     WebhookDestinationCreated,
     WebhookDestinationWire,
     WebhookEnvelope,
+    WebhookProbeResponse,
 )
 from webhooks.constants import DeliveryStatus, WebhookEnvelopeType, WebhookErrorCode
 from webhooks.delivery.protocol import DeliveryResult
@@ -79,6 +80,59 @@ class _Base(TestCase):
             resp = self.client.post(reverse("webhooks_test", kwargs={"id": destination_id}))
         assert resp.status_code == 200, resp.content
         return resp.json(), fake
+
+
+class ProbeTests(_Base):
+    def _probe(self, body: dict, result: DeliveryResult | None = None) -> tuple:
+        fake = _FakeSender(result or _ok())
+        with patch("webhooks.services.destinations.WebhookSender", return_value=fake):
+            resp = self.client.post(reverse("webhooks_probe"), body, content_type="application/json")
+        return resp, fake
+
+    def test_probe_sends_a_throwaway_signed_ping_and_stores_nothing(self):
+        resp, fake = self._probe({"label": "CRM sync", "url": URL, "headers": HEADERS})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        probed = WebhookProbeResponse.model_validate(resp.json())
+        attempt = probed.attempt
+        self.assertEqual(attempt.status, DeliveryStatus.OK)
+        self.assertEqual(attempt.http_status, 200)
+        self.assertTrue(attempt.test)
+        self.assertEqual(attempt.type, WebhookEnvelopeType.PING)
+        self.assertNotIn("destination_id", resp.json()["attempt"])
+        (call,) = fake.calls
+        self.assertEqual(call["url"], URL)
+        self.assertEqual(call["headers"], {"Authorization": "Bearer receiver-token"})
+        self.assertEqual(call["delivery_id"], attempt.id)
+        self.assertEqual(len(call["secrets"]), 1)
+        self.assertTrue(call["secrets"][0].startswith(WEBHOOK_SECRET_PREFIX))
+        envelope = WebhookEnvelope.model_validate_json(call["body"])
+        self.assertTrue(envelope.test)
+        self.assertEqual(envelope.id, attempt.id)
+        self.assertIsNone(envelope.data.destination_id)
+        self.assertEqual(envelope.data.label, "CRM sync")
+        # The response shows the body exactly as the receiver got it.
+        self.assertEqual(probed.envelope, envelope)
+        self.assertEqual(WebhookDestination.objects.count(), 0)
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_probe_answers_a_failure_as_the_attempt(self):
+        failed = DeliveryResult(DeliveryStatus.TRANSIENT, 503, "The receiver answered with an error.", 40, "down")
+        resp, _ = self._probe({"url": URL}, failed)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        attempt = WebhookProbeResponse.model_validate(resp.json()).attempt
+        self.assertEqual(attempt.status, DeliveryStatus.TRANSIENT)
+        self.assertEqual(attempt.http_status, 503)
+        self.assertEqual(attempt.response_excerpt, "down")
+
+    @override_settings(WEBHOOK_BLOCK_PRIVATE_IPS=True, WEBHOOK_REQUIRE_HTTPS=True)
+    def test_probe_refuses_what_create_refuses(self):
+        resp, fake = self._probe({"url": "https://10.0.0.1/in"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], WebhookErrorCode.URL_BLOCKED)
+        resp, fake = self._probe({"url": URL, "headers": [{"name": "Webhook-Signature", "value": "v1,x"}]})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], WebhookErrorCode.HEADER_RESERVED)
+        self.assertEqual(fake.calls, [])
 
 
 class CreateTests(_Base):

@@ -13,17 +13,26 @@ from typing import Any
 
 from rest_framework import serializers
 
-from openbower_schema.webhooks import WebhookDeliveriesPage, WebhookDeliveryWire, WebhookDestinationWire
+from openbower_schema.webhooks import (
+    WebhookAttemptWire,
+    WebhookDeliveriesPage,
+    WebhookDeliveryWire,
+    WebhookDestinationWire,
+    WebhookEnvelope,
+    WebhookProbeResponse,
+)
 
 from .constants import (
     LABEL_MAX_LENGTH,
     MAX_WEBHOOK_HEADERS,
+    WEBHOOK_ERROR_MAX_LENGTH,
     WEBHOOK_HEADER_NAME_GRAMMAR,
     WEBHOOK_HEADER_NAME_MAX_LENGTH,
     WEBHOOK_HEADER_VALUE_GRAMMAR,
     WEBHOOK_HEADER_VALUE_MAX_LENGTH,
     WEBHOOK_URL_MAX_LENGTH,
 )
+from .delivery.protocol import DeliveryResult
 from .models import WebhookDelivery, WebhookDestination
 
 
@@ -76,6 +85,21 @@ class DestinationCreateRequest(serializers.Serializer):
         return _headers_dict(value)
 
 
+class DestinationProbeRequest(serializers.Serializer):
+    """The add form's test before a save: the create's fields, the label
+    optional since the form may not have one yet."""
+
+    label = serializers.CharField(max_length=LABEL_MAX_LENGTH, required=False, default="", allow_blank=True)
+    url = serializers.URLField(max_length=WEBHOOK_URL_MAX_LENGTH)
+    headers = WebhookHeaderDef(many=True, required=False, default=list, max_length=MAX_WEBHOOK_HEADERS)
+
+    def validate_url(self, value: str) -> str:
+        return _http_url(value)
+
+    def validate_headers(self, value: list[dict[str, str]]) -> dict[str, str]:
+        return _headers_dict(value)
+
+
 class DestinationPatchRequest(serializers.Serializer):
     """Any subset; `headers` present replaces the whole set. At least one
     field must be present (the agents idiom)."""
@@ -95,6 +119,26 @@ class DestinationPatchRequest(serializers.Serializer):
         if not attrs:
             raise serializers.ValidationError("nothing to change")
         return attrs
+
+
+def attempt_model(result: DeliveryResult, envelope: WebhookEnvelope) -> WebhookAttemptWire:
+    """An unrecorded attempt, shaped as the log would have shaped it
+    (the same error cut), so one renderer reads both."""
+    return WebhookAttemptWire(
+        id=envelope.id,
+        type=envelope.type,
+        test=envelope.test,
+        status=result.status,
+        http_status=result.http_status,
+        duration_ms=result.duration_ms,
+        error=result.error[:WEBHOOK_ERROR_MAX_LENGTH],
+        response_excerpt=result.response_excerpt,
+        created_at=envelope.timestamp,
+    )
+
+
+def probe_wire(result: DeliveryResult, envelope: WebhookEnvelope) -> dict[str, Any]:
+    return WebhookProbeResponse(attempt=attempt_model(result, envelope), envelope=envelope).model_dump()
 
 
 def delivery_wire(delivery: WebhookDelivery) -> dict[str, Any]:

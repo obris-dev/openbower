@@ -57,6 +57,15 @@ class Sent(NamedTuple):
     envelope: WebhookEnvelope
 
 
+class Probed(NamedTuple):
+    """One unsaved attempt: what the POST got back, with the envelope it
+    carried. Recorded nowhere, since no destination exists to log it
+    under."""
+
+    result: DeliveryResult
+    envelope: WebhookEnvelope
+
+
 HEADERS_UNREADABLE = "This destination's headers are unreadable; delete it and add it again."
 
 
@@ -298,6 +307,25 @@ class WebhookDestinationService:
             delivery_id=delivery_id,
         )
         return Sent(delivery=delivery, envelope=envelope)
+
+    def probe(self, *, url: str, headers: dict[str, str], label: str) -> Probed:
+        """The add form's test of a URL before the destination exists:
+        the create's own guards, then one ping, signed with a secret
+        minted for this attempt alone and kept nowhere. The receiver
+        gets a well-formed delivery it cannot verify yet (its secret
+        arrives with the save), so this proves the address, the headers,
+        and the shape; the signed proof is the saved destination's test."""
+        self._guard_url(url)
+        self._guard_headers(headers)
+        envelope = envelope_of(test=True, data=WebhookPingData(label=label))
+        result = WebhookSender().send(
+            url=url,
+            headers=headers,
+            secrets=[mint_secret()],
+            delivery_id=envelope.id,
+            body=encode_body(envelope),
+        )
+        return Probed(result=result, envelope=envelope)
 
     def test(self, destination: WebhookDestination) -> WebhookDelivery:
         """The destination page's Test button: a ping, nothing from a

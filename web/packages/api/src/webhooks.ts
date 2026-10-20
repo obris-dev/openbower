@@ -3,18 +3,23 @@
 // philosophy as lists.
 
 import {
+  WebhookAttemptWireSchema,
   WebhookDeliveriesPageSchema,
   WebhookDeliveryWireSchema,
   WebhookDestinationCreatedSchema,
   WebhookDestinationsListSchema,
   WebhookDestinationWireSchema,
+  WebhookProbeResponseSchema,
   WIRE_BOUNDS,
   WIRE_CONSTANTS,
+  type WebhookAttemptWire,
   type WebhookDeliveriesPage,
   type WebhookDeliveryWire,
   type WebhookDestinationCreated,
   type WebhookDestinationsList,
   type WebhookDestinationWire,
+  type WebhookEnvelope,
+  type WebhookProbeResponse,
 } from "@bower/schema";
 
 import { z } from "zod";
@@ -23,11 +28,14 @@ import { http, type ApiResult } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 
 export type {
+  WebhookAttemptWire,
   WebhookDeliveriesPage,
   WebhookDeliveryWire,
   WebhookDestinationCreated,
   WebhookDestinationsList,
   WebhookDestinationWire,
+  WebhookEnvelope,
+  WebhookProbeResponse,
 };
 
 // Size bounds, straight off the contract document (the server's
@@ -67,6 +75,9 @@ export const WEBHOOK_HEADER_RESERVED_CODE = "header_reserved";
 
 export type WebhookHeader = { name: string; value: string };
 export type DestinationBody = { label: string; url: string; headers: WebhookHeader[] };
+/** What a test before the save sends: the create's body, the label
+ * optional since the form may not have one yet. */
+export type DestinationProbeBody = Omit<DestinationBody, "label"> & { label?: string };
 export type DestinationPatchBody = { label?: string; url?: string; enabled?: boolean; headers?: WebhookHeader[] };
 
 // A delivery's status and type are the SERVER's enums, and this bundle
@@ -80,12 +91,18 @@ export const UNKNOWN_DELIVERY_STATUS = "unknown" as const;
 export const UNKNOWN_DELIVERY_TYPE = "unknown" as const;
 export type RenderableDeliveryStatus = WebhookDeliveryWire["status"] | typeof UNKNOWN_DELIVERY_STATUS;
 export type RenderableDeliveryType = WebhookDeliveryWire["type"] | typeof UNKNOWN_DELIVERY_TYPE;
-/** A delivery as the app renders it: the wire's shape with the two
- * server-owned enums widened by their client-only unknown member. */
-export type RenderableDelivery = Omit<WebhookDeliveryWire, "status" | "type"> & {
+/** An attempt as the app renders it (what one POST got back, logged or
+ * not): the wire's shape with the two server-owned enums widened by
+ * their client-only unknown member. */
+export type RenderableAttempt = Omit<WebhookAttemptWire, "status" | "type"> & {
   status: RenderableDeliveryStatus;
   type: RenderableDeliveryType;
 };
+/** A delivery as the app renders it: an attempt on record. */
+export type RenderableDelivery = RenderableAttempt & Pick<WebhookDeliveryWire, "destination_id">;
+/** The add form's test as the app renders it: the attempt, and the
+ * envelope exactly as the receiver got it. */
+export type RenderableProbe = Omit<WebhookProbeResponse, "attempt"> & { attempt: RenderableAttempt };
 export type RenderableDestination = Omit<WebhookDestinationWire, "last_delivery"> & {
   last_delivery: RenderableDelivery | null;
 };
@@ -94,18 +111,24 @@ export type RenderableDestinationCreated = Omit<WebhookDestinationCreated, "dest
   destination: RenderableDestination;
 };
 
-const STATUSES = new Set<string>(WebhookDeliveryWireSchema.shape.status.options);
-const TYPES = new Set<string>(WebhookDeliveryWireSchema.shape.type.options);
-export const TolerantWebhookDeliveryWireSchema = WebhookDeliveryWireSchema.extend({
-  status: z.string(),
-  type: z.string(),
-}).transform(
-  (raw): RenderableDelivery => ({
-    ...raw,
+const STATUSES = new Set<string>(WebhookAttemptWireSchema.shape.status.options);
+const TYPES = new Set<string>(WebhookAttemptWireSchema.shape.type.options);
+const WIDENED = { status: z.string(), type: z.string() };
+function widen(raw: { status: string; type: string }): Pick<RenderableAttempt, "status" | "type"> {
+  return {
     status: (STATUSES.has(raw.status) ? raw.status : UNKNOWN_DELIVERY_STATUS) as RenderableDeliveryStatus,
     type: (TYPES.has(raw.type) ? raw.type : UNKNOWN_DELIVERY_TYPE) as RenderableDeliveryType,
-  }),
+  };
+}
+export const TolerantWebhookAttemptWireSchema = WebhookAttemptWireSchema.extend(WIDENED).transform(
+  (raw): RenderableAttempt => ({ ...raw, ...widen(raw) }),
 );
+export const TolerantWebhookDeliveryWireSchema = WebhookDeliveryWireSchema.extend(WIDENED).transform(
+  (raw): RenderableDelivery => ({ ...raw, ...widen(raw) }),
+);
+export const TolerantWebhookProbeResponseSchema = WebhookProbeResponseSchema.extend({
+  attempt: TolerantWebhookAttemptWireSchema,
+});
 export const TolerantWebhookDestinationWireSchema = WebhookDestinationWireSchema.extend({
   last_delivery: TolerantWebhookDeliveryWireSchema.nullable().default(null),
 });
@@ -121,6 +144,15 @@ export const TolerantWebhookDeliveriesPageSchema = WebhookDeliveriesPageSchema.e
 
 export async function fetchWebhooks(): Promise<ApiResult<{ items: RenderableDestination[] }>> {
   return http.get(apiRoutes.webhooks.index, TolerantWebhookDestinationsListSchema);
+}
+
+/** One ping to a URL that is not a destination yet, sent now and
+ * stored nowhere, signed with a throwaway secret. Answers ok with the
+ * attempt whatever the receiver did (its `status` is the outcome) and
+ * the envelope as sent. The create's refusals (a blocked URL, a
+ * reserved header) apply. */
+export async function probeWebhook(body: DestinationProbeBody): Promise<ApiResult<RenderableProbe>> {
+  return http.post(apiRoutes.webhooks.probe, TolerantWebhookProbeResponseSchema, body);
 }
 
 /** Create a destination. The response carries the signing secret ONCE;

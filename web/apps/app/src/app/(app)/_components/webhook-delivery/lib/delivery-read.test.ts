@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { deliveryFacts, deliveryLabel, deliveryRead, deliveryWord } from "./delivery-read.ts";
+import { deliveryFacts, deliveryLabel, deliveryRead, deliveryWord, receiverFacts } from "./delivery-read.ts";
 
 const DELIVERY = {
   id: "01DLV",
@@ -58,6 +58,11 @@ test("the facts line carries the label, the receiver's status when one came, and
   ]);
   // No answer came: no HTTP fact. An unknown shape: no label.
   assert.deepEqual(deliveryFacts({ type: "unknown", test: false, http_status: null, duration_ms: 5 }), ["5 ms"]);
+});
+
+test("the receiver's facts leave the label out", () => {
+  assert.deepEqual(receiverFacts({ http_status: 401, duration_ms: 1234 }), ["HTTP 401", "1,234 ms"]);
+  assert.deepEqual(receiverFacts({ http_status: null, duration_ms: 5 }), ["5 ms"]);
 });
 
 test("the label is the envelope's shape and test flag, and claims nothing for an unknown shape", () => {
