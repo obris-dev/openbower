@@ -5,15 +5,19 @@ import { Button, Drawer, ErrorMessage, FieldError, Input, Label } from "@bower/u
 import {
   createWebhook,
   DESTINATIONS_FULL_CODE,
+  probeWebhook,
   WEBHOOK_HEADER_RESERVED_CODE,
   WEBHOOK_LABEL_MAX_LENGTH,
   WEBHOOK_URL_BLOCKED_CODE,
   WEBHOOK_URL_MAX_LENGTH,
+  type RenderableProbe,
   type RenderableDestination,
 } from "@bower/api";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
+import { PROBE_ACTION } from "./copy";
 import { HeadersEditor } from "./headers-editor";
+import { ProbeOutcome } from "./probe-outcome";
 import { contentfulHeaders, headersProblem, urlProblem, type HeaderRow } from "./lib/headers";
 import { SecretReveal } from "./secret-reveal";
 
@@ -24,9 +28,17 @@ const URL_ID = "destination-url";
 const URL_ERROR_ID = "destination-url-error";
 const HEADERS_ID = "destination-headers";
 
+// Which gesture last diagnosed the form: a test needs the URL and the
+// headers, a save needs the name too, so the name's gap marks only
+// after a save.
+type Attempt = "test" | "save";
+
 /** The add-destination drawer. Mounted fresh per open, so state resets
- * with the gesture; on success the body swaps to the one-time secret
- * panel and stays until dismissed. */
+ * with the gesture. The footer holds the test beside the add (one
+ * unsaved ping to the typed URL, its answer above the buttons, where
+ * it never leaves the fold) so a wrong address shows before anything
+ * is stored; on save the body swaps to the one-time secret panel and
+ * stays until dismissed. */
 export function AddDestinationDrawer(props: {
   open: boolean;
   onClose: () => void;
@@ -63,9 +75,12 @@ function DrawerContent({
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
-  const [attempted, setAttempted] = useState(false);
+  const [attempted, setAttempted] = useState<Attempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [probeResult, setProbeResult] = useState<RenderableProbe | null>(null);
   const [urlRefusal, setUrlRefusal] = useState<string | null>(null);
   const [headersRefusal, setHeadersRefusal] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<{ label: string; secret: string } | null>(null);
@@ -74,26 +89,59 @@ function DrawerContent({
   const labelIssue = label.trim() === "" ? "Name this destination." : null;
   const urlIssue = useMemo(() => urlProblem(url), [url]);
   const headersIssue = useMemo(() => headersProblem(headerRows), [headerRows]);
-  const ready = !labelIssue && !urlIssue && !headersIssue;
+  const sendable = !urlIssue && !headersIssue;
+  const ready = !labelIssue && sendable;
+  const labelMarked = attempted === "save" && labelIssue !== null;
+  const urlMarked = attempted !== null && urlIssue !== null;
 
-  // The action stays ENABLED and diagnoses here: nothing marks before
+  // The actions stay ENABLED and diagnose here: nothing marks before
   // a first attempt, then the first gap is brought into view.
-  function blockOn(): boolean {
-    if (ready) return false;
-    setAttempted(true);
-    const anchor = labelIssue ? LABEL_ID : urlIssue ? URL_ID : HEADERS_ID;
+  function blockOn(attempt: Attempt): boolean {
+    if (attempt === "save" ? ready : sendable) return false;
+    setAttempted(attempt);
+    const anchor = attempt === "save" && labelIssue ? LABEL_ID : urlIssue ? URL_ID : HEADERS_ID;
     document.getElementById(anchor)?.scrollIntoView({ block: "nearest" });
     return true;
   }
 
+  // Tier 1: the server's detail renders VERBATIM, at the surface its
+  // code names when that surface is knowable; false when it is not.
+  function placeRefusal(code: string | undefined, message: string): boolean {
+    if (code === WEBHOOK_URL_BLOCKED_CODE) setUrlRefusal(message);
+    else if (code === WEBHOOK_HEADER_RESERVED_CODE) setHeadersRefusal(message);
+    else return false;
+    return true;
+  }
+
+  function body() {
+    return { label: label.trim(), url: url.trim(), headers: contentfulHeaders(headerRows) };
+  }
+
+  async function probe() {
+    if (blockOn("test") || probing) return;
+    setAttempted(null);
+    setProbing(true);
+    setProbeError(null);
+    setUrlRefusal(null);
+    setHeadersRefusal(null);
+    const res = await probeWebhook(body());
+    setProbing(false);
+    if (redirectIfUnauthenticated(res)) return;
+    if (res.status === "ok") {
+      setProbeResult(res.data);
+      return;
+    }
+    if (!placeRefusal(res.code, res.message)) setProbeError(res.message);
+  }
+
   async function submit() {
-    if (blockOn() || submitting) return;
-    setAttempted(false);
+    if (blockOn("save") || submitting) return;
+    setAttempted(null);
     setSubmitting(true);
     setServerError(null);
     setUrlRefusal(null);
     setHeadersRefusal(null);
-    const res = await createWebhook({ label: label.trim(), url: url.trim(), headers: contentfulHeaders(headerRows) });
+    const res = await createWebhook(body());
     setSubmitting(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "ok") {
@@ -101,14 +149,9 @@ function DrawerContent({
       setRevealed({ label: res.data.destination.label, secret: res.data.signing_secret });
       return;
     }
-    // Tier 1: the server's detail renders VERBATIM, at the surface its
-    // code names when that surface is knowable.
-    if (res.code === WEBHOOK_URL_BLOCKED_CODE) setUrlRefusal(res.message);
-    else if (res.code === WEBHOOK_HEADER_RESERVED_CODE) setHeadersRefusal(res.message);
-    else {
-      if (res.code === DESTINATIONS_FULL_CODE) onFull();
-      setServerError(res.message);
-    }
+    if (placeRefusal(res.code, res.message)) return;
+    if (res.code === DESTINATIONS_FULL_CODE) onFull();
+    setServerError(res.message);
   }
 
   const footer = revealed ? (
@@ -118,9 +161,16 @@ function DrawerContent({
   ) : (
     <>
       {serverError && <ErrorMessage message={serverError} />}
-      <Button type="submit" form={FORM_ID} fullWidth loading={submitting}>
-        Add destination
-      </Button>
+      {probeError && <ErrorMessage message={probeError} />}
+      {probeResult && <ProbeOutcome probe={probeResult} />}
+      <div className="flex gap-2">
+        <Button type="button" variant="ghost" loading={probing} onClick={() => void probe()}>
+          {PROBE_ACTION}
+        </Button>
+        <Button type="submit" form={FORM_ID} loading={submitting} className="flex-1">
+          Add destination
+        </Button>
+      </div>
     </>
   );
 
@@ -146,12 +196,12 @@ function DrawerContent({
               onChange={(event) => setLabel(event.target.value)}
               placeholder="CRM sync"
               maxLength={WEBHOOK_LABEL_MAX_LENGTH}
-              warned={attempted && labelIssue !== null}
-              aria-describedby={attempted && labelIssue ? LABEL_ERROR_ID : undefined}
+              warned={labelMarked}
+              aria-describedby={labelMarked ? LABEL_ERROR_ID : undefined}
               autoFocus
               className="mt-1"
             />
-            {attempted && labelIssue && (
+            {labelMarked && (
               <FieldError id={LABEL_ERROR_ID} tone="warning">
                 {labelIssue}
               </FieldError>
@@ -167,15 +217,17 @@ function DrawerContent({
               onChange={(event) => {
                 setUrl(event.target.value);
                 setUrlRefusal(null);
+                // An answer belongs to the address it was sent to.
+                setProbeResult(null);
               }}
               placeholder="https://hooks.example.com/openbower"
               maxLength={WEBHOOK_URL_MAX_LENGTH}
-              warned={attempted && urlIssue !== null}
+              warned={urlMarked}
               invalid={urlRefusal !== null}
-              aria-describedby={(attempted && urlIssue) || urlRefusal ? URL_ERROR_ID : undefined}
+              aria-describedby={urlMarked || urlRefusal ? URL_ERROR_ID : undefined}
               className="mt-1"
             />
-            {attempted && urlIssue && (
+            {urlMarked && (
               <FieldError id={URL_ERROR_ID} tone="warning">
                 {urlIssue}
               </FieldError>
@@ -188,8 +240,9 @@ function DrawerContent({
             onChange={(rows) => {
               setHeaderRows(rows);
               setHeadersRefusal(null);
+              setProbeResult(null);
             }}
-            problem={attempted ? headersIssue : null}
+            problem={attempted !== null ? headersIssue : null}
             refusal={headersRefusal}
           />
         </form>

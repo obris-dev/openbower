@@ -23,9 +23,11 @@ from .models import WebhookDestination
 from .serializers import (
     DestinationCreateRequest,
     DestinationPatchRequest,
+    DestinationProbeRequest,
     deliveries_page_wire,
     delivery_wire,
     destination_wire,
+    probe_wire,
 )
 from .services import DestinationNotFound, WebhookDeliveryService, WebhookDestinationService, WebhookRefused
 
@@ -92,6 +94,23 @@ class WebhooksView(_ScopedView):
             return _refused(e)
         created = WebhookDestinationCreated(destination=self._wire(destination), signing_secret=secret)
         return Response(created.model_dump(), status=201)
+
+
+class WebhookProbeView(_ScopedView):
+    """POST /v1/webhooks/probe: the add form's test of a URL before the
+    destination exists. The create's refusals, then 200 with the
+    attempt whatever the receiver did (a failure is an API object, its
+    `status` the outcome) and the envelope as sent. Nothing is stored."""
+
+    def post(self, request: Request) -> Response:
+        serializer = DestinationProbeRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            probed = self.destinations.probe(url=data["url"], headers=data["headers"], label=data["label"])
+        except WebhookRefused as e:
+            return _refused(e)
+        return Response(probe_wire(probed.result, probed.envelope))
 
 
 class WebhookDetailView(_ScopedView):

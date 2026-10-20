@@ -45,6 +45,7 @@ from openbower_schema import (
     LookalikeListResponse,
     NodeRunWire,
     RowsAdded,
+    WebhookAttemptWire,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
@@ -55,6 +56,7 @@ from openbower_schema import (
     WebhookDigestData,
     WebhookEnvelope,
     WebhookPingData,
+    WebhookProbeResponse,
 )
 from openbower_schema.agents import (
     MAX_TOOL_CALLS,
@@ -114,6 +116,7 @@ CONTRACT_MODELS: list[type[Any]] = [
     LookalikeListResponse,
     NodeRunWire,
     RowsAdded,
+    WebhookAttemptWire,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
@@ -121,6 +124,7 @@ CONTRACT_MODELS: list[type[Any]] = [
     WebhookDestinationCreated,
     WebhookDestinationsList,
     WebhookDestinationWire,
+    WebhookProbeResponse,
     # Not response roots: the body a RECEIVER validates and the two
     # shapes its `data` takes, listed so the contract documents what it
     # sends.

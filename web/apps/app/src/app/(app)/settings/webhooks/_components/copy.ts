@@ -77,3 +77,8 @@ export const EMPTY_SUBTITLE =
   "A destination is a URL that receives signed deliveries: add one, send it a test, then point sheets at it.";
 
 export const HEADERS_NOTE = "Sent with every delivery. Values are kept encrypted and never shown again.";
+
+// The add form's test, in the footer beside the add (the sheet's Send
+// webhook drawer's shape and word).
+export const PROBE_ACTION = "Send test";
+export const PROBE_SENT_FOLD = "What was sent";

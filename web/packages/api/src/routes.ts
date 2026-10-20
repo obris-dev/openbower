@@ -50,6 +50,9 @@ export const apiRoutes = {
     // GET the roster / POST create (the create response carries the
     // signing secret once).
     index: `/${API_VERSION}/webhooks`,
+    // POST a URL + headers before any destination exists: one ping, sent now,
+    // stored nowhere; 200 with the attempt and the envelope as sent.
+    probe: `/${API_VERSION}/webhooks/probe`,
     // GET / PATCH / DELETE one destination.
     detail: (id: string) => `/${API_VERSION}/webhooks/${id}`,
     // POST: one signed test delivery, sent now; 200 with the delivery.

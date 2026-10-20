@@ -1586,6 +1586,81 @@
       "title": "SearchToolCall",
       "type": "object"
     },
+    "WebhookAttemptWire": {
+      "description": "One POST and what it got back, whether or not a log keeps it:\nthe add form's test of a URL before the destination exists answers\nwith this alone. `id` is the `webhook-id` header the request\ncarried; `type` and `test` are the envelope's own.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "error": {
+          "default": "",
+          "description": "What went wrong, in the user's words; empty on ok.",
+          "title": "Error",
+          "type": "string"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The receiver's status code; null when no answer came.",
+          "title": "Http Status"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "response_excerpt": {
+          "default": "",
+          "description": "The head of the receiver's answer, kept only when it was not a 2xx.",
+          "maxLength": 1024,
+          "title": "Response Excerpt",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "transient",
+            "rejected",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "test": {
+          "default": false,
+          "title": "Test",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "ping",
+            "digest"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "status",
+        "created_at"
+      ],
+      "title": "WebhookAttemptWire",
+      "type": "object"
+    },
     "WebhookColumn": {
       "description": "A Send webhook column. It IS the second node of its own path\n(the wait node before it names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
       "properties": {
@@ -1751,7 +1826,7 @@
       "type": "object"
     },
     "WebhookDeliveryWire": {
-      "description": "One attempt to POST to a destination, whatever it answered. `id`\nis the `webhook-id` header that request carried; `type` and `test`\nare the envelope's own, recorded on our side.",
+      "description": "An attempt on record: the log's row, and by the newest row per\ndestination, its health.",
       "properties": {
         "created_at": {
           "title": "Created At",
@@ -1822,10 +1897,10 @@
       },
       "required": [
         "id",
-        "destination_id",
         "type",
         "status",
-        "created_at"
+        "created_at",
+        "destination_id"
       ],
       "title": "WebhookDeliveryWire",
       "type": "object"
@@ -2109,11 +2184,20 @@
       ]
     },
     "WebhookPingData": {
-      "description": "A destination's Test button: nothing from a sheet, just proof\nthat a signed delivery reaches the receiver.",
+      "description": "A Test button: nothing from a sheet, just proof that a delivery\nreaches the receiver.",
       "properties": {
         "destination_id": {
-          "title": "Destination Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The destination the ping came from; null when it was sent from the add form before the destination was saved (signed with a secret kept nowhere, so it cannot be verified).",
+          "title": "Destination Id"
         },
         "label": {
           "title": "Label",
@@ -2127,10 +2211,26 @@
         }
       },
       "required": [
-        "destination_id",
         "label"
       ],
       "title": "WebhookPingData",
+      "type": "object"
+    },
+    "WebhookProbeResponse": {
+      "description": "The add form's test of a URL before the destination exists: the\nattempt (stored nowhere), and the envelope exactly as the receiver\ngot it, so the form can show the body a receiver has to parse.",
+      "properties": {
+        "attempt": {
+          "$ref": "#/$defs/WebhookAttemptWire"
+        },
+        "envelope": {
+          "$ref": "#/$defs/WebhookEnvelope"
+        }
+      },
+      "required": [
+        "attempt",
+        "envelope"
+      ],
+      "title": "WebhookProbeResponse",
       "type": "object"
     },
     "WebhookSheetRef": {

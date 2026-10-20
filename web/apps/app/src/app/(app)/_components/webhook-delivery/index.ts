@@ -4,7 +4,15 @@
 // the settings pages and the sheet's Send webhook drawer. Route
 // families reach for these through this index.
 export { DeliveryResult } from "./delivery-result";
-export { deliveryFacts, deliveryLabel, deliveryRead, deliveryWord, TONE_CLASS, type DeliveryTone } from "./lib/delivery-read";
+export {
+  deliveryFacts,
+  deliveryLabel,
+  deliveryRead,
+  deliveryWord,
+  receiverFacts,
+  TONE_CLASS,
+  type DeliveryTone,
+} from "./lib/delivery-read";
 export { formatTime } from "./lib/format-time";
 export { hostOf } from "./lib/host-of";
 export { DeliveryRow } from "./delivery-row";

@@ -49,6 +49,7 @@ from .lists import (
 )
 from .runs import NodeRunWire
 from .webhooks import (
+    WebhookAttemptWire,
     WebhookColumnConfigWire,
     WebhookColumnPreviewResponse,
     WebhookColumnTestResponse,
@@ -61,6 +62,7 @@ from .webhooks import (
     WebhookDigestItem,
     WebhookEnvelope,
     WebhookPingData,
+    WebhookProbeResponse,
     WebhookSheetRef,
 )
 
@@ -99,6 +101,7 @@ __all__ = [
     "NodeRunWire",
     "PlainColumn",
     "RowsAdded",
+    "WebhookAttemptWire",
     "WebhookColumn",
     "WebhookColumnConfigWire",
     "WebhookColumnPreviewResponse",
@@ -112,5 +115,6 @@ __all__ = [
     "WebhookDigestItem",
     "WebhookEnvelope",
     "WebhookPingData",
+    "WebhookProbeResponse",
     "WebhookSheetRef",
 ]
