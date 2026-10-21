@@ -303,6 +303,14 @@ class RowsAdded(BaseModel):
     row_count: int
 
 
+class RowsDeleted(BaseModel):
+    """The rows-delete receipt: how many went, and the sheet's count
+    after, so the caller's footer moves without a re-read."""
+
+    deleted: int
+    row_count: int
+
+
 class IngestAccepted(BaseModel):
     """The webhook accept receipt. Rows are accepted for asynchronous
     append, not applied on the response; `event_id` correlates them."""

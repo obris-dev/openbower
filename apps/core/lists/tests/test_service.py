@@ -431,6 +431,36 @@ class FolderServiceTests(TestCase):
         self.assertEqual(lists.get(str(target.id)).folder_id, "")
 
 
+def _sheet_with_footprint(service: ListService, n: int) -> tuple[List, list[ListRow]]:
+    """A sheet of n rows, each with one cell state and one webhook run:
+    the whole footprint a row's delete has to take with it."""
+    from lists.constants import CellSource, NodeRunStatus, StoredCellState
+    from lists.models import ListCellState, NodeRun
+    from lists.nodes.registry import WEBHOOK
+
+    target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=ListOrigin.CSV)
+    rows = service.add_rows(target, [{"name": f"row {i}"} for i in range(n)])
+    for row in rows:
+        ListCellState.objects.create(
+            account_id=target.account_id,
+            list_id=str(target.id),
+            row_id=str(row.id),
+            column_key="name",
+            state=StoredCellState.FILLED,
+            source=CellSource.MANUAL,
+        )
+        NodeRun.objects.create(
+            account_id=target.account_id,
+            node_id=new_ulid(),
+            kind=WEBHOOK,
+            row_id=str(row.id),
+            list_id=str(target.id),
+            rank=row.rank,
+            status=NodeRunStatus.READY,
+        )
+    return target, rows
+
+
 class RowDeleteTests(TestCase):
     def test_delete_row_takes_its_cell_states_and_webhook_runs_and_recounts(self):
         from lists.constants import CellSource, NodeRunStatus, StoredCellState
@@ -468,6 +498,65 @@ class RowDeleteTests(TestCase):
         self.assertEqual(ListCellState.objects.filter(row_id=str(second.id)).count(), 1)
         self.assertEqual(NodeRun.objects.filter(row_id=str(second.id)).count(), 1)
         self.assertEqual(service.get(str(target.id)).row_count, 1)
+
+    def test_delete_rows_takes_the_named_rows_or_all_but_the_named_and_leaves_the_rest(self):
+        from lists.models import ListCellState, NodeRun
+        from lists.services.lists import AllRowsExcept, SomeRows
+
+        service = _service()
+        target, rows = _sheet_with_footprint(service, 5)
+        ids = [str(row.id) for row in rows]
+        removed = service.delete_rows(target, SomeRows((ids[0], ids[1], new_ulid())))
+        self.assertEqual(removed, (2, 3))
+        self.assertEqual(set(ListRow.objects.filter(list_id=str(target.id)).values_list("id", flat=True)), set(ids[2:]))
+        self.assertEqual(
+            set(ListCellState.objects.filter(list_id=str(target.id)).values_list("row_id", flat=True)), set(ids[2:])
+        )
+        self.assertEqual(
+            set(NodeRun.objects.filter(list_id=str(target.id)).values_list("row_id", flat=True)), set(ids[2:])
+        )
+        self.assertEqual(service.get(str(target.id)).row_count, 3)
+        # Every row but the one named: the one named keeps its footprint.
+        removed = service.delete_rows(target, AllRowsExcept((ids[4],)))
+        self.assertEqual(removed, (2, 1))
+        self.assertEqual(list(ListRow.objects.filter(list_id=str(target.id)).values_list("id", flat=True)), [ids[4]])
+        self.assertEqual(
+            list(ListCellState.objects.filter(list_id=str(target.id)).values_list("row_id", flat=True)), [ids[4]]
+        )
+        self.assertEqual(
+            list(NodeRun.objects.filter(list_id=str(target.id)).values_list("row_id", flat=True)), [ids[4]]
+        )
+        self.assertEqual(service.get(str(target.id)).row_count, 1)
+        # An id the sheet does not have deletes nothing and raises nothing.
+        self.assertEqual(service.delete_rows(target, SomeRows((new_ulid(),))).deleted, 0)
+
+    def test_delete_rows_walks_the_selection_a_page_at_a_time(self):
+        # The page bounds memory on a sheet of any size: with the batch
+        # at 2, five rows go in three pages, each page taking its rows,
+        # then their states, then their runs. FAILS if the walk is
+        # replaced by one unbounded delete (one page) or a page skips
+        # a table.
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from lists.models import ListCellState, NodeRun
+        from lists.services.lists import AllRowsExcept
+
+        service = _service()
+        target, _rows = _sheet_with_footprint(service, 5)
+        with patch("lists.services.lists.FILL_WRITE_BATCH", 2), CaptureQueriesContext(connection) as captured:
+            removed = service.delete_rows(target, AllRowsExcept(()))
+        self.assertEqual(removed, (5, 0))
+        self.assertEqual(ListRow.objects.filter(list_id=str(target.id)).count(), 0)
+        self.assertEqual(ListCellState.objects.filter(list_id=str(target.id)).count(), 0)
+        self.assertEqual(NodeRun.objects.filter(list_id=str(target.id)).count(), 0)
+        self.assertEqual(service.get(str(target.id)).row_count, 0)
+        deletes = [q["sql"].lower() for q in captured.captured_queries if q["sql"].upper().startswith("DELETE")]
+        tables = [
+            next(t for t in ("lists_listrow", "lists_listcellstate", "lists_noderun") if t in sql.split(" where ")[0])
+            for sql in deletes
+        ]
+        self.assertEqual(tables, ["lists_listrow", "lists_listcellstate", "lists_noderun"] * 3)
 
     def test_delete_row_refuses_a_missing_or_foreign_row(self):
         service = _service()
