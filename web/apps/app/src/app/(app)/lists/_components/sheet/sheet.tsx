@@ -489,8 +489,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
 
       {/* The scroll region's parent holds the selection bar over it:
           the bar floats at the region's bottom, not the sheet's. */}
+      {/* The sheet is one white surface, the page's paper around it:
+          the header, the gutter and the bar were already on surface,
+          and rows on paper read as a second, greyer sheet. */}
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} className="h-full overflow-auto">
+        <div ref={scrollRef} className="h-full overflow-auto bg-surface">
           <SheetGrid
             listId={detail.id}
             scrollRef={scrollRef}
