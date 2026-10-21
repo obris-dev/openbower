@@ -14,8 +14,9 @@ from ..constants import (
 
 class ListCellState(AccountScopedModel):
     """What was made of one AI cell: FILLED, or the cause it is blank,
-    and who made it (`source`: a fill today; a hand-typed value once the
-    grid can be edited). One row per (list, row, column), upserted.
+    and who made it (`source`: a node's run, or a person's own write
+    through the row cells PATCH). One row per (list, row, column),
+    upserted.
 
     ABSENCE means exactly one thing: never attempted. Nothing is
     written at admission, and nothing is written for a cell no writer

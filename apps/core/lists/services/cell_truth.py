@@ -3,9 +3,10 @@
 In production only the ListService's landing calls this module,
 inside the same transaction as the value write, so a sheet row and its
 truth can never be written apart. The purges are the owners' (a
-list's, a column's).
+list's, a column's, a row's).
 
-A record exists for every cell a fill has RESOLVED, filled ones
+A record exists for every cell a landing has RESOLVED (a run's, or a
+person's own write on a workflow column), filled ones
 included. There is nothing to write at admission (an open run of the
 cell's node is what makes a cell read pending) and nothing to sweep
 when a fill stops (nothing was written for the rows it never reached).
@@ -15,7 +16,7 @@ fills' records, which is a read-time replay this module exists to
 have no part of.
 
 So this module has exactly two jobs: write a row's states at the
-terminal write, and purge a deleted list's.
+landing, and purge what a deleted list, column or row recorded.
 
 Not account-scoped: the worker is a trusted process serving every
 account's fills, and every caller has already resolved its parent
@@ -169,6 +170,12 @@ def purge_column(list_id: str, column_key: str) -> None:
     is bounded by the cells the column answered, which has no ceiling
     short of the sheet."""
     _purge_in_pages(list_id=list_id, column_key=column_key)
+
+
+def purge_row(list_id: str, row_id: str) -> None:
+    """A deleted row takes its cell states with it: one record per
+    column at most, so one statement is the whole purge."""
+    ListCellState.objects.filter(list_id=list_id, row_id=row_id).delete()
 
 
 def purge_list(list_id: str) -> None:

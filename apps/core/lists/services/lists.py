@@ -28,6 +28,7 @@ from ..constants import (
     MAX_LIST_ROWS,
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
+    CellErrorCode,
 )
 from ..models import Folder, List, ListRow, NodeRun
 from . import cell_truth, fill_progress, webhook_runs
@@ -65,6 +66,55 @@ class ColumnNotWritable(Exception):
 
 class RowNotFound(Exception):
     """Missing row OR one outside the given list (reads as not-found)."""
+
+
+class CellRefused(Exception):
+    """A person's write on a cell the sheet will not take as written:
+    `code` is the machine leg the view maps to a status, str(self) is
+    server-authored copy the client renders verbatim (tier 1). A
+    refusal, never a flag: a machine's mismatched answer is recorded
+    as TYPE_MISMATCH and the row moves on, but a person's is handed
+    back so they can fix the value they meant."""
+
+    code = CellErrorCode.CELL_REFUSED
+
+
+class CellTypeRefused(CellRefused):
+    """The value does not fit the column's type."""
+
+    code = CellErrorCode.CELL_TYPE_MISMATCH
+
+    def __init__(self, *, column_label: str, why: str) -> None:
+        super().__init__(f"{column_label} will not take that value: {why}")
+
+
+class CellNotWritable(CellRefused):
+    """The column holds no value a person can set: a Send webhook column
+    is its send state."""
+
+    code = CellErrorCode.COLUMN_NOT_WRITABLE
+
+    def __init__(self, *, column_label: str) -> None:
+        super().__init__(f"{column_label} holds its send state, not a value you can set.")
+
+
+class CellBlank(CellRefused):
+    """The value is blank: nothing to write."""
+
+    code = CellErrorCode.CELL_BLANK
+
+    def __init__(self, *, column_label: str) -> None:
+        super().__init__(f"Nothing to put in {column_label}.")
+
+
+class CellColumnUnknown(CellRefused):
+    """The body names a column the sheet does not have. A refusal, not
+    a 404: the row and the sheet exist, the key in the body is wrong."""
+
+    code = CellErrorCode.CELL_COLUMN_UNKNOWN
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"This sheet has no column with key {key}.")
 
 
 class CellWrittenTwice(Exception):
@@ -323,6 +373,14 @@ class ListService:
             locked.save(update_fields=["row_count", "updated_at"])
         return created
 
+    def row(self, target: List, row_id: str) -> ListRow:
+        """One row of a sheet, as it reads now. Raises RowNotFound for a
+        row the sheet does not have."""
+        row = ListRow.objects.filter(id=row_id, list_id=str(target.id)).first()
+        if row is None:
+            raise RowNotFound(row_id)
+        return row
+
     def land_row(self, ctx: LandingContext, landing: RowLanding) -> RowVerdict:
         """One row's landing: see land_rows. Raises RowNotFound for a
         row that is gone."""
@@ -476,13 +534,19 @@ class ListService:
                     row_cells = dict(row.data)
                     cells = pending.get(row_id, {})
                     # Write-if-blank (a DB-state decision, not a shape one):
-                    # only a cell whose column is currently blank is a
-                    # candidate to write, so a user's value is never
-                    # destroyed. The candidates run through the shared
-                    # write-time transform; this writer's reaction to a
-                    # mismatch is to FLAG it (TYPE_MISMATCH), never reject.
+                    # a cell whose column is currently blank is a
+                    # candidate to write, so a machine's value never
+                    # destroys a person's. The one writer that may
+                    # replace a value is the write that says it
+                    # OVERWRITES (the person's own). The candidates run
+                    # through the shared write-time transform; this
+                    # writer's reaction to a mismatch is to FLAG it
+                    # (TYPE_MISMATCH), never reject.
+                    overwriting = {write.key for write in writes if write.overwrites}
                     candidates = {
-                        key: value for key, value in cells.items() if not str(row_cells.get(key, "") or "").strip()
+                        key: value
+                        for key, value in cells.items()
+                        if key in overwriting or not str(row_cells.get(key, "") or "").strip()
                     }
                     stored, mismatches = cells_for_storage(types, candidates, where="land_rows")
                     why_by_key = {mismatch.key: mismatch.why for mismatch in mismatches}
@@ -495,6 +559,13 @@ class ListService:
                             continue
                         if key in candidates and key in why_by_key:
                             mismatched.append(CellMismatch(key=key, why=why_by_key[key]))
+                        elif key in overwriting and stored[key] == str(row_cells.get(key, "") or ""):
+                            # An overwrite that lands the value already
+                            # there changed nothing, and says so: the
+                            # row and the record keep their stamps, so
+                            # a barrier reads no newer completion and
+                            # sends the row nowhere again.
+                            occupied.append(key)
                         elif key in candidates:
                             row_cells[key] = stored[key]
                             written.append(key)
@@ -645,6 +716,29 @@ class ListService:
                     if len(out) >= limit:
                         break
         return out
+
+    def delete_row(self, target: List, row_id: str) -> None:
+        """Delete one row with its cell states and its webhook runs, and
+        recount the sheet, in one transaction under the list lock (the
+        lock an append takes, so the recount cannot race one; a landing
+        locks the ROW, so one in flight on this row commits before the
+        delete takes it, and a later one finds it gone). The order is
+        the deletes' lock order, the one a landing takes: ListRow, then
+        ListCellState, then NodeRun. The row's fill-backed and autofill
+        runs are left alone (the list delete purges fills whole, with
+        their runs; one row's run is the claimed task's to settle: it
+        finds its row gone and settles ROW_MISSING)."""
+        with transaction.atomic():
+            locked = List.objects.select_for_update().filter(id=str(target.id), account_id=self.account_id).first()
+            if locked is None:
+                raise ListNotFound(str(target.id))
+            removed, _by_model = ListRow.objects.filter(id=row_id, list_id=str(locked.id)).delete()
+            if not removed:
+                raise RowNotFound(row_id)
+            cell_truth.purge_row(str(locked.id), row_id)
+            webhook_runs.purge_for_row(str(locked.id), row_id)
+            locked.row_count = ListRow.objects.filter(list_id=str(locked.id)).count()
+            locked.save(update_fields=["row_count", "updated_at"])
 
     def delete(self, target: List) -> None:
         """Delete the list with its rows, fills, tasks, cell states, and

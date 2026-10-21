@@ -1,7 +1,8 @@
 // @bower/ui: the design system's primitives. Components land with the
 // phase that needs them; every addition follows the layout rules in
 // ../LAYOUT.md (min-w-0 discipline, wrap-anywhere on user content,
-// mobile-first rows, | separators, drawers over modals).
+// mobile-first rows, | separators, drawers over modals, with the one
+// confirm dialog).
 export { cn } from "./cn";
 export { Button } from "./button";
 export { buttonClasses, TouchTarget, type ButtonSize, type ButtonVariant } from "./button-classes";
@@ -13,6 +14,8 @@ export { Dropdown, DropdownButton, DropdownItem, DropdownMenu } from "./dropdown
 export { EmptyState } from "./empty-state";
 export { PageState } from "./page-state";
 export { Popover, PopoverButton, PopoverItem, PopoverPanel } from "./popover";
+export { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./context-menu";
+export { ConfirmDialog, ConfirmDialogTitle } from "./confirm-dialog";
 export { ErrorMessage } from "./error-message";
 export { FieldError } from "./field-error";
 export { Input } from "./input";

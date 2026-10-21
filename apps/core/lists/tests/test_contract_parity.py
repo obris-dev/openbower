@@ -75,3 +75,24 @@ class RowDoorPins(SimpleTestCase):
             if re.search(r"\.add_rows\(", text) and not re.search(r"def add_rows\(", text):
                 callers.append(str(path.relative_to(core)))
         self.assertEqual(callers, ["lists/operations/append_rows.py"])
+
+    def test_a_persons_write_is_built_in_the_one_operation(self):
+        # A TypedWrite is the one write that REPLACES a value, and the
+        # landing's write-if-blank rests on nobody else building one:
+        # a processor or the append reaching for it would let a
+        # machine's run destroy a person's value. SetCellsOperation is
+        # the door. FAILS if any other production module builds one.
+        import re
+        from pathlib import Path
+
+        core = Path(__file__).resolve().parents[2]
+        builders = []
+        for path in core.rglob("*.py"):
+            if "/tests/" in str(path) or path.name.startswith("test_"):
+                continue
+            # The module that defines it names it in its own doc.
+            if path == core / "lists" / "cells.py":
+                continue
+            if re.search(r"\bTypedWrite\(", path.read_text()):
+                builders.append(str(path.relative_to(core)))
+        self.assertEqual(builders, ["lists/operations/set_cells.py"])

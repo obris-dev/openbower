@@ -41,7 +41,7 @@ export function BuilderFooter({
       {showDelete &&
         (confirmingDelete ? (
           <ConfirmDelete
-            inline
+            layout="inline"
             question={DELETE_AGENT_QUESTION}
             consequence={DELETE_AGENT_CONSEQUENCE}
             busy={busy}

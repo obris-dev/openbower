@@ -122,10 +122,12 @@ auth + data services live in a separate private repo.
   its first slices, the wait for its runs the rest; `fill_run_id` on a
   run or a cell is the job's id, and a fill reads its agent's config
   LIVE (no snapshot, no fingerprint). An agent's columns are ONE unit
-  (one run answers them together), and on every occasion an agent owes
-  a row only if none of its columns has a cell record: a row attempted
-  once, whatever came of it, is re-asked only by the user's own
-  gesture. (A webhook owes a row once its barrier completes after its
+  (one run answers them together and records them together), and on
+  every occasion an agent owes a row only if some column of its has no
+  cell record: a row attempted once, whatever came of it, is re-asked
+  only by the user's own gesture, while a record in some columns alone
+  is a hand's work and the run fills the rest around it. (A webhook
+  owes a row once its barrier completes after its
   newest run; a failed cell never completes, so a barrier over it stays
   shut for that row until the user re-asks it.) A stopped or failed
   fill is simply over: a new fill (Fill all remaining, Fill next N) runs
@@ -182,12 +184,17 @@ auth + data services live in a separate private repo.
   record, the value it lands where blank, the tools behind it): a
   node kind's run reaction (`NodeProcessor.on_run_landed`, one write
   per column the node fills); a person's typed value is a `TypedWrite`
-  (the grid is read-only today, so cell editing designs its own rules
-  per column when it arrives). Only a workflow column's cells are
+  (the row cells PATCH, through `lists/operations/set_cells.py`: the
+  ONE write that replaces a value already there, refused rather than
+  flagged when the type does not fit; it owes the workflow the
+  COMPLETE reaction, barriers only, never the next node, which runs
+  when the person asks). Only a workflow column's cells are
   recorded (`WorkflowColumn`), so rows alone never carry one. Writes
   are in-memory intents until `ListService.land_row` / `land_rows`
-  persists them, kind-blind: values onto the row write-if-blank
-  through the column's type, then one ledger record per write in ONE
+  persists them, kind-blind: values onto the row write-if-blank (a
+  person's own write is the one that replaces, and one that lands the
+  value already there is unchanged) through the column's type, then
+  one ledger record per write in ONE
   upsert, FILLED and TYPE_MISMATCH derived from what the row reported
   and every other state the write's own. Processors never touch a row
   or a cell record; the landing never branches on a node kind.
@@ -232,7 +239,8 @@ auth + data services live in a separate private repo.
   gets a directory with an index (single files stay flat). Shared hooks
   graduate to a package when a second consumer exists. Route files stay
   thin compositions. UI primitives live in `@bower/ui` (drawers and
-  inline editing, no modals).
+  inline editing; the one modal is the confirm dialog, for a
+  destructive act with no slot of its own to confirm in).
   Navigation is two-tier: in-app transitions use Link / router.push;
   crossing the auth boundary or any origin (login, logout, the OAuth
   redirect dance) uses window.location, where the full document load is

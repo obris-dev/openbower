@@ -46,6 +46,17 @@ def purge_for_node(node_id: str) -> int:
     return removed
 
 
+def purge_for_row(list_id: str, row_id: str) -> int:
+    """A deleted row's webhook runs go with it. The flush would retire
+    one ROW_MISSING at its window, so this is not what keeps a run from
+    running: it is the delete taking the row's whole footprint now,
+    beside its cell states, rather than leaving a run to be found gone
+    later and counted as a row that was ever waited on."""
+    with transaction.atomic():
+        removed, _by_model = NodeRun.objects.filter(kind=WEBHOOK, list_id=list_id, row_id=row_id).delete()
+    return removed
+
+
 def purge_for_list(list_id: str) -> int:
     """A sheet's webhook runs go with it, beside its fill-backed runs."""
     with transaction.atomic():

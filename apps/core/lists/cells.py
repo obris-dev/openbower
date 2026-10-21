@@ -37,9 +37,10 @@ class CellMismatch(NamedTuple):
 
 class RowVerdict(NamedTuple):
     """What the value pass made of one row: the keys whose value landed
-    (written), whose cell already held one that write-if-blank kept
-    (occupied), and whose value the column's type refused (mismatched).
-    A key in none of these landed nothing."""
+    (written), whose cell already held one that write-if-blank kept or
+    that an overwrite found holding the same value (occupied), and
+    whose value the column's type refused (mismatched). A key in none
+    of these landed nothing."""
 
     written: tuple[str, ...]
     occupied: tuple[str, ...]
@@ -75,8 +76,16 @@ class CellWrite(ABC):
     key: str
     tools: Mapping[str, str] = field(default_factory=dict, kw_only=True)
 
+    # Whether this write may REPLACE a value the cell already holds.
+    # Off for every machine writer: a fill, a push, an import find an
+    # occupied cell and leave it, so a person's value is never
+    # destroyed by a run. On only for the person's own write, since the
+    # gesture that put a value there is the one that may change it.
+    overwrites: bool = field(default=False, init=False)
+
     def value_to_land(self) -> str | None:
-        """The value to write where the cell is blank, or None."""
+        """The value to write where the cell is blank (or, for a write
+        that overwrites, wherever it is), or None."""
         return None
 
     @abstractmethod
@@ -90,9 +99,11 @@ class TypedWrite(CellWrite):
     """A person set a cell. The value is never blank (a blank is nothing
     to write and nothing to record, so a caller drops it before building
     a write; here it is refused), so it lands or the type refuses
-    it."""
+    it. It REPLACES whatever the cell holds: the person is the one
+    writer whose gesture outranks a value already there."""
 
     value: str
+    overwrites: bool = field(default=True, init=False)
 
     def __post_init__(self) -> None:
         if not self.value.strip():
@@ -141,7 +152,7 @@ class WebhookWrite(CellWrite):
 
 class RowLanding(NamedTuple):
     """One row's writes from one change: N columns of one node's run,
-    or the one cell a person typed. Several landings on one row in a
+    or the cells a person set in one write. Several landings on one row in a
     batch are merged by the landing under one row lock."""
 
     row_id: str

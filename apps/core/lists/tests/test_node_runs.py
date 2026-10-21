@@ -143,13 +143,15 @@ class EnqueueTests(AutofillHarness):
         self.assertEqual(self._new_row_ids(sheet, before), set())
         self.assertFalse(self._null_run_tasks().exists())
 
-    def test_a_multi_column_agent_skips_a_row_any_of_its_columns_was_attempted_on(self) -> None:
+    def test_a_multi_column_agent_skips_a_row_every_column_was_attempted_on(self) -> None:
         # One node (an agent) owns TWO columns and answers both in one
-        # run. A row attempted on both is done, and so is a row attempted
-        # on one: that run already happened, and re-asking is the user's
-        # gesture. Only a row neither column was attempted on is owed.
-        # FAILS if the rule needs EVERY column settled, which re-runs a
-        # row for its one blank sibling.
+        # run, recording both. A row with a record in both is done,
+        # whatever the records say, and re-asking is the user's gesture.
+        # A row with a record in ONE is a hand's work (a run never
+        # records half a unit), so the node still owes it the rest, and
+        # so is a row neither column was attempted on. FAILS if the rule
+        # takes any record for the whole unit, which strands the
+        # hand-filled row's blank sibling for good.
         sheet = self.lists.create(
             owner_id=USER,
             label="Multi",
@@ -168,10 +170,10 @@ class EnqueueTests(AutofillHarness):
             sheet, [{"company": "both.co"}, {"company": "one.co"}, {"company": "neither.co"}]
         )
         attempted = (
-            (both, {"a": StoredCellState.FILLED, "b": StoredCellState.NO_ANSWER}),
-            (one, {"a": StoredCellState.FILLED}),
+            (both, {"a": StoredCellState.FILLED, "b": StoredCellState.NO_ANSWER}, CellSource.NODE),
+            (one, {"a": StoredCellState.FILLED}, CellSource.MANUAL),
         )
-        for row, states in attempted:
+        for row, states, source in attempted:
             cell_truth.write(
                 account_id=ACCOUNT,
                 list_id=str(sheet.id),
@@ -179,12 +181,13 @@ class EnqueueTests(AutofillHarness):
                 fill_run_id=None,
                 states=states,
                 tools={},
-                source=CellSource.NODE,
+                source=source,
             )
         created = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, [both, one, neither])
-        self.assertEqual(created, 1)
+        self.assertEqual(created, 2)
         self.assertEqual(self._null_run_tasks().filter(row_id=str(neither.id)).count(), 1)
-        self.assertFalse(self._null_run_tasks().filter(row_id__in=[str(both.id), str(one.id)]).exists())
+        self.assertEqual(self._null_run_tasks().filter(row_id=str(one.id)).count(), 1)
+        self.assertFalse(self._null_run_tasks().filter(row_id=str(both.id)).exists())
 
     def test_a_push_to_a_two_node_sheet_enqueues_one_task_per_node_for_the_row(self) -> None:
         # Two distinct nodes on one sheet: the one shape where a row owes

@@ -1,9 +1,13 @@
 "use client";
 
-import { Button, ErrorMessage } from "@bower/ui";
+import { Button, ConfirmDialogTitle, ErrorMessage } from "@bower/ui";
 
-/** THE delete confirm ritual, shared by every surface that swaps one
- * in (footer bars, row-menu panels): the question, an optional quiet
+/** The three places the ritual sits; see `layout` below. */
+export type ConfirmLayout = "panel" | "inline" | "dialog";
+
+/** THE delete confirm ritual, shared by every surface that asks one
+ * (footer bars, row-menu panels, the confirm dialog): the question, an
+ * optional quiet
  * consequence line, then Cancel BEFORE the destructive verb, with
  * focus landing on Cancel. One ritual, not three hand-written tiers
  * with three button orders. A refusal the server answered (a 409, in
@@ -14,7 +18,7 @@ export function ConfirmDelete({
   question,
   consequence,
   busy,
-  inline = false,
+  layout = "panel",
   verb = "Delete",
   refusal = null,
   onCancel,
@@ -23,11 +27,16 @@ export function ConfirmDelete({
   question: string;
   consequence?: string;
   busy?: boolean;
-  /** Row layout instead of the stacked panel form, for a bar the
-   * ritual has to itself (a page footer, a toolbar's action slot): it
-   * never shares a flex line with the content it confirms. A roster
-   * row hangs the stacked form off its verb in an anchored panel. */
-  inline?: boolean;
+  /** Where the ritual sits, one of three. `panel` (the default) is the
+   * stacked form a roster row hangs off its verb in an anchored panel.
+   * `inline` is the row layout for a bar the ritual has to itself (a
+   * page footer, a toolbar's action slot): it never shares a flex line
+   * with the content it confirms. `dialog` is the ConfirmDialog's
+   * form: the dialog owns the width and padding, so this fills it,
+   * with the question as the dialog's heading, the consequence as its
+   * one line of body, and full-size buttons with a bordered Cancel,
+   * the way a dialog's answers read. */
+  layout?: ConfirmLayout;
   verb?: string;
   refusal?: string | null;
   onCancel: () => void;
@@ -37,15 +46,35 @@ export function ConfirmDelete({
     <>
       {/* autoFocus lands focus on the swap-in tier's Cancel;
           data-autofocus does the same under a headless panel. */}
-      <Button autoFocus data-autofocus size="sm" variant="ghost" onClick={onCancel}>
+      <Button
+        autoFocus
+        data-autofocus
+        size={layout === "dialog" ? "md" : "sm"}
+        variant={layout === "dialog" ? "outline" : "ghost"}
+        onClick={onCancel}
+      >
         Cancel
       </Button>
-      <Button size="sm" variant="danger" onClick={onDelete} loading={busy}>
+      <Button size={layout === "dialog" ? "md" : "sm"} variant="danger" onClick={onDelete} loading={busy}>
         {verb}
       </Button>
     </>
   );
-  if (inline) {
+  if (layout === "dialog") {
+    return (
+      <div>
+        <ConfirmDialogTitle>{question}</ConfirmDialogTitle>
+        {consequence && <p className="mt-1 text-sm leading-5 text-muted">{consequence}</p>}
+        {refusal && (
+          <div className="mt-3">
+            <ErrorMessage message={refusal} />
+          </div>
+        )}
+        <div className="mt-6 flex justify-end gap-3">{buttons}</div>
+      </div>
+    );
+  }
+  if (layout === "inline") {
     return (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-sm text-muted">{question}</span>

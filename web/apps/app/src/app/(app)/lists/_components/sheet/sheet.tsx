@@ -58,7 +58,10 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   const toast = useToast();
   const columns = useColumns(initialDetail);
   const { detail } = columns;
-  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef } = useRows(detail.id, initialRows);
+  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, setCells, removeRow, scrollRef, sentinelRef } = useRows(
+    detail.id,
+    initialRows,
+  );
   // The fill attachment polls the FILLS alone; cell states ride the
   // rows this component already holds.
   const fill = useFill(detail.id);
@@ -273,6 +276,39 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     return null;
   }
 
+  // A paste: the row swaps in on success (the hook's job); a refusal
+  // is the server's sentence under a title that says so, tier c (an
+  // outcome, no form to attach it to); a failure that judged nothing
+  // is the generic sentence bare, like every other mutation's; and no
+  // sentence is the page leaving for login. A pasted value on an AI
+  // column counts as filled, so the tracker's totals re-read.
+  async function pasteCells(rowId: string, data: Record<string, string>) {
+    const outcome = await setCells(rowId, data);
+    if (!outcome.ok) {
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Paste refused" : undefined);
+      return outcome;
+    }
+    void fill.refresh();
+    return outcome;
+  }
+
+  // A row's removal, once the grid's confirm has been answered (there
+  // is no undo): the toast is the one word after. The footer's count
+  // is the detail's, and the tracker's per-column counts are the
+  // fills page's (the row's cells counted there): both re-read in
+  // place.
+  async function deleteRow(rowId: string) {
+    const outcome = await removeRow(rowId);
+    if (!outcome.ok) {
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Row not deleted" : undefined);
+      return outcome;
+    }
+    toast.success("Row deleted.");
+    void columns.reread();
+    void fill.refresh();
+    return outcome;
+  }
+
   async function submitRename() {
     const next = titleDraft?.trim() ?? "";
     setTitleDraft(null);
@@ -347,7 +383,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
             // Destruction confirms IN PLACE (the same slot the verb came
             // from), naming what dies; the ONE shared ritual, no modal.
             <ConfirmDelete
-              inline
+              layout="inline"
               question="Delete this list?"
               consequence="This can't be undone."
               onCancel={() => setConfirmingDelete(false)}
@@ -448,6 +484,8 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
           onEditWebhook={openEditWebhook}
           pendingColumn={columns.pendingColumn}
           onNamePending={(label) => void columns.namePending(label)}
+          onSetCells={pasteCells}
+          onRemoveRow={deleteRow}
         />
         {hasMore && (
           <>

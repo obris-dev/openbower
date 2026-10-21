@@ -60,6 +60,9 @@ export function useColumns(initialDetail: ListDetail): {
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
   renameList: (label: string) => Promise<boolean>;
+  /** Re-read the summary in place (a row removed elsewhere moved its
+   * count); true when the page is leaving for login. */
+  reread: () => Promise<boolean>;
 } {
   const toast = useToast();
   const [detail, setDetail] = useState(initialDetail);
@@ -71,9 +74,10 @@ export function useColumns(initialDetail: ListDetail): {
   // it, so every later attempt would refuse the same way until a
   // manual reload. Re-read instead, so the server's "try again" can
   // succeed in place. True when the page is leaving for login.
-  // SILENT on a non-ok by design: this runs only on refusal paths,
-  // where the caller's own toast or rendered refusal is the voice and
-  // a second message would be noise.
+  // SILENT on a non-ok by design: it runs after a refusal, where the
+  // caller's own toast or rendered refusal is the voice, or after a
+  // row's delete, where the row is already gone and a stale count is
+  // the lesser noise; a second message would be noise either way.
   const reread = useCallback(async (): Promise<boolean> => {
     const summary = await fetchList(detail.id);
     if (redirectIfUnauthenticated(summary)) return true;
@@ -255,5 +259,6 @@ export function useColumns(initialDetail: ListDetail): {
     startPending,
     namePending,
     renameList,
+    reread,
   };
 }

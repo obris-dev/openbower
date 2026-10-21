@@ -85,6 +85,17 @@ class RowsAddRequest(serializers.Serializer):
     )
 
 
+class RowCellsPatchRequest(serializers.Serializer):
+    """A person setting cells on one row: column key to value, at least
+    one. Values are strings at the boundary for the append's reason; a
+    blank is refused later with its own sentence (the operation's), and
+    an oversize value clamps at the writer rather than failing here."""
+
+    data = serializers.DictField(
+        child=serializers.CharField(allow_blank=True, trim_whitespace=False), allow_empty=False
+    )
+
+
 class IngestRequest(serializers.Serializer):
     """A webhook push: rows plus an OPTIONAL caller-supplied idempotency key.
     Absent -> the endpoint mints a ULID; present -> used verbatim (a blank

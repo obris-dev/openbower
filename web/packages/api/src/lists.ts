@@ -306,14 +306,14 @@ const TolerantCellStateSchema = z.union([
   z.string(),
   z.object({ state: z.string(), tools: z.record(z.string(), z.string()).default({}) }),
 ]);
+const TolerantListRowSchema = ListRowWireSchema.extend({
+  states: z.record(z.string(), TolerantCellStateSchema).default({}),
+});
 export const TolerantListRowsPageSchema = ListRowsPageSchema.extend({
-  items: z.array(
-    ListRowWireSchema.extend({
-      states: z.record(z.string(), TolerantCellStateSchema).default({}),
-    }),
-  ),
+  items: z.array(TolerantListRowSchema),
 });
 type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
+type TolerantListRow = z.infer<typeof TolerantListRowSchema>;
 
 export async function fetchListRows(
   id: string,
@@ -335,6 +335,13 @@ export async function fetchListRows(
 export function renderablePage(page: {
   items: { states: Record<string, TolerantCellState> }[];
 }): RenderableListRowsPage {
+  return {
+    ...(page as unknown as RenderableListRowsPage),
+    items: page.items.map(renderableRow),
+  };
+}
+
+function renderableRow(item: { states: Record<string, TolerantCellState> }): RenderableListRow {
   const known = new Set<string>(CELL_STATES);
   const narrow = (entry: TolerantCellState): RenderableCellStateWire => {
     const state = typeof entry === "string" ? entry : entry.state;
@@ -342,12 +349,27 @@ export function renderablePage(page: {
     return { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
   };
   return {
-    ...(page as unknown as RenderableListRowsPage),
-    items: page.items.map((item) => ({
-      ...(item as unknown as RenderableListRow),
-      states: Object.fromEntries(Object.entries(item.states).map(([key, entry]) => [key, narrow(entry)])),
-    })),
+    ...(item as unknown as RenderableListRow),
+    states: Object.fromEntries(Object.entries(item.states).map(([key, entry]) => [key, narrow(entry)])),
   };
+}
+
+/** A person's cell values on one row, replacing what is there. The
+ * 200 body is the row with its states, so the sheet swaps it in. A
+ * refusal (the type, a column that takes no value) is the server's
+ * own sentence in `message`. */
+export async function setListRowCells(
+  id: string,
+  rowId: string,
+  data: Record<string, string>,
+): Promise<ApiResult<RenderableListRow>> {
+  const res = await http.patch(apiRoutes.lists.row(id, rowId), TolerantListRowSchema, { data });
+  if (res.status !== "ok") return res;
+  return { ...res, data: renderableRow(res.data as TolerantListRow) };
+}
+
+export async function deleteListRow(id: string, rowId: string): Promise<ApiResult<null>> {
+  return http.delete(apiRoutes.lists.row(id, rowId));
 }
 
 export async function updateList(

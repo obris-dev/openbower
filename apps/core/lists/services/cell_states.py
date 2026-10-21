@@ -62,13 +62,27 @@ class CellStateService:
         )
 
     def attempted_row_ids(self, list_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]) -> set[str]:
-        """The rows on this page that ANY of the columns has a record
-        for: a cell the landing has resolved once (filled, a model's
-        verdict, or an infrastructure failure) is attempted, and a node
-        that fills these columns owes such a row nothing until the user
-        asks again. One read per page, the record being the truth."""
-        records = self._scoped(list_id, row_ids=row_ids, column_keys=column_keys)
-        attempted = records.values_list("row_id", flat=True).distinct()
+        """The rows on this page that EVERY one of the columns has a
+        record for: a cell the landing has resolved once (filled, a
+        model's verdict, or an infrastructure failure) is attempted, and
+        a node that fills these columns owes such a row nothing until
+        the user asks again. Every column, not any: a node's run records
+        all of its columns at once, so a row with a record in some of
+        them was filled by hand in those, and the node still owes it the
+        rest (its run leaves the hand-filled cells as they are). One
+        read per page, the record being the truth."""
+        # The filter keeps a row's records to these keys, so a row whose
+        # distinct keys number the whole set has one for every key: the
+        # one-query form of "has all of them". A set, so a repeated key
+        # cannot inflate the number a row has to reach.
+        keys = set(column_keys)
+        records = self._scoped(list_id, row_ids=row_ids, column_keys=keys)
+        attempted = (
+            records.values("row_id")
+            .annotate(recorded=models.Count("column_key", distinct=True))
+            .filter(recorded=len(keys))
+            .values_list("row_id", flat=True)
+        )
         return {str(row_id) for row_id in attempted}
 
     def iter_recorded(
