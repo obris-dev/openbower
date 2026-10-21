@@ -134,17 +134,51 @@ class WriteIfBlankTests(TestCase):
             self.assertIsNotNone(read, sql)
             self.assertLess(locked, read, sql)
 
-    def test_occupied_cell_untouched(self):
+    def test_occupied_cell_untouched_by_a_machine(self):
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme"}])
         result = service.land_row(
-            _ctx(str(target.id), CellSource.MANUAL),
-            _landing(str(row.id), {"name": "Machine Name"}, column_keys=("name",), blank_state=None),
+            _ctx(str(target.id), CellSource.NODE),
+            RowLanding(str(row.id), [AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE)]),
         )
         self.assertEqual(result.occupied, ("name",))
         self.assertEqual(result.written, ())
         row.refresh_from_db()
         self.assertEqual(row.data["name"], "Acme")  # the user's value survives
+
+    def test_a_persons_write_replaces_an_occupied_cell(self):
+        # The one writer that may replace a value: the person's own
+        # gesture. FAILS if the overwrite facet is dropped from the
+        # landing (the typed value would read as occupied) or from
+        # TypedWrite (it would stop asking for it).
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            RowLanding(str(row.id), [TypedWrite("name", "Acme Holdings")]),
+        )
+        self.assertEqual(result.written, ("name",))
+        self.assertEqual(result.occupied, ())
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme Holdings")
+
+    def test_a_persons_write_of_the_value_already_there_changes_nothing(self):
+        # Pasting a cell's own value back is not a write: the row keeps
+        # its stamp and the verdict says occupied, so the ledger's record
+        # is left as it is (a barrier would otherwise read a newer
+        # completion and send the row again). FAILS if an overwrite
+        # counts as written whatever it lands.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        before = row.updated_at
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            RowLanding(str(row.id), [TypedWrite("name", "Acme")]),
+        )
+        self.assertEqual(result.written, ())
+        self.assertEqual(result.occupied, ("name",))
+        row.refresh_from_db()
+        self.assertEqual(row.updated_at, before)
 
     def test_clamp_at_cell_max_length(self):
         service = _service()
@@ -236,13 +270,15 @@ class WriteIfBlankTests(TestCase):
         landing = RowLanding(
             str(row.id),
             [
-                TypedWrite("name", "Machine Name"),  # occupied: a person's value stays
+                AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE),  # occupied: the value stays
                 TypedWrite("employees", "42"),  # lands
                 TypedWrite("founded", "next spring"),  # the date type refuses
                 AnsweredWrite("domain", None, StoredCellState.NO_EVIDENCE),  # an agent had none
             ],
         )
         service.land_row(_ctx(str(target.id), CellSource.NODE), landing)
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme")
         recorded = dict(ListCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
         self.assertEqual(
             recorded,
@@ -397,15 +433,20 @@ class WriteIfBlankTests(TestCase):
         )
 
     def test_mixed_dict_partial_outcomes(self):
+        # A machine's writes, so the occupied cell is left alone; a
+        # blank answer is no value to land.
         service = _service()
         target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
         result = service.land_row(
-            _ctx(str(target.id), CellSource.MANUAL),
-            _landing(
+            _ctx(str(target.id), CellSource.NODE),
+            RowLanding(
                 str(row.id),
-                {"name": "Machine Name", "employees": "42", "founded": "next spring", "domain": ""},
-                column_keys=("name", "employees", "founded", "domain"),
-                blank_state=None,
+                [
+                    AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("employees", "42", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("founded", "next spring", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("domain", "", StoredCellState.NO_EVIDENCE),
+                ],
             ),
         )
         self.assertEqual(result.written, ("employees",))
@@ -621,6 +662,34 @@ class LockGranularityTests(TransactionTestCase):
         self.assertEqual(
             order(captured.captured_queries, "update", "insert"),
             ["lists_listrow", "lists_listcellstate", "lists_noderun"],
+        )
+        # The row delete purges the same three tables for one row, in
+        # the same order, against the same landing.
+        from lists.models import ListCellState
+        from lists.nodes.registry import WEBHOOK
+
+        (other,) = lists.add_rows(sheet, [{}])
+        ListCellState.objects.create(
+            account_id="01AC" + "A" * 22,
+            list_id=str(sheet.id),
+            row_id=str(other.id),
+            column_key="employees",
+            state=StoredCellState.FILLED,
+            source=CellSource.MANUAL,
+        )
+        NodeRun.objects.create(
+            account_id="01AC" + "A" * 22,
+            node_id="01ND" + "B" * 22,
+            kind=WEBHOOK,
+            row_id=str(other.id),
+            list_id=str(sheet.id),
+            rank=other.rank,
+            status=NodeRunStatus.READY,
+        )
+        with CaptureQueriesContext(connection) as captured:
+            lists.delete_row(sheet, str(other.id))
+        self.assertEqual(
+            order(captured.captured_queries, "delete"), ["lists_listrow", "lists_listcellstate", "lists_noderun"]
         )
         with CaptureQueriesContext(connection) as captured:
             lists.delete(sheet)

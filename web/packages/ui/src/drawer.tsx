@@ -20,7 +20,8 @@ const WIDTHS = {
 export type DrawerWidth = keyof typeof WIDTHS;
 
 /** The house's overlay surface (LAYOUT.md rule 6: drawers and inline
- * editing, never modals): a right-side panel with a pinned header, a
+ * editing; the one modal is ConfirmDialog): a right-side panel with a
+ * pinned header, a
  * scrolling body, and an optional pinned footer whose controls submit
  * body forms through the `form` attribute.
  *

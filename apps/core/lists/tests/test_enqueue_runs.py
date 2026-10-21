@@ -395,29 +395,42 @@ class PushedRuleTests(_Harness):
         self.assertEqual(enqueue_thin(2)[0], enqueue_thin(5)[0])
 
     def test_a_nodes_columns_are_one_unit(self):
-        # One run answers every column the node fills, so a row attempted
-        # in ANY of them is attempted in all, on every occasion: a record
-        # in the second column alone makes the row done for a fill and an
-        # arrival alike. FAILS if the judgement reads fewer than the
-        # node's columns on the sheet.
+        # One run answers every column the node fills and records them
+        # together, so a row with a record in EVERY one of them is done,
+        # for a fill and an arrival alike, whatever the records say. A
+        # record in some of them alone is a hand's work, and the node
+        # still owes that row the rest. FAILS if the judgement reads
+        # fewer than the node's columns on the sheet, or takes a record
+        # in any one of them for the whole unit.
         self.sheet.columns = [
             *self.sheet.columns,
             {"key": "other", "label": "Other", "type": "text", "kind": "ai", "node_id": str(self.node.id)},
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        pushed = self.lists.add_rows(self.sheet, [{"company": "done.io"}, {"company": "open.io"}])
+        pushed = self.lists.add_rows(
+            self.sheet, [{"company": "done.io"}, {"company": "open.io"}, {"company": "half.io"}]
+        )
         cell_truth.write(
             account_id=ACCOUNT,
             list_id=str(self.sheet.id),
             row_id=str(pushed[0].id),
             fill_run_id=None,
-            states={"other": StoredCellState.NO_EVIDENCE},
+            states={"answer": StoredCellState.FILLED, "other": StoredCellState.NO_EVIDENCE},
             tools={},
             source=CellSource.NODE,
         )
+        cell_truth.write(
+            account_id=ACCOUNT,
+            list_id=str(self.sheet.id),
+            row_id=str(pushed[2].id),
+            fill_run_id=None,
+            states={"other": StoredCellState.FILLED},
+            tools={},
+            source=CellSource.MANUAL,
+        )
         arrival = self._processor(FillScope(mode=FillMode.AUTOFILL))
-        self.assertEqual(arrival.enqueue_runs(self.sheet, pushed, now=NOW), 1)
-        self.assertEqual(set(self._runs().values_list("row_id", flat=True)), {str(pushed[1].id)})
+        self.assertEqual(arrival.enqueue_runs(self.sheet, pushed, now=NOW), 2)
+        self.assertEqual(set(self._runs().values_list("row_id", flat=True)), {str(pushed[1].id), str(pushed[2].id)})
         fill = self._fill()
         filling = self._processor(FillScope(mode=FillMode.MANUAL, fill_run_id=str(fill.id)))
         self.assertEqual(filling.enqueue_runs(self.sheet, pushed[:1], now=NOW), 0)

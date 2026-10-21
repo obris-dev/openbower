@@ -170,6 +170,25 @@ class FillErrorCode(StrEnum):
     MODEL_UNRUNNABLE = "model_unrunnable"
 
 
+# A person's cell write's refusals, its own lane (one row's cells,
+# never a fill or a column): the machine leg of the {error, detail}
+# envelope PATCH /v1/lists/{id}/rows/{row_id} answers with, the detail
+# server-authored copy the client renders verbatim (tier 1).
+class CellErrorCode(StrEnum):
+    # The generic leg a refusal carries until a subclass names its own.
+    CELL_REFUSED = "cell_refused"
+    # A value outside the column's type.
+    CELL_TYPE_MISMATCH = "cell_type_mismatch"
+    # A column that holds no value a person can set (a Send column is
+    # its send state).
+    COLUMN_NOT_WRITABLE = "column_not_writable"
+    # A blank value: nothing to write.
+    CELL_BLANK = "cell_blank"
+    # A key the sheet has no column for: named in the body, so a
+    # refusal and not a missing resource.
+    CELL_COLUMN_UNKNOWN = "cell_column_unknown"
+
+
 # The preview's refusals, its own lane (a preview run is a NodeRun, never
 # a fill): the machine leg of the {error, detail} envelope
 # POST /v1/runs/preview answers with. The codes keep the "test" word
@@ -361,9 +380,8 @@ CELL_SOURCE_MAX_LENGTH = 8
 class CellSource(StrEnum):
     """Who wrote a cell's state: a NODE's run (an agent's, a webhook's;
     which fill, if any, is the record's fill_run_id) or a person
-    (MANUAL, once the grid can be edited; that writer does not exist
-    yet). Completion is source-agnostic: a filled cell is done whoever
-    filled it."""
+    (MANUAL: the row cells PATCH, a paste in the grid). Completion is
+    source-agnostic: a filled cell is done whoever filled it."""
 
     NODE = "node"
     MANUAL = "manual"

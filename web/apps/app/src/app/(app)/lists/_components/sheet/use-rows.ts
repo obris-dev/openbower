@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { useToast } from "@bower/ui";
 import {
   ROWS_PAGE_LIMIT,
+  deleteListRow,
   fetchListRows,
+  setListRowCells,
   type RenderableListRow,
   type RenderableListRowsPage,
 } from "@bower/api";
@@ -33,6 +35,8 @@ export function useRows(
   loadingMore: boolean;
   loadMore: () => Promise<void>;
   refreshLoaded: () => Promise<boolean>;
+  setCells: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
+  removeRow: (rowId: string) => Promise<RowOutcome>;
   scrollRef: RefObject<HTMLDivElement | null>;
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
@@ -53,11 +57,18 @@ export function useRows(
   // caller's loop counts consecutive failures and surfaces trouble.
   // Answers whether the rows were re-read: a skipped call (one already
   // in flight) counts as a read, since that one will land.
+  // A person's write moves the generation. A re-read that went out
+  // before a write came back carries rows older than the ones the
+  // write swapped in, so a result from an earlier generation is
+  // dropped rather than put over them; the next re-read carries the
+  // write.
   const refreshBusyRef = useRef(false);
+  const writeGenerationRef = useRef(0);
   const refreshLoaded = useCallback(async (): Promise<boolean> => {
     if (refreshBusyRef.current) return true;
     refreshBusyRef.current = true;
     try {
+      const generation = writeGenerationRef.current;
       const target = Math.max(rowsRef.current.length, 1);
       const items: RenderableListRow[] = [];
       let after: string | undefined;
@@ -71,6 +82,7 @@ export function useRows(
         if (!cursor || items.length >= target) break;
         after = cursor;
       }
+      if (generation !== writeGenerationRef.current) return true;
       setRows(items);
       setNextCursor(cursor);
       return true;
@@ -88,6 +100,36 @@ export function useRows(
     setRows((prev) => [...prev, ...res.data.items]);
     setNextCursor(res.data.next_cursor);
   }, [listId, nextCursor, loadingMore, toast]);
+
+  // A person's write on one row: the server answers with the row as it
+  // now reads, states included, so it is swapped in whole and nothing
+  // is re-read. A refusal comes back as the server's sentence for the
+  // caller to show; a transport failure as the generic one.
+  const setCells = useCallback(
+    async (rowId: string, data: Record<string, string>): Promise<RowOutcome> => {
+      const res = await setListRowCells(listId, rowId, data);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      writeGenerationRef.current += 1;
+      setRows((prev) => prev.map((row) => (row.id === rowId ? res.data : row)));
+      return { ok: true };
+    },
+    [listId],
+  );
+
+  // A row's removal: gone from the page the moment the server agrees.
+  // The count in the footer is the detail's, which the caller refreshes.
+  const removeRow = useCallback(
+    async (rowId: string): Promise<RowOutcome> => {
+      const res = await deleteListRow(listId, rowId);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      writeGenerationRef.current += 1;
+      setRows((prev) => prev.filter((row) => row.id !== rowId));
+      return { ok: true };
+    },
+    [listId],
+  );
 
   // Infinite scroll: the sentinel drives loadMore as it comes into
   // view (loadingMore guards double-fires). The observer is rebuilt
@@ -112,5 +154,26 @@ export function useRows(
   // Boolean(), not a null check: an empty-string cursor must read as
   // done, or the Load more button renders while loadMore's own guard
   // refuses to act on it.
-  return { rows, hasMore: Boolean(nextCursor), loadingMore, loadMore, refreshLoaded, scrollRef, sentinelRef };
+  return {
+    rows,
+    hasMore: Boolean(nextCursor),
+    loadingMore,
+    loadMore,
+    refreshLoaded,
+    setCells,
+    removeRow,
+    scrollRef,
+    sentinelRef,
+  };
 }
+
+/** What a row write or removal came to: done, or not, with a sentence
+ * the caller's toast renders verbatim. `refused` tells the server's
+ * answer (a classified refusal, in its words: the value was judged)
+ * from a failure that judged nothing (the network, a 500, a row gone
+ * meanwhile), so the toast's title claims a refusal only when one
+ * happened. An empty sentence is the page leaving for login: not done,
+ * and nothing to say while navigation lands. */
+export type RowOutcome = { ok: true } | { ok: false; detail: string; refused: boolean };
+
+const LEAVING: RowOutcome = { ok: false, detail: "", refused: false };

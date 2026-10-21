@@ -88,6 +88,10 @@ export const apiRoutes = {
     detail: (id: string) => `/${API_VERSION}/lists/${id}`,
     // GET: keyset rows in sheet order (?after=<the page's next_cursor, verbatim>&limit=). POST: append rows.
     rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
+    // PATCH {data}: a person's cell values on one row, replacing what is
+    // there; 200 with the row. DELETE: the row, its cell states and its
+    // webhook runs; 204.
+    row: (id: string, rowId: string) => `/${API_VERSION}/lists/${id}/rows/${rowId}`,
     // GET: the push schema (the columns a producer may send). POST {rows, event_id?}
     // with a machine API key: the webhook push; 202, rows land off the bus.
     ingest: (id: string) => `/${API_VERSION}/lists/${id}/ingest`,

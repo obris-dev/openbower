@@ -45,7 +45,7 @@ export function DetailFooter({
     <PageFooter>
       {confirming ? (
         <ConfirmDelete
-          inline
+          layout="inline"
           question={DELETE_DESTINATION_QUESTION}
           consequence={DELETE_DESTINATION_CONSEQUENCE}
           busy={deleting}

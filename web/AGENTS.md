@@ -82,7 +82,13 @@ violation shipped once and got caught).
   by dnd-kit confined to the orchestrator and the header, and every
   other module a dumb cell or row taking a width. Column widths are a
   per-sheet localStorage sync AFTER mount (the storage-after-mount
-  rule above), keyed by column key, validated on read.
+  rule above), keyed by column key, validated on read. The right-click
+  menu rides `ContextMenu` in @bower/ui (Radix, the one menu that
+  opens at the pointer; everything that opens from a button stays on
+  Headless UI), one menu over the body reading the pressed cell off
+  its `data-row-id` / `data-column-key` marks. A cell's write goes
+  through PATCH row cells: a person's paste replaces a value, a fill
+  never does.
 
 ## Errors, status, and copy
 
@@ -144,9 +150,12 @@ violation shipped once and got caught).
   directory rows via their menu, the API keys row off its Revoke
   button); the inline form takes the destructive verb's own place in a
   bar (a page footer, the sheet toolbar's action slot) and the bar's
-  other actions stay where they are. Polaris opens a modal
-  for the same decision; the anchored panel keeps what the modal is for
-  (one decision, nothing else moving) without the overlay.
+  other actions stay where they are; an act chosen from a menu that is
+  gone when the question is asked (a row's delete) has no slot, so it
+  alone opens `ConfirmDialog`, the one modal, holding the same form.
+  Polaris opens a modal for every such decision; the anchored panel
+  keeps what the modal is for (one decision, nothing else moving)
+  without the overlay.
 
 ## Action verbs
 

@@ -7,9 +7,19 @@ import { GUTTER_WIDTH } from "./lib/column-sizing";
  * row number (or the header's mark) stays put while the columns
  * scroll under it. Its background is opaque for the same reason, or
  * the cells would show through as they pass. */
-export function GutterCell({ className, children }: { className?: string; children?: ReactNode }) {
+export function GutterCell({
+  className,
+  rowId,
+  children,
+}: {
+  className?: string;
+  /** The row this gutter cell leads, for a press that lands here. */
+  rowId?: string;
+  children?: ReactNode;
+}) {
   return (
     <div
+      data-row-id={rowId}
       className={cn(
         "sticky left-0 z-10 flex flex-none items-center justify-center border-r border-hairline bg-surface text-xs text-faint",
         className,

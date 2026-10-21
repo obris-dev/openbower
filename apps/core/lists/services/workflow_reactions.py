@@ -1,4 +1,4 @@
-"""How the workflow MOVES: its reactions to the two changes a sheet
+"""How the workflow MOVES: its reactions to the three changes a sheet
 can undergo, each answered by offering rows to the nodes that care
 (a processor's `enqueue_runs`, which judges for itself; an offer under
 the open-run key repeats as a no-op).
@@ -32,6 +32,15 @@ does no work), and a reaction that finds one standing where work
 belongs has no rule for it, so it stops there. Called by the
 processors' base after every run that LANDED, after the kind's own
 transaction.
+
+COMPLETE: a person set a node's cells by hand (the row cells PATCH),
+so the row's facts changed without a run. Rule 2 alone: when the node
+is the last on its path, the barriers that path feeds judge the row
+again, and the ones it now clears hand it on. Rule 1 is deliberately
+NOT applied, since a hand-filled cell is one cell of a row that may
+still be being edited, and the node behind it runs when the person
+asks for that run, never off an edit. Called by the set-cells
+operation, once per node whose columns it wrote.
 
 Reads the workflow at rest through WorkflowService and writes runs
 through the processors: the one service that imports both, so the
@@ -93,12 +102,8 @@ class WorkflowReactions:
         last node no wait names, returns at the first reads, so the
         common landing pays one node read and one indexed query."""
         now = now or timezone.now()
-        landed = (
-            Node.objects.filter(id=from_node_id, account_id=self.account_id)
-            .only("workflow_id", "path_id", "rank")
-            .first()
-        )
-        if landed is None or not landed.path_id:
+        landed = self._landed_node(from_node_id)
+        if landed is None:
             return 0
         following = self.workflows.node_after(landed.path_id, landed.rank)
         if following is not None:
@@ -110,9 +115,34 @@ class WorkflowReactions:
         # RULE 2, the step OUT of a path: nothing stands behind the
         # landed node, so its path just ended, and the only way the
         # workflow moves on is into the barriers that path feeds.
-        return self._advance_through_barriers(list_id, row_ids, landed, now=now)
+        return self._through_barriers(list_id, row_ids, landed, now=now)
 
-    def _advance_through_barriers(self, list_id: str, row_ids: Sequence[str], landed: Node, *, now: datetime) -> int:
+    def complete(self, *, list_id: str, row_ids: Sequence[str], from_node_id: str, now: datetime | None = None) -> int:
+        """A node's cells were set by hand on rows: judge the barriers
+        its path feeds for them (rule 2) and nothing else. A node that
+        does not end its path changes nothing yet, since the barrier
+        would not clear before the path's last column has a record for
+        the row. Returns the runs enqueued behind the barriers."""
+        now = now or timezone.now()
+        landed = self._landed_node(from_node_id)
+        if landed is None:
+            return 0
+        if self.workflows.node_after(landed.path_id, landed.rank) is not None:
+            return 0
+        return self._through_barriers(list_id, row_ids, landed, now=now)
+
+    def _landed_node(self, node_id: str) -> Node | None:
+        """The node a reaction starts from, with the three fields the
+        rules read, or None for a node that is not this account's or
+        stands on no path (the preview node): nothing to move."""
+        landed = (
+            Node.objects.filter(id=node_id, account_id=self.account_id).only("workflow_id", "path_id", "rank").first()
+        )
+        if landed is None or not landed.path_id:
+            return None
+        return landed
+
+    def _through_barriers(self, list_id: str, row_ids: Sequence[str], landed: Node, *, now: datetime) -> int:
         """Rule 2: the landed node ENDED its path, so every barrier that
         path feeds is judged for the rows, and the node behind each
         barrier a row cleared is handed that row. A path no barrier

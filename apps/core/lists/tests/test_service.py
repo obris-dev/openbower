@@ -429,3 +429,55 @@ class FolderServiceTests(TestCase):
             lists.move(target, folder_id=str(theirs.id))
         lists.move(target, folder_id="")
         self.assertEqual(lists.get(str(target.id)).folder_id, "")
+
+
+class RowDeleteTests(TestCase):
+    def test_delete_row_takes_its_cell_states_and_webhook_runs_and_recounts(self):
+        from lists.constants import CellSource, NodeRunStatus, StoredCellState
+        from lists.models import ListCellState, NodeRun
+        from lists.nodes.registry import WEBHOOK
+
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=ListOrigin.CSV)
+        first, second = service.add_rows(target, [{"name": "Acme"}, {"name": "Example"}])
+        account = target.account_id
+        for row in (first, second):
+            ListCellState.objects.create(
+                account_id=account,
+                list_id=str(target.id),
+                row_id=str(row.id),
+                column_key="name",
+                state=StoredCellState.FILLED,
+                source=CellSource.MANUAL,
+            )
+            NodeRun.objects.create(
+                account_id=account,
+                node_id=new_ulid(),
+                kind=WEBHOOK,
+                row_id=str(row.id),
+                list_id=str(target.id),
+                rank=row.rank,
+                status=NodeRunStatus.READY,
+            )
+        service.delete_row(target, str(first.id))
+        self.assertEqual(ListRow.objects.filter(id=str(first.id)).count(), 0)
+        self.assertEqual(ListCellState.objects.filter(row_id=str(first.id)).count(), 0)
+        self.assertEqual(NodeRun.objects.filter(row_id=str(first.id)).count(), 0)
+        # The sibling row keeps everything: the purge is by row, never
+        # by sheet.
+        self.assertEqual(ListCellState.objects.filter(row_id=str(second.id)).count(), 1)
+        self.assertEqual(NodeRun.objects.filter(row_id=str(second.id)).count(), 1)
+        self.assertEqual(service.get(str(target.id)).row_count, 1)
+
+    def test_delete_row_refuses_a_missing_or_foreign_row(self):
+        service = _service()
+        target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=ListOrigin.CSV)
+        other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=ListOrigin.CSV)
+        (row,) = service.add_rows(other, [{"name": "Elsewhere"}])
+        with self.assertRaises(RowNotFound):
+            service.delete_row(target, str(row.id))  # another sheet's row
+        with self.assertRaises(RowNotFound):
+            service.delete_row(target, new_ulid())
+        with self.assertRaises(ListNotFound):
+            _service(account="01AC" + "Z" * 22).delete_row(target, str(row.id))
+        self.assertEqual(ListRow.objects.filter(id=str(row.id)).count(), 1)

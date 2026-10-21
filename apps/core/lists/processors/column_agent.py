@@ -466,14 +466,17 @@ class AIColumnProcessor(NodeProcessor):
     def _work_status_for_page(
         self, target_list: List, rows: Sequence[ListRow], scope: FillScope
     ) -> Callable[[ListRow], _WorkStatus]:
-        """Every occasion asks ONE question of the cell record: has any
+        """Every occasion asks ONE question of the cell record: has every
         column this node fills been attempted on the row? The node's
-        columns are one unit (one run answers them together), so a row
-        attempted in any of them is attempted in all. A row the
-        landing has resolved once (filled, a model's verdict, or an
-        infrastructure failure) is owed nothing until the user asks
-        again, so the record, not the row's values or the run history,
-        is what decides. One read per page. A fill then asks whether the
+        columns are one unit (one run answers them together, and
+        records them together), so a row with a record in all of them
+        was run; one with a record in some of them was filled by hand
+        there, and the node still owes it the rest (its run leaves a
+        hand-filled cell as it is). A row the landing has resolved once
+        (filled, a model's verdict, or an infrastructure failure) is
+        owed nothing until the user asks again, so the record, not the
+        row's values or the run history, is what decides. One read per
+        page. A fill then asks whether the
         prompt can act on the row; an arrival has no dialog to report a
         dropped row to, so it runs and lands the diagnosis on the
         cell."""

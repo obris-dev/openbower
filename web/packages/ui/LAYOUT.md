@@ -24,13 +24,18 @@ reports; review against this list before adding a component.
    appears inside short non-wrapping segments.
 6. **Drawers and inline editing, not modals.** Pinned header/footer,
    scrollable body; footer buttons submit body forms via the `form`
-   attribute.
+   attribute. The one modal is `ConfirmDialog`: the confirm for a
+   destructive act with no slot of its own to confirm in (a row, or a
+   selection of rows, chosen from a menu that is gone when the
+   question is asked). Every other confirm swaps in where its verb was.
 7. **Pre-paint state via head scripts.** Anything the server can't know
    (theme, collapsed chrome) is stamped on `<html>` by a blocking script
    and rendered from CSS keyed on that attribute; lazy `useState` cannot
    beat SSR to the first paint.
 8. **Behavioral components ride Headless UI** (menus, dialogs, switches,
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
+   The one exception is `ContextMenu`, which rides Radix: Headless UI
+   has no menu that opens at the pointer rather than from a button.
 9. **Errors have three tiers; pick by attachment, not preference.**
    (a) Field-level validation lives at its field (a mismatch hint, an
    invalid email), often live: `FieldError`, id-linked to the input's

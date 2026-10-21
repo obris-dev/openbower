@@ -51,6 +51,7 @@ from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, List
 from .operations.append_rows import AppendRowsOperation
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
+from .operations.set_cells import SetCellsOperation
 from .serializers import (
     AiColumnRequest,
     ColumnAddRequest,
@@ -62,6 +63,7 @@ from .serializers import (
     IngestRequest,
     ListCreateRequest,
     ListPatchRequest,
+    RowCellsPatchRequest,
     RowsAddRequest,
     WebhookColumnAddRequest,
     WebhookColumnPatchRequest,
@@ -80,6 +82,7 @@ from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import (
+    CellRefused,
     ColumnNotWritable,
     FolderNotFound,
     FolderService,
@@ -89,6 +92,7 @@ from .services.lists import (
     ListService,
     ListsFull,
     RowCursor,
+    RowNotFound,
 )
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 from .services.workflows import NodeNotFound
@@ -253,6 +257,45 @@ class ListRowsView(_ScopedView):
         added = report.added
         target_list.refresh_from_db()
         return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
+
+
+class ListRowView(_ScopedView):
+    """PATCH /v1/lists/{id}/rows/{row_id} {data}: a person setting cells
+    on one row (the values replace what is there; the 200 body is the
+    row with its states, so the sheet swaps it in without a re-read).
+    A refusal is the {error, detail} envelope at 400, the detail the
+    server's own sentence. DELETE: the row goes with its cell states
+    and its webhook runs; 204."""
+
+    def patch(self, request: Request, id: str, row_id: str) -> Response:
+        target_list = self._list_or_404(id)
+        serializer = RowCellsPatchRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            report = SetCellsOperation(
+                account_id=self.request.user.account_id,
+                target_list=target_list,
+                row_id=row_id,
+                cells=serializer.validated_data["data"],
+            ).run()
+        except CellRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except RowNotFound as e:
+            raise NotFound("no row with that id") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        states = self.fills.cell_states_for_rows(target_list, [report.row])
+        return Response(row_wire(report.row, states.get(str(report.row.id), {})))
+
+    def delete(self, request: Request, id: str, row_id: str) -> Response:
+        target_list = self._list_or_404(id)
+        try:
+            self.lists.delete_row(target_list, row_id)
+        except RowNotFound as e:
+            raise NotFound("no row with that id") from e
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(status=204)
 
 
 class ListIngestView(_ScopedView):

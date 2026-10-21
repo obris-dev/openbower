@@ -184,3 +184,72 @@ class FoldersViewsTests(TestCase):
             )
         items = self.client.get(reverse("lists_folders")).json()["items"]
         self.assertEqual([f["list_count"] for f in items if f["id"] == folder_id], [3])
+
+
+class RowViewTests(TestCase):
+    """PATCH and DELETE /v1/lists/{id}/rows/{row_id}: a person's cell
+    writes and a row's removal."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.list_id = self.client.post(
+            reverse("lists_index"),
+            {
+                "label": "Rows",
+                "columns": [
+                    {"key": "company", "label": "Company", "type": "text"},
+                    {"key": "employees", "label": "Employees", "type": "number"},
+                ],
+            },
+            content_type="application/json",
+        ).json()["id"]
+        self.client.post(
+            reverse("lists_rows", kwargs={"id": self.list_id}),
+            {"rows": [{"company": "acme.com", "employees": "10"}, {"company": "example.io"}]},
+            content_type="application/json",
+        )
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.first_id, self.second_id = [row["id"] for row in page["items"]]
+
+    def row_url(self, row_id: str) -> str:
+        return reverse("lists_row", kwargs={"id": self.list_id, "row_id": row_id})
+
+    def patch(self, row_id: str, data: dict):
+        return self.client.patch(self.row_url(row_id), {"data": data}, content_type="application/json")
+
+    def test_patch_writes_the_cells_and_answers_the_row(self):
+        resp = self.patch(self.first_id, {"company": "Acme Holdings"})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertEqual(body["id"], self.first_id)
+        self.assertEqual(body["data"], {"company": "Acme Holdings", "employees": "10"})
+        self.assertEqual(body["states"], {})
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.assertEqual(page["items"][0]["data"]["company"], "Acme Holdings")
+
+    def test_patch_refusals_carry_a_code_and_a_sentence_and_write_nothing(self):
+        mismatch = self.patch(self.first_id, {"employees": "lots"})
+        self.assertEqual(mismatch.status_code, 400, mismatch.content)
+        self.assertEqual(mismatch.json()["error"], "cell_type_mismatch")
+        self.assertIn("Employees", mismatch.json()["detail"])
+        blank = self.patch(self.first_id, {"company": "  "})
+        self.assertEqual(blank.status_code, 400, blank.content)
+        self.assertEqual(blank.json()["error"], "cell_blank")
+        unknown = self.patch(self.first_id, {"revenue": "1"})
+        self.assertEqual(unknown.status_code, 400, unknown.content)
+        self.assertEqual(unknown.json()["error"], "cell_column_unknown")
+        self.assertIn("revenue", unknown.json()["detail"])
+        self.assertEqual(self.patch("01ROW" + "0" * 21, {"company": "x"}).status_code, 404)
+        self.assertEqual(self.patch(self.first_id, {}).status_code, 400)
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.assertEqual(page["items"][0]["data"], {"company": "acme.com", "employees": "10"})
+
+    def test_delete_removes_the_row_and_recounts(self):
+        gone = self.client.delete(self.row_url(self.first_id))
+        self.assertEqual(gone.status_code, 204)
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.assertEqual([row["id"] for row in page["items"]], [self.second_id])
+        detail = self.client.get(reverse("lists_detail", kwargs={"id": self.list_id})).json()
+        self.assertEqual(detail["row_count"], 1)
+        self.assertEqual(self.client.delete(self.row_url(self.first_id)).status_code, 404)
+        self.assertEqual(self.client.delete(self.row_url("01ROW" + "0" * 21)).status_code, 404)

@@ -1,17 +1,24 @@
 "use client";
 
 import { DndContext, closestCenter, type DragEndEvent, type Modifier } from "@dnd-kit/core";
-import { useCallback, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { ConfirmDialog } from "@bower/ui";
 import type { ColumnType, ListColumn, RenderableListRow, WebhookColumn } from "@bower/api";
 
+import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import type { AddColumnKind } from "../add-column";
 import type { SearchProviderChoice } from "../fill";
 import type { ColumnOutcome } from "../use-columns";
+import type { RowOutcome } from "../use-rows";
 import { Body } from "./body";
+import { CellActionsContext, type CellActions } from "./cell-actions";
 import { HeaderRow } from "./header-row";
+import { copiedValueFor } from "./lib/cell-clipboard";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
+import { RowContextMenu } from "./row-context-menu";
 import { TrackerRow, type SheetFills } from "./tracker-row";
+import { useCellClipboard } from "./use-cell-clipboard";
 import { useColumnSensors } from "./use-column-sensors";
 import { useColumnWidths } from "./use-column-widths";
 import { useGridTable } from "./use-grid-table";
@@ -43,9 +50,17 @@ export function SheetGrid({
   onEditWebhook,
   pendingColumn,
   onNamePending,
+  onSetCells,
+  onRemoveRow,
   searchProvider = null,
 }: {
   listId: string;
+  /** A person's values on one row (a paste); resolves with the outcome
+   * so a refusal can be shown in the server's words. Its presence,
+   * with `onRemoveRow`, is what arms the right-click menu and the
+   * copy and paste keys. */
+  onSetCells?: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
+  onRemoveRow?: (rowId: string) => Promise<RowOutcome>;
   /** The scroll region the grid lives in; the virtualizer listens to it. */
   scrollRef: RefObject<HTMLDivElement | null>;
   columns: ListColumn[];
@@ -102,6 +117,82 @@ export function SheetGrid({
   // would be dead height between header and rows.
   const tracker = fills !== undefined && columns.some((column) => column.kind === "ai") ? fills : undefined;
 
+  // The cell verbs, one object for the menu and the keys alike. Copy
+  // reads the value off the row this grid holds; paste reads the
+  // clipboard and hands the value to the sheet's write; delete asks
+  // first, in the dialog below. A grid handed no write has no verbs.
+  const clipboard = useCellClipboard();
+  // The row whose delete is being confirmed, and whether the delete
+  // is in flight: ONE state, so a busy question on no row is
+  // impossible. The menu that asked is gone by the time the question
+  // shows, and a selection of rows will ask the same question with
+  // no one row to host it, so it is a dialog and not a strip in a row.
+  const [confirming, setConfirming] = useState<{ rowId: string; columnKey: string | null; busy: boolean } | null>(
+    null,
+  );
+  // Where focus lands once a row is gone: the dialog returns it to the
+  // menu item that asked, which left with the menu, so a keyboard
+  // user would land on nothing. The same column in the next row (the
+  // previous one at the end of the sheet) takes it, after the dialog
+  // has closed and given focus back.
+  const [landing, setLanding] = useState<{ rowId: string; columnKey: string | null } | null>(null);
+  useEffect(() => {
+    if (!landing || confirming !== null) return;
+    const frame = requestAnimationFrame(() => {
+      const column = landing.columnKey === null ? "" : `[data-column-key="${landing.columnKey}"]`;
+      const cell = bodyRef.current?.querySelector<HTMLElement>(`[data-row-id="${landing.rowId}"][tabindex]${column}`);
+      cell?.focus();
+      setLanding(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [landing, confirming, bodyRef]);
+  const actions = useMemo<CellActions | null>(() => {
+    if (!onSetCells || !onRemoveRow) return null;
+    return {
+      copy: (rowId, columnKey) => {
+        const column = columns.find((entry) => entry.key === columnKey);
+        const row = rows.find((entry) => entry.id === rowId);
+        if (!column || !row) return;
+        const value = copiedValueFor(column, row.data[columnKey] ?? "");
+        if (value !== null) void clipboard.copy(value);
+      },
+      paste: (rowId, columnKey) => {
+        void (async () => {
+          const value = await clipboard.read();
+          if (value !== null) await onSetCells(rowId, { [columnKey]: value });
+        })();
+      },
+      deleteRow: (rowId, columnKey) => setConfirming({ rowId, columnKey, busy: false }),
+    };
+  }, [onSetCells, onRemoveRow, columns, rows, clipboard]);
+
+  function confirmDelete() {
+    if (!confirming || !onRemoveRow) return;
+    const { rowId, columnKey } = confirming;
+    const index = rows.findIndex((row) => row.id === rowId);
+    const neighbour = rows[index + 1] ?? rows[index - 1] ?? null;
+    void (async () => {
+      setConfirming({ rowId, columnKey, busy: true });
+      const outcome = await onRemoveRow(rowId);
+      // Gone or refused, the question is answered either way: a
+      // refusal is the sheet's toast, and the row stays as it was.
+      setConfirming(null);
+      if (outcome.ok && neighbour) setLanding({ rowId: neighbour.id, columnKey });
+    })();
+  }
+
+  const body = (
+    <Body
+      bodyRef={bodyRef}
+      rows={rows}
+      items={items}
+      totalSize={totalSize}
+      scrollMargin={scrollMargin}
+      headers={headers}
+      searchProvider={searchProvider}
+    />
+  );
+
   return (
     // closestCenter over a horizontal strip: the pointer sits inside
     // one header cell at a time, so the nearest centre IS the column
@@ -124,15 +215,29 @@ export function SheetGrid({
           onAddColumn={onAddColumn}
         />
         {tracker && <TrackerRow headers={headers} fills={tracker} />}
-        <Body
-          bodyRef={bodyRef}
-          rows={rows}
-          items={items}
-          totalSize={totalSize}
-          scrollMargin={scrollMargin}
-          headers={headers}
-          searchProvider={searchProvider}
-        />
+        {/* The menu wraps the body whatever it holds: a press on the
+            empty sheet's one line finds no row and opens nothing, and
+            the body keeps one parent across the zero-rows edge instead
+            of being remounted there. */}
+        <CellActionsContext.Provider value={actions}>
+          {actions ? (
+            <RowContextMenu columns={columns} actions={actions}>
+              {body}
+            </RowContextMenu>
+          ) : (
+            body
+          )}
+        </CellActionsContext.Provider>
+        <ConfirmDialog open={confirming !== null} onClose={() => !confirming?.busy && setConfirming(null)}>
+          <ConfirmDelete
+            layout="dialog"
+            question="Delete row?"
+            consequence="Are you sure you want to delete this row?"
+            busy={confirming?.busy}
+            onCancel={() => setConfirming(null)}
+            onDelete={confirmDelete}
+          />
+        </ConfirmDialog>
       </div>
     </DndContext>
   );
