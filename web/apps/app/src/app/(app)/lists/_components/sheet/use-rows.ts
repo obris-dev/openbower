@@ -5,10 +5,12 @@ import { useToast } from "@bower/ui";
 import {
   ROWS_PAGE_LIMIT,
   deleteListRow,
+  deleteListRows,
   fetchListRows,
   setListRowCells,
   type RenderableListRow,
   type RenderableListRowsPage,
+  type RowSelectionBody,
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
@@ -37,6 +39,7 @@ export function useRows(
   refreshLoaded: () => Promise<boolean>;
   setCells: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
   removeRow: (rowId: string) => Promise<RowOutcome>;
+  removeRows: (body: RowSelectionBody) => Promise<RowsOutcome>;
   scrollRef: RefObject<HTMLDivElement | null>;
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
@@ -131,6 +134,29 @@ export function useRows(
     [listId],
   );
 
+  // A selection's removal. Named rows drop out; under "all", only the
+  // rows kept remain, and every one of those is loaded (only a loaded
+  // row can be unticked), so the page is exact and the cursor is
+  // spent: nothing is left beyond it.
+  const removeRows = useCallback(
+    async (body: RowSelectionBody): Promise<RowsOutcome> => {
+      const res = await deleteListRows(listId, body);
+      if (redirectIfUnauthenticated(res)) return LEAVING_ROWS;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      writeGenerationRef.current += 1;
+      if ("row_ids" in body) {
+        const gone = new Set(body.row_ids);
+        setRows((prev) => prev.filter((row) => !gone.has(row.id)));
+      } else {
+        const kept = new Set(body.keep);
+        setRows((prev) => prev.filter((row) => kept.has(row.id)));
+        setNextCursor(null);
+      }
+      return { ok: true, deleted: res.data.deleted, rowCount: res.data.row_count };
+    },
+    [listId],
+  );
+
   // Infinite scroll: the sentinel drives loadMore as it comes into
   // view (loadingMore guards double-fires). The observer is rebuilt
   // when loadMore's inputs move; a still-visible sentinel then fires
@@ -162,6 +188,7 @@ export function useRows(
     refreshLoaded,
     setCells,
     removeRow,
+    removeRows,
     scrollRef,
     sentinelRef,
   };
@@ -177,3 +204,9 @@ export function useRows(
 export type RowOutcome = { ok: true } | { ok: false; detail: string; refused: boolean };
 
 const LEAVING: RowOutcome = { ok: false, detail: "", refused: false };
+
+/** A rows delete's outcome: the row outcome's shape with the receipt
+ * (how many went, the sheet's count after) on success. */
+export type RowsOutcome = { ok: true; deleted: number; rowCount: number } | Extract<RowOutcome, { ok: false }>;
+
+const LEAVING_ROWS: RowsOutcome = { ok: false, detail: "", refused: false };

@@ -14,6 +14,7 @@ import { Body } from "./body";
 import { CellActionsContext, type CellActions } from "./cell-actions";
 import { HeaderRow } from "./header-row";
 import { copiedValueFor } from "./lib/cell-clipboard";
+import type { RowSelectionControls } from "./lib/row-selection";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { RowContextMenu } from "./row-context-menu";
@@ -52,6 +53,7 @@ export function SheetGrid({
   onNamePending,
   onSetCells,
   onRemoveRow,
+  selection,
   searchProvider = null,
 }: {
   listId: string;
@@ -61,6 +63,10 @@ export function SheetGrid({
    * copy and paste keys. */
   onSetCells?: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
   onRemoveRow?: (rowId: string) => Promise<RowOutcome>;
+  /** The sheet's row selection, read and driven here (the gutter's
+   * boxes, the header's select all); absent on a grid that cannot
+   * select, whose gutter is the row number alone. */
+  selection?: RowSelectionControls;
   /** The scroll region the grid lives in; the virtualizer listens to it. */
   scrollRef: RefObject<HTMLDivElement | null>;
   columns: ListColumn[];
@@ -190,6 +196,7 @@ export function SheetGrid({
       scrollMargin={scrollMargin}
       headers={headers}
       searchProvider={searchProvider}
+      selection={selection}
     />
   );
 
@@ -213,6 +220,7 @@ export function SheetGrid({
           pendingColumn={pendingColumn}
           onNamePending={onNamePending}
           onAddColumn={onAddColumn}
+          selection={selection}
         />
         {tracker && <TrackerRow headers={headers} fills={tracker} />}
         {/* The menu wraps the body whatever it holds: a press on the

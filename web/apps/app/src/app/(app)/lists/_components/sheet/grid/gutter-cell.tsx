@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
-import { cn } from "@bower/ui";
+"use client";
+
+import { useRef, type PointerEvent, type ReactNode } from "react";
+import { Checkbox, cn } from "@bower/ui";
 
 import { GUTTER_WIDTH } from "./lib/column-sizing";
 
@@ -28,5 +30,50 @@ export function GutterCell({
     >
       {children}
     </div>
+  );
+}
+
+/** A body row's gutter on a sheet that can be selected: the row
+ * number, which gives way to the row's checkbox on hover or focus,
+ * and stays the box while the row is picked or any row is. The box
+ * covers the whole cell, so a tap on the number toggles on touch,
+ * where there is no hover. Shift is read off the press, since the
+ * primitive's change carries no key. */
+export function RowGutterCell({
+  rowId,
+  number,
+  selected,
+  selecting,
+  onToggle,
+}: {
+  rowId: string;
+  number: number;
+  selected: boolean;
+  selecting: boolean;
+  onToggle: (range: boolean) => void;
+}) {
+  const shiftRef = useRef(false);
+  const shown = selected || selecting;
+  return (
+    <GutterCell className="group/gutter relative select-none border-b" rowId={rowId}>
+      <span
+        aria-hidden
+        className={cn("group-hover:invisible group-focus-within/gutter:invisible", shown && "invisible")}
+      >
+        {number}
+      </span>
+      <Checkbox
+        checked={selected}
+        aria-label={`Select row ${number}`}
+        onPointerDown={(event: PointerEvent<HTMLElement>) => {
+          shiftRef.current = event.shiftKey;
+        }}
+        onChange={() => onToggle(shiftRef.current)}
+        className={cn(
+          "absolute inset-0 m-auto opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+          shown && "opacity-100",
+        )}
+      />
+    </GutterCell>
   );
 }

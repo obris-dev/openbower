@@ -88,7 +88,14 @@ violation shipped once and got caught).
   Headless UI), one menu over the body reading the pressed cell off
   its `data-row-id` / `data-column-key` marks. A cell's write goes
   through PATCH row cells: a person's paste replaces a value, a fill
-  never does.
+  never does. Row selection is the SHEET's state (`use-row-selection`,
+  over the pure `grid/lib/row-selection`): the gutter cell is the
+  row's `Checkbox` (Headless UI, in @bower/ui; the number gives way to
+  it on hover), the header's gutter is select all (every row of the
+  sheet, loaded or not: the server takes "all but these"), and the
+  bar floating over the scroll region (`selection-bar`) holds the
+  count, Deselect, Delete rows and the selection's confirm dialog.
+  The right-click menu stays one row's.
 
 ## Errors, status, and copy
 

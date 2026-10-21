@@ -40,6 +40,9 @@ import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } 
 import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
+import { useRowSelection } from "./use-row-selection";
+import { SelectionBar } from "./selection-bar";
+import { toBody } from "./grid/lib/row-selection";
 
 /** The sheet, full-bleed under the shell's chrome in three bands: one
  * slim toolbar (click-to-rename title left; the actions right, column
@@ -58,10 +61,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   const toast = useToast();
   const columns = useColumns(initialDetail);
   const { detail } = columns;
-  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, setCells, removeRow, scrollRef, sentinelRef } = useRows(
-    detail.id,
-    initialRows,
-  );
+  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, setCells, removeRow, removeRows, scrollRef, sentinelRef } =
+    useRows(detail.id, initialRows);
+  // The rows a person has ticked: the sheet's, since the bar and its
+  // confirm are rendered here.
+  const selection = useRowSelection(rows, detail.row_count);
   // The fill attachment polls the FILLS alone; cell states ride the
   // rows this component already holds.
   const fill = useFill(detail.id);
@@ -309,6 +313,29 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     return outcome;
   }
 
+  // A selection's removal, once the bar's confirm has been answered:
+  // the toast counts what went, the footer's count is the detail's
+  // and the tracker's are the fills page's, both re-read in place,
+  // and the selection empties. Focus then lands on the header's
+  // select all, the one box that is still there.
+  async function deleteRows() {
+    const outcome = await removeRows(toBody(selection.selection));
+    if (!outcome.ok) {
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Rows not deleted" : undefined);
+      return outcome;
+    }
+    toast.success(outcome.deleted === 1 ? "1 row deleted." : `${outcome.deleted.toLocaleString("en-US")} rows deleted.`);
+    selection.clear();
+    void columns.reread();
+    void fill.refresh();
+    return outcome;
+  }
+
+  function focusSelectAll() {
+    const box = scrollRef.current?.querySelector<HTMLElement>("[data-select-all]");
+    box?.focus();
+  }
+
   async function submitRename() {
     const next = titleDraft?.trim() ?? "";
     setTitleDraft(null);
@@ -460,43 +487,60 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
         sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        <SheetGrid
-          listId={detail.id}
-          scrollRef={scrollRef}
-          columns={detail.columns}
-          rows={rows}
-          searchProvider={searchProvider}
-          fills={{
-            listId: detail.id,
-            runs: fill.runs,
-            summaries: fill.summaries,
-            pollTrouble,
-            rowCount: detail.row_count,
-            entryActionIds: detail.entry_action_ids,
-            onStop: fill.stop,
-            onFill: fillColumn,
-          }}
-          onAddColumn={openAddColumn}
-          onReorder={columns.reorder}
-          onRenameColumn={columns.rename}
-          onDeleteColumn={removeColumn}
-          onEditWebhook={openEditWebhook}
-          pendingColumn={columns.pendingColumn}
-          onNamePending={(label) => void columns.namePending(label)}
-          onSetCells={pasteCells}
-          onRemoveRow={deleteRow}
+      {/* The scroll region's parent holds the selection bar over it:
+          the bar floats at the region's bottom, not the sheet's. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} className="h-full overflow-auto">
+          <SheetGrid
+            listId={detail.id}
+            scrollRef={scrollRef}
+            columns={detail.columns}
+            rows={rows}
+            searchProvider={searchProvider}
+            fills={{
+              listId: detail.id,
+              runs: fill.runs,
+              summaries: fill.summaries,
+              pollTrouble,
+              rowCount: detail.row_count,
+              entryActionIds: detail.entry_action_ids,
+              onStop: fill.stop,
+              onFill: fillColumn,
+            }}
+            onAddColumn={openAddColumn}
+            onReorder={columns.reorder}
+            onRenameColumn={columns.rename}
+            onDeleteColumn={removeColumn}
+            onEditWebhook={openEditWebhook}
+            pendingColumn={columns.pendingColumn}
+            onNamePending={(label) => void columns.namePending(label)}
+            onSetCells={pasteCells}
+            onRemoveRow={deleteRow}
+            selection={{
+              isSelected: selection.isSelected,
+              selecting: !selection.empty,
+              headerState: selection.headerState,
+              onToggle: (rowId, range) => selection.toggle(rowId, { range }),
+              onToggleAll: selection.toggleAll,
+            }}
+          />
+          {hasMore && (
+            <>
+              <div ref={sentinelRef} aria-hidden />
+              <div className="border-t border-hairline p-3 text-center">
+                <Button size="sm" variant="ghost" loading={loadingMore} onClick={() => void loadMore()}>
+                  Load more ({rows.length.toLocaleString("en-US")} of {detail.row_count.toLocaleString("en-US")})
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+        <SelectionBar
+          count={selection.count}
+          onDeselect={selection.clear}
+          onDelete={deleteRows}
+          onDeleted={focusSelectAll}
         />
-        {hasMore && (
-          <>
-            <div ref={sentinelRef} aria-hidden />
-            <div className="border-t border-hairline p-3 text-center">
-              <Button size="sm" variant="ghost" loading={loadingMore} onClick={() => void loadMore()}>
-                Load more ({rows.length.toLocaleString("en-US")} of {detail.row_count.toLocaleString("en-US")})
-              </Button>
-            </div>
-          </>
-        )}
       </div>
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-1.5">

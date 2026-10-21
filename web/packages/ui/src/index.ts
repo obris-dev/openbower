@@ -7,6 +7,7 @@ export { cn } from "./cn";
 export { Button } from "./button";
 export { buttonClasses, TouchTarget, type ButtonSize, type ButtonVariant } from "./button-classes";
 export { Card } from "./card";
+export { Checkbox } from "./checkbox";
 export { CopyButton } from "./copy-button";
 export { Combobox, type ComboboxItem } from "./combobox";
 export { Drawer, type DrawerWidth } from "./drawer";
