@@ -60,7 +60,9 @@ export function RowGutterCell({
     <GutterCell className="group/gutter select-none border-b" rowId={rowId}>
       <span
         aria-hidden
-        className={cn("group-hover:invisible group-focus-within/gutter:invisible", shown && "invisible")}
+        // Hidden for a VISIBLE focus only: a mouse click leaves focus on
+        // the box without showing it, and the number must come back.
+        className={cn("group-hover:invisible group-has-[:focus-visible]/gutter:invisible", shown && "invisible")}
       >
         {number}
       </span>
