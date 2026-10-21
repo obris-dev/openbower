@@ -259,9 +259,11 @@ class ListRowsView(_ScopedView):
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        added = report.added
         target_list.refresh_from_db()
-        return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
+        states = self.fills.cell_states_for_rows(target_list, report.created)
+        rows = [row_wire(row, states.get(str(row.id), {})) for row in report.created]
+        receipt = RowsAdded(added=report.added, row_count=target_list.row_count, rows=rows)
+        return Response(receipt.model_dump(), status=201)
 
     def delete(self, request: Request, id: str) -> Response:
         """The rows named, or every row but the ones named: the sheet's

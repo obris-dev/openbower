@@ -38,7 +38,11 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   });
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify({ added: 2, row_count: 7 }), {
+    const rows = [
+      { id: "01BBBBBBBBBBBBBBBBBBBBBBBB", data: { a: "1" }, states: {} },
+      { id: "01CCCCCCCCCCCCCCCCCCCCCCCC", data: { a: "2" }, states: {} },
+    ];
+    return new Response(JSON.stringify({ added: 2, row_count: 7, rows }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });
@@ -46,7 +50,14 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
 
   const res = await addListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", [{ a: "1" }, { a: "2" }]);
   assert.equal(res.status, "ok");
-  if (res.status === "ok") assert.deepEqual(res.data, { added: 2, row_count: 7 });
+  if (res.status === "ok") {
+    assert.equal(res.data.added, 2);
+    assert.equal(res.data.row_count, 7);
+    assert.deepEqual(
+      res.data.rows.map((row) => row.id),
+      ["01BBBBBBBBBBBBBBBBBBBBBBBB", "01CCCCCCCCCCCCCCCCCCCCCCCC"],
+    );
+  }
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.url.endsWith("/v1/lists/01AAAAAAAAAAAAAAAAAAAAAAAA/rows"));
   assert.equal(calls[0]!.init.method, "POST");

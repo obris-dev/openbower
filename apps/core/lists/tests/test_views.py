@@ -118,10 +118,16 @@ class ListsViewsTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(added.status_code, 201)
-        self.assertEqual(added.json(), {"added": 5, "row_count": 5})
+        receipt = added.json()
+        self.assertEqual((receipt["added"], receipt["row_count"]), (5, 5))
+        # The receipt carries the rows made, in sheet order, the shape
+        # the page serves: the sheet shows them without a re-read.
+        self.assertEqual([r["data"]["a"] for r in receipt["rows"]], ["0", "1", "2", "3", "4"])
+        self.assertEqual(receipt["rows"][0]["states"], {})
 
         first = self.client.get(reverse("lists_rows", kwargs={"id": list_id}), {"limit": 2}).json()
         self.assertEqual([r["data"]["a"] for r in first["items"]], ["0", "1"])
+        self.assertEqual([r["id"] for r in first["items"]], [r["id"] for r in receipt["rows"][:2]])
         # The cursor is opaque and self-contained (the last row's rank
         # and id): nothing about order rides a row, and the next page
         # needs no lookup.

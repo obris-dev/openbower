@@ -297,10 +297,13 @@ class ListsPage(BaseModel):
 
 
 class RowsAdded(BaseModel):
-    """The manual-append receipt."""
+    """The manual-append receipt: the rows made, in sheet order with
+    their states (an AI cell reads pending once the arrival opened its
+    run), so a sheet that added them shows them without a re-read."""
 
     added: int
     row_count: int
+    rows: list[ListRowWire]
 
 
 class RowsDeleted(BaseModel):

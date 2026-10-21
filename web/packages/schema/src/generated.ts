@@ -78,7 +78,7 @@ export type LookalikeListResponse = z.infer<typeof LookalikeListResponseSchema>;
 export const PlainColumnSchema = z.object({ "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("plain").default("plain"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A column the user or an import fills by hand.");
 export type PlainColumn = z.infer<typeof PlainColumnSchema>;
 
-export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
+export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int(), "rows": z.array(z.lazy(() => ListRowWireSchema)) }).describe("The manual-append receipt: the rows made, in sheet order with\ntheir states (an AI cell reads pending once the arrival opened its\nrun), so a sheet that added them shows them without a re-read.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
 export const RowsDeletedSchema = z.object({ "deleted": z.number().int(), "row_count": z.number().int() }).describe("The rows-delete receipt: how many went, and the sheet's count\nafter, so the caller's footer moves without a re-read.");
