@@ -55,7 +55,9 @@ export function RowGutterCell({
   const shiftRef = useRef(false);
   const shown = selected || selecting;
   return (
-    <GutterCell className="group/gutter relative select-none border-b" rowId={rowId}>
+    // No `relative` here: it would replace the gutter's `sticky`, and
+    // the box inside positions against the sticky cell just as well.
+    <GutterCell className="group/gutter select-none border-b" rowId={rowId}>
       <span
         aria-hidden
         className={cn("group-hover:invisible group-focus-within/gutter:invisible", shown && "invisible")}
