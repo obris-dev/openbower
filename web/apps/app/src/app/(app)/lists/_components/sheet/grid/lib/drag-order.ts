@@ -1,6 +1,6 @@
 import type { ListColumn } from "@bower/api";
 
-import { moveColumn } from "./column-order.ts";
+import { moveColumn } from "../../lib/column-order.ts";
 
 /** What a drag actually reports, narrowed to the two fields this
  * reads. dnd-kit's DragEndEvent satisfies it structurally, so the

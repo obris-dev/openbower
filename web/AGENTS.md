@@ -74,6 +74,15 @@ violation shipped once and got caught).
   LEAST, and pin the mapping.
 - Every fetch result goes through `ensureOk` (or an explicit rendered
   failure state); a swallowed non-ok is a silent dead feature.
+- A table-shaped surface is the sheet grid family
+  (`lists/_components/sheet/grid`), never a `<table>`: fixed-width
+  columns off a headless table model (`use-grid-table`, the ONE module
+  that knows TanStack Table), rows placed by a virtualizer
+  (`use-virtual-rows`, the one that knows TanStack Virtual), reorder
+  by dnd-kit confined to the orchestrator and the header, and every
+  other module a dumb cell or row taking a width. Column widths are a
+  per-sheet localStorage sync AFTER mount (the storage-after-mount
+  rule above), keyed by column key, validated on read.
 
 ## Errors, status, and copy
 

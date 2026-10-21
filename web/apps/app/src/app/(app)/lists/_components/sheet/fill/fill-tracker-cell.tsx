@@ -108,7 +108,9 @@ export function FillTrackerCell({
     <Popover>
       <PopoverButton
         aria-label={`Manage the ${column.label} column's fill`}
-        className="block w-full min-w-16 rounded px-1 py-0.5 text-left outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-signal"
+        // The floor keeps a click target on a column with nothing to
+        // report (its button would otherwise collapse to its padding).
+        className="block min-h-4 w-full min-w-16 rounded px-1 py-0.5 text-left outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-signal"
       >
         {/* The header rides ABOVE the run status, so the two never say
             the same thing: with no fill attached there is no status to
