@@ -1,5 +1,6 @@
-// addListRows: pinned here because no shipped UI posts rows yet; the
-// contract (route, body shape, RowsAdded parse) must not rot silently.
+// addListRows: the sheet's add row posts one row at a time; the
+// contract (route, body shape, the RowsAdded parse with its rows) is
+// pinned here as well, where a fixture can name every field.
 // postColumnFill: its optional max_row_count scope is pinned because
 // omission vs presence is the contract (no body means all remaining rows).
 import { strict as assert } from "node:assert";

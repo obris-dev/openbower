@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useToast } from "@bower/ui";
 import {
+  GENERIC_FAILURE,
   ROWS_PAGE_LIMIT,
+  addListRows,
   deleteListRow,
   deleteListRows,
   fetchListRows,
@@ -40,6 +42,7 @@ export function useRows(
   setCells: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
   removeRow: (rowId: string) => Promise<RowOutcome>;
   removeRows: (body: RowSelectionBody) => Promise<RowsOutcome>;
+  addRows: (count: number) => Promise<AddRowsOutcome>;
   scrollRef: RefObject<HTMLDivElement | null>;
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
@@ -157,6 +160,25 @@ export function useRows(
     [listId],
   );
 
+  // Blank rows from the add-rows control: the receipt carries them in
+  // the page's shape, so they join the end of the loaded rows (the
+  // append ranks them last, and the control shows only once the end
+  // is loaded) and nothing is re-read.
+  const addRows = useCallback(
+    async (count: number): Promise<AddRowsOutcome> => {
+      const res = await addListRows(listId, Array.from({ length: count }, () => ({})));
+      if (redirectIfUnauthenticated(res)) return LEAVING_ADD;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      const made = res.data.rows;
+      const first = made[0];
+      if (!first) return { ok: false, detail: GENERIC_FAILURE, refused: false };
+      writeGenerationRef.current += 1;
+      setRows((prev) => [...prev, ...made]);
+      return { ok: true, firstRowId: first.id, added: made.length };
+    },
+    [listId],
+  );
+
   // Infinite scroll: the sentinel drives loadMore as it comes into
   // view (loadingMore guards double-fires). The observer is rebuilt
   // when loadMore's inputs move; a still-visible sentinel then fires
@@ -189,6 +211,7 @@ export function useRows(
     setCells,
     removeRow,
     removeRows,
+    addRows,
     scrollRef,
     sentinelRef,
   };
@@ -210,3 +233,11 @@ const LEAVING: RowOutcome = { ok: false, detail: "", refused: false };
 export type RowsOutcome = { ok: true; deleted: number; rowCount: number } | Extract<RowOutcome, { ok: false }>;
 
 const LEAVING_ROWS: RowsOutcome = { ok: false, detail: "", refused: false };
+
+/** An add's outcome: how many rows were made and the first one's id,
+ * so focus can land on it. */
+export type AddRowsOutcome =
+  | { ok: true; firstRowId: string; added: number }
+  | Extract<RowOutcome, { ok: false }>;
+
+const LEAVING_ADD: AddRowsOutcome = { ok: false, detail: "", refused: false };
