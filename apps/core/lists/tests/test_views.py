@@ -244,6 +244,55 @@ class RowViewTests(TestCase):
         page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
         self.assertEqual(page["items"][0]["data"], {"company": "acme.com", "employees": "10"})
 
+    def test_delete_rows_takes_the_named_rows_or_all_but_the_kept(self):
+        third = self.client.post(
+            reverse("lists_rows", kwargs={"id": self.list_id}),
+            {"rows": [{"company": "third.io"}]},
+            content_type="application/json",
+        )
+        self.assertEqual(third.status_code, 201, third.content)
+        named = self.client.delete(
+            reverse("lists_rows", kwargs={"id": self.list_id}),
+            {"row_ids": [self.first_id, self.second_id, "01ROW" + "0" * 21]},
+            content_type="application/json",
+        )
+        self.assertEqual(named.status_code, 200, named.content)
+        self.assertEqual(named.json(), {"deleted": 2, "row_count": 1})
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        (kept,) = page["items"]
+        self.assertEqual(kept["data"]["company"], "third.io")
+        self.client.post(
+            reverse("lists_rows", kwargs={"id": self.list_id}),
+            {"rows": [{"company": "fourth.io"}, {"company": "fifth.io"}]},
+            content_type="application/json",
+        )
+        everything_but = self.client.delete(
+            reverse("lists_rows", kwargs={"id": self.list_id}),
+            {"all": True, "keep": [kept["id"]]},
+            content_type="application/json",
+        )
+        self.assertEqual(everything_but.status_code, 200, everything_but.content)
+        self.assertEqual(everything_but.json(), {"deleted": 2, "row_count": 1})
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.assertEqual([row["id"] for row in page["items"]], [kept["id"]])
+
+    def test_delete_rows_needs_exactly_one_of_named_or_all(self):
+        for body in ({}, {"row_ids": [self.first_id], "all": True}, {"keep": [self.first_id]}, {"row_ids": []}):
+            refused = self.client.delete(
+                reverse("lists_rows", kwargs={"id": self.list_id}), body, content_type="application/json"
+            )
+            self.assertEqual(refused.status_code, 400, (body, refused.content))
+        self.assertEqual(
+            self.client.delete(
+                reverse("lists_rows", kwargs={"id": "01LST" + "0" * 21}),
+                {"all": True},
+                content_type="application/json",
+            ).status_code,
+            404,
+        )
+        page = self.client.get(reverse("lists_rows", kwargs={"id": self.list_id})).json()
+        self.assertEqual(len(page["items"]), 2)
+
     def test_delete_removes_the_row_and_recounts(self):
         gone = self.client.delete(self.row_url(self.first_id))
         self.assertEqual(gone.status_code, 204)

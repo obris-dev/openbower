@@ -31,6 +31,7 @@ from .constants import (
     MAX_INGEST_PROBLEMS,
     MAX_LIST_COLUMNS,
     MAX_LIST_ROWS,
+    MAX_ROW_IDS_PER_DELETE,
     MAX_ROWS_PER_ADD,
     ColumnType,
 )
@@ -83,6 +84,29 @@ class RowsAddRequest(serializers.Serializer):
         min_length=1,
         max_length=MAX_ROWS_PER_ADD,
     )
+
+
+class RowsDeleteRequest(serializers.Serializer):
+    """A rows delete: the rows named (`row_ids`), or every row but the
+    ones named (`all` with `keep`). One of the two, never both or
+    neither. Ids are checked for shape only; one the sheet lacks
+    deletes nothing, and the receipt says how many went."""
+
+    row_ids = serializers.ListField(
+        child=serializers.CharField(max_length=26), min_length=1, max_length=MAX_ROW_IDS_PER_DELETE, required=False
+    )
+    all = serializers.BooleanField(required=False, default=False)
+    keep = serializers.ListField(
+        child=serializers.CharField(max_length=26), max_length=MAX_ROW_IDS_PER_DELETE, required=False
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        named = "row_ids" in attrs
+        if named == bool(attrs["all"]):
+            raise serializers.ValidationError("Name the rows to delete, or all rows.")
+        if "keep" in attrs and not attrs["all"]:
+            raise serializers.ValidationError("keep goes with all.")
+        return attrs
 
 
 class RowCellsPatchRequest(serializers.Serializer):
