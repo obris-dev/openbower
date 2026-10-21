@@ -43,6 +43,10 @@ import { useRows } from "./use-rows";
 import { useRowSelection } from "./use-row-selection";
 import { SelectionBar } from "./selection-bar";
 import { toBody } from "./grid/lib/row-selection";
+import type { WriteHow } from "./grid/cell-actions";
+import { focusCell } from "./grid/focus-cell";
+import { isEditable } from "./grid/lib/cell-navigation";
+import { AddRowsBar } from "./add-rows-bar";
 
 /** The sheet, full-bleed under the shell's chrome in three bands: one
  * slim toolbar (click-to-rename title left; the actions right, column
@@ -61,8 +65,19 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   const toast = useToast();
   const columns = useColumns(initialDetail);
   const { detail } = columns;
-  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, setCells, removeRow, removeRows, scrollRef, sentinelRef } =
-    useRows(detail.id, initialRows);
+  const {
+    rows,
+    hasMore,
+    loadingMore,
+    loadMore,
+    refreshLoaded,
+    setCells,
+    removeRow,
+    removeRows,
+    addRows: appendRows,
+    scrollRef,
+    sentinelRef,
+  } = useRows(detail.id, initialRows);
   // The rows a person has ticked: the sheet's, since the bar and its
   // confirm are rendered here.
   const selection = useRowSelection(rows, detail.row_count);
@@ -280,16 +295,18 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     return null;
   }
 
-  // A paste: the row swaps in on success (the hook's job); a refusal
-  // is the server's sentence under a title that says so, tier c (an
-  // outcome, no form to attach it to); a failure that judged nothing
-  // is the generic sentence bare, like every other mutation's; and no
-  // sentence is the page leaving for login. A pasted value on an AI
-  // column counts as filled, so the tracker's totals re-read.
-  async function pasteCells(rowId: string, data: Record<string, string>) {
+  // A value reaching a cell, pasted or typed: the row swaps in on
+  // success (the hook's job); a refusal is the server's sentence
+  // under a title naming the act, tier c (an outcome, no form to
+  // attach it to); a failure that judged nothing is the generic
+  // sentence bare, like every other mutation's; and no sentence is
+  // the page leaving for login. A person's value on an AI column
+  // counts as filled, so the tracker's totals re-read.
+  async function writeCells(rowId: string, data: Record<string, string>, how: WriteHow) {
     const outcome = await setCells(rowId, data);
     if (!outcome.ok) {
-      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Paste refused" : undefined);
+      const title = how === "paste" ? "Paste refused" : "Edit refused";
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? title : undefined);
       return outcome;
     }
     void fill.refresh();
@@ -311,6 +328,33 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     void columns.reread();
     void fill.refresh();
     return outcome;
+  }
+
+  // Blank rows from the add-rows bar: the hook appends them (the rows
+  // are the feedback, no toast), the footer's count re-reads, and the
+  // first new row's first editable cell takes focus once it has
+  // rendered, so typing can start at once. Blank rows arrive without
+  // a workflow trigger, so the tracker has nothing new to show. A
+  // refusal (the sheet full) is the server's sentence.
+  const [addingRows, setAddingRows] = useState(false);
+  function addRows(count: number) {
+    if (addingRows) return;
+    void (async () => {
+      setAddingRows(true);
+      const outcome = await appendRows(count);
+      setAddingRows(false);
+      if (!outcome.ok) {
+        if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Rows not added" : undefined);
+        return;
+      }
+      void columns.reread();
+      const first = detail.columns.find(isEditable);
+      if (!first) return;
+      requestAnimationFrame(() => {
+        const root = document.querySelector(`[data-grid-id="${detail.id}"]`);
+        focusCell(root, outcome.firstRowId, first.key);
+      });
+    })();
   }
 
   // A selection's removal, once the bar's confirm has been answered:
@@ -517,8 +561,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
             onEditWebhook={openEditWebhook}
             pendingColumn={columns.pendingColumn}
             onNamePending={(label) => void columns.namePending(label)}
-            onSetCells={pasteCells}
+            onSetCells={writeCells}
             onRemoveRow={deleteRow}
+
             selection={{
               isSelected: selection.isSelected,
               selecting: !selection.empty,
@@ -527,6 +572,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
               onToggleAll: selection.toggleAll,
             }}
           />
+          {!hasMore && <AddRowsBar busy={addingRows} onAdd={addRows} />}
           {hasMore && (
             <>
               <div ref={sentinelRef} aria-hidden />

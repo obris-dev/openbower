@@ -427,9 +427,21 @@ export async function deleteList(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.lists.detail(id));
 }
 
-/** Manual append (bounded); the receipt is the contract's RowsAdded. */
-export async function addListRows(id: string, rows: Record<string, string>[]): Promise<ApiResult<RowsAdded>> {
-  return http.post(apiRoutes.lists.rows(id), RowsAddedSchema, { rows });
+/** The append's receipt with its rows renderable: the counts, and the
+ * rows made in the page's own shape. */
+export type RenderableRowsAdded = Omit<RowsAdded, "rows"> & { rows: RenderableListRow[] };
+
+const TolerantRowsAddedSchema = RowsAddedSchema.extend({ rows: z.array(TolerantListRowSchema) });
+
+/** Manual append (bounded); the receipt is the contract's RowsAdded,
+ * its rows parsed as tolerantly as a page's. */
+export async function addListRows(
+  id: string,
+  rows: Record<string, string>[],
+): Promise<ApiResult<RenderableRowsAdded>> {
+  const res = await http.post(apiRoutes.lists.rows(id), TolerantRowsAddedSchema, { rows });
+  if (res.status !== "ok") return res;
+  return { ...res, data: { ...res.data, rows: res.data.rows.map(renderableRow) } };
 }
 
 export async function importListCsv(file: File, label?: string): Promise<ApiResult<ImportResult>> {

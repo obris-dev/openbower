@@ -95,7 +95,18 @@ violation shipped once and got caught).
   sheet, loaded or not: the server takes "all but these"), and the
   bar floating over the scroll region (`selection-bar`) holds the
   count, Deselect, Delete rows and the selection's confirm dialog.
-  The right-click menu stays one row's.
+  The right-click menu stays one row's. Typing is the second write
+  path through PATCH row cells: a focused cell opens its own editor
+  (`grid/cell-editor`, the rename field's keys: Enter commits and
+  stays, Escape cancels, Tab commits and moves, blur commits) on a
+  printable key (typing replaces) or Enter / F2 (edit the value); the
+  arrows move between cells and Tab between editable ones
+  (`grid/lib/cell-navigation`, the one predicate with paste). The
+  add-rows bar (`sheet/add-rows-bar`, "Add [10] more rows", a line
+  under the grid once the end is loaded, not a row of it) is the one
+  shipped surface that posts rows: blank ones, to be typed into, which
+  arrive without a workflow trigger by the append's rule; the receipt
+  carries the rows made, and focus lands on the first.
 
 ## Errors, status, and copy
 
