@@ -81,6 +81,9 @@ export type PlainColumn = z.infer<typeof PlainColumnSchema>;
 export const RowsAddedSchema = z.object({ "added": z.number().int(), "row_count": z.number().int() }).describe("The manual-append receipt.");
 export type RowsAdded = z.infer<typeof RowsAddedSchema>;
 
+export const RowsDeletedSchema = z.object({ "deleted": z.number().int(), "row_count": z.number().int() }).describe("The rows-delete receipt: how many went, and the sheet's count\nafter, so the caller's footer moves without a re-read.");
+export type RowsDeleted = z.infer<typeof RowsDeletedSchema>;
+
 export const SearchToolCallSchema = z.object({ "attempts": z.number().int(), "discarded": z.number().int(), "hits": z.number().int(), "kind": z.literal("search").default("search"), "provider": z.string(), "query": z.string(), "status": z.string(), "tool": z.string() }).describe("One search-tool call's record: `status` is what the provider\nsaid (open, and hits, possibly zero, is the honest answer; any\nother code is the tool's own failure code saying why there are\nnone), `provider` which provider served it, `attempts` how many\ntries the seam made for this one query (a rate limit is retried,\nsame query, before it counts), and `tool` which tool called, so a\nreader can tell whose call refused. `hits` counts what the tool\nKEPT; `discarded` counts served hits the tool dropped as off-scope\n(an engine that runs dry on a demanded site: relaxes the query and\nserves off-site pages dressed as answers), so a thin answer shows\nwhether the provider ran dry or ran off. Every field REQUIRED: the\none writer sets them all, and a stored record is the same shape as\na served one.");
 export type SearchToolCall = z.infer<typeof SearchToolCallSchema>;
 
