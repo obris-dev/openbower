@@ -157,7 +157,9 @@ auth + data services live in a separate private repo.
   then the ADVANCE every kind owes the workflow once a run reaches
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
-  other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet: rows
+  other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet
+  holding something (a row that arrives blank, the add-rows control's, is created and counted but not offered: an
+  entry agent has nothing to read, and a fill offers it once it does): rows
   enter through one
   operation (lists/operations/append_rows.py: the list service's
   primitive, then the trigger, one transaction), which every door (a

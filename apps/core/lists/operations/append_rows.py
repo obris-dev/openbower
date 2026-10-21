@@ -7,7 +7,15 @@ add_rows) is called by nothing else in production; a pin holds that.
 
 Every door triggers, on purpose: a sheet that has no agent node yet
 (a fresh import, a snapshot) is a no-op trigger, and a sheet that has
-one is exactly the case where an arriving row must be judged."""
+one is exactly the case where an arriving row must be judged.
+
+A row that arrives BLANK (every cell empty: the sheet's add-rows
+control makes such rows to be typed into) is created, counted and
+ranked but not offered: nothing has arrived for an entry agent to
+read, and a run on it would burn a model call to land a diagnosis and
+count the row as attempted. The fill lane judges such a row BLOCKED
+until it holds something, and offers it when a person asks for the
+column; an edit starts nothing, by the standing rule."""
 
 from __future__ import annotations
 
@@ -45,5 +53,12 @@ class AppendRowsOperation:
         each door answers them in its own voice."""
         with transaction.atomic():
             created = ListService(account_id=self.account_id).add_rows(self.target_list, self.rows)
-            queued = WorkflowReactions(account_id=self.account_id).trigger(self.target_list, created)
+            arrived = [row for row in created if _holds_something(row)]
+            queued = WorkflowReactions(account_id=self.account_id).trigger(self.target_list, arrived)
         return AppendReport(created=created, queued=queued)
+
+
+def _holds_something(row: ListRow) -> bool:
+    """A row with at least one non-blank cell: the one kind the
+    workflow is told about."""
+    return any(str(value or "").strip() for value in row.data.values())
