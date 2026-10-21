@@ -30,14 +30,13 @@ import {
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
-import { menuButtonId } from "./column-header";
+import { menuButtonId, SheetGrid } from "./grid";
 import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
 import { AddRowsDrawer } from "./add-rows-drawer";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
-import { SheetTable } from "./sheet-table";
 import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
@@ -426,7 +425,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
       />
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        <SheetTable
+        <SheetGrid
+          listId={detail.id}
+          scrollRef={scrollRef}
           columns={detail.columns}
           rows={rows}
           searchProvider={searchProvider}
