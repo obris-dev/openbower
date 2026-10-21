@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.6](https://github.com/obris-dev/openbower/compare/v0.0.5...v0.0.6) (2026-10-21)
+
+
+### Features
+
+* a right-click menu on the sheet's cells with Copy, Paste and Delete row, the grid's first writes ([#113](https://github.com/obris-dev/openbower/issues/113)) ([1c5d36a](https://github.com/obris-dev/openbower/commit/1c5d36ad4f84144cecd2e797f4afa7181d28a761))
+* **web:** the sheet as a fixed-width grid: resizable 200px columns, virtual rows, everything left aligned ([#112](https://github.com/obris-dev/openbower/issues/112)) ([eb86fc7](https://github.com/obris-dev/openbower/commit/eb86fc790d841ec3cccd24889b2e1abbbd7f36a2))
+
+
+### Bug fixes
+
+* **web:** a sheet with no rows can still get its first column ([#110](https://github.com/obris-dev/openbower/issues/110)) ([6efa118](https://github.com/obris-dev/openbower/commit/6efa1185280e2e549bdddf4b427563653eeaee65))
+
 ## [0.0.5](https://github.com/obris-dev/openbower/compare/v0.0.4...v0.0.5) (2026-10-20)
 
 
