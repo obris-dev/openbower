@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@bower/ui";
 import type { RenderableListRow } from "@bower/api";
 
 import type { SearchProviderChoice } from "../fill";
@@ -35,7 +36,12 @@ export function GridRow({
 }) {
   return (
     <div
-      className="group absolute left-0 top-0 flex w-max min-w-full"
+      className={cn(
+        "group absolute left-0 top-0 flex w-max min-w-full",
+        // A picked row wears a faint wash in the selection's colour, so
+        // the boxes, the rows and the bar read as one thing.
+        selection?.isSelected(row.id) && "bg-signal/5",
+      )}
       style={{ height: ROW_HEIGHT, transform: `translateY(${offset}px)` }}
     >
       {selection ? (

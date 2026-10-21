@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, ConfirmDialog } from "@bower/ui";
+import { Button, ConfirmDialog, cn } from "@bower/ui";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import type { RowsOutcome } from "./use-rows";
@@ -50,23 +50,49 @@ export function SelectionBar({
 
   return (
     <>
-      {count > 0 && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
-          <div
-            role="toolbar"
-            aria-label="Selected rows"
-            className="pointer-events-auto flex items-center gap-3 rounded-lg border border-hairline bg-surface px-4 py-2 shadow-lg"
+      {/* Always in the tree, shown by the count: the pill fades and
+          lifts 4px in as the first row is picked and out as the last
+          is unpicked, instead of popping. Hidden, it takes no pointer
+          and is out of the accessibility tree. */}
+      <div
+        aria-hidden={count === 0}
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-4 flex justify-center transition duration-100 ease-out motion-reduce:transition-none",
+          count === 0 ? "translate-y-1 opacity-0" : "translate-y-0 opacity-100",
+        )}
+      >
+        <div
+          role="toolbar"
+          aria-label={`${rows} selected`}
+          className={cn(
+            "flex items-center gap-2 rounded-xl bg-surface/95 py-1.5 pl-3 pr-1.5 shadow-lg ring-1 ring-hairline backdrop-blur dark:ring-foreground/15",
+            count > 0 && "pointer-events-auto",
+          )}
+        >
+          <p className="whitespace-nowrap text-sm text-muted">
+            <span className="font-medium tabular-nums text-foreground">{count.toLocaleString("en-US")}</span>
+            {count === 1 ? " row selected" : " rows selected"}
+          </p>
+          <span aria-hidden className="h-5 w-px shrink-0 bg-hairline" />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="font-medium text-muted hover:text-foreground"
+            onClick={onDeselect}
+            tabIndex={count === 0 ? -1 : undefined}
           >
-            <p className="text-sm text-foreground">{rows} selected</p>
-            <Button size="sm" variant="ghost" onClick={onDeselect}>
-              Deselect
-            </Button>
-            <Button size="sm" variant="danger" onClick={() => setConfirming({ busy: false })}>
-              Delete rows
-            </Button>
-          </div>
+            Deselect
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setConfirming({ busy: false })}
+            tabIndex={count === 0 ? -1 : undefined}
+          >
+            Delete rows
+          </Button>
         </div>
-      )}
+      </div>
       <ConfirmDialog open={confirming !== null} onClose={() => !confirming?.busy && setConfirming(null)}>
         <ConfirmDelete
           layout="dialog"
