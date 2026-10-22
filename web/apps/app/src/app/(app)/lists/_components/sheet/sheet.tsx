@@ -30,7 +30,7 @@ import {
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
-import { menuButtonId, SheetGrid } from "./grid";
+import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
 import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { FindLookalikes } from "./find-lookalikes";
@@ -40,6 +40,10 @@ import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } 
 import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
+import { useRowSelection } from "./use-row-selection";
+import { SelectionBar } from "./selection-bar";
+import { toBody } from "./lib/row-selection";
+import { AddRowsBar } from "./add-rows-bar";
 
 /** The sheet, full-bleed under the shell's chrome in three bands: one
  * slim toolbar (click-to-rename title left; the actions right, column
@@ -58,10 +62,22 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   const toast = useToast();
   const columns = useColumns(initialDetail);
   const { detail } = columns;
-  const { rows, hasMore, loadingMore, loadMore, refreshLoaded, setCells, removeRow, scrollRef, sentinelRef } = useRows(
-    detail.id,
-    initialRows,
-  );
+  const {
+    rows,
+    hasMore,
+    loadingMore,
+    loadMore,
+    refreshLoaded,
+    setCells,
+    removeRow,
+    removeRows,
+    addRows: appendRows,
+    scrollRef,
+    sentinelRef,
+  } = useRows(detail.id, initialRows);
+  // The rows a person has ticked: the sheet's, since the bar and its
+  // confirm are rendered here.
+  const selection = useRowSelection(rows, detail.row_count);
   // The fill attachment polls the FILLS alone; cell states ride the
   // rows this component already holds.
   const fill = useFill(detail.id);
@@ -276,16 +292,18 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     return null;
   }
 
-  // A paste: the row swaps in on success (the hook's job); a refusal
-  // is the server's sentence under a title that says so, tier c (an
-  // outcome, no form to attach it to); a failure that judged nothing
-  // is the generic sentence bare, like every other mutation's; and no
-  // sentence is the page leaving for login. A pasted value on an AI
-  // column counts as filled, so the tracker's totals re-read.
-  async function pasteCells(rowId: string, data: Record<string, string>) {
+  // A value reaching a cell, pasted or typed: the row swaps in on
+  // success (the hook's job); a refusal is the server's sentence
+  // under a title naming the act, tier c (an outcome, no form to
+  // attach it to); a failure that judged nothing is the generic
+  // sentence bare, like every other mutation's; and no sentence is
+  // the page leaving for login. A person's value on an AI column
+  // counts as filled, so the tracker's totals re-read.
+  async function writeCells(rowId: string, data: Record<string, string>, how: WriteHow) {
     const outcome = await setCells(rowId, data);
     if (!outcome.ok) {
-      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Paste refused" : undefined);
+      const title = how === "paste" ? "Paste refused" : "Edit refused";
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? title : undefined);
       return outcome;
     }
     void fill.refresh();
@@ -307,6 +325,56 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     void columns.reread();
     void fill.refresh();
     return outcome;
+  }
+
+  // Blank rows from the add-rows bar: the hook appends them (the rows
+  // are the feedback, no toast), the footer takes the receipt's count,
+  // and the first new row's first editable cell takes focus once it
+  // has rendered, so typing can start at once. Blank rows arrive without
+  // a workflow trigger, so the tracker has nothing new to show. A
+  // refusal (the sheet full) is the server's sentence.
+  const [addingRows, setAddingRows] = useState(false);
+  function addRows(count: number) {
+    if (addingRows) return;
+    void (async () => {
+      setAddingRows(true);
+      const outcome = await appendRows(count);
+      setAddingRows(false);
+      if (!outcome.ok) {
+        if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Rows not added" : undefined);
+        return;
+      }
+      columns.setRowCount(outcome.rowCount);
+      const first = detail.columns.find(isEditable);
+      if (!first) return;
+      requestAnimationFrame(() => {
+        const root = document.querySelector(`[data-grid-id="${detail.id}"]`);
+        focusCell(root, outcome.firstRowId, first.key);
+      });
+    })();
+  }
+
+  // A selection's removal, once the bar's confirm has been answered:
+  // the toast counts what went, the footer takes the receipt's count,
+  // the tracker's counts are the fills page's, re-read in place, and
+  // the selection empties. Focus then lands on the header's
+  // select all, the one box that is still there.
+  async function deleteRows() {
+    const outcome = await removeRows(toBody(selection.selection));
+    if (!outcome.ok) {
+      if (outcome.detail) toast.error(outcome.detail, outcome.refused ? "Rows not deleted" : undefined);
+      return outcome;
+    }
+    toast.success(outcome.deleted === 1 ? "1 row deleted." : `${outcome.deleted.toLocaleString("en-US")} rows deleted.`);
+    selection.clear();
+    columns.setRowCount(outcome.rowCount);
+    void fill.refresh();
+    return outcome;
+  }
+
+  function focusSelectAll() {
+    const box = scrollRef.current?.querySelector<HTMLElement>("[data-select-all]");
+    box?.focus();
   }
 
   async function submitRename() {
@@ -460,43 +528,66 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
         sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        <SheetGrid
-          listId={detail.id}
-          scrollRef={scrollRef}
-          columns={detail.columns}
-          rows={rows}
-          searchProvider={searchProvider}
-          fills={{
-            listId: detail.id,
-            runs: fill.runs,
-            summaries: fill.summaries,
-            pollTrouble,
-            rowCount: detail.row_count,
-            entryActionIds: detail.entry_action_ids,
-            onStop: fill.stop,
-            onFill: fillColumn,
-          }}
-          onAddColumn={openAddColumn}
-          onReorder={columns.reorder}
-          onRenameColumn={columns.rename}
-          onDeleteColumn={removeColumn}
-          onEditWebhook={openEditWebhook}
-          pendingColumn={columns.pendingColumn}
-          onNamePending={(label) => void columns.namePending(label)}
-          onSetCells={pasteCells}
-          onRemoveRow={deleteRow}
+      {/* The scroll region's parent holds the selection bar over it:
+          the bar floats at the region's bottom, not the sheet's. */}
+      {/* The sheet is one white surface, the page's paper around it:
+          the header, the gutter and the bar were already on surface,
+          and rows on paper read as a second, greyer sheet. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} className="h-full overflow-auto bg-surface">
+          <SheetGrid
+            listId={detail.id}
+            scrollRef={scrollRef}
+            columns={detail.columns}
+            rows={rows}
+            searchProvider={searchProvider}
+            fills={{
+              listId: detail.id,
+              runs: fill.runs,
+              summaries: fill.summaries,
+              pollTrouble,
+              rowCount: detail.row_count,
+              entryActionIds: detail.entry_action_ids,
+              onStop: fill.stop,
+              onFill: fillColumn,
+            }}
+            onAddColumn={openAddColumn}
+            onReorder={columns.reorder}
+            onRenameColumn={columns.rename}
+            onDeleteColumn={removeColumn}
+            onEditWebhook={openEditWebhook}
+            pendingColumn={columns.pendingColumn}
+            onNamePending={(label) => void columns.namePending(label)}
+            onSetCells={writeCells}
+            onRemoveRow={deleteRow}
+
+            selection={{
+              isSelected: selection.isSelected,
+              selecting: !selection.empty,
+              headerState: selection.headerState,
+              disabled: detail.row_count === 0,
+              onToggle: (rowId, range) => selection.toggle(rowId, { range }),
+              onToggleAll: selection.toggleAll,
+            }}
+          />
+          {!hasMore && <AddRowsBar busy={addingRows} onAdd={addRows} />}
+          {hasMore && (
+            <>
+              <div ref={sentinelRef} aria-hidden />
+              <div className="border-t border-hairline p-3 text-center">
+                <Button size="sm" variant="ghost" loading={loadingMore} onClick={() => void loadMore()}>
+                  Load more ({rows.length.toLocaleString("en-US")} of {detail.row_count.toLocaleString("en-US")})
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+        <SelectionBar
+          count={selection.count}
+          onDeselect={selection.clear}
+          onDelete={deleteRows}
+          onEmptied={focusSelectAll}
         />
-        {hasMore && (
-          <>
-            <div ref={sentinelRef} aria-hidden />
-            <div className="border-t border-hairline p-3 text-center">
-              <Button size="sm" variant="ghost" loading={loadingMore} onClick={() => void loadMore()}>
-                Load more ({rows.length.toLocaleString("en-US")} of {detail.row_count.toLocaleString("en-US")})
-              </Button>
-            </div>
-          </>
-        )}
       </div>
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-1.5">

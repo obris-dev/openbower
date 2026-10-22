@@ -63,6 +63,9 @@ export function useColumns(initialDetail: ListDetail): {
   /** Re-read the summary in place (a row removed elsewhere moved its
    * count); true when the page is leaving for login. */
   reread: () => Promise<boolean>;
+  /** The sheet's row count as a receipt just reported it (a rows
+   * delete, an add): the footer moves without a re-read. */
+  setRowCount: (rowCount: number) => void;
 } {
   const toast = useToast();
   const [detail, setDetail] = useState(initialDetail);
@@ -78,6 +81,10 @@ export function useColumns(initialDetail: ListDetail): {
   // caller's own toast or rendered refusal is the voice, or after a
   // row's delete, where the row is already gone and a stale count is
   // the lesser noise; a second message would be noise either way.
+  const setRowCount = useCallback((rowCount: number) => {
+    setDetail((current) => (current.row_count === rowCount ? current : { ...current, row_count: rowCount }));
+  }, []);
+
   const reread = useCallback(async (): Promise<boolean> => {
     const summary = await fetchList(detail.id);
     if (redirectIfUnauthenticated(summary)) return true;
@@ -260,5 +267,6 @@ export function useColumns(initialDetail: ListDetail): {
     namePending,
     renameList,
     reread,
+    setRowCount,
   };
 }

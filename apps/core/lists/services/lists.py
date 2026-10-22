@@ -5,7 +5,8 @@ a missing row, so foreign ids are not an oracle)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import NamedTuple
 
 from django.db import transaction
@@ -14,6 +15,7 @@ from django.utils import timezone
 
 from agents.services import AgentService
 from jobs.services import JobService
+from openbower_kernel.batches import iter_id_pages
 from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
@@ -117,6 +119,15 @@ class CellColumnUnknown(CellRefused):
         super().__init__(f"This sheet has no column with key {key}.")
 
 
+class RowSelectionUnsupported(Exception):
+    """A rows delete was handed a selection shape it has no rule for.
+    Raised rather than judged: the one default a delete must never
+    fall through to is the whole sheet."""
+
+    def __init__(self, selection: object) -> None:
+        super().__init__(f"no rule for a rows delete over {type(selection).__name__}")
+
+
 class CellWrittenTwice(Exception):
     """A landing carried two writes for one cell. The ledger takes one
     record per cell per statement, so this is refused before anything
@@ -208,6 +219,41 @@ def cells_for_storage(
     normalized, mismatches = normalize_row(types, data)
     stored = {key: _clamp_cell(key, value, where=where) for key, value in normalized.items()}
     return stored, mismatches
+
+
+@dataclass(frozen=True)
+class SomeRows:
+    """Rows named by id."""
+
+    ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AllRowsExcept:
+    """Every row of the sheet but the ones to keep."""
+
+    keep: tuple[str, ...]
+
+
+# What a rows delete acts on, as the service names it (the wire says
+# row_ids, or all with keep; the sheet carries the same two shapes).
+# "All" is judged under the list lock, so it is every row as of that
+# moment, a push racing it included only after.
+RowSelection = SomeRows | AllRowsExcept
+
+
+def _chunks(ids: Sequence[str], size: int) -> Iterator[list[str]]:
+    """Consecutive slices of the ids, each at most `size` long."""
+    for start in range(0, len(ids), size):
+        yield list(ids[start : start + size])
+
+
+class RowsRemoved(NamedTuple):
+    """What a rows delete did: the rows that went, and the sheet's
+    count after."""
+
+    deleted: int
+    row_count: int
 
 
 class FolderService:
@@ -717,28 +763,54 @@ class ListService:
                         break
         return out
 
-    def delete_row(self, target: List, row_id: str) -> None:
-        """Delete one row with its cell states and its webhook runs, and
-        recount the sheet, in one transaction under the list lock (the
-        lock an append takes, so the recount cannot race one; a landing
-        locks the ROW, so one in flight on this row commits before the
-        delete takes it, and a later one finds it gone). The order is
-        the deletes' lock order, the one a landing takes: ListRow, then
-        ListCellState, then NodeRun. The row's fill-backed and autofill
-        runs are left alone (the list delete purges fills whole, with
-        their runs; one row's run is the claimed task's to settle: it
-        finds its row gone and settles ROW_MISSING)."""
+    def delete_rows(self, target: List, selection: RowSelection) -> RowsRemoved:
+        """Delete the selected rows with their cell states and their
+        webhook runs, and recount the sheet, in one transaction under
+        the list lock (the lock an append takes, so a push racing this
+        waits and lands after it, and "all" is every row as of the
+        lock; a landing locks the ROW, so one in flight on a row commits
+        before the delete takes it, and a later one finds it gone). A
+        page at a time, each page in the deletes' lock order, the one a
+        landing takes: ListRow, then ListCellState, then NodeRun. The
+        rows' fill-backed and autofill runs are left alone (the list
+        delete purges fills whole, with their runs; a row's run is the
+        claimed task's to settle: it finds its row gone and settles
+        ROW_MISSING). An id the sheet does not have deletes nothing."""
         with transaction.atomic():
             locked = List.objects.select_for_update().filter(id=str(target.id), account_id=self.account_id).first()
             if locked is None:
                 raise ListNotFound(str(target.id))
-            removed, _by_model = ListRow.objects.filter(id=row_id, list_id=str(locked.id)).delete()
-            if not removed:
-                raise RowNotFound(row_id)
-            cell_truth.purge_row(str(locked.id), row_id)
-            webhook_runs.purge_for_row(str(locked.id), row_id)
+            sheet_rows = ListRow.objects.filter(list_id=str(locked.id))
+            # Exhaustive on purpose: a selection shape this delete has no
+            # rule for raises, and nothing is queried until a rule names
+            # the rows. The one default a delete must never fall through
+            # to is the whole sheet. Named rows are walked in chunks of
+            # the ids themselves (a list the size of the sheet is many
+            # small statements, never one IN list repeated per page);
+            # all-but walks the sheet by keyset.
+            match selection:
+                case SomeRows(ids):
+                    pages = _chunks(sorted(set(ids)), FILL_WRITE_BATCH)
+                case AllRowsExcept(keep):
+                    pages = iter_id_pages(sheet_rows.exclude(id__in=keep), batch=FILL_WRITE_BATCH)
+                case _:
+                    raise RowSelectionUnsupported(selection)
+            deleted = 0
+            for page in pages:
+                removed, _by_model = ListRow.objects.filter(id__in=page, list_id=str(locked.id)).delete()
+                cell_truth.purge_rows(str(locked.id), page)
+                webhook_runs.purge_for_rows(str(locked.id), page)
+                deleted += removed
             locked.row_count = ListRow.objects.filter(list_id=str(locked.id)).count()
             locked.save(update_fields=["row_count", "updated_at"])
+        return RowsRemoved(deleted=deleted, row_count=locked.row_count)
+
+    def delete_row(self, target: List, row_id: str) -> None:
+        """One row by id, through the rows delete. Raises RowNotFound
+        when the sheet has no such row."""
+        removed = self.delete_rows(target, SomeRows((row_id,)))
+        if removed.deleted == 0:
+            raise RowNotFound(row_id)
 
     def delete(self, target: List) -> None:
         """Delete the list with its rows, fills, tasks, cell states, and

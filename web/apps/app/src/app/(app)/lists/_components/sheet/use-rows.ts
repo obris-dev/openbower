@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useToast } from "@bower/ui";
 import {
+  GENERIC_FAILURE,
   ROWS_PAGE_LIMIT,
+  addListRows,
   deleteListRow,
+  deleteListRows,
   fetchListRows,
   setListRowCells,
   type RenderableListRow,
   type RenderableListRowsPage,
+  type RowSelectionBody,
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
@@ -37,6 +41,8 @@ export function useRows(
   refreshLoaded: () => Promise<boolean>;
   setCells: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
   removeRow: (rowId: string) => Promise<RowOutcome>;
+  removeRows: (body: RowSelectionBody) => Promise<RowsOutcome>;
+  addRows: (count: number) => Promise<AddRowsOutcome>;
   scrollRef: RefObject<HTMLDivElement | null>;
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
@@ -131,6 +137,48 @@ export function useRows(
     [listId],
   );
 
+  // A selection's removal. Named rows drop out; under "all", only the
+  // rows kept remain, and every one of those is loaded (only a loaded
+  // row can be unticked), so the page is exact and the cursor is
+  // spent: nothing is left beyond it.
+  const removeRows = useCallback(
+    async (body: RowSelectionBody): Promise<RowsOutcome> => {
+      const res = await deleteListRows(listId, body);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      writeGenerationRef.current += 1;
+      if ("row_ids" in body) {
+        const gone = new Set(body.row_ids);
+        setRows((prev) => prev.filter((row) => !gone.has(row.id)));
+      } else {
+        const kept = new Set(body.keep);
+        setRows((prev) => prev.filter((row) => kept.has(row.id)));
+        setNextCursor(null);
+      }
+      return { ok: true, deleted: res.data.deleted, rowCount: res.data.row_count };
+    },
+    [listId],
+  );
+
+  // Blank rows from the add-rows control: the receipt carries them in
+  // the page's shape, so they join the end of the loaded rows (the
+  // append ranks them last, and the control shows only once the end
+  // is loaded) and nothing is re-read.
+  const addRows = useCallback(
+    async (count: number): Promise<AddRowsOutcome> => {
+      const res = await addListRows(listId, Array.from({ length: count }, () => ({})));
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
+      const made = res.data.rows;
+      const first = made[0];
+      if (!first) return { ok: false, detail: GENERIC_FAILURE, refused: false };
+      writeGenerationRef.current += 1;
+      setRows((prev) => [...prev, ...made]);
+      return { ok: true, firstRowId: first.id, added: made.length, rowCount: res.data.row_count };
+    },
+    [listId],
+  );
+
   // Infinite scroll: the sentinel drives loadMore as it comes into
   // view (loadingMore guards double-fires). The observer is rebuilt
   // when loadMore's inputs move; a still-visible sentinel then fires
@@ -162,18 +210,29 @@ export function useRows(
     refreshLoaded,
     setCells,
     removeRow,
+    removeRows,
+    addRows,
     scrollRef,
     sentinelRef,
   };
 }
 
-/** What a row write or removal came to: done, or not, with a sentence
- * the caller's toast renders verbatim. `refused` tells the server's
- * answer (a classified refusal, in its words: the value was judged)
- * from a failure that judged nothing (the network, a 500, a row gone
- * meanwhile), so the toast's title claims a refusal only when one
- * happened. An empty sentence is the page leaving for login: not done,
- * and nothing to say while navigation lands. */
-export type RowOutcome = { ok: true } | { ok: false; detail: string; refused: boolean };
+/** What a row write came to: done (with what the receipt said, when
+ * there is one), or not, with a sentence the caller's toast renders
+ * verbatim. `refused` tells the server's answer (a classified refusal,
+ * in its words: the value was judged) from a failure that judged
+ * nothing (the network, a 500, a row gone meanwhile), so the toast's
+ * title claims a refusal only when one happened. An empty sentence is
+ * the page leaving for login: not done, and nothing to say while
+ * navigation lands. */
+export type Failure = { ok: false; detail: string; refused: boolean };
+export type Outcome<Receipt = object> = ({ ok: true } & Receipt) | Failure;
 
-const LEAVING: RowOutcome = { ok: false, detail: "", refused: false };
+export type RowOutcome = Outcome;
+/** A rows delete: how many went, and the sheet's count after. */
+export type RowsOutcome = Outcome<{ deleted: number; rowCount: number }>;
+/** An add: how many rows were made, the first one's id (so focus can
+ * land on it), and the sheet's count after. */
+export type AddRowsOutcome = Outcome<{ firstRowId: string; added: number; rowCount: number }>;
+
+const LEAVING: Failure = { ok: false, detail: "", refused: false };

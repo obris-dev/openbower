@@ -27,6 +27,9 @@ export function ColumnNameField({ label, onDone }: { label: string; onDone: (nex
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => onDone(draft.trim())}
       onKeyDown={(event) => {
+        // A key inside an open composition (a CJK input method picking
+        // a candidate) is the composition's, not the field's.
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Enter") {
           event.preventDefault();
           onDone(draft.trim());

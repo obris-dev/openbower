@@ -88,7 +88,25 @@ violation shipped once and got caught).
   Headless UI), one menu over the body reading the pressed cell off
   its `data-row-id` / `data-column-key` marks. A cell's write goes
   through PATCH row cells: a person's paste replaces a value, a fill
-  never does.
+  never does. Row selection is the SHEET's state (`use-row-selection`,
+  over the pure `grid/lib/row-selection`): the gutter cell is the
+  row's `Checkbox` (Headless UI, in @bower/ui; the number gives way to
+  it on hover), the header's gutter is select all (every row of the
+  sheet, loaded or not: the server takes "all but these"), and the
+  bar floating over the scroll region (`selection-bar`) holds the
+  count, Deselect, Delete rows and the selection's confirm dialog.
+  The right-click menu stays one row's. Typing is the second write
+  path through PATCH row cells: a focused cell opens its own editor
+  (`grid/cell-editor`, the rename field's keys: Enter commits and
+  stays, Escape cancels, Tab commits and moves, blur commits) on a
+  printable key (typing replaces) or Enter / F2 (edit the value); the
+  arrows move between cells and Tab between editable ones
+  (`grid/lib/cell-navigation`, the one predicate with paste). The
+  add-rows bar (`sheet/add-rows-bar`, "Add [10] more rows", a line
+  under the grid once the end is loaded, not a row of it) is the one
+  shipped surface that posts rows: blank ones, to be typed into, which
+  arrive without a workflow trigger by the append's rule; the receipt
+  carries the rows made, and focus lands on the first.
 
 ## Errors, status, and copy
 
@@ -150,12 +168,15 @@ violation shipped once and got caught).
   directory rows via their menu, the API keys row off its Revoke
   button); the inline form takes the destructive verb's own place in a
   bar (a page footer, the sheet toolbar's action slot) and the bar's
-  other actions stay where they are; an act chosen from a menu that is
-  gone when the question is asked (a row's delete) has no slot, so it
-  alone opens `ConfirmDialog`, the one modal, holding the same form.
-  Polaris opens a modal for every such decision; the anchored panel
-  keeps what the modal is for (one decision, nothing else moving)
-  without the overlay.
+  other actions stay where they are. Two acts open `ConfirmDialog`,
+  the one modal, holding the same form: a row's delete, chosen from a
+  menu that is gone when the question is asked (no slot), and the
+  selection's delete, whose verb sits in the floating pill (a slot too
+  small for the form, floating over the very rows it names, so the two
+  deletes ask the same way rather than one of them growing under the
+  pointer). Polaris opens a modal for every such decision; the
+  anchored panel keeps what the modal is for (one decision, nothing
+  else moving) without the overlay.
 
 ## Action verbs
 

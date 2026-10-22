@@ -451,6 +451,27 @@ class PushedRuleTests(_Harness):
         self.assertEqual(report.added, 1)
         self.assertEqual(NodeRun.objects.count(), before)
 
+    def test_rows_that_arrive_blank_are_counted_but_not_offered(self):
+        # The add-rows control makes rows to be typed into: nothing has
+        # arrived for an entry agent to read, so no run is queued for
+        # them (one would burn a model call to land a diagnosis and
+        # count the row as attempted). A row with any value arrives as
+        # before. FAILS if the append offers every row it made.
+        from lists.operations.append_rows import AppendRowsOperation
+
+        before = NodeRun.objects.count()
+        self.sheet.refresh_from_db()
+        rows_before = self.sheet.row_count
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_list=self.sheet, rows=[{}, {"company": "   "}, {"company": "new.io"}, {}]
+        ).run()
+        self.assertEqual(report.added, 4)
+        self.assertEqual(report.queued, 1)
+        self.assertEqual(NodeRun.objects.count(), before + 1)
+        self.assertEqual(NodeRun.objects.order_by("-id").first().row_id, str(report.created[2].id))
+        self.sheet.refresh_from_db()
+        self.assertEqual(self.sheet.row_count, rows_before + 4)
+
     def test_a_person_adding_rows_triggers_the_workflow_for_them(self):
         # The rows POST is a request to fill, as a push is: the workflow
         # starts for the new rows in the same transaction, one READY run

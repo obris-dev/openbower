@@ -1,11 +1,13 @@
 "use client";
 
+import { cn } from "@bower/ui";
 import type { RenderableListRow } from "@bower/api";
 
 import type { SearchProviderChoice } from "../fill";
 import { GridCell } from "./grid-cell";
-import { GutterCell } from "./gutter-cell";
+import { GutterCell, RowGutterCell } from "./gutter-cell";
 import { ROW_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
+import type { RowSelectionControls } from "./row-selection-controls";
 import type { GridHeader } from "./use-grid-table";
 
 /** One row of the body, positioned by the virtualizer: the number in
@@ -13,13 +15,15 @@ import type { GridHeader } from "./use-grid-table";
  * sheet order and nothing about order rides the row), one cell per
  * column at that column's width, and the empty trailing cell under
  * the header's Add column, marked as the row's (a press on it is a
- * press on the row). */
+ * press on the row). The row is a hover group: its gutter swaps the
+ * number for the row's checkbox while the pointer is anywhere on it. */
 export function GridRow({
   row,
   index,
   headers,
   offset,
   searchProvider,
+  selection,
 }: {
   row: RenderableListRow;
   index: number;
@@ -27,15 +31,32 @@ export function GridRow({
   /** The row's top, relative to the body. */
   offset: number;
   searchProvider: SearchProviderChoice;
+  /** Absent on a grid that cannot select: the gutter is the number alone. */
+  selection?: RowSelectionControls;
 }) {
   return (
     <div
-      className="absolute left-0 top-0 flex w-max min-w-full"
+      className={cn(
+        "group absolute left-0 top-0 flex w-max min-w-full",
+        // A picked row wears a faint wash in the selection's colour, so
+        // the boxes, the rows and the bar read as one thing.
+        selection?.isSelected(row.id) && "bg-signal/5",
+      )}
       style={{ height: ROW_HEIGHT, transform: `translateY(${offset}px)` }}
     >
-      <GutterCell className="border-b" rowId={row.id}>
-        {index + 1}
-      </GutterCell>
+      {selection ? (
+        <RowGutterCell
+          rowId={row.id}
+          number={index + 1}
+          selected={selection.isSelected(row.id)}
+          selecting={selection.selecting}
+          onToggle={(range) => selection.onToggle(row.id, range)}
+        />
+      ) : (
+        <GutterCell className="border-b" rowId={row.id}>
+          {index + 1}
+        </GutterCell>
+      )}
       {headers.map((header) => (
         <GridCell
           key={header.id}

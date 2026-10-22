@@ -37,6 +37,11 @@ MAX_LIST_ROWS = 50_000
 # exported CSV lands back in those tools.
 CELL_MAX_LENGTH = WIRE_CELL_MAX_LENGTH
 MAX_ROWS_PER_ADD = 1000
+# The ids one rows delete may name: the sheet's own bound, since a
+# selection can never name more rows than the sheet holds (a
+# sheet-wide delete names the rows that STAY). The service walks the
+# ids in chunks, so a request this size is many small statements.
+MAX_ROW_IDS_PER_DELETE = MAX_LIST_ROWS
 # A rank's bounds (openbower_kernel.ranks owns the column bound),
 # shared by every model that carries one, a row, a node, a run: appends
 # keep it at four characters for the largest sheet, and moves into the

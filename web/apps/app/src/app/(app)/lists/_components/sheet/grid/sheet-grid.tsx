@@ -11,9 +11,14 @@ import type { SearchProviderChoice } from "../fill";
 import type { ColumnOutcome } from "../use-columns";
 import type { RowOutcome } from "../use-rows";
 import { Body } from "./body";
-import { CellActionsContext, type CellActions } from "./cell-actions";
+import { CellActionsContext, type CellActions, type WriteHow } from "./cell-actions";
+import { CellEditingContext, type CellEditing, type EditingCell } from "./cell-editing";
+import { focusCell } from "./focus-cell";
 import { HeaderRow } from "./header-row";
 import { copiedValueFor } from "./lib/cell-clipboard";
+import { neighbour, type Direction, type Over } from "./lib/cell-navigation";
+import type { RowSelectionControls } from "./row-selection-controls";
+import { GUTTER_WIDTH } from "./lib/column-sizing";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { RowContextMenu } from "./row-context-menu";
@@ -52,6 +57,7 @@ export function SheetGrid({
   onNamePending,
   onSetCells,
   onRemoveRow,
+  selection,
   searchProvider = null,
 }: {
   listId: string;
@@ -59,8 +65,12 @@ export function SheetGrid({
    * so a refusal can be shown in the server's words. Its presence,
    * with `onRemoveRow`, is what arms the right-click menu and the
    * copy and paste keys. */
-  onSetCells?: (rowId: string, data: Record<string, string>) => Promise<RowOutcome>;
+  onSetCells?: (rowId: string, data: Record<string, string>, how: WriteHow) => Promise<RowOutcome>;
   onRemoveRow?: (rowId: string) => Promise<RowOutcome>;
+  /** The sheet's row selection, read and driven here (the gutter's
+   * boxes, the header's select all); absent on a grid that cannot
+   * select, whose gutter is the row number alone. */
+  selection?: RowSelectionControls;
   /** The scroll region the grid lives in; the virtualizer listens to it. */
   scrollRef: RefObject<HTMLDivElement | null>;
   columns: ListColumn[];
@@ -91,6 +101,37 @@ export function SheetGrid({
   );
   const { headers } = useGridTable({ columns, rows, sizing, sizingInfo, onSizingChange, onSizingInfoChange });
   const { bodyRef, items, totalSize, scrollMargin } = useVirtualRows(rows.length, scrollRef);
+
+  // The scroll region's real edges: the header band and the tracker
+  // row stick to its top and the gutter to its left, so a cell
+  // scrolled "into view" by a key would land under them. Scroll
+  // padding tells the browser where the edges are; measured, since
+  // the tracker's height follows its content, and kept current as
+  // the bands change size.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const grid = gridRef.current;
+    if (!scroller || !grid) return;
+    const bands = grid.querySelectorAll<HTMLElement>("[data-sticky-top]");
+    const measure = () => {
+      let top = 0;
+      bands.forEach((band) => {
+        top += band.offsetHeight;
+      });
+      scroller.style.scrollPaddingTop = `${top}px`;
+      scroller.style.scrollPaddingLeft = `${GUTTER_WIDTH}px`;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    bands.forEach((band) => observer.observe(band));
+    return () => {
+      observer.disconnect();
+      scroller.style.scrollPaddingTop = "";
+      scroller.style.scrollPaddingLeft = "";
+    };
+    // Re-measured when the tracker row can come or go (an AI column
+    // added or removed, the fills attached), not only on resize.
+  }, [scrollRef, fills, columns]);
 
   // The grid is the bound, so a column cannot be carried off the
   // sheet and left somewhere it has no meaning. The grid's rect
@@ -125,8 +166,8 @@ export function SheetGrid({
   // The row whose delete is being confirmed, and whether the delete
   // is in flight: ONE state, so a busy question on no row is
   // impossible. The menu that asked is gone by the time the question
-  // shows, and a selection of rows will ask the same question with
-  // no one row to host it, so it is a dialog and not a strip in a row.
+  // shows, so it is a dialog and not a strip in a row; the selection
+  // bar asks the same way, for its own reason (its doc).
   const [confirming, setConfirming] = useState<{ rowId: string; columnKey: string | null; busy: boolean } | null>(
     null,
   );
@@ -139,15 +180,43 @@ export function SheetGrid({
   useEffect(() => {
     if (!landing || confirming !== null) return;
     const frame = requestAnimationFrame(() => {
-      const column = landing.columnKey === null ? "" : `[data-column-key="${landing.columnKey}"]`;
-      const cell = bodyRef.current?.querySelector<HTMLElement>(`[data-row-id="${landing.rowId}"][tabindex]${column}`);
-      cell?.focus();
+      focusCell(bodyRef.current, landing.rowId, landing.columnKey);
       setLanding(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [landing, confirming, bodyRef]);
+  // The cell being typed into; the editor holds the draft.
+  const [editing, setEditing] = useState<EditingCell | null>(null);
+  const cellEditing = useMemo<CellEditing | null>(() => {
+    if (!onSetCells) return null;
+    return {
+      editing,
+      start: setEditing,
+      done: (cell) =>
+        setEditing((prev) =>
+          prev && prev.rowId === cell.rowId && prev.columnKey === cell.columnKey ? null : prev,
+        ),
+    };
+  }, [onSetCells, editing]);
+  // The rows a key can move through: the loaded ones.
+  const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  // The grid's root found by its mark, not a ref: the verbs object
+  // that carries this is read at render, and a ref read inside it
+  // would mark the whole object as one (the compiler's rule).
+  const focusNeighbour = useCallback(
+    (rowId: string, columnKey: string, direction: Direction, over: Over = "all"): boolean => {
+      const target = neighbour(columns, rowIds, { rowId, columnKey }, direction, over);
+      const root = document.querySelector(`[data-grid-id="${listId}"]`);
+      return target !== null && focusCell(root, target.rowId, target.columnKey);
+    },
+    [columns, rowIds, listId],
+  );
   const actions = useMemo<CellActions | null>(() => {
     if (!onSetCells || !onRemoveRow) return null;
+    // One route for a value reaching a cell, typed or pasted.
+    function writeCell(rowId: string, columnKey: string, value: string, how: WriteHow): Promise<RowOutcome> {
+      return onSetCells!(rowId, { [columnKey]: value }, how);
+    }
     return {
       copy: (rowId, columnKey) => {
         const column = columns.find((entry) => entry.key === columnKey);
@@ -159,12 +228,14 @@ export function SheetGrid({
       paste: (rowId, columnKey) => {
         void (async () => {
           const value = await clipboard.read();
-          if (value !== null) await onSetCells(rowId, { [columnKey]: value });
+          if (value !== null) await writeCell(rowId, columnKey, value, "paste");
         })();
       },
+      write: (rowId, columnKey, value) => writeCell(rowId, columnKey, value, "typed"),
+      focusNeighbour,
       deleteRow: (rowId, columnKey) => setConfirming({ rowId, columnKey, busy: false }),
     };
-  }, [onSetCells, onRemoveRow, columns, rows, clipboard]);
+  }, [onSetCells, onRemoveRow, columns, rows, clipboard, focusNeighbour]);
 
   function confirmDelete() {
     if (!confirming || !onRemoveRow) return;
@@ -190,6 +261,7 @@ export function SheetGrid({
       scrollMargin={scrollMargin}
       headers={headers}
       searchProvider={searchProvider}
+      selection={selection}
     />
   );
 
@@ -202,7 +274,7 @@ export function SheetGrid({
           container the sticky bands look for): the resize guide runs
           down the grid and must stop at its bottom edge rather than
           stretch the scroll region's extent under the pointer. */}
-      <div ref={gridRef} className="relative isolate w-max min-w-full overflow-clip text-sm">
+      <div ref={gridRef} data-grid-id={listId} className="relative isolate w-max min-w-full overflow-clip text-sm">
         <HeaderRow
           headers={headers}
           columns={columns}
@@ -213,6 +285,7 @@ export function SheetGrid({
           pendingColumn={pendingColumn}
           onNamePending={onNamePending}
           onAddColumn={onAddColumn}
+          selection={selection}
         />
         {tracker && <TrackerRow headers={headers} fills={tracker} />}
         {/* The menu wraps the body whatever it holds: a press on the
@@ -220,13 +293,15 @@ export function SheetGrid({
             the body keeps one parent across the zero-rows edge instead
             of being remounted there. */}
         <CellActionsContext.Provider value={actions}>
-          {actions ? (
-            <RowContextMenu columns={columns} actions={actions}>
-              {body}
-            </RowContextMenu>
-          ) : (
-            body
-          )}
+          <CellEditingContext.Provider value={cellEditing}>
+            {actions ? (
+              <RowContextMenu columns={columns} actions={actions}>
+                {body}
+              </RowContextMenu>
+            ) : (
+              body
+            )}
+          </CellEditingContext.Provider>
         </CellActionsContext.Provider>
         <ConfirmDialog open={confirming !== null} onClose={() => !confirming?.busy && setConfirming(null)}>
           <ConfirmDelete

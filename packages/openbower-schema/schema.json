@@ -1653,7 +1653,7 @@
       "type": "object"
     },
     "RowsAdded": {
-      "description": "The manual-append receipt.",
+      "description": "The manual-append receipt: the rows made, in sheet order with\ntheir states (an AI cell reads pending once the arrival opened its\nrun), so a sheet that added them shows them without a re-read.",
       "properties": {
         "added": {
           "title": "Added",
@@ -1662,13 +1662,40 @@
         "row_count": {
           "title": "Row Count",
           "type": "integer"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/ListRowWire"
+          },
+          "title": "Rows",
+          "type": "array"
         }
       },
       "required": [
         "added",
-        "row_count"
+        "row_count",
+        "rows"
       ],
       "title": "RowsAdded",
+      "type": "object"
+    },
+    "RowsDeleted": {
+      "description": "The rows-delete receipt: how many went, and the sheet's count\nafter, so the caller's footer moves without a re-read.",
+      "properties": {
+        "deleted": {
+          "title": "Deleted",
+          "type": "integer"
+        },
+        "row_count": {
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deleted",
+        "row_count"
+      ],
+      "title": "RowsDeleted",
       "type": "object"
     },
     "SearchToolCall": {

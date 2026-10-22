@@ -20,6 +20,8 @@ Trusted-process module like node_runs.py: account ids are passed in.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from django.db import transaction
 from pydantic import BaseModel
 
@@ -46,14 +48,15 @@ def purge_for_node(node_id: str) -> int:
     return removed
 
 
-def purge_for_row(list_id: str, row_id: str) -> int:
-    """A deleted row's webhook runs go with it. The flush would retire
-    one ROW_MISSING at its window, so this is not what keeps a run from
-    running: it is the delete taking the row's whole footprint now,
-    beside its cell states, rather than leaving a run to be found gone
-    later and counted as a row that was ever waited on."""
+def purge_for_rows(list_id: str, row_ids: Sequence[str]) -> int:
+    """Deleted rows' webhook runs go with them (one page of rows at a
+    time, the caller's). The flush would retire one ROW_MISSING at its
+    window, so this is not what keeps a run from running: it is the
+    delete taking the rows' whole footprint now, beside their cell
+    states, rather than leaving a run to be found gone later and
+    counted as a row that was ever waited on."""
     with transaction.atomic():
-        removed, _by_model = NodeRun.objects.filter(kind=WEBHOOK, list_id=list_id, row_id=row_id).delete()
+        removed, _by_model = NodeRun.objects.filter(kind=WEBHOOK, list_id=list_id, row_id__in=list(row_ids)).delete()
     return removed
 
 

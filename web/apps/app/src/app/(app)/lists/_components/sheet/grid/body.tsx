@@ -6,6 +6,7 @@ import type { VirtualItem } from "@tanstack/react-virtual";
 
 import type { SearchProviderChoice } from "../fill";
 import { GridRow } from "./grid-row";
+import type { RowSelectionControls } from "./row-selection-controls";
 import type { GridHeader } from "./use-grid-table";
 
 /** The rows band: a box as tall as every loaded row would be, holding
@@ -21,6 +22,7 @@ export function Body({
   scrollMargin,
   headers,
   searchProvider,
+  selection,
 }: {
   bodyRef: RefObject<HTMLDivElement | null>;
   rows: RenderableListRow[];
@@ -29,6 +31,7 @@ export function Body({
   scrollMargin: number;
   headers: GridHeader[];
   searchProvider: SearchProviderChoice;
+  selection?: RowSelectionControls;
 }) {
   if (rows.length === 0) {
     return (
@@ -50,6 +53,7 @@ export function Body({
             headers={headers}
             offset={item.start - scrollMargin}
             searchProvider={searchProvider}
+            selection={selection}
           />
         );
       })}
