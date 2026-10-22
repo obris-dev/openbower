@@ -14,7 +14,7 @@ export type ColumnWidths = Record<string, number>;
  * prefixes, and `storageKey` and `widthVariablePrefix` build the same
  * names here, so nothing is derived twice by hand. */
 export const SHEET_PATH = "^/lists/([0-9A-Z]{26})$";
-export const STORAGE_KEY_PREFIX = "sheet-widths:";
+export const STORAGE_KEY_PREFIX = "bower.sheet.widths:";
 export const WIDTH_PROPERTY_PREFIX = "--sheet-width-";
 
 /** One storage entry per sheet: a width is a fact about a column on
