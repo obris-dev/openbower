@@ -1,0 +1,23 @@
+# What each CI lane in ci.yml checks, read by its path filter: a lane
+# whose inputs the PR did not touch skips its steps and reports green,
+# so a Python change does not build two workers and a web change does
+# not sync a Python environment. Every file a lane reads has to be
+# listed, or a change there ships unchecked.
+web:
+  - 'web/**'
+  # The site's build copies the installer into its assets.
+  - 'scripts/install.sh'
+  - 'scripts/tests/worker-smoke.sh'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'
+python:
+  - '**/*.py'
+  - 'apps/**'
+  - 'packages/**'
+  - 'tools/**'
+  - 'config/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - 'ruff.toml'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'
