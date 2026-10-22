@@ -724,12 +724,12 @@ wheels = [
 
 [[package]]
 name = "openbower"
-version = "0.0.7"
+version = "0.0.8"
 source = { virtual = "." }
 
 [[package]]
 name = "openbower-core"
-version = "0.0.7"
+version = "0.0.8"
 source = { virtual = "apps/core" }
 dependencies = [
     { name = "confluent-kafka" },
