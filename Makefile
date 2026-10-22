@@ -26,7 +26,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/common.mk $(DEPLOY_DIR)/make/app/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test-workers test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -204,6 +204,9 @@ test-images: ## Build both production images from a clean context and start each
 	sh scripts/tests/image-smoke.sh core openbower-core:test
 	docker build -f web/apps/app/Dockerfile $(WEB_BUILD_ARGS) -t openbower-web:test web
 	sh scripts/tests/image-smoke.sh web openbower-web:test 3303
+
+test-workers: ## Build both web apps as their hosted workers and prove each serves (what CI's web job runs for the changed ones)
+	cd web && pnpm install --frozen-lockfile && pnpm -r --workspace-concurrency=1 run smoke
 
 test: test-core test-web test-scripts ## Run every suite
 

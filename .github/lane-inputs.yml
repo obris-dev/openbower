@@ -1,0 +1,37 @@
+# What each CI lane in ci.yml checks, read by its path filter: a lane
+# whose inputs the PR did not touch skips its steps and reports green,
+# so a Python change does not build two workers and a web change does
+# not sync a Python environment. Every file a lane reads has to be
+# listed, or a change there ships unchecked.
+web:
+  - 'web/**'
+  # The zod contract is generated from this export.
+  - 'packages/openbower-schema/schema.json'
+  # The site's build copies the installer into its assets.
+  - 'scripts/install.sh'
+  - 'scripts/tests/worker-smoke.sh'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'
+# Within the web lane, pnpm's package graph picks the packages a change
+# reaches; these files sit outside every package and reach them all.
+workspace:
+  - 'web/package.json'
+  - 'web/pnpm-lock.yaml'
+  - 'web/pnpm-workspace.yaml'
+  - 'web/tsconfig.base.json'
+  - 'packages/openbower-schema/schema.json'
+  - 'scripts/install.sh'
+  - 'scripts/tests/worker-smoke.sh'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'
+python:
+  - '**/*.py'
+  - 'apps/**'
+  - 'packages/**'
+  - 'tools/**'
+  - 'config/**'
+  - 'pyproject.toml'
+  - 'uv.lock'
+  - 'ruff.toml'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'

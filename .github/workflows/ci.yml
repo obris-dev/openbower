@@ -56,9 +56,20 @@ jobs:
 
   lint-python:
     runs-on: ubuntu-latest
+    # The path filter lists the PR's changed files through the API,
+    # which a public repo serves to anyone; claimed here so the job
+    # does not depend on that.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/lane-inputs.yml
       - uses: astral-sh/setup-uv@v5
+        if: steps.filter.outputs.python == 'true'
         with:
           # The uv the images build with, so one uv owns the lock.
           version: "0.12.x"
@@ -66,14 +77,25 @@ jobs:
       # release bump that missed its re-lock, or a hand-edited manifest,
       # fails here instead.
       - run: uv lock --check
+        if: steps.filter.outputs.python == 'true'
       - run: uv sync --all-packages
+        if: steps.filter.outputs.python == 'true'
       - run: uv run ruff check .
+        if: steps.filter.outputs.python == 'true'
       - run: uv run ruff format --check .
+        if: steps.filter.outputs.python == 'true'
       - name: Contract is current
+        if: steps.filter.outputs.python == 'true'
         run: uv run python -m tools.schema_sync.generate --check
 
   test-core:
     runs-on: ubuntu-latest
+    # The path filter lists the PR's changed files through the API,
+    # which a public repo serves to anyone; claimed here so the job
+    # does not depend on that.
+    permissions:
+      contents: read
+      pull-requests: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -89,9 +111,16 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/lane-inputs.yml
       - uses: astral-sh/setup-uv@v5
+        if: steps.filter.outputs.python == 'true'
       - run: uv sync --all-packages
+        if: steps.filter.outputs.python == 'true'
       - name: Migrations are complete
+        if: steps.filter.outputs.python == 'true'
         # A model edit whose migration was never generated ships as a
         # first-boot crash for whoever migrates next; fail it here.
         run: cd apps/core && uv run python manage.py makemigrations --check --dry-run
@@ -99,6 +128,7 @@ jobs:
           DJANGO_ENV: test
           DJANGO_SECRET_KEY: test-only
       - name: Run the app backend suite
+        if: steps.filter.outputs.python == 'true'
         run: cd apps/core && uv run python manage.py test
         env:
           DJANGO_ENV: test
@@ -106,34 +136,77 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    # The path filter lists the PR's changed files through the API,
+    # which a public repo serves to anyone; claimed here so the job
+    # does not depend on that.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The history back to the base: the selection below diffs
+          # the PR against it.
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/lane-inputs.yml
+      # Which packages the steps run in: pnpm's own graph, the packages
+      # the PR changed and every package depending on one, so a change
+      # to a shared package checks the apps built on it and a change to
+      # one app checks that app alone. The workspace-level files are
+      # outside the graph and reach every package, so they select all.
+      - name: Select the packages the PR reaches
+        id: select
+        if: steps.filter.outputs.web == 'true'
+        env:
+          WORKSPACE_CHANGED: ${{ steps.filter.outputs.workspace }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$WORKSPACE_CHANGED" = true ]; then
+            echo "filter=" >> "$GITHUB_OUTPUT"
+          else
+            echo "filter=--filter ...[$BASE_SHA]" >> "$GITHUB_OUTPUT"
+          fi
       # No version pin: action-setup reads packageManager from
       # web/package.json, which is the one home for it (both web images
       # do the same via corepack).
       - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.web == 'true'
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@v4
+        if: steps.filter.outputs.web == 'true'
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: cd web && pnpm install --frozen-lockfile
-      - run: cd web && pnpm -r lint
-      - run: cd web && pnpm -r typecheck
-      - run: cd web && pnpm -r test
+        if: steps.filter.outputs.web == 'true'
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} lint
+        if: steps.filter.outputs.web == 'true'
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} typecheck
+        if: steps.filter.outputs.web == 'true'
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} test
+        if: steps.filter.outputs.web == 'true'
       # The zod side of the contract is generated; drift between the
-      # committed output and the Pydantic-exported schema.json fails here.
-      - run: cd web && pnpm --filter @bower/schema check
-      # The real production build: server/client directive violations
-      # (a "use client" export CALLED from a server component) surface
-      # only here; lint, tsc, and unit tests all pass over them.
-      - run: cd web && pnpm --filter @bower/app exec next build
-      # The package's build script, not the binary: it copies
-      # scripts/install.sh into public/ first, so a moved or missing
-      # installer fails here and not in the site's deploy.
-      - run: cd web && pnpm --filter @bower/marketing run build
+      # committed output and the Pydantic-exported schema.json fails here
+      # (the export is a workspace-level input, so its change runs this).
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} run check
+        if: steps.filter.outputs.web == 'true'
+      # The real production build, the way the hosted workers are built.
+      # Server/client directive violations (a "use client" export CALLED
+      # from a server component) surface only in next build, which the
+      # adapter runs through each package's own build script (the site's
+      # copies scripts/install.sh into public/ first, so a moved or
+      # missing installer fails here and not in the site's deploy). Then
+      # the preview answers one request: a Next the adapter does not know
+      # fails there and nowhere earlier. The app asks for its login page,
+      # the site for a page its worker does not answer by hand.
+      - name: Each worker the PR reaches serves a page
+        if: steps.filter.outputs.web == 'true'
+        run: cd web && pnpm -r --workspace-concurrency=1 ${{ steps.select.outputs.filter }} run smoke
 
   # Both images build from a clean context and each one starts: the core
   # answers Django's system check, the web serves its login page. The
