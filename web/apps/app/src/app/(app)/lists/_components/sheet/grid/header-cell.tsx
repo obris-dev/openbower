@@ -85,7 +85,7 @@ export function HeaderCell({
       // stretch a narrow column's text to a wide one's shape and back
       // on every crossing. Position moves, size does not.
       style={{ width: header.getSize(), transform: CSS.Translate.toString(transform), transition }}
-      className={`relative h-full flex-none border-r border-hairline ${
+      className={`relative h-full flex-none border-b border-r border-hairline ${
         onReorder ? "cursor-grab select-none active:cursor-grabbing" : ""
       } ${
         // Lifted, not hidden: the column keeps its place in the header

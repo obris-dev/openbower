@@ -40,16 +40,16 @@ export function TrackerRow({ headers, fills }: { headers: GridHeader[]; fills: S
       // A floor on the height: a column with nothing to report renders
       // an empty cell, and the band still has to read as a band.
       data-sticky-top=""
-      className="sticky z-20 flex min-h-6 w-max min-w-full border-b border-hairline bg-surface text-xs"
+      className="sticky z-20 flex min-h-6 w-max min-w-full bg-surface text-xs"
       style={{ top: HEADER_HEIGHT }}
     >
-      <GutterCell className="z-30" />
+      <GutterCell className="z-30 border-b" />
       {headers.map((header) => {
         const column: ListColumn = header.column.columnDef.meta!.column;
         return (
           <div
             key={header.id}
-            className="flex min-w-0 flex-none items-center border-r border-hairline px-2 py-1"
+            className="flex min-w-0 flex-none items-center border-b border-r border-hairline px-2 py-1"
             style={{ width: header.getSize() }}
           >
             {column.kind === "ai" && (
@@ -68,7 +68,7 @@ export function TrackerRow({ headers, fills }: { headers: GridHeader[]; fills: S
           </div>
         );
       })}
-      <div className="flex-none border-r border-hairline" style={{ width: TRAILING_CELL_WIDTH }} />
+      <div className="flex-none border-b border-r border-hairline" style={{ width: TRAILING_CELL_WIDTH }} />
     </div>
   );
 }
