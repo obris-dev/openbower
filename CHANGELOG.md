@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.7](https://github.com/obris-dev/openbower/compare/v0.0.6...v0.0.7) (2026-10-22)
+
+
+### Features
+
+* row selection, typing into cells, and an add-rows line on the sheet, with the rows delete and the receipts behind them ([#114](https://github.com/obris-dev/openbower/issues/114)) ([8900966](https://github.com/obris-dev/openbower/commit/8900966253b3468c3296ed8b564f3717850be5d9))
+
 ## [0.0.6](https://github.com/obris-dev/openbower/compare/v0.0.5...v0.0.6) (2026-10-21)
 
 
