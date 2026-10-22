@@ -205,10 +205,8 @@ test-images: ## Build both production images from a clean context and start each
 	docker build -f web/apps/app/Dockerfile $(WEB_BUILD_ARGS) -t openbower-web:test web
 	sh scripts/tests/image-smoke.sh web openbower-web:test 3303
 
-test-workers: ## Build both web apps as their hosted workers and prove each serves (what CI's web job runs)
-	cd web && pnpm install --frozen-lockfile
-	sh scripts/tests/worker-smoke.sh @bower/app web/apps/app /login 8790
-	sh scripts/tests/worker-smoke.sh @bower/marketing web/apps/marketing /privacy 8791
+test-workers: ## Build both web apps as their hosted workers and prove each serves (what CI's web job runs for the changed ones)
+	cd web && pnpm install --frozen-lockfile && pnpm -r --workspace-concurrency=1 run smoke
 
 test: test-core test-web test-scripts ## Run every suite
 

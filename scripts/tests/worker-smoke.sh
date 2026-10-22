@@ -1,8 +1,10 @@
 #!/bin/sh
 # Build a web app the way its hosted worker is built and prove the worker
-# serves, the same check for CI's web job and `make test-workers`:
-#   worker-smoke.sh <package> <dir> <path> [port]
-#   worker-smoke.sh @bower/app web/apps/app /login 8790
+# serves. Run from the app's directory, which its `smoke` package script
+# does, so `pnpm -r run smoke` checks every worker in the workspace and
+# a package filter checks the changed ones:
+#   worker-smoke.sh <path> [port]
+#   worker-smoke.sh /login 8790
 # The adapter's build runs the package's own `build` script (next build;
 # the site copies the installer first), then patches Next's server for
 # the Workers runtime. A Next the adapter does not know fails only when
@@ -11,15 +13,13 @@
 # deployed a worker that threw on every request.
 set -eu
 
-package=${1:?usage: worker-smoke.sh <package> <dir> <path> [port]}
-dir=${2:?usage: worker-smoke.sh <package> <dir> <path> [port]}
-path=${3:?usage: worker-smoke.sh <package> <dir> <path> [port]}
-port=${4:-8790}
+path=${1:?usage: worker-smoke.sh <path> [port]}
+port=${2:-8790}
+name=${npm_package_name:-$(basename "$PWD")}
 
-(cd web && pnpm --filter "$package" exec opennextjs-cloudflare build)
+pnpm exec opennextjs-cloudflare build
 
 log=$(mktemp)
-cd "$dir"
 pnpm exec opennextjs-cloudflare preview -- --port "$port" >"$log" 2>&1 &
 pid=$!
 # The preview is a process tree (pnpm, the adapter, wrangler, the
@@ -53,7 +53,7 @@ while [ $i -lt 60 ]; do
 done
 if [ "$code" != 200 ]; then
     cat "$log"
-    echo "${package} worker: ${path} answered '${code}'" >&2
+    echo "${name} worker: ${path} answered '${code}'" >&2
     exit 1
 fi
-echo "${package} worker serves ${path}"
+echo "${name} worker serves ${path}"

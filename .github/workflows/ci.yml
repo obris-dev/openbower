@@ -144,10 +144,31 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The history back to the base: the selection below diffs
+          # the PR against it.
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: .github/lane-inputs.yml
+      # Which packages the steps run in: pnpm's own graph, the packages
+      # the PR changed and every package depending on one, so a change
+      # to a shared package checks the apps built on it and a change to
+      # one app checks that app alone. The workspace-level files are
+      # outside the graph and reach every package, so they select all.
+      - name: Select the packages the PR reaches
+        id: select
+        if: steps.filter.outputs.web == 'true'
+        env:
+          WORKSPACE_CHANGED: ${{ steps.filter.outputs.workspace }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$WORKSPACE_CHANGED" = true ]; then
+            echo "filter=" >> "$GITHUB_OUTPUT"
+          else
+            echo "filter=--filter ...[$BASE_SHA]" >> "$GITHUB_OUTPUT"
+          fi
       # No version pin: action-setup reads packageManager from
       # web/package.json, which is the one home for it (both web images
       # do the same via corepack).
@@ -163,15 +184,16 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: cd web && pnpm install --frozen-lockfile
         if: steps.filter.outputs.web == 'true'
-      - run: cd web && pnpm -r lint
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} lint
         if: steps.filter.outputs.web == 'true'
-      - run: cd web && pnpm -r typecheck
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} typecheck
         if: steps.filter.outputs.web == 'true'
-      - run: cd web && pnpm -r test
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} test
         if: steps.filter.outputs.web == 'true'
       # The zod side of the contract is generated; drift between the
-      # committed output and the Pydantic-exported schema.json fails here.
-      - run: cd web && pnpm --filter @bower/schema check
+      # committed output and the Pydantic-exported schema.json fails here
+      # (the export is a workspace-level input, so its change runs this).
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} run check
         if: steps.filter.outputs.web == 'true'
       # The real production build, the way the hosted workers are built.
       # Server/client directive violations (a "use client" export CALLED
@@ -180,13 +202,11 @@ jobs:
       # copies scripts/install.sh into public/ first, so a moved or
       # missing installer fails here and not in the site's deploy). Then
       # the preview answers one request: a Next the adapter does not know
-      # fails there and nowhere earlier.
-      - name: The app's worker serves its login page
+      # fails there and nowhere earlier. The app asks for its login page,
+      # the site for a page its worker does not answer by hand.
+      - name: Each worker the PR reaches serves a page
         if: steps.filter.outputs.web == 'true'
-        run: sh scripts/tests/worker-smoke.sh @bower/app web/apps/app /login 8790
-      - name: The site's worker serves a page
-        if: steps.filter.outputs.web == 'true'
-        run: sh scripts/tests/worker-smoke.sh @bower/marketing web/apps/marketing /privacy 8791
+        run: cd web && pnpm -r --workspace-concurrency=1 ${{ steps.select.outputs.filter }} run smoke
 
   # Both images build from a clean context and each one starts: the core
   # answers Django's system check, the web serves its login page. The

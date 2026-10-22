@@ -5,7 +5,21 @@
 # listed, or a change there ships unchecked.
 web:
   - 'web/**'
+  # The zod contract is generated from this export.
+  - 'packages/openbower-schema/schema.json'
   # The site's build copies the installer into its assets.
+  - 'scripts/install.sh'
+  - 'scripts/tests/worker-smoke.sh'
+  - '.github/lane-inputs.yml'
+  - '.github/workflows/ci.yml'
+# Within the web lane, pnpm's package graph picks the packages a change
+# reaches; these files sit outside every package and reach them all.
+workspace:
+  - 'web/package.json'
+  - 'web/pnpm-lock.yaml'
+  - 'web/pnpm-workspace.yaml'
+  - 'web/tsconfig.base.json'
+  - 'packages/openbower-schema/schema.json'
   - 'scripts/install.sh'
   - 'scripts/tests/worker-smoke.sh'
   - '.github/lane-inputs.yml'
