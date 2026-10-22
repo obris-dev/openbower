@@ -12,7 +12,7 @@ import { GutterCell } from "./gutter-cell";
 import { HeaderCell } from "./header-cell";
 import { DEFAULT_COLUMN_WIDTH, HEADER_HEIGHT } from "./lib/column-sizing";
 import type { RowSelectionControls } from "./row-selection-controls";
-import type { GridHeader } from "./use-grid-table";
+import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The header band, stuck to the top of the scroll region: the gutter
  * mark (the select-all box on a sheet that can be selected: every
@@ -25,6 +25,7 @@ import type { GridHeader } from "./use-grid-table";
  * offset relies on. */
 export function HeaderRow({
   headers,
+  widthOf,
   columns,
   onReorder,
   onRenameColumn,
@@ -36,6 +37,7 @@ export function HeaderRow({
   selection,
 }: {
   headers: GridHeader[];
+  widthOf: (header: GridHeader) => CellWidth;
   columns: ListColumn[];
   selection?: RowSelectionControls;
   onReorder?: (keys: string[]) => void;
@@ -71,6 +73,7 @@ export function HeaderRow({
           <HeaderCell
             key={header.id}
             header={header}
+            width={widthOf(header)}
             column={header.column.columnDef.meta!.column}
             columns={columns}
             onReorder={onReorder}

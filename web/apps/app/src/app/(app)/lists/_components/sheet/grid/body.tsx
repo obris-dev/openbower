@@ -7,7 +7,7 @@ import type { VirtualItem } from "@tanstack/react-virtual";
 import type { SearchProviderChoice } from "../fill";
 import { GridRow } from "./grid-row";
 import type { RowSelectionControls } from "./row-selection-controls";
-import type { GridHeader } from "./use-grid-table";
+import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The rows band: a box as tall as every loaded row would be, holding
  * only the rows the virtualizer says are near the viewport, each
@@ -21,6 +21,7 @@ export function Body({
   totalSize,
   scrollMargin,
   headers,
+  widthOf,
   searchProvider,
   selection,
 }: {
@@ -30,6 +31,7 @@ export function Body({
   totalSize: number;
   scrollMargin: number;
   headers: GridHeader[];
+  widthOf: (header: GridHeader) => CellWidth;
   searchProvider: SearchProviderChoice;
   selection?: RowSelectionControls;
 }) {
@@ -51,6 +53,7 @@ export function Body({
             row={row}
             index={item.index}
             headers={headers}
+            widthOf={widthOf}
             offset={item.start - scrollMargin}
             searchProvider={searchProvider}
             selection={selection}

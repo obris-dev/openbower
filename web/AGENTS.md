@@ -35,7 +35,9 @@ violation shipped once and got caught).
 - Forms whose state initializes from client storage render CLIENT-ONLY
   (`ssr: false` wrapper): a render-time storage read under SSR is a
   hydration mismatch on every visit. Never read browser storage during
-  a server-renderable render. Use `next/dynamic` for this, never
+  a server-renderable render (the pre-paint scripts of LAYOUT.md rule
+  7 are the one exception: they read it in the browser before
+  hydration, never during a render). Use `next/dynamic` for this, never
   React.lazy + Suspense (which still SSRs the tree); dynamic's
   `loading` slot IS a Suspense fallback, and it renders a SKELETON
   holding the real layout's shape (same grid, same heights, pulse with
@@ -82,7 +84,14 @@ violation shipped once and got caught).
   by dnd-kit confined to the orchestrator and the header, and every
   other module a dumb cell or row taking a width. Column widths are a
   per-sheet localStorage sync AFTER mount (the storage-after-mount
-  rule above), keyed by column key, validated on read. The right-click
+  rule above), keyed by column key, validated on read, in a LAYOUT
+  effect so a client navigation commits them before paint. A document
+  load paints the server's HTML before any effect, and the root
+  layout's pre-paint script covers it (`ColumnWidthsHeadScript`,
+  LAYOUT.md rule 7): it finds the sheet in the URL and stamps the
+  same entry on `<html>` as custom properties, and every cell's width
+  is `var()` of its property with the model's width as fallback until
+  the sync lands. The right-click
   menu rides `ContextMenu` in @bower/ui (Radix, the one menu that
   opens at the pointer; everything that opens from a button stays on
   Headless UI), one menu over the body reading the pressed cell off
@@ -255,9 +264,9 @@ per action across the product, so a person learns the vocabulary once.
   through LinkButton; Button's own `href` form is a full-document
   anchor, for boundary crossings only).
 - External links: `target="_blank"` pairs with `rel="noreferrer"`. No
-  `dangerouslySetInnerHTML`, except the pre-paint head scripts
-  `@bower/ui` itself ships (LAYOUT.md requires them; that closed set
-  is the whole carve-out). An `href` renders only for values whose
+  `dangerouslySetInnerHTML`, except the pre-paint scripts `@bower/ui`
+  itself ships (LAYOUT.md requires them; that closed set is the whole
+  carve-out). An `href` renders only for values whose
   declared TYPE is url AND whose shape is one.
 
 ## Tests

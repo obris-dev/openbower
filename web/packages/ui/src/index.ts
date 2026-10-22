@@ -32,4 +32,5 @@ export { BrandMark } from "./brand-mark";
 export { GitHubMark, GoogleMark } from "./provider-marks";
 export { ToastProvider, useToast } from "./toast";
 export * from "./sidebar";
+export * from "./pre-paint";
 export * from "./theme";

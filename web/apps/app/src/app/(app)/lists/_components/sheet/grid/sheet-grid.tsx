@@ -95,11 +95,20 @@ export function SheetGrid({
 }) {
   const sensors = useColumnSensors();
   const gridRef = useRef<HTMLDivElement>(null);
-  const { sizing, sizingInfo, onSizingChange, onSizingInfoChange } = useColumnWidths(
+  const { loaded, sizing, sizingInfo, onSizingChange, onSizingInfoChange } = useColumnWidths(
     listId,
     columns.map((column) => column.key),
   );
-  const { headers } = useGridTable({ columns, rows, sizing, sizingInfo, onSizingChange, onSizingInfoChange });
+  const { headers, widthOf } = useGridTable({
+    listId,
+    columns,
+    rows,
+    widthsLoaded: loaded,
+    sizing,
+    sizingInfo,
+    onSizingChange,
+    onSizingInfoChange,
+  });
   const { bodyRef, items, totalSize, scrollMargin } = useVirtualRows(rows.length, scrollRef);
 
   // The scroll region's real edges: the header band and the tracker
@@ -260,6 +269,7 @@ export function SheetGrid({
       totalSize={totalSize}
       scrollMargin={scrollMargin}
       headers={headers}
+      widthOf={widthOf}
       searchProvider={searchProvider}
       selection={selection}
     />
@@ -277,6 +287,7 @@ export function SheetGrid({
       <div ref={gridRef} data-grid-id={listId} className="relative isolate w-max min-w-full overflow-clip text-sm">
         <HeaderRow
           headers={headers}
+          widthOf={widthOf}
           columns={columns}
           onReorder={onReorder}
           onRenameColumn={onRenameColumn}
@@ -287,7 +298,7 @@ export function SheetGrid({
           onAddColumn={onAddColumn}
           selection={selection}
         />
-        {tracker && <TrackerRow headers={headers} fills={tracker} />}
+        {tracker && <TrackerRow headers={headers} widthOf={widthOf} fills={tracker} />}
         {/* The menu wraps the body whatever it holds: a press on the
             empty sheet's one line finds no row and opens nothing, and
             the body keeps one parent across the zero-rows edge instead

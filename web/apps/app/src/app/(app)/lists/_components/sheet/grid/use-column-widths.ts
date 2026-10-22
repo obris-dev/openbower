@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ColumnSizingInfoState, ColumnSizingState, OnChangeFn } from "@tanstack/react-table";
 
 import { parseStoredWidths, serializeWidths, storageKey } from "./lib/column-widths";
@@ -28,10 +28,18 @@ const NO_RESIZE: ColumnSizingInfoState = {
  *
  * The widths start EMPTY (every column at the default) and sync FROM
  * storage after mount: a render-time storage read would differ
- * between the server's paint and the client's and break hydration,
- * so the first paint is the default grid and the stored widths land
- * one effect later. Storage that is unavailable (a private window)
- * simply does not persist.
+ * between the server's paint and the client's and break hydration.
+ * The sync is a LAYOUT effect, so on a client render (a navigation
+ * into the sheet) the stored widths are committed before the browser
+ * paints and the defaults are never seen. The one paint that happens
+ * before any effect is the server's HTML on a document load, and the
+ * root layout's pre-paint script covers it: it stamps the same
+ * storage entry on <html> as custom properties, and until `loaded`
+ * every cell's width is `var()` of its property with the model's
+ * default as the fallback (`pendingWidth`), so that paint and the
+ * synced one are the same. The properties are read only in that
+ * window, so nothing has to keep them current afterwards. Storage
+ * that is unavailable (a private window) simply does not persist.
  *
  * The resize in progress is owned here too, and BOTH updaters are
  * applied the moment they arrive, against a mirror of the latest
@@ -45,6 +53,9 @@ export function useColumnWidths(
   listId: string,
   keys: readonly string[],
 ): {
+  /** Whether storage has been read: until then a cell paints the
+   * pre-paint property (`pendingWidth`) rather than the model's width. */
+  loaded: boolean;
   sizing: ColumnSizingState;
   sizingInfo: ColumnSizingInfoState;
   onSizingChange: OnChangeFn<ColumnSizingState>;
@@ -60,7 +71,7 @@ export function useColumnWidths(
   // re-applying it is a no-op in every other case.
   const keyList = keys.join("\n");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let raw: string | null = null;
     try {
       raw = window.localStorage.getItem(storageKey(listId));
@@ -94,5 +105,5 @@ export function useColumnWidths(
     setSizingInfo(next);
   }, []);
 
-  return { sizing: widths.sizing, sizingInfo, onSizingChange, onSizingInfoChange };
+  return { loaded: widths.loaded, sizing: widths.sizing, sizingInfo, onSizingChange, onSizingInfoChange };
 }
