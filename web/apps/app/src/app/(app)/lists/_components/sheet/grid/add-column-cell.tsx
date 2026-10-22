@@ -11,7 +11,7 @@ import { TRAILING_CELL_WIDTH } from "./lib/column-sizing";
  * toolbar primary, so both entry points speak one gesture. */
 export function AddColumnCell({ onAddColumn }: { onAddColumn: (kind: AddColumnKind) => void }) {
   return (
-    <div className="flex h-full flex-none border-r border-hairline" style={{ width: TRAILING_CELL_WIDTH }}>
+    <div className="flex h-full flex-none border-b border-r border-hairline" style={{ width: TRAILING_CELL_WIDTH }}>
       <Dropdown>
         <DropdownButton className="flex h-full w-full items-center gap-1.5 whitespace-nowrap px-2.5 text-sm font-medium text-foreground hover:bg-wash">
           <Plus aria-hidden className="h-4 w-4 shrink-0" />

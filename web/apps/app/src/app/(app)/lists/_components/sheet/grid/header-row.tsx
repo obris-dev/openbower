@@ -49,10 +49,10 @@ export function HeaderRow({
   return (
     <div
       data-sticky-top=""
-      className="sticky top-0 z-20 flex w-max min-w-full border-b border-hairline bg-surface"
+      className="sticky top-0 z-20 flex w-max min-w-full bg-surface"
       style={{ height: HEADER_HEIGHT }}
     >
-      <GutterCell className="z-30">
+      <GutterCell className="z-30 border-b">
         {selection ? (
           <Checkbox
             data-select-all=""
@@ -86,7 +86,7 @@ export function HeaderRow({
         // never moves a key: creating first would leave a column
         // called "Revenue" keyed on whatever placeholder it was
         // born with.
-        <div className="flex flex-none items-center border-r border-hairline px-1" style={{ width: DEFAULT_COLUMN_WIDTH }}>
+        <div className="flex flex-none items-center border-b border-r border-hairline px-1" style={{ width: DEFAULT_COLUMN_WIDTH }}>
           <ColumnNameField label="" onDone={onNamePending} />
         </div>
       )}
