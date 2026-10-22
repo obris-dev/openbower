@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.8](https://github.com/obris-dev/openbower/compare/v0.0.7...v0.0.8) (2026-10-22)
+
+
+### Features
+
+* **web:** paint stored column widths before first paint ([#122](https://github.com/obris-dev/openbower/issues/122)) ([609cd19](https://github.com/obris-dev/openbower/commit/609cd19c18989d678f0488ebe9ffb58a5efaf772))
+
+
+### Bug fixes
+
+* **deps:** lift certifi and glob past their advisories ([#120](https://github.com/obris-dev/openbower/issues/120)) ([93ce513](https://github.com/obris-dev/openbower/commit/93ce513a1715c6b8900ab0751d9b2a39a72350a6))
+* **deps:** lift next, djangorestframework and opentelemetry-api past their advisories ([#123](https://github.com/obris-dev/openbower/issues/123)) ([0f897a5](https://github.com/obris-dev/openbower/commit/0f897a5c68316697ca60e636738ec49b8b062dd5))
+* **deps:** lift the OpenNext adapter to one that knows next 16.4 ([#124](https://github.com/obris-dev/openbower/issues/124)) ([baaa067](https://github.com/obris-dev/openbower/commit/baaa067599a68eef6b26859ded80b621b99e444c))
+* **web:** a column being named has its cells down the sheet ([#126](https://github.com/obris-dev/openbower/issues/126)) ([12ffc96](https://github.com/obris-dev/openbower/commit/12ffc961eb5c977127c97ceb9f70bf8fab38f4f9))
+* **web:** paint the whole sheet on surface, one rule under the toolbar ([#118](https://github.com/obris-dev/openbower/issues/118)) ([8531de1](https://github.com/obris-dev/openbower/commit/8531de13e1998a9d436c6062f5845cb8aead77bf))
+* **web:** the header's bottom rule ends at the last column ([#121](https://github.com/obris-dev/openbower/issues/121)) ([bf3eada](https://github.com/obris-dev/openbower/commit/bf3eada5a6c1ef794b4b1ad00c1e1c210274c6bc))
+
 ## [0.0.7](https://github.com/obris-dev/openbower/compare/v0.0.6...v0.0.7) (2026-10-22)
 
 
