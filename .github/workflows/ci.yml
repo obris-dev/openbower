@@ -193,7 +193,10 @@ jobs:
       # The zod side of the contract is generated; drift between the
       # committed output and the Pydantic-exported schema.json fails here
       # (the export is a workspace-level input, so its change runs this).
-      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} run check
+      # `--if-present` on this step and the smoke: a selection holding no
+      # package with the script is a pnpm error otherwise, and a change
+      # to one app alone selects no package that has `check`.
+      - run: cd web && pnpm -r ${{ steps.select.outputs.filter }} run --if-present check
         if: steps.filter.outputs.web == 'true'
       # The real production build, the way the hosted workers are built.
       # Server/client directive violations (a "use client" export CALLED
@@ -206,7 +209,7 @@ jobs:
       # the site for a page its worker does not answer by hand.
       - name: Each worker the PR reaches serves a page
         if: steps.filter.outputs.web == 'true'
-        run: cd web && pnpm -r --workspace-concurrency=1 ${{ steps.select.outputs.filter }} run smoke
+        run: cd web && pnpm -r --workspace-concurrency=1 ${{ steps.select.outputs.filter }} run --if-present smoke
 
   # Both images build from a clean context and each one starts: the core
   # answers Django's system check, the web serves its login page. The
