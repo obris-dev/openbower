@@ -30,6 +30,7 @@ from openbower_schema.lists import (
     ListsPage,
     PlainColumn,
     RowsAdded,
+    RowsDeleted,
 )
 from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
@@ -65,6 +66,7 @@ from .serializers import (
     ListPatchRequest,
     RowCellsPatchRequest,
     RowsAddRequest,
+    RowsDeleteRequest,
     WebhookColumnAddRequest,
     WebhookColumnPatchRequest,
     WebhookColumnTestRequest,
@@ -82,6 +84,7 @@ from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
 from .services.lists import (
+    AllRowsExcept,
     CellRefused,
     ColumnNotWritable,
     FolderNotFound,
@@ -93,6 +96,8 @@ from .services.lists import (
     ListsFull,
     RowCursor,
     RowNotFound,
+    RowSelection,
+    SomeRows,
 )
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 from .services.workflows import NodeNotFound
@@ -254,9 +259,28 @@ class ListRowsView(_ScopedView):
             raise ValidationError(str(e)) from e
         except ListNotFound as e:
             raise NotFound("no list with that id") from e
-        added = report.added
         target_list.refresh_from_db()
-        return Response(RowsAdded(added=added, row_count=target_list.row_count).model_dump(), status=201)
+        states = self.fills.cell_states_for_rows(target_list, report.created)
+        rows = [row_wire(row, states.get(str(row.id), {})) for row in report.created]
+        receipt = RowsAdded(added=report.added, row_count=target_list.row_count, rows=rows)
+        return Response(receipt.model_dump(), status=201)
+
+    def delete(self, request: Request, id: str) -> Response:
+        """The rows named, or every row but the ones named: the sheet's
+        selection, deleted under the list lock; 200 with the receipt."""
+        target_list = self._list_or_404(id)
+        serializer = RowsDeleteRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if data["all"]:
+            selection: RowSelection = AllRowsExcept(tuple(data.get("keep", [])))
+        else:
+            selection = SomeRows(tuple(data["row_ids"]))
+        try:
+            removed = self.lists.delete_rows(target_list, selection)
+        except ListNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(RowsDeleted(deleted=removed.deleted, row_count=removed.row_count).model_dump())
 
 
 class ListRowView(_ScopedView):

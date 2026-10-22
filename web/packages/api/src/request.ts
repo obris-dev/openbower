@@ -103,4 +103,9 @@ export const http = {
   delete(path: string): Promise<ApiResult<null>> {
     return request(path, null, { method: "DELETE" });
   },
+  // A body names what to delete when the path cannot (a selection of
+  // rows), and such a delete answers a receipt rather than no content.
+  deleteWithBody<T>(path: string, schema: ZodType<T>, body: Record<string, unknown>): Promise<ApiResult<T>> {
+    return request(path, schema, bodyInit("DELETE", body));
+  },
 };

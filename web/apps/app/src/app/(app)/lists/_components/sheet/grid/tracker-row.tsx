@@ -39,6 +39,7 @@ export function TrackerRow({ headers, fills }: { headers: GridHeader[]; fills: S
     <div
       // A floor on the height: a column with nothing to report renders
       // an empty cell, and the band still has to read as a band.
+      data-sticky-top=""
       className="sticky z-20 flex min-h-6 w-max min-w-full border-b border-hairline bg-surface text-xs"
       style={{ top: HEADER_HEIGHT }}
     >

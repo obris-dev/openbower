@@ -172,10 +172,11 @@ def purge_column(list_id: str, column_key: str) -> None:
     _purge_in_pages(list_id=list_id, column_key=column_key)
 
 
-def purge_row(list_id: str, row_id: str) -> None:
-    """A deleted row takes its cell states with it: one record per
-    column at most, so one statement is the whole purge."""
-    ListCellState.objects.filter(list_id=list_id, row_id=row_id).delete()
+def purge_rows(list_id: str, row_ids: Sequence[str]) -> None:
+    """Deleted rows take their cell states with them: one record per
+    column per row at most, and the caller hands over one page of rows
+    at a time, so one statement is the whole purge."""
+    ListCellState.objects.filter(list_id=list_id, row_id__in=list(row_ids)).delete()
 
 
 def purge_list(list_id: str) -> None:

@@ -107,28 +107,39 @@ export function HeaderCell({
         </div>
       ) : (
         <Popover className="h-full">
-          <PopoverButton
-            id={menuButtonId(column.key)}
-            title={column.label}
-            aria-label={`${column.label} column menu`}
-            className="flex h-full w-full min-w-0 items-center gap-1.5 p-2 text-left text-sm font-medium text-foreground outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-signal"
-          >
-            <ColumnIcon column={column} />
-            <span className="min-w-0 truncate">{column.label}</span>
-          </PopoverButton>
-          <PopoverPanel anchor="bottom start" focus>
-            {({ close }) => (
-              <ColumnMenu
-                column={column}
-                columns={columns}
-                close={close}
-                onMove={(direction) => nudge(direction)}
-                onRename={onRename && (() => setRenaming(true))}
-                onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
-                onDelete={onDelete && (() => onDelete(column))}
-              />
-            )}
-          </PopoverPanel>
+          {({ open }) => (
+            <>
+              <PopoverButton
+                id={menuButtonId(column.key)}
+                title={column.label}
+                aria-label={`${column.label} column menu`}
+                // A right-click opens the same menu a click does: the
+                // header has one menu, so the browser's own is not
+                // offered here.
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  if (!open) event.currentTarget.click();
+                }}
+                className="flex h-full w-full min-w-0 items-center gap-1.5 p-2 text-left text-sm font-medium text-foreground outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-signal"
+              >
+                <ColumnIcon column={column} />
+                <span className="min-w-0 truncate">{column.label}</span>
+              </PopoverButton>
+              <PopoverPanel anchor="bottom start" focus>
+                {({ close }) => (
+                  <ColumnMenu
+                    column={column}
+                    columns={columns}
+                    close={close}
+                    onMove={(direction) => nudge(direction)}
+                    onRename={onRename && (() => setRenaming(true))}
+                    onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
+                    onDelete={onDelete && (() => onDelete(column))}
+                  />
+                )}
+              </PopoverPanel>
+            </>
+          )}
         </Popover>
       )}
       <ResizeHandle header={header} />

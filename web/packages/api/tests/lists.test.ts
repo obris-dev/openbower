@@ -1,5 +1,6 @@
-// addListRows: pinned here because no shipped UI posts rows yet; the
-// contract (route, body shape, RowsAdded parse) must not rot silently.
+// addListRows: the sheet's add row posts one row at a time; the
+// contract (route, body shape, the RowsAdded parse with its rows) is
+// pinned here as well, where a fixture can name every field.
 // postColumnFill: its optional max_row_count scope is pinned because
 // omission vs presence is the contract (no body means all remaining rows).
 import { strict as assert } from "node:assert";
@@ -38,7 +39,11 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
   });
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify({ added: 2, row_count: 7 }), {
+    const rows = [
+      { id: "01BBBBBBBBBBBBBBBBBBBBBBBB", data: { a: "1" }, states: {} },
+      { id: "01CCCCCCCCCCCCCCCCCCCCCCCC", data: { a: "2" }, states: {} },
+    ];
+    return new Response(JSON.stringify({ added: 2, row_count: 7, rows }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     });
@@ -46,7 +51,14 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
 
   const res = await addListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", [{ a: "1" }, { a: "2" }]);
   assert.equal(res.status, "ok");
-  if (res.status === "ok") assert.deepEqual(res.data, { added: 2, row_count: 7 });
+  if (res.status === "ok") {
+    assert.equal(res.data.added, 2);
+    assert.equal(res.data.row_count, 7);
+    assert.deepEqual(
+      res.data.rows.map((row) => row.id),
+      ["01BBBBBBBBBBBBBBBBBBBBBBBB", "01CCCCCCCCCCCCCCCCCCCCCCCC"],
+    );
+  }
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.url.endsWith("/v1/lists/01AAAAAAAAAAAAAAAAAAAAAAAA/rows"));
   assert.equal(calls[0]!.init.method, "POST");

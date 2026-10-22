@@ -22,6 +22,7 @@ import {
   ListsPageSchema,
   ListSummarySchema,
   RowsAddedSchema,
+  RowsDeletedSchema,
   WebhookColumnConfigWireSchema,
   WebhookColumnPreviewResponseSchema,
   WebhookColumnTestResponseSchema,
@@ -44,6 +45,7 @@ import {
   type ListSummary as WireListSummary,
   type PlainColumn,
   type RowsAdded,
+  type RowsDeleted,
   type WebhookColumnConfigWire,
 } from "@bower/schema";
 
@@ -58,7 +60,17 @@ import { TolerantWebhookDeliveryWireSchema, type RenderableDelivery } from "./we
 export const ROWS_FIRST_PAGE = 50;
 export const ROWS_PAGE_LIMIT = 200;
 
-export type { ColumnFillSummary, ColumnPromptWire, FillRunPage, FillRunWire, FoldersList, FolderSummary, ListRowsPage, RowsAdded };
+export type {
+  ColumnFillSummary,
+  ColumnPromptWire,
+  FillRunPage,
+  FillRunWire,
+  FoldersList,
+  FolderSummary,
+  ListRowsPage,
+  RowsAdded,
+  RowsDeleted,
+};
 // Re-exported so app code never imports @bower/schema directly (the
 // schema package has exactly one consumer: this one).
 export type { AiColumn, FillError, ListRowWire, PlainColumn, WebhookColumn, WebhookColumnConfigWire } from "@bower/schema";
@@ -372,6 +384,18 @@ export async function deleteListRow(id: string, rowId: string): Promise<ApiResul
   return http.delete(apiRoutes.lists.row(id, rowId));
 }
 
+/** What a rows delete names: the rows, or every row but the ones to
+ * keep (a select all with some unticked; the server judges "all"
+ * under its own lock, so the page never has to hold the whole
+ * sheet). */
+export type RowSelectionBody = { row_ids: string[] } | { all: true; keep: string[] };
+
+/** A selection of rows deleted at once; the receipt is the contract's
+ * RowsDeleted, so the footer's count moves without a re-read. */
+export async function deleteListRows(id: string, body: RowSelectionBody): Promise<ApiResult<RowsDeleted>> {
+  return http.deleteWithBody(apiRoutes.lists.rows(id), RowsDeletedSchema, body);
+}
+
 export async function updateList(
   id: string,
   patch: { label?: string; folder_id?: string },
@@ -403,9 +427,21 @@ export async function deleteList(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.lists.detail(id));
 }
 
-/** Manual append (bounded); the receipt is the contract's RowsAdded. */
-export async function addListRows(id: string, rows: Record<string, string>[]): Promise<ApiResult<RowsAdded>> {
-  return http.post(apiRoutes.lists.rows(id), RowsAddedSchema, { rows });
+/** The append's receipt with its rows renderable: the counts, and the
+ * rows made in the page's own shape. */
+export type RenderableRowsAdded = Omit<RowsAdded, "rows"> & { rows: RenderableListRow[] };
+
+const TolerantRowsAddedSchema = RowsAddedSchema.extend({ rows: z.array(TolerantListRowSchema) });
+
+/** Manual append (bounded); the receipt is the contract's RowsAdded,
+ * its rows parsed as tolerantly as a page's. */
+export async function addListRows(
+  id: string,
+  rows: Record<string, string>[],
+): Promise<ApiResult<RenderableRowsAdded>> {
+  const res = await http.post(apiRoutes.lists.rows(id), TolerantRowsAddedSchema, { rows });
+  if (res.status !== "ok") return res;
+  return { ...res, data: { ...res.data, rows: res.data.rows.map(renderableRow) } };
 }
 
 export async function importListCsv(file: File, label?: string): Promise<ApiResult<ImportResult>> {

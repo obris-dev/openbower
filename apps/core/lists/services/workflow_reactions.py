@@ -6,7 +6,8 @@ the open-run key repeats as a no-op).
 TRIGGER: rows arrived on the sheet, so the workflow starts for them.
 The entry action behind each ENTRY marker (the head of a path nothing
 feeds) judges the new rows under AUTOFILL: it runs unless any column it
-fills already has a record for the row. A node standing behind a WAIT is
+fills already has a record for the row. A row that arrived blank is
+not offered (the append's rule: nothing has arrived to read). A node standing behind a WAIT is
 not started by an arrival; its barrier is what starts it, through the
 advance. Called by every door rows enter through
 (operations/append_rows.py); a sheet with no workflow starts nothing,

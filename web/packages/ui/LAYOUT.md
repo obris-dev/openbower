@@ -24,10 +24,14 @@ reports; review against this list before adding a component.
    appears inside short non-wrapping segments.
 6. **Drawers and inline editing, not modals.** Pinned header/footer,
    scrollable body; footer buttons submit body forms via the `form`
-   attribute. The one modal is `ConfirmDialog`: the confirm for a
-   destructive act with no slot of its own to confirm in (a row, or a
-   selection of rows, chosen from a menu that is gone when the
-   question is asked). Every other confirm swaps in where its verb was.
+   attribute. The one modal is `ConfirmDialog`, for two destructive
+   acts and no other: a row's delete, chosen from a menu that is gone
+   when the question is asked, so it has no slot to confirm in; and
+   the selection's delete, whose verb sits in the floating selection
+   pill, a slot too small to hold a question, a consequence and two
+   answers, and one that floats over the rows it names, so growing it
+   under the pointer at the moment of the decision is worse than an
+   overlay. Every other confirm swaps in where its verb was.
 7. **Pre-paint state via head scripts.** Anything the server can't know
    (theme, collapsed chrome) is stamped on `<html>` by a blocking script
    and rendered from CSS keyed on that attribute; lazy `useState` cannot
