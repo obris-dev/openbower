@@ -4,7 +4,7 @@ import type { ColumnFillSummary, ListColumn } from "@bower/api";
 
 import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
-import { HEADER_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
+import { DEFAULT_COLUMN_WIDTH, HEADER_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
 import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The tracker row's inputs, one object because they only travel
@@ -38,10 +38,14 @@ export function TrackerRow({
   headers,
   widthOf,
   fills,
+  pendingColumn = false,
 }: {
   headers: GridHeader[];
   widthOf: (header: GridHeader) => CellWidth;
   fills: SheetFills;
+  /** Whether the header holds a column being named: its cell here is
+   * empty at the default width, like the rows' below. */
+  pendingColumn?: boolean;
 }) {
   return (
     <div
@@ -76,6 +80,7 @@ export function TrackerRow({
           </div>
         );
       })}
+      {pendingColumn && <div className="flex-none border-b border-r border-hairline" style={{ width: DEFAULT_COLUMN_WIDTH }} />}
       <div className="flex-none border-b border-r border-hairline" style={{ width: TRAILING_CELL_WIDTH }} />
     </div>
   );
