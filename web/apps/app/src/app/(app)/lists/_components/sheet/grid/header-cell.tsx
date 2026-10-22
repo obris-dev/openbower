@@ -12,7 +12,7 @@ import { ColumnMenu } from "./column-menu";
 import { ColumnNameField } from "./column-name-field";
 import { nudgeColumn } from "../lib/column-order";
 import { RESIZE_HANDLE_ATTRIBUTE, ResizeHandle } from "./resize-handle";
-import type { GridHeader } from "./use-grid-table";
+import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The column menu button's id: what an edit gesture opened from the
  * menu hands focus back to, since the menu item itself is gone by
@@ -37,6 +37,7 @@ export function menuButtonId(key: string): string {
 export function HeaderCell({
   header,
   column,
+  width,
   columns,
   onReorder,
   onRename,
@@ -44,6 +45,7 @@ export function HeaderCell({
   onEditWebhook,
 }: {
   header: GridHeader;
+  width: CellWidth;
   column: ListColumn;
   columns: ListColumn[];
   onReorder?: (keys: string[]) => void;
@@ -84,7 +86,7 @@ export function HeaderCell({
       // (hovered column width / its own width), so a Transform would
       // stretch a narrow column's text to a wide one's shape and back
       // on every crossing. Position moves, size does not.
-      style={{ width: header.getSize(), transform: CSS.Translate.toString(transform), transition }}
+      style={{ width, transform: CSS.Translate.toString(transform), transition }}
       className={`relative h-full flex-none border-b border-r border-hairline ${
         onReorder ? "cursor-grab select-none active:cursor-grabbing" : ""
       } ${

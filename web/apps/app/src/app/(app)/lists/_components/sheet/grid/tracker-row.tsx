@@ -5,7 +5,7 @@ import type { ColumnFillSummary, ListColumn } from "@bower/api";
 import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
 import { HEADER_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
-import type { GridHeader } from "./use-grid-table";
+import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The tracker row's inputs, one object because they only travel
  * together: the LIVE runs and the management verbs the popover's
@@ -34,7 +34,15 @@ export type SheetFills = {
  * column (the click-in management popover behind it), empty cells
  * elsewhere. The header's fixed height is what makes this band's
  * sticky offset exact. */
-export function TrackerRow({ headers, fills }: { headers: GridHeader[]; fills: SheetFills }) {
+export function TrackerRow({
+  headers,
+  widthOf,
+  fills,
+}: {
+  headers: GridHeader[];
+  widthOf: (header: GridHeader) => CellWidth;
+  fills: SheetFills;
+}) {
   return (
     <div
       // A floor on the height: a column with nothing to report renders
@@ -50,7 +58,7 @@ export function TrackerRow({ headers, fills }: { headers: GridHeader[]; fills: S
           <div
             key={header.id}
             className="flex min-w-0 flex-none items-center border-b border-r border-hairline px-2 py-1"
-            style={{ width: header.getSize() }}
+            style={{ width: widthOf(header) }}
           >
             {column.kind === "ai" && (
               <FillTrackerCell

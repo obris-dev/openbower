@@ -32,10 +32,18 @@ reports; review against this list before adding a component.
    answers, and one that floats over the rows it names, so growing it
    under the pointer at the moment of the decision is worse than an
    overlay. Every other confirm swaps in where its verb was.
-7. **Pre-paint state via head scripts.** Anything the server can't know
-   (theme, collapsed chrome) is stamped on `<html>` by a blocking script
-   and rendered from CSS keyed on that attribute; lazy `useState` cannot
-   beat SSR to the first paint.
+7. **Pre-paint state via blocking scripts.** Anything the server can't
+   know (theme, collapsed chrome) is stamped on `<html>` by a blocking
+   inline script first in `<body>` and rendered from CSS keyed on that
+   attribute; lazy `useState` cannot beat SSR to the first paint. A value CSS cannot enumerate (a width
+   per column) is stamped as custom properties instead
+   (`StoredWidthsHeadScript`), and the markup reads each with `var()`
+   and its default as the fallback until state has it. Every such
+   script renders from the ROOT LAYOUT and finds its entity in the
+   URL: a script a page renders is inserted by React on a client
+   navigation and never runs, so a page-rendered one covers document
+   loads only, and the state's own read (a layout effect) is what
+   covers client renders.
 8. **Behavioral components ride Headless UI** (menus, dialogs, switches,
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
    The one exception is `ContextMenu`, which rides Radix: Headless UI

@@ -6,11 +6,22 @@ import { clampWidth, DEFAULT_COLUMN_WIDTH } from "./column-sizing.ts";
  * delete. */
 export type ColumnWidths = Record<string, number>;
 
+/** The three facts the pre-paint script shares with this module: it
+ * finds the sheet in the URL (the first capture group is the id, a
+ * ULID, on the path `webRoutes.list` builds), reads the entry under
+ * `STORAGE_KEY_PREFIX + id`, and stamps `WIDTH_PROPERTY_PREFIX + id +
+ * "-" + key`. The script builds the names in the browser from these
+ * prefixes, and `storageKey` and `widthVariablePrefix` build the same
+ * names here, so nothing is derived twice by hand. */
+export const SHEET_PATH = "^/lists/([0-9A-Z]{26})$";
+export const STORAGE_KEY_PREFIX = "sheet-widths:";
+export const WIDTH_PROPERTY_PREFIX = "--sheet-width-";
+
 /** One storage entry per sheet: a width is a fact about a column on
  * THIS sheet, and two sheets sharing a key ("name") have nothing to
  * say to each other. */
 export function storageKey(listId: string): string {
-  return `sheet-widths:${listId}`;
+  return `${STORAGE_KEY_PREFIX}${listId}`;
 }
 
 /** The widths worth applying from a stored string. Storage is writable
@@ -48,4 +59,30 @@ export function serializeWidths(widths: ColumnWidths): string {
     if (width !== DEFAULT_COLUMN_WIDTH) kept[key] = width;
   }
   return JSON.stringify(kept);
+}
+
+/** The custom property a stored width is stamped under before first
+ * paint, one name per sheet AND column: scoped by sheet, so the
+ * properties of one sheet can never be read as another's. */
+export function widthVariablePrefix(listId: string): string {
+  return `${WIDTH_PROPERTY_PREFIX}${listId}-`;
+}
+
+/** The one column's property: what the script stamps and a pending
+ * cell reads, built here and nowhere else on this side. */
+export function widthVariable(listId: string, key: string): string {
+  const prefix = widthVariablePrefix(listId);
+  return `${prefix}${key}`;
+}
+
+/** A cell's width until the stored widths have synced into state:
+ * the stamped property if the script set one, else the model's
+ * width, which is the default. Once synced the number itself is
+ * rendered, so a resize is never fighting a property. The key goes
+ * into the name as it is: the contract's column key grammar
+ * (lowercase letters, digits and underscores) is a subset of a CSS
+ * identifier, which is what keeps the declaration valid. */
+export function pendingWidth(listId: string, key: string, fallback: number): string {
+  const name = widthVariable(listId, key);
+  return `var(${name}, ${fallback}px)`;
 }

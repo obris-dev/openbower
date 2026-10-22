@@ -12,6 +12,7 @@ import { useCellEditing } from "./cell-editing";
 import { CellEditor } from "./cell-editor";
 import { acceptsPaste } from "./lib/cell-clipboard";
 import { isEditable, type Direction } from "./lib/cell-navigation";
+import type { CellWidth } from "./use-grid-table";
 
 const ARROWS: Record<string, Direction> = {
   ArrowUp: "up",
@@ -63,7 +64,7 @@ export function GridCell({
 }: {
   column: ListColumn;
   row: RenderableListRow;
-  width: number;
+  width: CellWidth;
   searchProvider: SearchProviderChoice;
 }) {
   const actions = useCellActions();

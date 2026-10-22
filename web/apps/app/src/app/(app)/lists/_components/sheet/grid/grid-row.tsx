@@ -8,7 +8,7 @@ import { GridCell } from "./grid-cell";
 import { GutterCell, RowGutterCell } from "./gutter-cell";
 import { ROW_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
 import type { RowSelectionControls } from "./row-selection-controls";
-import type { GridHeader } from "./use-grid-table";
+import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** One row of the body, positioned by the virtualizer: the number in
  * the gutter (counted by the caller, since the page's array IS the
@@ -21,6 +21,7 @@ export function GridRow({
   row,
   index,
   headers,
+  widthOf,
   offset,
   searchProvider,
   selection,
@@ -28,6 +29,7 @@ export function GridRow({
   row: RenderableListRow;
   index: number;
   headers: GridHeader[];
+  widthOf: (header: GridHeader) => CellWidth;
   /** The row's top, relative to the body. */
   offset: number;
   searchProvider: SearchProviderChoice;
@@ -62,7 +64,7 @@ export function GridRow({
           key={header.id}
           column={header.column.columnDef.meta!.column}
           row={row}
-          width={header.getSize()}
+          width={widthOf(header)}
           searchProvider={searchProvider}
         />
       ))}
