@@ -19,3 +19,7 @@ allowBuilds:
 # the patched line, and the Workers dev runtime pins the one before it.
 overrides:
   sharp: ">=0.35.5"
+  # The OpenNext bundler's minifier pins an exact glob 10.3.3, whose CLI
+  # takes a shell command from a flag; the override lifts it to the
+  # patched 10.5 line without waiting on that package.
+  "glob@>=10.2.0 <10.5.0": "^10.5.0"
