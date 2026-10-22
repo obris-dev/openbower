@@ -407,8 +407,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   return (
     // FILLS the page's pinned wrapper ([id]/page.tsx owns the
     // viewport calc and clips): three bands split the height; only
-    // the grid band scrolls, the page itself never does.
-    <div className="flex h-full min-h-0 flex-col">
+    // the grid band scrolls, the page itself never does. The sheet is
+    // ONE white surface, all three bands: a toolbar or footer left on
+    // the page's paper reads as chrome around a sheet rather than the
+    // sheet's own edge.
+    <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-hairline px-4 py-2">
         <div className="min-w-0">
           {titleDraft !== null ? (
@@ -530,11 +533,8 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
 
       {/* The scroll region's parent holds the selection bar over it:
           the bar floats at the region's bottom, not the sheet's. */}
-      {/* The sheet is one white surface, the page's paper around it:
-          the header, the gutter and the bar were already on surface,
-          and rows on paper read as a second, greyer sheet. */}
       <div className="relative min-h-0 flex-1">
-        <div ref={scrollRef} className="h-full overflow-auto bg-surface">
+        <div ref={scrollRef} className="h-full overflow-auto">
           <SheetGrid
             listId={detail.id}
             scrollRef={scrollRef}

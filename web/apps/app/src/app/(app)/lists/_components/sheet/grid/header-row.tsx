@@ -49,7 +49,7 @@ export function HeaderRow({
   return (
     <div
       data-sticky-top=""
-      className="sticky top-0 z-20 flex w-max min-w-full border-y border-hairline bg-surface"
+      className="sticky top-0 z-20 flex w-max min-w-full border-b border-hairline bg-surface"
       style={{ height: HEADER_HEIGHT }}
     >
       <GutterCell className="z-30">
