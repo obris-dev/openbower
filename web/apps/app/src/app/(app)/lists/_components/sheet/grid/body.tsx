@@ -24,6 +24,7 @@ export function Body({
   widthOf,
   searchProvider,
   selection,
+  pendingColumn,
 }: {
   bodyRef: RefObject<HTMLDivElement | null>;
   rows: RenderableListRow[];
@@ -34,6 +35,7 @@ export function Body({
   widthOf: (header: GridHeader) => CellWidth;
   searchProvider: SearchProviderChoice;
   selection?: RowSelectionControls;
+  pendingColumn?: boolean;
 }) {
   if (rows.length === 0) {
     return (
@@ -57,6 +59,7 @@ export function Body({
             offset={item.start - scrollMargin}
             searchProvider={searchProvider}
             selection={selection}
+            pendingColumn={pendingColumn}
           />
         );
       })}

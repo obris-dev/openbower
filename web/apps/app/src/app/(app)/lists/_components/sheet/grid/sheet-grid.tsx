@@ -272,6 +272,7 @@ export function SheetGrid({
       widthOf={widthOf}
       searchProvider={searchProvider}
       selection={selection}
+      pendingColumn={pendingColumn != null}
     />
   );
 
@@ -298,7 +299,7 @@ export function SheetGrid({
           onAddColumn={onAddColumn}
           selection={selection}
         />
-        {tracker && <TrackerRow headers={headers} widthOf={widthOf} fills={tracker} />}
+        {tracker && <TrackerRow headers={headers} widthOf={widthOf} fills={tracker} pendingColumn={pendingColumn != null} />}
         {/* The menu wraps the body whatever it holds: a press on the
             empty sheet's one line finds no row and opens nothing, and
             the body keeps one parent across the zero-rows edge instead
