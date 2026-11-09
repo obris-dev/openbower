@@ -149,12 +149,12 @@ class LookalikesProxyTests(TestCase):
         # silently break the data-audience binding.
         resp = self.client.get(reverse("auth_login"))
         query = parse_qs(urlparse(resp["Location"]).query)
-        self.assertEqual(query["scope"], ["profile data:read data:write"])
-        # RFC 8707: both resource indicators (IdP + data) present as repeated
-        # params, so the minted token is bound to both audiences.
+        self.assertEqual(query["scope"], ["profile data:read data:write signals:read signals:write"])
+        # RFC 8707: every resource indicator (IdP, data, signals) present as
+        # repeated params, so the minted token is bound to each audience.
         self.assertEqual(
             sorted(query["resource"]),
-            sorted([settings.OPENBOWER_AUTH_URL, settings.OPENBOWER_DATA_URL]),
+            sorted([settings.OPENBOWER_AUTH_URL, settings.OPENBOWER_DATA_URL, settings.OPENBOWER_SIGNALS_URL]),
         )
 
     def test_unauthenticated_is_401(self):
