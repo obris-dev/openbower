@@ -23,3 +23,7 @@ overrides:
   # takes a shell command from a flag; the override lifts it to the
   # patched 10.5 line without waiting on that package.
   "glob@>=10.2.0 <10.5.0": "^10.5.0"
+  # The Workers dev runtime (miniflare, under wrangler and the OpenNext
+  # adapter) pins an exact undici 7.29.1, short of the 7.30.1 fixes for
+  # its TLS validation and denial-of-service advisories.
+  "undici@>=7.0.0 <7.30.1": "^7.30.1"
