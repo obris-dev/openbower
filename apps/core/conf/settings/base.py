@@ -43,6 +43,7 @@ LOCAL_APPS = [
     "common",
     "auth_client",
     "discover",
+    "signals",
     "lists",
     "agents",
     "webhooks",
@@ -143,15 +144,25 @@ OPENBOWER_DATA_INTERNAL_URL = (os.environ.get("OPENBOWER_DATA_INTERNAL_URL") or 
 OPENBOWER_DATA_API_VERSION = os.environ.get("OPENBOWER_DATA_API_VERSION", "v1")
 DATA_HTTP_TIMEOUT_SECONDS = int(os.environ.get("DATA_HTTP_TIMEOUT_SECONDS", "10"))
 
+# The signals service (listeners on funding news and the matches they
+# find). Called the same way as the data service: server-to-server on the
+# user's behalf with the session's access token (signals:read, and
+# signals:write to change a listener), the same identity/transport split.
+# Required; local.py / cloud.py supply env defaults.
+OPENBOWER_SIGNALS_URL = os.environ["OPENBOWER_SIGNALS_URL"].rstrip("/")
+OPENBOWER_SIGNALS_INTERNAL_URL = (os.environ.get("OPENBOWER_SIGNALS_INTERNAL_URL") or OPENBOWER_SIGNALS_URL).rstrip("/")
+OPENBOWER_SIGNALS_API_VERSION = os.environ.get("OPENBOWER_SIGNALS_API_VERSION", "v1")
+SIGNALS_HTTP_TIMEOUT_SECONDS = int(os.environ.get("SIGNALS_HTTP_TIMEOUT_SECONDS", "10"))
+
 
 # RFC 8707 resource indicators for the session access token. The token is
-# used at TWO resource servers, so it names both as its audience: the IdP
-# itself (its /v1/auth/me userinfo, which the toolkit audience-checks) and
-# the data service (which enforces its own audience on introspection). Each
-# audience is that service's real base URL, so it matches per env (dev
-# localhost, cloud openbower.ai); binding to only one would get the token
-# rejected at the other.
-OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL]
+# used at THREE resource servers, so it names each as its audience: the IdP
+# itself (its /v1/auth/me userinfo, which the toolkit audience-checks), the
+# data service and the signals service (each enforcing its own audience on
+# introspection). Each audience is that service's real base URL, so it
+# matches per env (dev localhost, cloud openbower.ai); leaving one out
+# would get the token rejected there.
+OAUTH_RESOURCES = [OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL, OPENBOWER_SIGNALS_URL]
 
 # Inference providers for agents: API SPECS, each holding NAMED SOURCES
 # so one deploy can run several servers of the same spec side by side

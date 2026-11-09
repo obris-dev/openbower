@@ -6,7 +6,7 @@ with evidence-grounded answers, plus an optional hosted company universe
 (lookalike discovery) behind an OAuth seam. The open app runs standalone
 (CSV import + local models + self-hosted search) at zero cost; the hosted
 data service is the paid layer. This repo is the PUBLIC one; the hosted
-auth + data services live in a separate private repo.
+auth, data and signals services live in a separate private repo.
 
 ## Conventions
 

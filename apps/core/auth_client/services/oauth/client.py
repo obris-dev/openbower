@@ -55,8 +55,9 @@ class OAuthClientGlobal:
                 "redirect_uri": _redirect_uri(),
                 # Scopes are FIXED at mint: refresh rotates tokens but
                 # carries the same set, so a session can only gain a scope
-                # through a fresh login.
-                "scope": "profile data:read data:write",
+                # through a fresh login (a session from before signals
+                # signs in again to read them).
+                "scope": "profile data:read data:write signals:read signals:write",
                 # RFC 8707 resource indicators (repeated param): bind the
                 # token to exactly the resource servers it is used at, so
                 # it cannot be replayed elsewhere. Encoded with doseq in

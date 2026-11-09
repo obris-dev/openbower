@@ -44,6 +44,7 @@ x-core-env: &core_env
   # reach the web container.
   OPENBOWER_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
   OPENBOWER_DATA_URL: ${OPENBOWER_DATA_URL:-https://data.openbower.ai}
+  OPENBOWER_SIGNALS_URL: ${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}
   # By SERVICE NAME over the shared suite network, not through the host
   # gateway: a loopback-published port (which is how those services are
   # published, and should be) is unreachable from a container on Linux,
@@ -51,9 +52,10 @@ x-core-env: &core_env
   # The transport this process dials, which follows the identity URL
   # (the hub, by default). Locally run development copies of those
   # services are sibling containers reached by service name, so that setup sets these
-  # two alongside the identity URLs (the root .env.example has the block).
+  # alongside the identity URLs (the root .env.example has the block).
   OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}}
   OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-${OPENBOWER_DATA_URL:-https://data.openbower.ai}}
+  OPENBOWER_SIGNALS_INTERNAL_URL: ${OPENBOWER_SIGNALS_INTERNAL_URL:-${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}}
   # The ingest bus, by service name over this stack's default network. Set
   # here (not in local.py's localhost seeds) because only the containers
   # reach the broker; a host-run process without it falls back to the
