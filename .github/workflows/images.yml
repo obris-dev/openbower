@@ -1,6 +1,9 @@
 # Build and push the core and web images to GHCR. Only on a merge to main
-# (PR-gated) or a manual run on main, never on tags or from a branch:
-# a sha-<short> on the public registry names reviewed code. Each build
+# (PR-gated) or a manual run, never on tags or a branch push. A manual
+# run takes whichever branch it is started on (only maintainers can
+# start one): off main it exists to prove a branch on the hosted
+# deployment before it merges, so it publishes sha-<short> alone, never
+# `latest` and never a version. Each build
 # publishes an immutable `sha-<short>`; `latest` then moves to it in a
 # last job that runs one at a time and only for the newest commit on
 # main, since two merges seconds apart build in parallel and the older
@@ -45,7 +48,7 @@ jobs:
   # which the PR-time build in ci.yml reads too, so the two can never
   # disagree about what a rebuild needs.
   changes:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
@@ -239,6 +242,9 @@ jobs:
   # version tags above never wait on this.
   latest:
     needs: [changes, manifest]
+    # A branch's build is a candidate, never what `latest` names (the
+    # head check below would also refuse it, by sha).
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write

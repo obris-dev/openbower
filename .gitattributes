@@ -1,0 +1,4 @@
+# Generated from the openbower_schema models by tools/schema_sync; review
+# the model change, not its output. GitHub collapses these in a diff.
+packages/openbower-schema/schema.json linguist-generated=true
+web/packages/schema/src/generated.ts linguist-generated=true
