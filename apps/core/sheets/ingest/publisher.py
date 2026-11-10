@@ -47,7 +47,7 @@ class LoggingIngestPublisher:
 
     def publish(self, event: IngestEvent) -> None:
         logger.info(
-            "ingest accepted (no bus configured: NOT persisted) event=%s list=%s account=%s rows=%d",
+            "ingest accepted (no bus configured: NOT persisted) event=%s sheet=%s account=%s rows=%d",
             event.event_id,
             event.sheet_id,
             event.account_id,

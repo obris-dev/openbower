@@ -97,10 +97,10 @@ def handle_ingest_event(event: IngestEvent) -> str:
             return "skipped"
         result = _append_rows(event)
         if not result.applied:
-            logger.warning("ingest dropped event=%s list=%s: %s", event.event_id, event.sheet_id, result.reason)
+            logger.warning("ingest dropped event=%s sheet=%s: %s", event.event_id, event.sheet_id, result.reason)
             return "dropped"
         logger.info(
-            "ingest applied event=%s list=%s account=%s rows=%d",
+            "ingest applied event=%s sheet=%s account=%s rows=%d",
             event.event_id,
             event.sheet_id,
             event.account_id,

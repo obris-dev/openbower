@@ -379,7 +379,7 @@ class SheetIngestView(_ScopedView):
             # The batch never reached the bus, so it was NOT accepted: 503
             # (retryable), never a 202 that silently dropped it. Dedupe makes
             # the caller's retry safe.
-            logger.warning("ingest publish failed for list %s: %s", event.sheet_id, e)
+            logger.warning("ingest publish failed for sheet %s: %s", event.sheet_id, e)
             return Response(
                 {"error": IngestErrorCode.INGEST_UNAVAILABLE, "detail": "ingest bus unavailable; retry"}, status=503
             )

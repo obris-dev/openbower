@@ -173,5 +173,5 @@ class ImportCsvOperation:
         # MAX_JUDGED_ROWS.
         added = AppendRowsOperation(account_id=self.account_id, target_sheet=target, rows=rows).run().added
         target.refresh_from_db()
-        logger.info("csv import: list=%s rows=%d skipped=%d", target.id, added, skipped)
+        logger.info("csv import: sheet=%s rows=%d skipped=%d", target.id, added, skipped)
         return ImportStats(target=target, rows=added, skipped=skipped)
