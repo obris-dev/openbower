@@ -69,7 +69,7 @@ class RunOutcome(StrEnum):
     EXITED = "exited"
     PARKED = "parked"
     ROW_MISSING = "row_missing"
-    SHEET_MISSING = "list_missing"
+    SHEET_MISSING = "sheet_missing"
 
 
 @dataclass

@@ -18,7 +18,7 @@ from .fills import CellRunResult
 # The run ledger's status vocabulary, the server's NodeRunStatus
 # (parity pinned): the four open states, then the terminals.
 NodeRunStatusWire = Literal[
-    "ready", "queued", "processing", "deferred", "done", "abandoned", "row_missing", "list_missing"
+    "ready", "queued", "processing", "deferred", "done", "abandoned", "row_missing", "sheet_missing"
 ]
 # The OPEN partition: a poll keeps polling while the status is one of
 # these. A wire fact (x-constants) so the client derives the loop

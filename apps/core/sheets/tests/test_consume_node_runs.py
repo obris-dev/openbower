@@ -95,7 +95,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # the processor resolves the row but not its list.
         Sheet.objects.filter(id=sheet.id).delete()
 
-        self.assertEqual(handle_node_run(str(task.id), WORKER), "list_missing")
+        self.assertEqual(handle_node_run(str(task.id), WORKER), "sheet_missing")
 
         task.refresh_from_db()
         self.assertEqual(task.status, NodeRunStatus.SHEET_MISSING)

@@ -348,7 +348,7 @@ class NodeRunStatus(StrEnum):
     DONE = "done"
     ABANDONED = "abandoned"
     ROW_MISSING = "row_missing"
-    SHEET_MISSING = "list_missing"
+    SHEET_MISSING = "sheet_missing"
 
 
 # The states a task still owes work in: it shimmers on the sheet, the
