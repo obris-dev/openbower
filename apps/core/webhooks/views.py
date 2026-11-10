@@ -14,9 +14,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from common.views import ScopedView
-from lists.services.workflows import WorkflowService
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.webhooks import WebhookDestinationCreated, WebhookDestinationsList
+from sheets.services.workflows import WorkflowService
 
 from .constants import DEFAULT_DELIVERIES_PAGE, MAX_DELIVERIES_PAGE, WebhookErrorCode
 from .models import WebhookDestination

@@ -34,7 +34,7 @@ from .deliveries import WebhookDeliveryService
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from lists.models import Node
+    from sheets.models import Node
 
 
 def envelope_of(*, test: bool, data: WebhookEnvelopeData) -> WebhookEnvelope:
@@ -227,7 +227,7 @@ class WebhookDestinationService:
     def _webhook_nodes_naming(self, destination: WebhookDestination) -> list[Node]:
         # Imported here: the lists app already depends on this one, and a
         # module-level import would make that a cycle.
-        from lists.services.workflows import WorkflowService
+        from sheets.services.workflows import WorkflowService
 
         workflows = WorkflowService(account_id=self.account_id)
         return list(workflows.webhook_nodes_for(str(destination.id)))

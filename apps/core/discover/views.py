@@ -35,15 +35,15 @@ from discover.services.index_client import (
     IndexUpstreamError,
     IndexUpstreamUnavailable,
 )
-from lists.constants import LABEL_MAX_LENGTH as LIST_LABEL_MAX_LENGTH
-from lists.constants import MAX_LIST_ROWS, ColumnType, ListOrigin
-from lists.operations.append_rows import AppendRowsOperation
-from lists.serializers import list_wire
-from lists.services.lists import ListNotFound, ListService, ListsFull
 from openbower_kernel.domains import normalize_domain
 from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import LookalikeListResponse
 from openbower_schema.lists import PlainColumn
+from sheets.constants import LABEL_MAX_LENGTH as LIST_LABEL_MAX_LENGTH
+from sheets.constants import MAX_SHEET_ROWS, ColumnType, SheetOrigin
+from sheets.operations.append_rows import AppendRowsOperation
+from sheets.serializers import sheet_wire
+from sheets.services.sheets import SheetFull, SheetNotFound, SheetService
 
 from .constants import (
     MAX_INLINE_DOMAINS,
@@ -202,10 +202,10 @@ def _list_seed_domains(request, *, list_id: str, identifier_key: str) -> list[st
     no domains at all)."""
     from .domains_input import normalize_seed_values
 
-    service = ListService(account_id=request.user.account_id)
+    service = SheetService(account_id=request.user.account_id)
     try:
         target = service.get(list_id)
-    except ListNotFound:
+    except SheetNotFound:
         return _invalid_request("no list with that id")
     if identifier_key not in {c.key for c in target.columns}:
         return _invalid_request("that column does not exist on the list")
@@ -232,7 +232,7 @@ class SaveListRequest(serializers.Serializer):
     def validate_limit(self, value: int) -> int:
         # Clamp, never reject: past the row cap "means everything", and
         # the web sends the run's own cutoff, which may exceed it.
-        return min(value, MAX_LIST_ROWS)
+        return min(value, MAX_SHEET_ROWS)
 
     # The web's Exclude filter: the saved sheet must match the table the
     # user is looking at, so the filtered-out domains ride along.
@@ -272,12 +272,12 @@ class LookalikeRunSaveListView(ScopedView):
         wanted = serializer.validated_data.get("limit")
         excluded = {d for d in (normalize_domain(v) for v in serializer.validated_data["exclude"]) if d}
         client = IndexClientService.for_session(request.auth)
-        service = ListService(account_id=request.user.account_id)
+        service = SheetService(account_id=request.user.account_id)
         target = service.create(
             owner_id=request.user.id,
             label=label,
             columns=self._COLUMNS,
-            origin=ListOrigin.DISCOVER,
+            origin=SheetOrigin.DISCOVER,
             origin_ref=id,
         )
         added = 0
@@ -295,7 +295,7 @@ class LookalikeRunSaveListView(ScopedView):
                 # Clamp to remaining capacity so the final page part-fills
                 # the sheet ("what fit is saved") instead of tripping
                 # ListsFull and dropping whole.
-                capacity = MAX_LIST_ROWS - added
+                capacity = MAX_SHEET_ROWS - added
                 if capacity <= 0:
                     break
                 limit = (
@@ -326,7 +326,7 @@ class LookalikeRunSaveListView(ScopedView):
                     if normalize_domain(item.company.domain) not in excluded
                 ]
                 added += (
-                    AppendRowsOperation(account_id=request.user.account_id, target_list=target, rows=rows).run().added
+                    AppendRowsOperation(account_id=request.user.account_id, target_sheet=target, rows=rows).run().added
                 )
                 # The advance guard the client export also carries: a
                 # stuck cursor must not walk forever.
@@ -334,11 +334,11 @@ class LookalikeRunSaveListView(ScopedView):
                     raise IndexUpstreamError("run cursor did not advance")
                 cursor = result.next_cursor
             completed = True
-        except ListsFull:
+        except SheetFull:
             # A concurrent writer filled the list first: what fit is
             # saved, honestly partial.
             completed = True
-        except ListNotFound:
+        except SheetNotFound:
             # The target was deleted mid-save: a conflict with a
             # concurrent action, not a bad request.
             return Response(
@@ -351,7 +351,7 @@ class LookalikeRunSaveListView(ScopedView):
             if not completed:
                 service.delete(target)
         target.refresh_from_db()
-        return Response(list_wire(target), status=201)
+        return Response(sheet_wire(target), status=201)
 
 
 class LookalikeRunCancelView(ScopedView):

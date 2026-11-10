@@ -1,0 +1,185 @@
+"""The one writer of ListCellState: what a writer made of each cell.
+
+In production only the ListService's landing calls this module,
+inside the same transaction as the value write, so a sheet row and its
+truth can never be written apart. The purges are the owners' (a
+list's, a column's, a row's).
+
+A record exists for every cell a landing has RESOLVED (a run's, or a
+person's own write on a workflow column), filled ones
+included. There is nothing to write at admission (an open run of the
+cell's node is what makes a cell read pending) and nothing to sweep
+when a fill stops (nothing was written for the rows it never reached).
+Not writing a pending state is what makes a stop need no sweep: a
+sweep would have to reconstruct each cell's previous truth from other
+fills' records, which is a read-time replay this module exists to
+have no part of.
+
+So this module has exactly two jobs: write a row's states at the
+landing, and purge what a deleted list, column or row recorded.
+
+Not account-scoped: the worker is a trusted process serving every
+account's fills, and every caller has already resolved its parent
+account-scoped. The `account_id` on the record is denormalized defence
+in depth, not the guard.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple
+
+from openbower_kernel.batches import iter_id_pages
+
+from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
+from ..models import SheetCellState
+
+_UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
+# `source` rides the upsert: a fill landing over a hand-written cell
+# re-attributes it, and a hand-written value over a fill's will too.
+_UPSERT_FIELDS = ["state", "fill_run_id", "tools", "source", "updated_at"]
+
+
+def write(
+    *,
+    account_id: str,
+    sheet_id: str,
+    row_id: str,
+    fill_run_id: str | None,
+    states: dict[str, StoredCellState],
+    tools: dict[str, str],
+    source: CellSource,
+) -> None:
+    """One row's cell states, written inside the terminal transaction
+    that also writes the sheet row and closes the task.
+
+    Takes the identity pieces: the fill-backed caller passes its fill
+    job's, and the automatic path (autofill) passes the task's, with
+    `fill_run_id` NULL (an autofilled cell belongs to no run).
+
+    Per COLUMN, because a run answers outputs independently: a run that
+    answered one output of three settles that column FILLED and leaves
+    the other two carrying their own cause, so an unanswered column
+    stays targetable instead of reading as answered.
+
+    Every column the run owns gets a record, including the answered
+    ones. That is what keeps the per-column counts an indexed read
+    rather than a scan of the sheet, and it is why absence means
+    NEVER ATTEMPTED and nothing else. `tools` is the run's per-tool
+    provider statuses, the same on every column of the row: a filled cell
+    keeps the record of a degraded tool beside its value. `source` says
+    who wrote it, and every caller says so (no default: a writer that
+    did not think about attribution should not compile). Every caller
+    today is a fill; the grid's edit path will write MANUAL once it
+    exists, and completion reads both alike."""
+    write_records(
+        account_id=account_id,
+        sheet_id=sheet_id,
+        records=[CellRecord(row_id, column_key, state, tools) for column_key, state in states.items()],
+        fill_run_id=fill_run_id,
+        source=source,
+    )
+
+
+class CellRecord(NamedTuple):
+    """One ledger record to write: a cell and the state and tool
+    statuses it carries (tools vary per row: a run's are the row's)."""
+
+    row_id: str
+    column_key: str
+    state: StoredCellState
+    tools: Mapping[str, str]
+
+
+def _rows(
+    *, account_id: str, sheet_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
+) -> list[SheetCellState]:
+    return [
+        SheetCellState(
+            account_id=account_id,
+            sheet_id=sheet_id,
+            row_id=record.row_id,
+            column_key=record.column_key,
+            state=record.state,
+            fill_run_id=fill_run_id,
+            tools=dict(record.tools),
+            source=source,
+        )
+        for record in records
+    ]
+
+
+def write_records(
+    *, account_id: str, sheet_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
+) -> None:
+    """Many cells' states under one identity, ONE upsert: a landing
+    (one row's N columns, or a digest's many rows) records everything
+    in a single statement. For the cells the landing RESOLVED; one it
+    left alone goes to record_unchanged."""
+    if not records:
+        return
+    SheetCellState.objects.bulk_create(
+        _rows(account_id=account_id, sheet_id=sheet_id, records=records, fill_run_id=fill_run_id, source=source),
+        update_conflicts=True,
+        unique_fields=_UNIQUE_FIELDS,
+        update_fields=_UPSERT_FIELDS,
+    )
+
+
+def record_unchanged(
+    *, account_id: str, sheet_id: str, records: Sequence[CellRecord], fill_run_id: str | None, source: CellSource
+) -> None:
+    """Cells the landing did NOT change: recorded when nothing is
+    there, left exactly as they are when something is.
+
+    A run that found a cell occupied has an opinion about the COLUMN,
+    not about that cell. Its `updated_at` is when the row completed as
+    far as a barrier is concerned, so restamping it sends the row again
+    under a new event id the receiver cannot dedupe; its `source` and
+    `fill_run_id` are what the drawer shows as the answer behind the
+    value, so restamping those credits this run with a value another
+    writer put there.
+
+    The record still lands when the cell has none, because absence
+    means NEVER ATTEMPTED: a column converted from plain, or a value
+    stored before rows stopped carrying recorded columns, would
+    otherwise complete no barrier."""
+    if not records:
+        return
+    SheetCellState.objects.bulk_create(
+        _rows(account_id=account_id, sheet_id=sheet_id, records=records, fill_run_id=fill_run_id, source=source),
+        ignore_conflicts=True,
+    )
+
+
+def uniform(column_keys: list[str], state: StoredCellState) -> dict[str, StoredCellState]:
+    """The same state for every column a fill owns: the shape a run
+    that answered NOTHING produces."""
+    return dict.fromkeys(column_keys, state)
+
+
+def _purge_in_pages(**lookup: str) -> None:
+    """Delete matching cell states a page at a time (the page bounds
+    memory; a deleted page never comes back)."""
+    for ids in iter_id_pages(SheetCellState.objects.filter(**lookup), batch=FILL_WRITE_BATCH):
+        SheetCellState.objects.filter(id__in=ids).delete()
+
+
+def purge_column(sheet_id: str, column_key: str) -> None:
+    """A deleted column takes its cell states with it. Paged: the count
+    is bounded by the cells the column answered, which has no ceiling
+    short of the sheet."""
+    _purge_in_pages(sheet_id=sheet_id, column_key=column_key)
+
+
+def purge_rows(sheet_id: str, row_ids: Sequence[str]) -> None:
+    """Deleted rows take their cell states with them: one record per
+    column per row at most, and the caller hands over one page of rows
+    at a time, so one statement is the whole purge."""
+    SheetCellState.objects.filter(sheet_id=sheet_id, row_id__in=list(row_ids)).delete()
+
+
+def purge_sheet(sheet_id: str) -> None:
+    """A deleted list takes its cell states with it. Paged for the same
+    reason purge_column is."""
+    _purge_in_pages(sheet_id=sheet_id)

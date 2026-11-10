@@ -1,0 +1,788 @@
+"""`/v1/lists`: the sheets CRUD + rows + CSV import.
+
+Session-authed like discover; every query scopes through the caller's
+account via the service (foreign ids read as not-found). No export
+endpoint on purpose: exports build client-side from the rows pages."""
+
+from __future__ import annotations
+
+import logging
+from functools import cached_property
+
+from django.db import transaction
+from django.utils import timezone
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from agents.services import AgentNotFound
+from auth_client.authentication import AppSessionAuthentication
+from common.views import ScopedView
+from openbower_kernel.fields import new_ulid
+from openbower_kernel.pagination import next_cursor_from, parse_limit
+from openbower_schema.agents import AgentConfig
+from openbower_schema.fills import ColumnPromptWire, FillRunPage
+from openbower_schema.lists import (
+    FoldersList,
+    ImportResult,
+    IngestAccepted,
+    ListRowsPage,
+    ListsPage,
+    PlainColumn,
+    RowsAdded,
+    RowsDeleted,
+)
+from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColumnTestResponse
+from resource_server import MachineTokenAuthentication
+from webhooks.serializers import delivery_model
+
+from .constants import (
+    DEFAULT_INDEX_PAGE,
+    DEFAULT_ROWS_PAGE,
+    IMPORT_BODY_OVERHEAD,
+    LABEL_MAX_LENGTH,
+    MAX_CSV_BYTES,
+    MAX_INDEX_PAGE,
+    MAX_ROWS_PAGE,
+    FillErrorCode,
+    IngestErrorCode,
+    SheetOrigin,
+)
+from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
+from .models import Folder, Sheet
+from .operations.append_rows import AppendRowsOperation
+from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
+from .operations.set_cells import SetCellsOperation
+from .serializers import (
+    AiColumnRequest,
+    ColumnAddRequest,
+    ColumnFillRequest,
+    ColumnOrderRequest,
+    ColumnPromptRequest,
+    ColumnRenameRequest,
+    FolderRequest,
+    IngestRequest,
+    RowCellsPatchRequest,
+    RowsAddRequest,
+    RowsDeleteRequest,
+    SheetCreateRequest,
+    SheetPatchRequest,
+    WebhookColumnAddRequest,
+    WebhookColumnPatchRequest,
+    WebhookColumnTestRequest,
+    fill_run_wire,
+    fill_runs_wire,
+    folder_wire,
+    ingest_schema_wire,
+    row_wire,
+    sheet_detail_wire,
+    sheet_wire,
+    validate_ingest_rows,
+)
+from .services.ai_columns import AiColumnService
+from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
+from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
+from .services.fills import FillNotFound, FillService
+from .services.sheets import (
+    AllRowsExcept,
+    CellRefused,
+    ColumnNotWritable,
+    FolderNotFound,
+    FolderService,
+    FoldersFull,
+    InvalidRowCursor,
+    RowCursor,
+    RowNotFound,
+    RowSelection,
+    SheetFull,
+    SheetNotFound,
+    SheetService,
+    SomeRows,
+)
+from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
+from .services.workflows import NodeNotFound
+
+logger = logging.getLogger(__name__)
+
+# Refusal codes that answer 409 (a conflict with live state: the same
+# request succeeds once the world changes, with nothing for the caller
+# to alter); every other FillRefused code is a 400 (the request itself
+# must change, by narrowing the ask or by configuring the deployment).
+# Both ride the sibling envelope ({error: <code>, detail}): the client
+# classifies by CODE and renders the detail verbatim (tier 1).
+_FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
+
+# The same partition for the COLUMN vocabulary, kept separate because
+# the two sets are disjoint and neither endpoint should classify by
+# the other's codes.
+_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
+
+
+def _fill_refusal_status(e: FillRefused) -> int:
+    """One classifier for every fill refusal, so a code added to the
+    conflict set reaches every endpoint that answers one."""
+    return 409 if e.code in _FILL_CONFLICT_CODES else 400
+
+
+def _column_refusal_status(e: ColumnRefused) -> int:
+    """One classifier for every column write, so a status added to the
+    set reaches both endpoints and neither can drift from the other."""
+    return 409 if e.code in _COLUMN_CONFLICT_CODES else 400
+
+
+class _ScopedView(ScopedView):
+    @cached_property
+    def sheets(self) -> SheetService:
+        return SheetService(account_id=self.request.user.account_id)
+
+    @cached_property
+    def folders(self) -> FolderService:
+        return FolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def columns(self) -> ColumnService:
+        return ColumnService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def fill_admission(self) -> FillAdmissionService:
+        return FillAdmissionService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def fills(self) -> FillService:
+        return FillService(account_id=self.request.user.account_id)
+
+    @cached_property
+    def ai_columns(self) -> AiColumnService:
+        return AiColumnService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    @cached_property
+    def webhook_columns(self) -> WebhookColumnService:
+        return WebhookColumnService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+
+    def _sheet_or_404(self, sheet_id: str) -> Sheet:
+        try:
+            return self.sheets.get(sheet_id)
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+
+    def _folder_or_404(self, folder_id: str) -> Folder:
+        try:
+            return self.folders.get(folder_id)
+        except FolderNotFound as e:
+            raise NotFound("no folder with that id") from e
+
+
+class SheetsView(_ScopedView):
+    # The lists collection is where a machine producer both enumerates
+    # ("which lists can I push to?") and creates a list to push into, so
+    # BOTH methods ride the machine lane; account/user scoping (no session
+    # state) makes a machine token safe on either. Every other lists
+    # endpoint keeps the cookie-only default, which also proves the per-view
+    # scoping. Cookie auth is listed FIRST so a browser's 401 (an expired
+    # session) carries the `Cookie` challenge, not `Bearer`; the machine
+    # class returns None without a Bearer header, so it still authenticates
+    # a real machine token.
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def get(self, request: Request) -> Response:
+        limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
+        after = request.query_params.get("after", "")
+        rows = self.sheets.page(after_id=after, limit=limit)
+        page = ListsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
+        return Response(page.model_dump())
+
+    def post(self, request: Request) -> Response:
+        serializer = SheetCreateRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        columns = [PlainColumn(**column) for column in data["columns"]]
+        target_sheet = self.sheets.create(
+            owner_id=self.request.user.id,
+            label=data["label"],
+            columns=columns,
+            origin=SheetOrigin.MANUAL,
+        )
+        return Response(sheet_wire(target_sheet), status=201)
+
+
+class SheetDetailView(_ScopedView):
+    def get(self, request: Request, id: str) -> Response:
+        return Response(sheet_detail_wire(self._sheet_or_404(id)))
+
+    def patch(self, request: Request, id: str) -> Response:
+        serializer = SheetPatchRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        target_sheet = self._sheet_or_404(id)
+        # One PATCH, one outcome: a bad folder id must not leave a
+        # half-applied rename behind.
+        with transaction.atomic():
+            if "label" in data:
+                target_sheet = self.sheets.rename(target_sheet, label=data["label"])
+            if "folder_id" in data:
+                try:
+                    target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
+                except FolderNotFound:
+                    raise ValidationError("no folder with that id") from None
+        return Response(sheet_detail_wire(target_sheet))
+
+    def delete(self, request: Request, id: str) -> Response:
+        self.sheets.delete(self._sheet_or_404(id))
+        return Response(status=204)
+
+
+class SheetRowsView(_ScopedView):
+    def get(self, request: Request, id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        limit = parse_limit(request, default=DEFAULT_ROWS_PAGE, maximum=MAX_ROWS_PAGE)
+        after = request.query_params.get("after", "")
+        try:
+            cursor = RowCursor.parse(after) if after else None
+        except InvalidRowCursor as e:
+            raise ValidationError("?after= must be a cursor this sheet handed out") from e
+        rows = self.sheets.rows_page(target_sheet, after=cursor, limit=limit)
+        states = self.fills.cell_states_for_rows(target_sheet, rows)
+        next_cursor = next_cursor_from(rows, limit=limit, cursor=lambda row: RowCursor(str(row.id), row.rank).wire())
+        items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
+        page = ListRowsPage(items=items, next_cursor=next_cursor)
+        return Response(page.model_dump())
+
+    def post(self, request: Request, id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        serializer = RowsAddRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            report = AppendRowsOperation(
+                account_id=self.request.user.account_id,
+                target_sheet=target_sheet,
+                rows=serializer.validated_data["rows"],
+            ).run()
+        except (SheetFull, ColumnNotWritable) as e:
+            raise ValidationError(str(e)) from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        target_sheet.refresh_from_db()
+        states = self.fills.cell_states_for_rows(target_sheet, report.created)
+        rows = [row_wire(row, states.get(str(row.id), {})) for row in report.created]
+        receipt = RowsAdded(added=report.added, row_count=target_sheet.row_count, rows=rows)
+        return Response(receipt.model_dump(), status=201)
+
+    def delete(self, request: Request, id: str) -> Response:
+        """The rows named, or every row but the ones named: the sheet's
+        selection, deleted under the list lock; 200 with the receipt."""
+        target_sheet = self._sheet_or_404(id)
+        serializer = RowsDeleteRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if data["all"]:
+            selection: RowSelection = AllRowsExcept(tuple(data.get("keep", [])))
+        else:
+            selection = SomeRows(tuple(data["row_ids"]))
+        try:
+            removed = self.sheets.delete_rows(target_sheet, selection)
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(RowsDeleted(deleted=removed.deleted, row_count=removed.row_count).model_dump())
+
+
+class SheetRowView(_ScopedView):
+    """PATCH /v1/lists/{id}/rows/{row_id} {data}: a person setting cells
+    on one row (the values replace what is there; the 200 body is the
+    row with its states, so the sheet swaps it in without a re-read).
+    A refusal is the {error, detail} envelope at 400, the detail the
+    server's own sentence. DELETE: the row goes with its cell states
+    and its webhook runs; 204."""
+
+    def patch(self, request: Request, id: str, row_id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        serializer = RowCellsPatchRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            report = SetCellsOperation(
+                account_id=self.request.user.account_id,
+                target_sheet=target_sheet,
+                row_id=row_id,
+                cells=serializer.validated_data["data"],
+            ).run()
+        except CellRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except RowNotFound as e:
+            raise NotFound("no row with that id") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        states = self.fills.cell_states_for_rows(target_sheet, [report.row])
+        return Response(row_wire(report.row, states.get(str(report.row.id), {})))
+
+    def delete(self, request: Request, id: str, row_id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        try:
+            self.sheets.delete_row(target_sheet, row_id)
+        except RowNotFound as e:
+            raise NotFound("no row with that id") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(status=204)
+
+
+class SheetIngestView(_ScopedView):
+    """POST /v1/lists/{id}/ingest: the ASYNC row push (the webhook).
+
+    A minted machine key (or a session) pushes rows; we validate them and
+    the target list (account-scoped, so a key only reaches its owner's
+    lists), publish the batch to the ingest bus, and return 202 once the
+    broker acked it. The rows are NOT in the sheet on return: the ingest
+    worker appends them off the bus, deduped on `event_id`, and the append
+    starts the sheet's workflow for them. A deployment with no bus
+    configured logs and drops the batch (lists.ingest.publisher). Same
+    auth pair and order as the lists collection.
+    """
+
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def get(self, request: Request, id: str) -> Response:
+        """GET /v1/lists/{id}/ingest: the pushable row schema, the
+        columns a producer OWNS with their keys and types, so a push can
+        be built without guessing. A column the system fills is absent:
+        its value is written with the record of what filled it, which a
+        push cannot carry, so sending its key is refused. Same
+        account-scoped auth as the push."""
+        return Response(ingest_schema_wire(self._sheet_or_404(id)))
+
+    def post(self, request: Request, id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        serializer = IngestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        # Validate the push against the sheet's columns BEFORE accepting it:
+        # the append is async (202), so the POST is the only place a
+        # malformed value can reach the producer as a 400 it can fix, rather
+        # than being stored as sent. Tier-1 envelope ({error, detail}). The
+        # returned rows are run through the shared cells_for_storage (the
+        # writers' transform), so the bus carries exactly what add_rows will
+        # store (canonical form, clamped), not the raw push.
+        problems, rows = validate_ingest_rows(target_sheet, serializer.validated_data["rows"])
+        if problems:
+            return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
+        # The caller's idempotency key if they sent one, else a fresh ULID.
+        # Carried through the bus, so a retried push or a redelivery dedupes
+        # to one append in the worker's inbox (ProcessedIngestEvent).
+        event = IngestEvent(
+            event_id=serializer.validated_data.get("event_id") or new_ulid(),
+            sheet_id=str(target_sheet.id),
+            account_id=self.request.user.account_id,
+            user_id=self.request.user.id,
+            rows=rows,
+            received_at=timezone.now(),
+        )
+        try:
+            get_ingest_publisher().publish(event)
+        except IngestPublishError as e:
+            # The batch never reached the bus, so it was NOT accepted: 503
+            # (retryable), never a 202 that silently dropped it. Dedupe makes
+            # the caller's retry safe.
+            logger.warning("ingest publish failed for list %s: %s", event.sheet_id, e)
+            return Response(
+                {"error": IngestErrorCode.INGEST_UNAVAILABLE, "detail": "ingest bus unavailable; retry"}, status=503
+            )
+        return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
+
+
+class ColumnsView(_ScopedView):
+    """POST /v1/lists/{id}/columns: append one BLANK column (the
+    CSV-template flow, for values typed or pasted in; an AI column
+    create REFUSES a key a column already holds). Refusals ride
+    the sibling envelope: the client classifies by CODE and renders
+    the detail verbatim (tier 1). The 200 body is the updated list
+    detail, so the sheet re-renders its columns from the response."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = ColumnAddRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            target_sheet = self.columns.add_column(id, label=data["label"], column_type=data["type"])
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(sheet_detail_wire(target_sheet))
+
+
+class ColumnOrderView(_ScopedView):
+    """PATCH /v1/lists/{id}/column-order {keys}: reorder the sheet's
+    columns. The 200 body is the updated list detail, the same shape
+    the sibling column writes return, so the sheet re-renders its
+    columns from the response rather than trusting its own optimistic
+    move."""
+
+    def patch(self, request: Request, id: str) -> Response:
+        serializer = ColumnOrderRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            target_sheet = self.columns.reorder(id, keys=serializer.validated_data["keys"])
+        except ColumnRefused as e:
+            # Caught at the BASE and classified by code, the same way
+            # the sibling column write above does it: a refusal added
+            # to reorder() later gets a status here instead of escaping
+            # as a 500.
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(sheet_detail_wire(target_sheet))
+
+
+class AiColumnView(_ScopedView):
+    """POST /v1/lists/{id}/columns/ai: add the AI column set (its agent
+    and node with it) in the service's one transaction, and answer with
+    the list detail, the shape every columns write returns. No fill:
+    the client fills the new column next (POST .../columns/{key}/fill)."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = AiColumnRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        config = AgentConfig(**data["config"]) if data.get("config") is not None else None
+        try:
+            target_sheet = self.ai_columns.add(id, config=config, agent_id=data["agent_id"])
+        except FillRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(sheet_detail_wire(target_sheet), status=201)
+
+
+class ColumnWebhookTestView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook/test: one sample digest to a
+    destination, sent now. Answers 200 with the delivery and the envelope
+    it carried whatever the receiver did, since a failed delivery is an
+    API object. Every refusal names something in the body the caller
+    changes, so it is a 400 with a code."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnTestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            sent = self.webhook_columns.test(
+                id,
+                key=data["key"],
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                row_id=data["row_id"],
+                cells=data["cells"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        delivery = delivery_model(sent.delivery)
+        body = WebhookColumnTestResponse(delivery=delivery, envelope=sent.envelope)
+        return Response(body.model_dump())
+
+
+class ColumnWebhookPreviewView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook/preview: the envelope a test
+    send of this body would carry, rendered and sent nowhere, so the
+    sheet shows the truth before a send. The test route's body."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnTestRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            envelope = self.webhook_columns.preview(
+                id,
+                key=data["key"],
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                row_id=data["row_id"],
+                cells=data["cells"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        body = WebhookColumnPreviewResponse(envelope=envelope)
+        return Response(body.model_dump())
+
+
+class ColumnWebhookView(_ScopedView):
+    """POST /v1/lists/{id}/columns/webhook: add a Send webhook column
+    (its path and two nodes with it). 201 with the list detail, the
+    shape every columns write returns. Body references refuse 400 with
+    a code; the column's own name refuses as a column add does."""
+
+    def post(self, request: Request, id: str) -> Response:
+        serializer = WebhookColumnAddRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            target_sheet = self.webhook_columns.add(
+                id,
+                label=data["label"],
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                interval_seconds=data["interval_seconds"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(sheet_detail_wire(target_sheet), status=201)
+
+
+class ColumnWebhookDetailView(_ScopedView):
+    """GET /v1/lists/{id}/columns/{key}/webhook: the column as
+    configured. PATCH: the whole config, rewritten. The key sits in its
+    own segment, as the fill and prompt routes place it, so no column
+    key can shadow a literal route (the `columns/ai` and
+    `columns/webhook` collections are the reserved keys)."""
+
+    def get(self, request: Request, id: str, key: str) -> Response:
+        try:
+            config = self.webhook_columns.config(id, key)
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(config.model_dump())
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = WebhookColumnPatchRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            config = self.webhook_columns.update(
+                id,
+                key,
+                destination_id=data["destination_id"],
+                wait_keys=data["wait_keys"],
+                payload_keys=data["payload_keys"],
+                interval_seconds=data["interval_seconds"],
+                enabled=data["enabled"],
+            )
+        except WebhookColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=400)
+        except NodeNotFound as e:
+            logger.warning("webhook column read: node gone (%s)", e)
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(config.model_dump())
+
+
+class ColumnDetailView(_ScopedView):
+    """PATCH /v1/lists/{id}/columns/{key} {label}: relabel one column.
+    DELETE: remove it and everything it holds.
+
+    Delete takes ANY column, not only an AI one: a plain column is the
+    same operation with less to clean up, and a sheet the user cannot
+    tidy is the worse failure. The 200 body is the updated list
+    detail, the shape every columns write returns."""
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnRenameRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            target_sheet = self.columns.rename(id, key=key, label=serializer.validated_data["label"])
+        except ColumnNotFound as e:
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(sheet_detail_wire(target_sheet))
+
+    def delete(self, request: Request, id: str, key: str) -> Response:
+        try:
+            target_sheet = self.columns.delete(id, key=key)
+        except ColumnRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+        except ColumnNotFound as e:
+            raise NotFound("no column with that key") from e
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        return Response(sheet_detail_wire(target_sheet))
+
+
+class ColumnFillView(_ScopedView):
+    """POST /v1/lists/{id}/columns/{key}/fill: a NEW fill over the
+    column's rows never tried (the column names everything except the
+    optional `max_row_count` scope, and the fill reads the agent's
+    config live). The 201 body is the fill envelope."""
+
+    def post(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnFillRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            fill = self.fill_admission.fill_column(
+                sheet_id=id,
+                column_key=key,
+                max_row_count=serializer.validated_data["max_row_count"],
+            )
+        except FillRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(fill_run_wire(fill), status=201)
+
+
+class ColumnPromptView(_ScopedView):
+    """GET and PATCH /v1/lists/{id}/columns/{key}/prompt: the column's
+    CURRENT fill config (what its next fill would run), and the
+    prompt-only edit against it. Surfaces peeking at "what fills this
+    column" read HERE. A fill reads its agent live, so an edit reaches
+    a running fill's next row and every row a later fill reaches."""
+
+    def get(self, request: Request, id: str, key: str) -> Response:
+        try:
+            config = self.columns.fill_config(id, column_key=key)
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(_column_prompt_wire(config))
+
+    def patch(self, request: Request, id: str, key: str) -> Response:
+        serializer = ColumnPromptRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            stored = self.columns.update_fill_prompt(id, column_key=key, prompt=serializer.validated_data["prompt"])
+        except FillRefused as e:
+            return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
+        except SheetNotFound as e:
+            raise NotFound("no list with that id") from e
+        except FillColumnNotFound as e:
+            raise NotFound("no fill column with that key") from e
+        except AgentNotFound as e:
+            raise NotFound("no agent with that id") from e
+        return Response(_column_prompt_wire(stored))
+
+
+class SheetFillsView(_ScopedView):
+    """GET /v1/lists/{id}/fills?after=: the list's LIVE fill runs,
+    keyset by -id, plus the per-column summaries the tracker renders
+    (server truth: the totals, the newest run's status, and its error
+    when it failed, never a 4xx; a client sum over one page of runs
+    silently undercounts once history outgrows the page)."""
+
+    def get(self, request: Request, id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
+        after = request.query_params.get("after", "")
+        runs = list(self.fills.page_for_sheet(str(target_sheet.id), after_id=after, limit=limit))
+        page = FillRunPage(
+            runs=fill_runs_wire(runs),
+            columns=self.fills.column_summaries(target_sheet),
+            next_cursor=next_cursor_from(runs, limit=limit),
+        )
+        return Response(page.model_dump())
+
+
+class FillCancelView(_ScopedView):
+    def post(self, request: Request, id: str, fill_run_id: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        try:
+            fill = self.fills.get(fill_run_id)
+        except FillNotFound as e:
+            raise NotFound("no fill with that id") from e
+        # The route nests under a list; a fill of another sheet must not
+        # be addressable through this one's URL.
+        if fill.target_id != str(target_sheet.id):
+            raise NotFound("no fill with that id")
+        return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
+
+
+def _column_prompt_wire(config: AgentConfig) -> dict:
+    return ColumnPromptWire(prompt=config.prompt, model=config.model, source=config.source).model_dump()
+
+
+class SheetImportView(_ScopedView):
+    """POST multipart {file, label?}: a CSV becomes a plain sheet. The
+    filename (sans extension) is the default label so a quick drop needs
+    no form at all."""
+
+    def post(self, request: Request) -> Response:
+        # Reject on the DECLARED size before touching request.FILES:
+        # reading FILES parses the whole multipart body, so the cap must
+        # fire first or an oversized upload gets buffered just to be
+        # refused. (A deployment still wants the reverse proxy capping
+        # bodies; this is the app-side floor.)
+        raw_length = str(request.META.get("CONTENT_LENGTH") or "0")
+        # Some servers pass the header through unvalidated; junk reads
+        # as absent rather than a 500.
+        declared = int(raw_length) if raw_length.isdecimal() else 0
+        if declared > MAX_CSV_BYTES + IMPORT_BODY_OVERHEAD:
+            raise ValidationError(f"the file exceeds {MAX_CSV_BYTES // (1024 * 1024)}MB")
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError("a CSV file upload is required")
+        if upload.size > MAX_CSV_BYTES:
+            raise ValidationError(f"the file exceeds {MAX_CSV_BYTES // (1024 * 1024)}MB")
+        # Filename fallback, then a last resort: a file literally named
+        # ".csv" must not create a nameless sheet.
+        label = str(request.data.get("label", "")).strip() or upload.name.rsplit(".", 1)[0]
+        label = label[:LABEL_MAX_LENGTH] or "Imported list"
+        operation = ImportCsvOperation(
+            account_id=request.user.account_id, user_id=request.user.id, label=label, raw=upload.read()
+        )
+        try:
+            stats = operation.run()
+        except (CsvUnusable, CsvTooLarge) as e:
+            raise ValidationError(str(e)) from e
+        wire = ImportResult(list=sheet_wire(stats.target), rows=stats.rows, skipped=stats.skipped)
+        return Response(wire.model_dump(), status=201)
+
+
+class FoldersView(_ScopedView):
+    def get(self, request: Request) -> Response:
+        # Folders are a small, unbounded-by-nothing user taxonomy; the
+        # whole set ships (no paging, deliberately unlike the lists).
+        folders = self.folders.all()
+        counts = self.folders.sheet_counts([str(f.id) for f in folders])
+        items = [folder_wire(f, list_count=counts.get(str(f.id), 0)) for f in folders]
+        return Response(FoldersList(items=items).model_dump())
+
+    def post(self, request: Request) -> Response:
+        serializer = FolderRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            created = self.folders.create(label=serializer.validated_data["label"])
+        except FoldersFull as e:
+            raise ValidationError(str(e)) from e
+        return Response(folder_wire(created, list_count=0), status=201)
+
+
+class FolderDetailView(_ScopedView):
+    def patch(self, request: Request, id: str) -> Response:
+        serializer = FolderRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        folder = self.folders.rename(self._folder_or_404(id), label=serializer.validated_data["label"])
+        count = self.folders.sheet_counts([str(folder.id)]).get(str(folder.id), 0)
+        return Response(folder_wire(folder, list_count=count))
+
+    def delete(self, request: Request, id: str) -> Response:
+        self.folders.delete(self._folder_or_404(id))
+        return Response(status=204)
