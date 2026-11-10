@@ -91,7 +91,7 @@ class SaveListTests(TestCase):
         self.assertEqual(body["row_count"], 3)
         self.assertEqual(body["origin"], SheetOrigin.DISCOVER)
         self.assertEqual(body["origin_ref"], _RUN_ID)
-        rows = SheetRow.objects.filter(list_id=body["id"]).order_by("rank", "id")
+        rows = SheetRow.objects.filter(sheet_id=body["id"]).order_by("rank", "id")
         self.assertEqual(rows[0].data["domain"], "similar1.example")
         # The first upstream page was asked from the top of the run.
         self.assertIn(f"{_RUN_ID}:0", calls[0]["content"].decode())
@@ -126,7 +126,7 @@ class SaveListTests(TestCase):
     def test_full_list_keeps_what_fit_from_the_final_page(self):
         # Cap 3, pages of 2: the second page must part-fill to exactly
         # the cap, not drop whole.
-        with patch("discover.views.MAX_LIST_ROWS", 3):
+        with patch("discover.views.MAX_SHEET_ROWS", 3):
             resp, _ = self._save(
                 (200, {"json": _page([1, 2], next_cursor=f"{_RUN_ID}:2")}),
                 (200, {"json": _page([3, 4], next_cursor=None)}),
@@ -163,7 +163,7 @@ class SaveListTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         body = resp.json()
         self.assertEqual(body["row_count"], 2)
-        domains = [r.data["domain"] for r in SheetRow.objects.filter(list_id=body["id"]).order_by("rank", "id")]
+        domains = [r.data["domain"] for r in SheetRow.objects.filter(sheet_id=body["id"]).order_by("rank", "id")]
         self.assertEqual(domains, ["similar1.example", "similar3.example"])
 
     def test_over_cap_limit_clamps_to_201(self):

@@ -74,7 +74,7 @@ class RowDoorPins(SimpleTestCase):
             text = path.read_text()
             if re.search(r"\.add_rows\(", text) and not re.search(r"def add_rows\(", text):
                 callers.append(str(path.relative_to(core)))
-        self.assertEqual(callers, ["lists/operations/append_rows.py"])
+        self.assertEqual(callers, ["sheets/operations/append_rows.py"])
 
     def test_a_persons_write_is_built_in_the_one_operation(self):
         # A TypedWrite is the one write that REPLACES a value, and the
@@ -91,8 +91,8 @@ class RowDoorPins(SimpleTestCase):
             if "/tests/" in str(path) or path.name.startswith("test_"):
                 continue
             # The module that defines it names it in its own doc.
-            if path == core / "lists" / "cells.py":
+            if path == core / "sheets" / "cells.py":
                 continue
             if re.search(r"\bTypedWrite\(", path.read_text()):
                 builders.append(str(path.relative_to(core)))
-        self.assertEqual(builders, ["lists/operations/set_cells.py"])
+        self.assertEqual(builders, ["sheets/operations/set_cells.py"])

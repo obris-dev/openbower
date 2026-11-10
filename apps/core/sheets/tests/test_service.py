@@ -133,7 +133,7 @@ class SheetServiceTests(TestCase):
         # Queued ONCE while it is open, however many moves cross the bound.
         (job,) = list(Job.objects.filter(kind="rerank"))
         self.assertIsNone(job.user_id)  # a system job: nobody asked
-        self.assertEqual((job.payload, job.target_id), ({"list_id": str(target.id)}, str(target.id)))
+        self.assertEqual((job.payload, job.target_id), ({"sheet_id": str(target.id)}, str(target.id)))
         JobRunner(worker_id="test:1").tick()
         job.refresh_from_db()
         self.assertEqual(job.status, JobStatus.DONE)
@@ -240,7 +240,7 @@ class SheetServiceTests(TestCase):
     def test_a_row_with_no_rank_is_refused_at_the_insert(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        with self.assertRaisesMessage(IntegrityError, "list_row_rank_named"):
+        with self.assertRaisesMessage(IntegrityError, "sheet_row_rank_named"):
             SheetRow.objects.create(sheet_id=str(target.id), data={"domain": "acme.com", "name": "x"}, rank="")
 
     def test_row_cap_is_enforced(self):

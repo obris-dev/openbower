@@ -337,7 +337,7 @@ class CompletionTests(TestCase):
         fill = make_run(rows=1)
         (read,) = list(fill_progress.iter_consents(fill_progress.fill_jobs().filter(id=fill.id)))
         self.assertEqual((read[0], read[1].column_keys), (str(fill.id), ["answer"]))
-        Job.objects.filter(id=fill.id).update(payload={"list_id": SHEET})
+        Job.objects.filter(id=fill.id).update(payload={"sheet_id": SHEET})
         with self.assertRaises(ValidationError):
             list(fill_progress.iter_consents(fill_progress.fill_jobs().filter(id=fill.id)))
 

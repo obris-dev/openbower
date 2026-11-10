@@ -75,7 +75,7 @@ class ProvisionIndexPlanTests(TestCase):
 
     def test_the_autofill_firehose_reads_its_index_in_order_never_sorts(self) -> None:
         plan = self._plan(
-            self._base().filter(fill_run_id__isnull=True, kind=COLUMN_AGENT).order_by("list_id", "rank", "id")[:64]
+            self._base().filter(fill_run_id__isnull=True, kind=COLUMN_AGENT).order_by("sheet_id", "rank", "id")[:64]
         )
         self.assertIn("node_run_autofill_idx", plan)
         self.assertNotIn("Sort", plan)  # the whole point: IS NULL must still stop at the LIMIT
@@ -85,10 +85,10 @@ class ProvisionIndexPlanTests(TestCase):
         plan = self._plan(
             self._base()
             .filter(fill_run_id__isnull=True, kind=COLUMN_AGENT, sheet_id=one_sheet)
-            .order_by("list_id", "rank", "id")[:64]
+            .order_by("sheet_id", "rank", "id")[:64]
         )
         self.assertIn("node_run_autofill_idx", plan)
-        self.assertIn("list_id", plan)  # list_id is an index condition (a seek), not a post-filter
+        self.assertIn("sheet_id", plan)  # list_id is an index condition (a seek), not a post-filter
         self.assertNotIn("Sort", plan)
 
     def test_the_fill_backed_pick_reads_its_index_in_order_never_sorts(self) -> None:

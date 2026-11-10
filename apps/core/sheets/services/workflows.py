@@ -449,7 +449,7 @@ class WorkflowService:
         if not node_by_workflow:
             return []
         workflow_rows = Workflow.objects.filter(account_id=self.account_id, id__in=list(node_by_workflow)).values_list(
-            "list_id", "id"
+            "sheet_id", "id"
         )
         workflow_by_sheet = {str(sheet_id): str(workflow_id) for sheet_id, workflow_id in workflow_rows}
         uses: list[AgentColumnUse] = []

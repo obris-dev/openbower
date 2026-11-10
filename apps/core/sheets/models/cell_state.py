@@ -40,7 +40,7 @@ class SheetCellState(AccountScopedModel):
     holds, filled, the model's verdict, or an infrastructure failure,
     no fill re-asks the row (re-asking is the user's gesture)."""
 
-    sheet_id = models.CharField(_("list id"), max_length=26)
+    sheet_id = models.CharField(_("sheet id"), max_length=26)
     row_id = models.CharField(_("row id"), max_length=26)
     column_key = models.CharField(_("column key"), max_length=COLUMN_KEY_MAX_LENGTH)
     state = models.CharField(_("state"), max_length=CELL_STATE_MAX_LENGTH, default=StoredCellState.NO_EVIDENCE)
@@ -58,22 +58,22 @@ class SheetCellState(AccountScopedModel):
     tools = models.JSONField(_("tool statuses"), default=dict, blank=True)
 
     class Meta:
-        verbose_name = _("list cell state")
-        verbose_name_plural = _("list cell states")
+        verbose_name = _("sheet cell state")
+        verbose_name_plural = _("sheet cell states")
         constraints = [
             # One truth per cell; every write is an upsert against it.
-            models.UniqueConstraint(fields=["list_id", "row_id", "column_key"], name="cell_state_cell_uniq"),
+            models.UniqueConstraint(fields=["sheet_id", "row_id", "column_key"], name="cell_state_cell_uniq"),
         ]
         indexes = [
             # THE poll's index: filled and attempted per column come off
             # ONE grouped read of this, with no sheet scan anywhere.
             # Also a fill's targeting (attempted in the judged columns)
             # and a selective rerun (everything that failed with X).
-            models.Index(fields=["list_id", "column_key", "state"], name="cell_state_column_idx"),
+            models.Index(fields=["sheet_id", "column_key", "state"], name="cell_state_column_idx"),
             # Sheet-wide by state ("show me every unverified cell"). A
             # distinct index because the one above leads with
             # column_key and cannot serve a query that names no column.
-            models.Index(fields=["list_id", "state"], name="cell_state_state_idx"),
+            models.Index(fields=["sheet_id", "state"], name="cell_state_state_idx"),
         ]
 
     def __str__(self) -> str:

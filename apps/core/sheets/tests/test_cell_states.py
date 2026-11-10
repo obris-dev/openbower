@@ -59,7 +59,7 @@ class CellSourceTests(TestCase):
         sheets = SheetService(account_id=TEST_IDENTITY["account_id"])
         sheet = sheets.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual")
         [row] = sheets.add_rows(sheet, [{"company": "acme.com"}])
-        write = {"account_id": TEST_IDENTITY["account_id"], "list_id": str(sheet.id), "row_id": str(row.id)}
+        write = {"account_id": TEST_IDENTITY["account_id"], "sheet_id": str(sheet.id), "row_id": str(row.id)}
         cell_truth.write(
             **write,
             fill_run_id=None,

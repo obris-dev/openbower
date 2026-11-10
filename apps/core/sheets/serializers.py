@@ -378,7 +378,7 @@ def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
     error = fill_progress.error_of(fill.status, fill.error_code, fill.error)
     return WireFillRun(
         id=str(fill.id),
-        sheet_id=fill.target_id,
+        list_id=fill.target_id,
         agent_id=consent.agent_id,
         status=status,
         column_keys=consent.column_keys,

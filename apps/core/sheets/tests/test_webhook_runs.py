@@ -216,7 +216,7 @@ class ProcessorTests(_SheetHarness):
             with spy, patch.object(AIColumnProcessor, "_process_run", return_value=outcome):
                 agent.process_run(on_row, flow=flow)
                 agent.process_run(preview, flow=flow)
-        self.assertEqual(calls, [(("from_node_id", str(self.first.id)), ("list_id", "L1"), ("row_ids", ["R1"]))])
+        self.assertEqual(calls, [(("from_node_id", str(self.first.id)), ("row_ids", ["R1"]), ("sheet_id", "L1"))])
         # A batch advances ONE page per list, not one call per row.
         node_id = self._add_webhook_column(["country"])
         tally = BatchTally(settled=3, settled_rows=[("L1", "R1"), ("L2", "R9"), ("L1", "R2")])
@@ -224,7 +224,7 @@ class ProcessorTests(_SheetHarness):
         with (
             patch(
                 "sheets.services.workflow_reactions.WorkflowReactions.advance",
-                side_effect=lambda **kw: calls.append((kw["list_id"], kw["row_ids"])),
+                side_effect=lambda **kw: calls.append((kw["sheet_id"], kw["row_ids"])),
             ),
             patch.object(WebhookProcessor, "_process_batch", return_value=tally),
         ):
@@ -701,7 +701,7 @@ class BackfillTests(_BackfilledSheet):
         node_id = next(column.node_id for column in self.sheet.columns if column.kind == "webhook")
         (job,) = list(Job.objects.all())
         self.assertEqual((job.kind, job.status, job.account_id), ("column_backfill", JobStatus.READY, ACCOUNT))
-        self.assertEqual(job.payload["list_id"], str(self.sheet.id))
+        self.assertEqual(job.payload["sheet_id"], str(self.sheet.id))
         self.assertEqual(job.payload["node_id"], node_id)
         # The request inserted no run and read no cell state: the walk
         # is the job's.

@@ -34,7 +34,7 @@ def to_wire(event: IngestEvent) -> dict:
     shape it is handed rather than validating a version."""
     return {
         "event_id": event.event_id,
-        "list_id": event.sheet_id,
+        "sheet_id": event.sheet_id,
         "account_id": event.account_id,
         "user_id": event.user_id,
         "rows": event.rows,
@@ -46,7 +46,7 @@ def from_wire(data: dict) -> IngestEvent:
     """Rebuild an IngestEvent from a bus message body."""
     return IngestEvent(
         event_id=data["event_id"],
-        sheet_id=data["list_id"],
+        sheet_id=data["sheet_id"],
         account_id=data["account_id"],
         user_id=data["user_id"],
         rows=data["rows"],

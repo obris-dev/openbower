@@ -90,7 +90,7 @@ def handle_ingest_event(event: IngestEvent) -> str:
         _, created = ProcessedIngestEvent.objects.get_or_create(
             account_id=event.account_id,
             event_id=event.event_id,
-            defaults={"list_id": event.sheet_id},
+            defaults={"sheet_id": event.sheet_id},
         )
         if not created:
             logger.info("ingest skip duplicate event=%s account=%s", event.event_id, event.account_id)

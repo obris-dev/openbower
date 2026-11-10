@@ -17,7 +17,7 @@ class Workflow(AccountScopedModel):
     workflow, kind), so a pointer here would be a second copy of that
     fact with nothing to gain."""
 
-    sheet_id = models.CharField(_("list id"), max_length=26)
+    sheet_id = models.CharField(_("sheet id"), max_length=26)
 
     class Meta:
         verbose_name = _("workflow")
@@ -25,7 +25,7 @@ class Workflow(AccountScopedModel):
         constraints = [
             # One workflow per sheet; also the get-or-create key, and the
             # only access path anything reads today.
-            models.UniqueConstraint(fields=["list_id"], name="workflow_list_uniq"),
+            models.UniqueConstraint(fields=["sheet_id"], name="workflow_sheet_uniq"),
         ]
 
     def __str__(self) -> str:

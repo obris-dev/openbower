@@ -44,7 +44,7 @@ LOCAL_APPS = [
     "auth_client",
     "discover",
     "signals",
-    "lists",
+    "sheets",
     "agents",
     "webhooks",
     "jobs",

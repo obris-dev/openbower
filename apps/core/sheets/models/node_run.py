@@ -63,7 +63,7 @@ class NodeRun(AccountScopedModel):
     # (fill-backed) or the target sheet (autofill), so per-list
     # distribution and account scoping never need a join back to find it.
     # BLANK for a preview run, which points at no sheet by construction.
-    sheet_id = models.CharField(_("list id"), max_length=26, blank=True, default="")
+    sheet_id = models.CharField(_("sheet id"), max_length=26, blank=True, default="")
     # What the run was GIVEN, for a run that owns its input (the preview):
     # {"row": the hand-fed values, "config": the drafted AgentConfig}.
     # The row half is bounded at the endpoint by the contract's preview
@@ -204,7 +204,7 @@ class NodeRun(AccountScopedModel):
             # lists rather than scanning. `kind` rides the leaf beside
             # not_before so the pick's lane filter stays index-only.
             models.Index(
-                fields=["status", "list_id", "rank", "id"],
+                fields=["status", "sheet_id", "rank", "id"],
                 include=["not_before", "kind"],
                 name="node_run_autofill_idx",
                 condition=models.Q(fill_run_id__isnull=True),

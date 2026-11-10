@@ -72,7 +72,7 @@ class NodeRunFlow:
         pick that defines the agent lane says so itself)."""
         now = timezone.now()
         qs = NodeRun.objects.filter(_due(now), status=NodeRunStatus.READY, fill_run_id__isnull=True, kind=COLUMN_AGENT)
-        yield from qs.defer("result").order_by("list_id", "rank", "id")[:limit].iterator()
+        yield from qs.defer("result").order_by("sheet_id", "rank", "id")[:limit].iterator()
 
     @staticmethod
     def iter_ready_for_fill(fill_run_id: str, *, limit: int) -> Iterator[NodeRun]:

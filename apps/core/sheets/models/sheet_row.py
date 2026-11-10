@@ -17,7 +17,7 @@ class SheetRow(BaseModel):
     its neighbours. Row numbers are derived by whoever renders a page,
     never stored."""
 
-    sheet_id = models.CharField(_("list id"), max_length=26)
+    sheet_id = models.CharField(_("sheet id"), max_length=26)
     # The C collation, so the database compares ranks in the digits'
     # own byte order; a locale collation would sort `a` before `B` and
     # break the scheme.
@@ -25,13 +25,13 @@ class SheetRow(BaseModel):
     data = models.JSONField(_("data"), default=dict)
 
     class Meta:
-        verbose_name = _("list row")
-        verbose_name_plural = _("list rows")
+        verbose_name = _("sheet row")
+        verbose_name_plural = _("sheet rows")
         constraints = [
-            models.UniqueConstraint(fields=["list_id", "rank"], name="list_row_rank_uniq"),
+            models.UniqueConstraint(fields=["sheet_id", "rank"], name="sheet_row_rank_uniq"),
             # A CharField silently stores "" when a writer forgets the rank;
             # refused at the insert, as on a node and a run.
-            models.CheckConstraint(condition=~models.Q(rank=""), name="list_row_rank_named"),
+            models.CheckConstraint(condition=~models.Q(rank=""), name="sheet_row_rank_named"),
         ]
 
     def __str__(self) -> str:

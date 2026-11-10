@@ -536,7 +536,7 @@ class ConsentUnderLockTests(AdmissionTestCase):
                 self.columns.delete(sheet_id, key="beta")
             return real(sheet_id, lock=lock)
 
-        with patch.object(self.admission, "_list_or_raise", side_effect=delete_then_lock):
+        with patch.object(self.admission, "_sheet_or_raise", side_effect=delete_then_lock):
             fill = self.admission.fill_column(sheet_id=str(self.sheet.id), column_key="alpha")
         self.assertEqual(consent_of(str(fill.id)).column_keys, ["alpha"])
         self.sheet.refresh_from_db()
@@ -593,10 +593,10 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         with CaptureQueriesContext(connection) as captured:
             self.admission.fill_column(sheet_id=str(self.sheet.id), column_key=key)
         sql = self.sql(captured)
-        self.assertEqual([s for s in sql if s.startswith('INSERT INTO "LISTS_NODERUN"')], [])
+        self.assertEqual([s for s in sql if s.startswith('INSERT INTO "SHEETS_NODERUN"')], [])
         self.assertEqual(len([s for s in sql if s.startswith('INSERT INTO "JOBS_JOB"')]), 1)
-        self.index_of(sql, lambda s: '"LISTS_LIST"' in s and "FOR UPDATE" in s)
-        self.assertEqual(len([s for s in sql if s.startswith('UPDATE "LISTS_LIST"')]), 1)
+        self.index_of(sql, lambda s: '"SHEETS_SHEET"' in s and "FOR UPDATE" in s)
+        self.assertEqual(len([s for s in sql if s.startswith('UPDATE "SHEETS_SHEET"')]), 1)
 
     def test_deterministic_refusals_never_queue_the_walk(self) -> None:
         # An account at its cap and a sheet at its column cap are both
@@ -662,5 +662,5 @@ class AdmissionLockSpanTests(AdmissionTestCase):
                     (key,) = self.add_column()
                 else:
                     self.admission.fill_column(sheet_id=str(self.sheet.id), column_key=key)
-            writes = [s for s in self.sql(captured) if s.startswith('UPDATE "LISTS_LIST"')]
+            writes = [s for s in self.sql(captured) if s.startswith('UPDATE "SHEETS_SHEET"')]
             self.assertEqual(len(writes), 1, writes)

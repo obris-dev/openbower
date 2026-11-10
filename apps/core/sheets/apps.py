@@ -2,7 +2,7 @@ from django.apps import AppConfig
 
 
 class SheetsConfig(AppConfig):
-    name = "lists"
+    name = "sheets"
 
     def ready(self) -> None:
         # The node-kind roster: the DIRECTORY is the roster. Walking

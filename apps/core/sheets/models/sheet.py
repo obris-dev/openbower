@@ -21,16 +21,16 @@ class Sheet(UserScopedModel):
     columns = SheetColumnsField(
         _("columns"), default=list, help_text=_("The contract's ListColumn dumps, in display order")
     )
-    origin = models.CharField(_("origin"), max_length=ORIGIN_MAX_LENGTH, help_text=_("ListOrigin"))
+    origin = models.CharField(_("origin"), max_length=ORIGIN_MAX_LENGTH, help_text=_("SheetOrigin"))
     origin_ref = models.CharField(
         _("origin ref"), max_length=64, blank=True, default="", help_text=_("e.g. the source run id")
     )
     row_count = models.IntegerField(_("row count"), default=0)
 
     class Meta:
-        verbose_name = _("list")
-        verbose_name_plural = _("lists")
-        indexes = [models.Index(fields=["account_id", "id"], name="list_account_idx")]
+        verbose_name = _("sheet")
+        verbose_name_plural = _("sheets")
+        indexes = [models.Index(fields=["account_id", "id"], name="sheet_account_idx")]
 
     def __str__(self) -> str:
         return self.label

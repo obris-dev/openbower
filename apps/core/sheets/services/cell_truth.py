@@ -34,7 +34,7 @@ from openbower_kernel.batches import iter_id_pages
 from ..constants import FILL_WRITE_BATCH, CellSource, StoredCellState
 from ..models import SheetCellState
 
-_UNIQUE_FIELDS = ["list_id", "row_id", "column_key"]
+_UNIQUE_FIELDS = ["sheet_id", "row_id", "column_key"]
 # `source` rides the upsert: a fill landing over a hand-written cell
 # re-attributes it, and a hand-written value over a fill's will too.
 _UPSERT_FIELDS = ["state", "fill_run_id", "tools", "source", "updated_at"]

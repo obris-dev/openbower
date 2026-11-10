@@ -150,7 +150,7 @@ class AiColumnPostTests(FillViewsTestCase):
         body = resp.json()
         wire = FillRunWire(**body)
         self.assertEqual(wire.status, "pending")
-        self.assertEqual(wire.sheet_id, str(self.sheet.id))
+        self.assertEqual(wire.list_id, str(self.sheet.id))
         self.assertEqual(wire.column_keys, ["answer"])
         self.assertEqual(wire.target_row_count, 2)
         self.assertEqual(wire.started_by, TEST_IDENTITY["id"])

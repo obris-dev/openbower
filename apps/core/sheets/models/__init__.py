@@ -10,12 +10,12 @@ from .workflow import Workflow
 
 __all__ = [
     "Folder",
-    "List",
-    "ListCellState",
-    "ListRow",
     "Node",
     "NodePath",
     "NodeRun",
     "ProcessedIngestEvent",
+    "Sheet",
+    "SheetCellState",
+    "SheetRow",
     "Workflow",
 ]

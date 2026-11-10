@@ -19,7 +19,7 @@ class ProcessedIngestEvent(AccountScopedModel):
     """
 
     event_id = models.CharField(_("event id"), max_length=MAX_INGEST_EVENT_ID_LENGTH)
-    sheet_id = models.CharField(_("list id"), max_length=26)
+    sheet_id = models.CharField(_("sheet id"), max_length=26)
 
     class Meta:
         verbose_name = _("processed ingest event")
