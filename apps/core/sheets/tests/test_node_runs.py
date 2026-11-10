@@ -254,7 +254,7 @@ class ProvisionerTests(AutofillHarness):
         # Published: task id in the value, keyed by task id, on the topic.
         producer.produce.assert_called_once()
         args, kwargs = producer.produce.call_args
-        self.assertEqual(args[0], "list.fill.autofill")
+        self.assertEqual(args[0], "sheet.fill.autofill")
         self.assertEqual(kwargs["key"], str(task.id).encode())
         self.assertEqual(json.loads(kwargs["value"])["task_id"], str(task.id))
         producer.flush.assert_called_once()

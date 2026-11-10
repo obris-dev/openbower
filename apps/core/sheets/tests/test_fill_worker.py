@@ -490,7 +490,7 @@ class ProvisionerTests(ManualFillTestCase):
         # per-task flush (call_count would be len(tasks)).
         self.assertEqual(producer.flush.call_count, 1)
         args, _kwargs = producer.produce.call_args
-        self.assertEqual(args[0], "list.fill.manual")
+        self.assertEqual(args[0], "sheet.fill.manual")
         for task in tasks:
             task.refresh_from_db()
             self.assertEqual(task.status, NodeRunStatus.QUEUED)

@@ -41,23 +41,23 @@ class TopicSpec:
         }
 
 
-SHEET_ROWS_INGESTED = TopicSpec(name="list.rows.ingested", consumer_group="ingest-append-worker")
+SHEET_ROWS_INGESTED = TopicSpec(name="sheet.rows.ingested", consumer_group="ingest-append-worker")
 
 # Node-run work on THREE topics, one per lane, so the lanes cannot
 # starve each other (separate consumer lag, separate scaling). A
 # provisioner publishes a task id, keyed by task id; the shared consumer
 # claims and runs it, handing it to its node's processor.
 # The automatic lane: the pushed rows' runs.
-AUTOFILL_RUNS = TopicSpec(name="list.fill.autofill", consumer_group="node-run-worker-autofill")
+AUTOFILL_RUNS = TopicSpec(name="sheet.fill.autofill", consumer_group="node-run-worker-autofill")
 # The manual (fill-backed) lane: the provisioner publishes a live fill's
 # READY tasks here; its consumer claims, runs, and lands them.
-FILL_RUNS = TopicSpec(name="list.fill.manual", consumer_group="node-run-worker-manual")
+FILL_RUNS = TopicSpec(name="sheet.fill.manual", consumer_group="node-run-worker-manual")
 # The preview lane, ISOLATED on purpose: a one-row diagnostic a user is
 # watching must never queue behind a wide fill or a pushed-row firehose,
 # so it has its own topic and consumer. The autofill provisioner picks
 # preview runs with the automatic ones (both are unconsented agent runs)
 # and routes them here by NodeRun.is_preview.
-PREVIEW_RUNS = TopicSpec(name="list.fill.preview", consumer_group="node-run-worker-preview")
+PREVIEW_RUNS = TopicSpec(name="sheet.fill.preview", consumer_group="node-run-worker-preview")
 
 # What provision_topics walks. A new topic appends an entry.
 TOPICS: tuple[TopicSpec, ...] = (SHEET_ROWS_INGESTED, AUTOFILL_RUNS, FILL_RUNS, PREVIEW_RUNS)
