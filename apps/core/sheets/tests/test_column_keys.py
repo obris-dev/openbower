@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from openbower_schema.lists import COLUMN_KEY_MAX_LENGTH, derive_column_key
+from openbower_schema.sheets import COLUMN_KEY_MAX_LENGTH, derive_column_key
 
 # (label, key) pairs. Keep in lockstep with the TS file above.
 VECTORS = [

@@ -12,7 +12,7 @@ import { FieldError, Label, Textarea } from "@bower/ui";
 
 import { sheetsTruncatedNote } from "./copy";
 import { AGENT_PROMPT_MAX_LENGTH } from "@bower/api";
-import type { ListColumn, ListSummary } from "@bower/api";
+import type { SheetColumn, SheetSummary } from "@bower/api";
 
 import { CompactSelect } from "../compact-select";
 import { caretPoint, placeListbox } from "./lib/caret-position";
@@ -26,13 +26,13 @@ import { insertVariable, isVariableRoot, stripVariable, usesVariable } from "./l
 export type VariableSource =
   | {
       kind: "picker";
-      lists: ListSummary[];
+      lists: SheetSummary[];
       listsLoading: boolean;
       listsTruncated: boolean;
       sourceListId: string;
       onSourceList: (id: string) => void;
     }
-  | { kind: "sheet"; columns: ListColumn[] };
+  | { kind: "sheet"; columns: SheetColumn[] };
 
 const LISTBOX_ID = "agent-prompt-variables";
 
@@ -81,7 +81,7 @@ export function PromptEditor({
   source: VariableSource;
   autoFocus?: boolean;
 }) {
-  const columns: ListColumn[] | null =
+  const columns: SheetColumn[] | null =
     source.kind === "sheet"
       ? source.columns
       : (source.lists.find((l) => l.id === source.sourceListId)?.columns ?? null);

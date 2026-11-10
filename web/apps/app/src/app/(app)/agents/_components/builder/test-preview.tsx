@@ -4,13 +4,13 @@ import { useState } from "react";
 import { FlaskConical, X } from "lucide-react";
 import { Button, Input, Label, Spinner, useToast } from "@bower/ui";
 import {
-  fetchListRows,
+  fetchSheetRows,
   TEST_KEY_MAX_LENGTH,
   TEST_ROW_MAX_KEYS,
   TEST_VALUE_MAX_LENGTH,
   type AgentOutput,
   type CellRunResult,
-  type ListSummary,
+  type SheetSummary,
 } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
@@ -67,7 +67,7 @@ export function TestPreview({
   supportFollowup,
 }: {
   inputKeys: string[];
-  lists: ListSummary[];
+  lists: SheetSummary[];
   listsLoading?: boolean;
   listsTruncated?: boolean;
   testRow: Record<string, string>;
@@ -91,7 +91,7 @@ export function TestPreview({
   async function fillFromList() {
     if (!sourceListId || borrowing) return;
     setBorrowing(true);
-    const res = await fetchListRows(sourceListId, { limit: 1 });
+    const res = await fetchSheetRows(sourceListId, { limit: 1 });
     setBorrowing(false);
     if (!ensureOk(res, toast)) return;
     const first = res.data.items[0];

@@ -1,4 +1,4 @@
-"""`/v1/lists`: the sheets CRUD + rows + CSV import.
+"""`/v1/sheets`: the sheets CRUD + rows + CSV import.
 
 Session-authed like discover; every query scopes through the caller's
 account via the service (foreign ids read as not-found). No export
@@ -22,15 +22,15 @@ from openbower_kernel.fields import new_ulid
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
-from openbower_schema.lists import (
+from openbower_schema.sheets import (
     FoldersList,
     ImportResult,
     IngestAccepted,
-    ListRowsPage,
-    ListsPage,
     PlainColumn,
     RowsAdded,
     RowsDeleted,
+    SheetRowsPage,
+    SheetsPage,
 )
 from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColumnTestResponse
 from resource_server import MachineTokenAuthentication
@@ -163,7 +163,7 @@ class _ScopedView(ScopedView):
         try:
             return self.sheets.get(sheet_id)
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
 
     def _folder_or_404(self, folder_id: str) -> Folder:
         try:
@@ -188,7 +188,7 @@ class SheetsView(_ScopedView):
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
         rows = self.sheets.page(after_id=after, limit=limit)
-        page = ListsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
+        page = SheetsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
         return Response(page.model_dump())
 
     def post(self, request: Request) -> Response:
@@ -244,7 +244,7 @@ class SheetRowsView(_ScopedView):
         states = self.fills.cell_states_for_rows(target_sheet, rows)
         next_cursor = next_cursor_from(rows, limit=limit, cursor=lambda row: RowCursor(str(row.id), row.rank).wire())
         items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
-        page = ListRowsPage(items=items, next_cursor=next_cursor)
+        page = SheetRowsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
     def post(self, request: Request, id: str) -> Response:
@@ -260,7 +260,7 @@ class SheetRowsView(_ScopedView):
         except (SheetFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         target_sheet.refresh_from_db()
         states = self.fills.cell_states_for_rows(target_sheet, report.created)
         rows = [row_wire(row, states.get(str(row.id), {})) for row in report.created]
@@ -281,12 +281,12 @@ class SheetRowsView(_ScopedView):
         try:
             removed = self.sheets.delete_rows(target_sheet, selection)
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(RowsDeleted(deleted=removed.deleted, row_count=removed.row_count).model_dump())
 
 
 class SheetRowView(_ScopedView):
-    """PATCH /v1/lists/{id}/rows/{row_id} {data}: a person setting cells
+    """PATCH /v1/sheets/{id}/rows/{row_id} {data}: a person setting cells
     on one row (the values replace what is there; the 200 body is the
     row with its states, so the sheet swaps it in without a re-read).
     A refusal is the {error, detail} envelope at 400, the detail the
@@ -309,7 +309,7 @@ class SheetRowView(_ScopedView):
         except RowNotFound as e:
             raise NotFound("no row with that id") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         states = self.fills.cell_states_for_rows(target_sheet, [report.row])
         return Response(row_wire(report.row, states.get(str(report.row.id), {})))
 
@@ -320,12 +320,12 @@ class SheetRowView(_ScopedView):
         except RowNotFound as e:
             raise NotFound("no row with that id") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(status=204)
 
 
 class SheetIngestView(_ScopedView):
-    """POST /v1/lists/{id}/ingest: the ASYNC row push (the webhook).
+    """POST /v1/sheets/{id}/ingest: the ASYNC row push (the webhook).
 
     A minted machine key (or a session) pushes rows; we validate them and
     the target sheet (account-scoped, so a key only reaches its owner's
@@ -340,7 +340,7 @@ class SheetIngestView(_ScopedView):
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
 
     def get(self, request: Request, id: str) -> Response:
-        """GET /v1/lists/{id}/ingest: the pushable row schema, the
+        """GET /v1/sheets/{id}/ingest: the pushable row schema, the
         columns a producer OWNS with their keys and types, so a push can
         be built without guessing. A column the system fills is absent:
         its value is written with the record of what filled it, which a
@@ -387,7 +387,7 @@ class SheetIngestView(_ScopedView):
 
 
 class ColumnsView(_ScopedView):
-    """POST /v1/lists/{id}/columns: append one BLANK column (the
+    """POST /v1/sheets/{id}/columns: append one BLANK column (the
     CSV-template flow, for values typed or pasted in; an AI column
     create REFUSES a key a column already holds). Refusals ride
     the sibling envelope: the client classifies by CODE and renders
@@ -403,12 +403,12 @@ class ColumnsView(_ScopedView):
         except ColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
 
 
 class ColumnOrderView(_ScopedView):
-    """PATCH /v1/lists/{id}/column-order {keys}: reorder the sheet's
+    """PATCH /v1/sheets/{id}/column-order {keys}: reorder the sheet's
     columns. The 200 body is the updated sheet detail, the same shape
     the sibling column writes return, so the sheet re-renders its
     columns from the response rather than trusting its own optimistic
@@ -426,12 +426,12 @@ class ColumnOrderView(_ScopedView):
             # as a 500.
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
 
 
 class AiColumnView(_ScopedView):
-    """POST /v1/lists/{id}/columns/ai: add the AI column set (its agent
+    """POST /v1/sheets/{id}/columns/ai: add the AI column set (its agent
     and node with it) in the service's one transaction, and answer with
     the sheet detail, the shape every columns write returns. No fill:
     the client fills the new column next (POST .../columns/{key}/fill)."""
@@ -446,14 +446,14 @@ class AiColumnView(_ScopedView):
         except FillRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
         return Response(sheet_detail_wire(target_sheet), status=201)
 
 
 class ColumnWebhookTestView(_ScopedView):
-    """POST /v1/lists/{id}/columns/webhook/test: one sample digest to a
+    """POST /v1/sheets/{id}/columns/webhook/test: one sample digest to a
     destination, sent now. Answers 200 with the delivery and the envelope
     it carried whatever the receiver did, since a failed delivery is an
     API object. Every refusal names something in the body the caller
@@ -479,14 +479,14 @@ class ColumnWebhookTestView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         delivery = delivery_model(sent.delivery)
         body = WebhookColumnTestResponse(delivery=delivery, envelope=sent.envelope)
         return Response(body.model_dump())
 
 
 class ColumnWebhookPreviewView(_ScopedView):
-    """POST /v1/lists/{id}/columns/webhook/preview: the envelope a test
+    """POST /v1/sheets/{id}/columns/webhook/preview: the envelope a test
     send of this body would carry, rendered and sent nowhere, so the
     sheet shows the truth before a send. The test route's body."""
 
@@ -510,13 +510,13 @@ class ColumnWebhookPreviewView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         body = WebhookColumnPreviewResponse(envelope=envelope)
         return Response(body.model_dump())
 
 
 class ColumnWebhookView(_ScopedView):
-    """POST /v1/lists/{id}/columns/webhook: add a Send webhook column
+    """POST /v1/sheets/{id}/columns/webhook: add a Send webhook column
     (its path and two nodes with it). 201 with the sheet detail, the
     shape every columns write returns. Body references refuse 400 with
     a code; the column's own name refuses as a column add does."""
@@ -542,12 +542,12 @@ class ColumnWebhookView(_ScopedView):
         except ColumnRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet), status=201)
 
 
 class ColumnWebhookDetailView(_ScopedView):
-    """GET /v1/lists/{id}/columns/{key}/webhook: the column as
+    """GET /v1/sheets/{id}/columns/{key}/webhook: the column as
     configured. PATCH: the whole config, rewritten. The key sits in its
     own segment, as the fill and prompt routes place it, so no column
     key can shadow a literal route (the `columns/ai` and
@@ -562,7 +562,7 @@ class ColumnWebhookDetailView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(config.model_dump())
 
     def patch(self, request: Request, id: str, key: str) -> Response:
@@ -585,12 +585,12 @@ class ColumnWebhookDetailView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(config.model_dump())
 
 
 class ColumnDetailView(_ScopedView):
-    """PATCH /v1/lists/{id}/columns/{key} {label}: relabel one column.
+    """PATCH /v1/sheets/{id}/columns/{key} {label}: relabel one column.
     DELETE: remove it and everything it holds.
 
     Delete takes ANY column, not only an AI one: a plain column is the
@@ -606,7 +606,7 @@ class ColumnDetailView(_ScopedView):
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
 
     def delete(self, request: Request, id: str, key: str) -> Response:
@@ -617,12 +617,12 @@ class ColumnDetailView(_ScopedView):
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
 
 
 class ColumnFillView(_ScopedView):
-    """POST /v1/lists/{id}/columns/{key}/fill: a NEW fill over the
+    """POST /v1/sheets/{id}/columns/{key}/fill: a NEW fill over the
     column's rows never tried (the column names everything except the
     optional `max_row_count` scope, and the fill reads the agent's
     config live). The 201 body is the fill envelope."""
@@ -639,7 +639,7 @@ class ColumnFillView(_ScopedView):
         except FillRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         except FillColumnNotFound as e:
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
@@ -648,7 +648,7 @@ class ColumnFillView(_ScopedView):
 
 
 class ColumnPromptView(_ScopedView):
-    """GET and PATCH /v1/lists/{id}/columns/{key}/prompt: the column's
+    """GET and PATCH /v1/sheets/{id}/columns/{key}/prompt: the column's
     CURRENT fill config (what its next fill would run), and the
     prompt-only edit against it. Surfaces peeking at "what fills this
     column" read HERE. A fill reads its agent live, so an edit reaches
@@ -658,7 +658,7 @@ class ColumnPromptView(_ScopedView):
         try:
             config = self.columns.fill_config(id, column_key=key)
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         except FillColumnNotFound as e:
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
@@ -673,7 +673,7 @@ class ColumnPromptView(_ScopedView):
         except FillRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
         except SheetNotFound as e:
-            raise NotFound("no list with that id") from e
+            raise NotFound("no sheet with that id") from e
         except FillColumnNotFound as e:
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
@@ -682,7 +682,7 @@ class ColumnPromptView(_ScopedView):
 
 
 class SheetFillsView(_ScopedView):
-    """GET /v1/lists/{id}/fills?after=: the sheet's LIVE fill runs,
+    """GET /v1/sheets/{id}/fills?after=: the sheet's LIVE fill runs,
     keyset by -id, plus the per-column summaries the tracker renders
     (server truth: the totals, the newest run's status, and its error
     when it failed, never a 4xx; a client sum over one page of runs
@@ -744,7 +744,7 @@ class SheetImportView(_ScopedView):
         # Filename fallback, then a last resort: a file literally named
         # ".csv" must not create a nameless sheet.
         label = str(request.data.get("label", "")).strip() or upload.name.rsplit(".", 1)[0]
-        label = label[:LABEL_MAX_LENGTH] or "Imported list"
+        label = label[:LABEL_MAX_LENGTH] or "Imported sheet"
         operation = ImportCsvOperation(
             account_id=request.user.account_id, user_id=request.user.id, label=label, raw=upload.read()
         )
@@ -752,7 +752,7 @@ class SheetImportView(_ScopedView):
             stats = operation.run()
         except (CsvUnusable, CsvTooLarge) as e:
             raise ValidationError(str(e)) from e
-        wire = ImportResult(list=sheet_wire(stats.target), rows=stats.rows, skipped=stats.skipped)
+        wire = ImportResult(sheet=sheet_wire(stats.target), rows=stats.rows, skipped=stats.skipped)
         return Response(wire.model_dump(), status=201)
 
 
@@ -762,7 +762,7 @@ class FoldersView(_ScopedView):
         # whole set ships (no paging, deliberately unlike the sheets).
         folders = self.folders.all()
         counts = self.folders.sheet_counts([str(f.id) for f in folders])
-        items = [folder_wire(f, list_count=counts.get(str(f.id), 0)) for f in folders]
+        items = [folder_wire(f, sheet_count=counts.get(str(f.id), 0)) for f in folders]
         return Response(FoldersList(items=items).model_dump())
 
     def post(self, request: Request) -> Response:
@@ -772,7 +772,7 @@ class FoldersView(_ScopedView):
             created = self.folders.create(label=serializer.validated_data["label"])
         except FoldersFull as e:
             raise ValidationError(str(e)) from e
-        return Response(folder_wire(created, list_count=0), status=201)
+        return Response(folder_wire(created, sheet_count=0), status=201)
 
 
 class FolderDetailView(_ScopedView):
@@ -781,7 +781,7 @@ class FolderDetailView(_ScopedView):
         serializer.is_valid(raise_exception=True)
         folder = self.folders.rename(self._folder_or_404(id), label=serializer.validated_data["label"])
         count = self.folders.sheet_counts([str(folder.id)]).get(str(folder.id), 0)
-        return Response(folder_wire(folder, list_count=count))
+        return Response(folder_wire(folder, sheet_count=count))
 
     def delete(self, request: Request, id: str) -> Response:
         self.folders.delete(self._folder_or_404(id))

@@ -4,8 +4,8 @@
 
 import {
   CellStateWireSchema,
-  ListRowWireSchema,
-  type ListRowWire,
+  SheetRowWireSchema,
+  type SheetRowWire,
   ColumnPromptWireSchema,
   ColumnFillSummarySchema,
   FillErrorSchema,
@@ -15,12 +15,12 @@ import {
   FolderSummarySchema,
   ImportResultSchema,
   IngestColumnSchema,
-  ListColumnSchema,
-  ListDetailSchema,
+  SheetColumnSchema,
+  SheetDetailSchema,
   PlainColumnSchema,
-  ListRowsPageSchema,
-  ListsPageSchema,
-  ListSummarySchema,
+  SheetRowsPageSchema,
+  SheetsPageSchema,
+  SheetSummarySchema,
   RowsAddedSchema,
   RowsDeletedSchema,
   WebhookColumnConfigWireSchema,
@@ -38,11 +38,11 @@ import {
   type FoldersList,
   type FolderSummary,
   type ImportResult as WireImportResult,
-  type ListColumn as WireListColumn,
-  type ListDetail as WireListDetail,
-  type ListRowsPage,
-  type ListsPage as WireListsPage,
-  type ListSummary as WireListSummary,
+  type SheetColumn as WireSheetColumn,
+  type SheetDetail as WireSheetDetail,
+  type SheetRowsPage,
+  type SheetsPage as WireSheetsPage,
+  type SheetSummary as WireSheetSummary,
   type PlainColumn,
   type RowsAdded,
   type RowsDeleted,
@@ -67,13 +67,13 @@ export type {
   FillRunWire,
   FoldersList,
   FolderSummary,
-  ListRowsPage,
+  SheetRowsPage,
   RowsAdded,
   RowsDeleted,
 };
 // Re-exported so app code never imports @bower/schema directly (the
 // schema package has exactly one consumer: this one).
-export type { AiColumn, FillError, ListRowWire, PlainColumn, WebhookColumn, WebhookColumnConfigWire } from "@bower/schema";
+export type { AiColumn, FillError, SheetRowWire, PlainColumn, WebhookColumn, WebhookColumnConfigWire } from "@bower/schema";
 
 /** A column kind this bundle has never heard of. A CLIENT member, not
  * one of the server's: the sheet renders its values like a plain
@@ -92,15 +92,15 @@ export type UnknownColumn = Pick<PlainColumn, "key" | "label" | "type"> & { kind
  * IS the client shape and the strict wire twin is unreachable from app
  * code, which is what "app code imports only @bower/api" buys. The
  * row types widen after the parse and so need a second name. */
-export type ListColumn = WireListColumn | UnknownColumn;
-export type ColumnKind = ListColumn["kind"];
-export type ListSummary = Omit<WireListSummary, "columns"> & { columns: ListColumn[] };
+export type SheetColumn = WireSheetColumn | UnknownColumn;
+export type ColumnKind = SheetColumn["kind"];
+export type SheetSummary = Omit<WireSheetSummary, "columns"> & { columns: SheetColumn[] };
 /** One list as its SHEET holds it: the summary plus its entry actions
  * (where a fill may start). The detail door (GET and PATCH) and every
  * write to the columns array answer with this. */
-export type ListDetail = Omit<WireListDetail, "columns"> & { columns: ListColumn[] };
-export type ListsPage = Omit<WireListsPage, "items"> & { items: ListSummary[] };
-export type ImportResult = Omit<WireImportResult, "list"> & { list: ListSummary };
+export type SheetDetail = Omit<WireSheetDetail, "columns"> & { columns: SheetColumn[] };
+export type SheetsPage = Omit<WireSheetsPage, "items"> & { items: SheetSummary[] };
+export type ImportResult = Omit<WireImportResult, "sheet"> & { sheet: SheetSummary };
 
 // The columns array is read TOLERANTLY, like fill statuses and cell
 // states: a kind added server-side must not fail every open sheet's
@@ -113,7 +113,7 @@ export type ImportResult = Omit<WireImportResult, "list"> & { list: ListSummary 
 // the base fields with the same skew tolerance: a display type this
 // bundle has not heard of renders as text (type drives rendering
 // only), and the label bound is the server's to enforce.
-const KNOWN_COLUMN_KINDS = new Set<string>(ListColumnSchema.options.map((member) => member.shape.kind.unwrap().value));
+const KNOWN_COLUMN_KINDS = new Set<string>(SheetColumnSchema.options.map((member) => member.shape.kind.unwrap().value));
 const KNOWN_COLUMN_TYPES = new Set<string>(PlainColumnSchema.shape.type.options);
 const UnknownColumnSchema = z
   .object({
@@ -123,15 +123,15 @@ const UnknownColumnSchema = z
     type: z.string().transform((type) => (KNOWN_COLUMN_TYPES.has(type) ? type : "text") as ColumnType),
   })
   .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
-const TolerantListColumnSchema = z.union([ListColumnSchema, UnknownColumnSchema]);
-export const TolerantListSummarySchema = ListSummarySchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
+const TolerantSheetColumnSchema = z.union([SheetColumnSchema, UnknownColumnSchema]);
+export const TolerantSheetSummarySchema = SheetSummarySchema.extend({ columns: z.array(TolerantSheetColumnSchema).default([]) });
 // `entry_action_ids` stays REQUIRED, against the default-new-fields
 // precedent below: this bundle's fill route and create semantics need
 // this server anyway, so an older server is not a case to tolerate, and
 // a defaulted [] would silently hide every Fill control instead.
-export const TolerantListDetailSchema = ListDetailSchema.extend({ columns: z.array(TolerantListColumnSchema).default([]) });
-export const TolerantListsPageSchema = ListsPageSchema.extend({ items: z.array(TolerantListSummarySchema) });
-const TolerantImportResultSchema = ImportResultSchema.extend({ list: TolerantListSummarySchema });
+export const TolerantSheetDetailSchema = SheetDetailSchema.extend({ columns: z.array(TolerantSheetColumnSchema).default([]) });
+export const TolerantSheetsPageSchema = SheetsPageSchema.extend({ items: z.array(TolerantSheetSummarySchema) });
+const TolerantImportResultSchema = ImportResultSchema.extend({ sheet: TolerantSheetSummarySchema });
 
 /** One cell's wire state, derived from the sidecar's own record so a
  * cause added server-side reaches every consumer through the regen:
@@ -139,7 +139,7 @@ const TolerantImportResultSchema = ImportResultSchema.extend({ list: TolerantLis
  * causes. `filled` travels only when the run that filled the cell
  * had a degraded tool (the mark beside the value); a value with no
  * entry IS filled and clean, and never-attempted is an absence. */
-export type CellStateWire = ListRowWire["states"][string];
+export type CellStateWire = SheetRowWire["states"][string];
 export type CellState = CellStateWire["state"];
 /** Tool -> the status code its door reported for the run that wrote
  * a cell ("open" for a tool that served). The vocabularies per tool
@@ -201,17 +201,17 @@ export type AiColumnBody = {
 // kind's projection is the base's; plain is the kind with nothing else.
 export const COLUMN_TYPES = PlainColumnSchema.shape.type.options;
 export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.label.maxLength;
-export type ColumnType = ListColumn["type"];
+export type ColumnType = SheetColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the
  * table and the export's formula-guard skip must agree. */
-export function isNumericColumn(column: ListColumn): boolean {
+export function isNumericColumn(column: SheetColumn): boolean {
   return column.type === "number" || column.type === "currency";
 }
 
-export async function fetchListsPage(after?: string): Promise<ApiResult<ListsPage>> {
+export async function fetchSheetsPage(after?: string): Promise<ApiResult<SheetsPage>> {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
-  return http.get(`${apiRoutes.lists.index}${suffix}`, TolerantListsPageSchema);
+  return http.get(`${apiRoutes.sheets.index}${suffix}`, TolerantSheetsPageSchema);
 }
 
 // The walk's bound counts PAGES, not items: an item bound never
@@ -223,12 +223,12 @@ const MAX_LIST_PAGES = 8;
  * consumers must not silently truncate at one page, and when the
  * bound itself truncates, the CALLER hears it (no silent caps: a
  * console.warn reaches nobody). */
-export async function fetchAllLists(): Promise<ApiResult<{ items: ListSummary[]; truncated: boolean }>> {
-  const items: ListSummary[] = [];
+export async function fetchAllSheets(): Promise<ApiResult<{ items: SheetSummary[]; truncated: boolean }>> {
+  const items: SheetSummary[] = [];
   let after: string | undefined;
   let truncated = false;
   for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
-    const result = await fetchListsPage(after);
+    const result = await fetchSheetsPage(after);
     if (result.status !== "ok") return result;
     items.push(...result.data.items);
     if (!result.data.next_cursor) break;
@@ -238,8 +238,8 @@ export async function fetchAllLists(): Promise<ApiResult<{ items: ListSummary[];
   return { status: "ok", data: { items, truncated } };
 }
 
-export async function fetchList(id: string): Promise<ApiResult<ListDetail>> {
-  return http.get(apiRoutes.lists.detail(id), TolerantListDetailSchema);
+export async function fetchSheet(id: string): Promise<ApiResult<SheetDetail>> {
+  return http.get(apiRoutes.sheets.detail(id), TolerantSheetDetailSchema);
 }
 
 // A cause this bundle has never heard of (a server ahead of the app)
@@ -305,10 +305,10 @@ export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolS
 /** A row as the CLIENT holds it: the states record (every node
  * column's, AI and Send webhook alike) admits the unknown member the
  * tolerant read produces, which the wire type cannot. */
-export type RenderableListRow = Omit<ListRowWire, "states"> & {
+export type RenderableSheetRow = Omit<SheetRowWire, "states"> & {
   states: Record<string, RenderableCellStateWire>;
 };
-export type RenderableListRowsPage = Omit<ListRowsPage, "items"> & { items: RenderableListRow[] };
+export type RenderableSheetRowsPage = Omit<SheetRowsPage, "items"> & { items: RenderableSheetRow[] };
 // Rows parse states TOLERANTLY: strict-parsing an unknown cause would
 // fail the whole page, and a sheet that will not render is a worse
 // answer than a cell whose dot is cautious. A bare string is the
@@ -318,24 +318,24 @@ const TolerantCellStateSchema = z.union([
   z.string(),
   z.object({ state: z.string(), tools: z.record(z.string(), z.string()).default({}) }),
 ]);
-const TolerantListRowSchema = ListRowWireSchema.extend({
+const TolerantSheetRowSchema = SheetRowWireSchema.extend({
   states: z.record(z.string(), TolerantCellStateSchema).default({}),
 });
-export const TolerantListRowsPageSchema = ListRowsPageSchema.extend({
-  items: z.array(TolerantListRowSchema),
+export const TolerantSheetRowsPageSchema = SheetRowsPageSchema.extend({
+  items: z.array(TolerantSheetRowSchema),
 });
 type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
-type TolerantListRow = z.infer<typeof TolerantListRowSchema>;
+type TolerantSheetRow = z.infer<typeof TolerantSheetRowSchema>;
 
-export async function fetchListRows(
+export async function fetchSheetRows(
   id: string,
   opts: { after?: string; limit?: number } = {},
-): Promise<ApiResult<RenderableListRowsPage>> {
+): Promise<ApiResult<RenderableSheetRowsPage>> {
   const params = new URLSearchParams();
   if (opts.after) params.set("after", opts.after);
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
-  const res = await http.get(`${apiRoutes.lists.rows(id)}${qs ? `?${qs}` : ""}`, TolerantListRowsPageSchema);
+  const res = await http.get(`${apiRoutes.sheets.rows(id)}${qs ? `?${qs}` : ""}`, TolerantSheetRowsPageSchema);
   if (res.status !== "ok") return res;
   return { ...res, data: renderablePage(res.data) };
 }
@@ -346,14 +346,14 @@ export async function fetchListRows(
  * render rather than one poll. */
 export function renderablePage(page: {
   items: { states: Record<string, TolerantCellState> }[];
-}): RenderableListRowsPage {
+}): RenderableSheetRowsPage {
   return {
-    ...(page as unknown as RenderableListRowsPage),
+    ...(page as unknown as RenderableSheetRowsPage),
     items: page.items.map(renderableRow),
   };
 }
 
-function renderableRow(item: { states: Record<string, TolerantCellState> }): RenderableListRow {
+function renderableRow(item: { states: Record<string, TolerantCellState> }): RenderableSheetRow {
   const known = new Set<string>(CELL_STATES);
   const narrow = (entry: TolerantCellState): RenderableCellStateWire => {
     const state = typeof entry === "string" ? entry : entry.state;
@@ -361,7 +361,7 @@ function renderableRow(item: { states: Record<string, TolerantCellState> }): Ren
     return { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
   };
   return {
-    ...(item as unknown as RenderableListRow),
+    ...(item as unknown as RenderableSheetRow),
     states: Object.fromEntries(Object.entries(item.states).map(([key, entry]) => [key, narrow(entry)])),
   };
 }
@@ -370,18 +370,18 @@ function renderableRow(item: { states: Record<string, TolerantCellState> }): Ren
  * 200 body is the row with its states, so the sheet swaps it in. A
  * refusal (the type, a column that takes no value) is the server's
  * own sentence in `message`. */
-export async function setListRowCells(
+export async function setSheetRowCells(
   id: string,
   rowId: string,
   data: Record<string, string>,
-): Promise<ApiResult<RenderableListRow>> {
-  const res = await http.patch(apiRoutes.lists.row(id, rowId), TolerantListRowSchema, { data });
+): Promise<ApiResult<RenderableSheetRow>> {
+  const res = await http.patch(apiRoutes.sheets.row(id, rowId), TolerantSheetRowSchema, { data });
   if (res.status !== "ok") return res;
-  return { ...res, data: renderableRow(res.data as TolerantListRow) };
+  return { ...res, data: renderableRow(res.data as TolerantSheetRow) };
 }
 
-export async function deleteListRow(id: string, rowId: string): Promise<ApiResult<null>> {
-  return http.delete(apiRoutes.lists.row(id, rowId));
+export async function deleteSheetRow(id: string, rowId: string): Promise<ApiResult<null>> {
+  return http.delete(apiRoutes.sheets.row(id, rowId));
 }
 
 /** What a rows delete names: the rows, or every row but the ones to
@@ -392,73 +392,73 @@ export type RowSelectionBody = { row_ids: string[] } | { all: true; keep: string
 
 /** A selection of rows deleted at once; the receipt is the contract's
  * RowsDeleted, so the footer's count moves without a re-read. */
-export async function deleteListRows(id: string, body: RowSelectionBody): Promise<ApiResult<RowsDeleted>> {
-  return http.deleteWithBody(apiRoutes.lists.rows(id), RowsDeletedSchema, body);
+export async function deleteSheetRows(id: string, body: RowSelectionBody): Promise<ApiResult<RowsDeleted>> {
+  return http.deleteWithBody(apiRoutes.sheets.rows(id), RowsDeletedSchema, body);
 }
 
-export async function updateList(
+export async function updateSheet(
   id: string,
   patch: { label?: string; folder_id?: string },
-): Promise<ApiResult<ListDetail>> {
-  return http.patch(apiRoutes.lists.detail(id), TolerantListDetailSchema, patch);
+): Promise<ApiResult<SheetDetail>> {
+  return http.patch(apiRoutes.sheets.detail(id), TolerantSheetDetailSchema, patch);
 }
 
-export async function createList(label: string): Promise<ApiResult<ListSummary>> {
-  return http.post(apiRoutes.lists.index, TolerantListSummarySchema, { label });
+export async function createSheet(label: string): Promise<ApiResult<SheetSummary>> {
+  return http.post(apiRoutes.sheets.index, TolerantSheetSummarySchema, { label });
 }
 
 export async function fetchFolders(): Promise<ApiResult<FoldersList>> {
-  return http.get(apiRoutes.lists.folders, FoldersListSchema);
+  return http.get(apiRoutes.sheets.folders, FoldersListSchema);
 }
 
 export async function createFolder(label: string): Promise<ApiResult<FolderSummary>> {
-  return http.post(apiRoutes.lists.folders, FolderSummarySchema, { label });
+  return http.post(apiRoutes.sheets.folders, FolderSummarySchema, { label });
 }
 
 export async function renameFolder(id: string, label: string): Promise<ApiResult<FolderSummary>> {
-  return http.patch(apiRoutes.lists.folder(id), FolderSummarySchema, { label });
+  return http.patch(apiRoutes.sheets.folder(id), FolderSummarySchema, { label });
 }
 
 export async function deleteFolder(id: string): Promise<ApiResult<null>> {
-  return http.delete(apiRoutes.lists.folder(id));
+  return http.delete(apiRoutes.sheets.folder(id));
 }
 
-export async function deleteList(id: string): Promise<ApiResult<null>> {
-  return http.delete(apiRoutes.lists.detail(id));
+export async function deleteSheet(id: string): Promise<ApiResult<null>> {
+  return http.delete(apiRoutes.sheets.detail(id));
 }
 
 /** The append's receipt with its rows renderable: the counts, and the
  * rows made in the page's own shape. */
-export type RenderableRowsAdded = Omit<RowsAdded, "rows"> & { rows: RenderableListRow[] };
+export type RenderableRowsAdded = Omit<RowsAdded, "rows"> & { rows: RenderableSheetRow[] };
 
-const TolerantRowsAddedSchema = RowsAddedSchema.extend({ rows: z.array(TolerantListRowSchema) });
+const TolerantRowsAddedSchema = RowsAddedSchema.extend({ rows: z.array(TolerantSheetRowSchema) });
 
 /** Manual append (bounded); the receipt is the contract's RowsAdded,
  * its rows parsed as tolerantly as a page's. */
-export async function addListRows(
+export async function addSheetRows(
   id: string,
   rows: Record<string, string>[],
 ): Promise<ApiResult<RenderableRowsAdded>> {
-  const res = await http.post(apiRoutes.lists.rows(id), TolerantRowsAddedSchema, { rows });
+  const res = await http.post(apiRoutes.sheets.rows(id), TolerantRowsAddedSchema, { rows });
   if (res.status !== "ok") return res;
   return { ...res, data: { ...res.data, rows: res.data.rows.map(renderableRow) } };
 }
 
-export async function importListCsv(file: File, label?: string): Promise<ApiResult<ImportResult>> {
+export async function importSheetCsv(file: File, label?: string): Promise<ApiResult<ImportResult>> {
   const form = new FormData();
   form.set("file", file);
   if (label) form.set("label", label);
-  return http.post(apiRoutes.lists.import, TolerantImportResultSchema, form);
+  return http.post(apiRoutes.sheets.import, TolerantImportResultSchema, form);
 }
 
-export async function saveRunAsList(
+export async function saveRunAsSheet(
   runId: string,
   opts: { label: string; limit?: number; exclude?: string[] },
-): Promise<ApiResult<ListSummary>> {
+): Promise<ApiResult<SheetSummary>> {
   const body: Record<string, unknown> = { label: opts.label };
   if (opts.limit) body.limit = opts.limit;
   if (opts.exclude?.length) body.exclude = opts.exclude;
-  return http.post(apiRoutes.discover.lookalikeRunSaveList(runId), TolerantListSummarySchema, body);
+  return http.post(apiRoutes.discover.lookalikeRunSaveList(runId), TolerantSheetSummarySchema, body);
 }
 
 /** Append one BLANK column (no fill): the key derives server-side
@@ -471,8 +471,8 @@ export async function saveRunAsList(
 export async function postColumn(
   id: string,
   body: { label: string; type: ColumnType },
-): Promise<ApiResult<ListDetail>> {
-  return http.post(apiRoutes.lists.columns(id), TolerantListDetailSchema, body);
+): Promise<ApiResult<SheetDetail>> {
+  return http.post(apiRoutes.sheets.columns(id), TolerantSheetDetailSchema, body);
 }
 
 /** Reorder the sheet's columns, sending the WHOLE key order.
@@ -483,26 +483,26 @@ export async function postColumn(
  * deleted a column since this client read the sheet. The 200 body is
  * the updated list detail, so the caller renders the SERVER's order
  * rather than trusting its own optimistic move. */
-export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<ListDetail>> {
-  return http.patch(apiRoutes.lists.columnOrder(id), TolerantListDetailSchema, { keys });
+export async function reorderColumns(id: string, keys: string[]): Promise<ApiResult<SheetDetail>> {
+  return http.patch(apiRoutes.sheets.columnOrder(id), TolerantSheetDetailSchema, { keys });
 }
 
 /** Relabel one column. The KEY is the address and never changes: row
  * data is keyed on it server-side, so a key that followed the label
  * would strand every cell the column holds. */
-export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<ListDetail>> {
-  return http.patch(apiRoutes.lists.column(id, key), TolerantListDetailSchema, { label });
+export async function renameColumn(id: string, key: string, label: string): Promise<ApiResult<SheetDetail>> {
+  return http.patch(apiRoutes.sheets.column(id, key), TolerantSheetDetailSchema, { label });
 }
 
 /** Delete one column and everything in it. Any column, not only an AI
  * one. The body is the updated list detail, so the sheet re-renders its
  * columns from the response. */
-export async function deleteColumn(id: string, key: string): Promise<ApiResult<ListDetail>> {
+export async function deleteColumn(id: string, key: string): Promise<ApiResult<SheetDetail>> {
   // Through `request` rather than `http.delete`, which is the
   // no-content form: this DELETE answers with the updated list detail, so
   // the sheet re-renders its columns from the response like it does
   // after every other columns write.
-  return request(apiRoutes.lists.column(id, key), TolerantListDetailSchema, { method: "DELETE" });
+  return request(apiRoutes.sheets.column(id, key), TolerantSheetDetailSchema, { method: "DELETE" });
 }
 
 /** Add an AI column set (one column per agent output); starts no
@@ -510,8 +510,8 @@ export async function deleteColumn(id: string, key: string): Promise<ApiResult<L
  * columns from the response. Refusals (caps, occupied-key collisions,
  * an unrunnable model) surface through the funnel as the server's
  * verbatim detail plus code. */
-export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<ListDetail>> {
-  return http.post(apiRoutes.lists.aiColumn(id), TolerantListDetailSchema, body);
+export async function postAiColumn(id: string, body: AiColumnBody): Promise<ApiResult<SheetDetail>> {
+  return http.post(apiRoutes.sheets.aiColumn(id), TolerantSheetDetailSchema, body);
 }
 
 /** Fill a column: the one way a fill starts, from the drawer right
@@ -538,7 +538,7 @@ export async function postColumnFill(
   if (opts.max_row_count !== undefined) body.max_row_count = opts.max_row_count;
   return fillResult(
     await http.post(
-      apiRoutes.lists.columnFill(id, columnKey),
+      apiRoutes.sheets.columnFill(id, columnKey),
       TolerantFillRunWireSchema,
       Object.keys(body).length > 0 ? body : undefined,
     ),
@@ -552,13 +552,13 @@ export async function postColumnFill(
  * the server's verbatim detail plus code; the 200 body echoes the
  * stored prompt. */
 export async function updateColumnPrompt(id: string, columnKey: string, prompt: string): Promise<ApiResult<ColumnPromptWire>> {
-  return http.patch(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema, { prompt });
+  return http.patch(apiRoutes.sheets.columnPrompt(id, columnKey), ColumnPromptWireSchema, { prompt });
 }
 
 /** The column's CURRENT fill config (what its next fill would run): the
  * prompt-peek surfaces read this. */
 export async function getColumnPrompt(id: string, columnKey: string): Promise<ApiResult<ColumnPromptWire>> {
-  return http.get(apiRoutes.lists.columnPrompt(id, columnKey), ColumnPromptWireSchema);
+  return http.get(apiRoutes.sheets.columnPrompt(id, columnKey), ColumnPromptWireSchema);
 }
 
 
@@ -574,7 +574,7 @@ function fillResult(res: ApiResult<z.infer<typeof TolerantFillRunWireSchema>>): 
  * runs list). */
 export async function getFills(id: string, after?: string): Promise<ApiResult<FillRunPage>> {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
-  const res = await http.get(`${apiRoutes.lists.fills(id)}${suffix}`, TolerantFillRunPageSchema);
+  const res = await http.get(`${apiRoutes.sheets.fills(id)}${suffix}`, TolerantFillRunPageSchema);
   if (res.status !== "ok") return res;
   return {
     ...res,
@@ -589,7 +589,7 @@ export async function getFills(id: string, after?: string): Promise<ApiResult<Fi
 /** Stop a live fill; an already-terminal run no-ops. Returns the run
  * as the server now holds it. */
 export async function postFillCancel(id: string, runId: string): Promise<ApiResult<FillRunWire>> {
-  return fillResult(await http.post(apiRoutes.lists.fillCancel(id, runId), TolerantFillRunWireSchema));
+  return fillResult(await http.post(apiRoutes.sheets.fillCancel(id, runId), TolerantFillRunWireSchema));
 }
 
 // The Send webhook column's Test: the server builds a sample digest
@@ -627,7 +627,7 @@ export async function postColumnWebhookTest(
   id: string,
   body: WebhookColumnTestBody,
 ): Promise<ApiResult<WebhookColumnTestResult>> {
-  return http.post(apiRoutes.lists.columnWebhookTest(id), TolerantWebhookColumnTestResponseSchema, body);
+  return http.post(apiRoutes.sheets.columnWebhookTest(id), TolerantWebhookColumnTestResponseSchema, body);
 }
 
 // The persisted column. Its cadence is a CHOICE off the contract (the
@@ -658,12 +658,12 @@ const TolerantWebhookColumnPreviewResponseSchema = WebhookColumnPreviewResponseS
 });
 
 /** Add a webhook column; the 201 body IS the list detail, the shape every columns write returns. */
-export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<ListDetail>> {
-  return http.post(apiRoutes.lists.columnWebhook(id), TolerantListDetailSchema, body);
+export async function postColumnWebhook(id: string, body: WebhookColumnBody): Promise<ApiResult<SheetDetail>> {
+  return http.post(apiRoutes.sheets.columnWebhook(id), TolerantSheetDetailSchema, body);
 }
 
 export async function getColumnWebhook(id: string, key: string): Promise<ApiResult<WebhookColumnConfigWire>> {
-  return http.get(apiRoutes.lists.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema);
+  return http.get(apiRoutes.sheets.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema);
 }
 
 /** The whole config, rewritten. */
@@ -672,7 +672,7 @@ export async function updateColumnWebhook(
   key: string,
   body: WebhookColumnPatchBody,
 ): Promise<ApiResult<WebhookColumnConfigWire>> {
-  return http.patch(apiRoutes.lists.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema, body);
+  return http.patch(apiRoutes.sheets.columnWebhookConfig(id, key), WebhookColumnConfigWireSchema, body);
 }
 
 /** The envelope a test of this body would carry, rendered by the server
@@ -681,7 +681,7 @@ export async function postColumnWebhookPreview(
   id: string,
   body: WebhookColumnTestBody,
 ): Promise<ApiResult<WebhookColumnPreview>> {
-  return http.post(apiRoutes.lists.columnWebhookPreview(id), TolerantWebhookColumnPreviewResponseSchema, body);
+  return http.post(apiRoutes.sheets.columnWebhookPreview(id), TolerantWebhookColumnPreviewResponseSchema, body);
 }
 
 export type { IngestColumn, IngestSchema };
@@ -702,5 +702,5 @@ const TolerantIngestSchemaSchema = z.object({
 /** The push schema: the columns a machine push may set on this sheet,
  * with the keys its rows are keyed on. System-filled columns are absent. */
 export async function fetchIngestSchema(id: string): Promise<ApiResult<IngestSchema>> {
-  return http.get(apiRoutes.lists.ingest(id), TolerantIngestSchemaSchema);
+  return http.get(apiRoutes.sheets.ingest(id), TolerantIngestSchemaSchema);
 }

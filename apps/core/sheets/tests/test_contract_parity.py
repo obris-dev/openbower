@@ -12,10 +12,10 @@ from django.test import SimpleTestCase
 
 from jobs.constants import JobStatus
 from openbower_schema.fills import FillStatusWire
-from openbower_schema.lists import ColumnType as WireColumnType
-from openbower_schema.lists import ListOrigin as WireListOrigin
-from openbower_schema.lists import WireCellState
 from openbower_schema.runs import OPEN_NODE_RUN_STATES, NodeRunStatusWire
+from openbower_schema.sheets import ColumnType as WireColumnType
+from openbower_schema.sheets import SheetOrigin as WireSheetOrigin
+from openbower_schema.sheets import WireCellState
 from sheets import constants
 from sheets.services.fill_progress import word_of
 
@@ -25,7 +25,7 @@ class WireEnumParityTests(SimpleTestCase):
         self.assertEqual(set(get_args(WireColumnType)), {v.value for v in constants.ColumnType})
 
     def test_sheet_origin_parity(self):
-        self.assertEqual(set(get_args(WireListOrigin)), {v.value for v in constants.SheetOrigin})
+        self.assertEqual(set(get_args(WireSheetOrigin)), {v.value for v in constants.SheetOrigin})
 
     def test_cell_state_parity(self):
         # The wire adds `pending` (derived, never stored) and otherwise

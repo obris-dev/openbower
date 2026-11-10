@@ -179,7 +179,7 @@ auth, data and signals services live in a separate private repo.
   marker and nothing else; every other node is an ACTION, and the
   action right behind an entry marker is an ENTRY ACTION: what an
   arrival starts, and the only place a user's fill starts (the sheet's
-  `ListDetail.entry_action_ids`). A column downstream of a barrier is
+  `SheetDetail.entry_action_ids`). A column downstream of a barrier is
   reached by the workflow and refuses a fill of its own
   (`fill_column_downstream`).
 - How a column's CELLS change is the cell layer (sheets/cells.py), and

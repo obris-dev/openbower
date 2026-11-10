@@ -7,7 +7,7 @@ import {
   createAgent,
   deleteAgent,
   fetchAgentCatalog,
-  fetchAllLists,
+  fetchAllSheets,
   updateAgent,
   webRoutes,
   type AgentCatalog,
@@ -16,7 +16,7 @@ import {
   type AgentSummary,
   type CellRunResult,
   type AgentTools,
-  type ListSummary,
+  type SheetSummary,
 } from "@bower/api";
 
 import { AGENT_LABEL_MAX_LENGTH, TEST_KEY_MAX_LENGTH, TEST_ROW_MAX_KEYS, TEST_VALUE_MAX_LENGTH } from "@bower/api";
@@ -72,7 +72,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   );
   const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
   const [catalogFailed, setCatalogFailed] = useState(false);
-  const [lists, setLists] = useState<ListSummary[]>([]);
+  const [lists, setLists] = useState<SheetSummary[]>([]);
   const [listsLoading, setListsLoading] = useState(true);
   const [listsTruncated, setListsTruncated] = useState(false);
   const [testRow, setTestRow] = useState<Record<string, string>>(draft?.testRow ?? {});
@@ -129,7 +129,7 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
 
   useEffect(() => {
     async function loadLists() {
-      const res = await fetchAllLists();
+      const res = await fetchAllSheets();
       if (ensureOk(res, toast, { title: "Sheets unavailable" })) {
         setLists(res.data.items);
         // Surfaced AT the sheet pickers, not as a mount toast: a

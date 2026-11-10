@@ -19,7 +19,7 @@ import logging
 from typing import Any
 
 from openbower_schema.agents import DEFAULT_AGENT_PROVIDER, AgentConfig, AgentTools
-from openbower_schema.lists import COLUMN_TYPE_CHOICES, DEFAULT_COLUMN_TYPE
+from openbower_schema.sheets import COLUMN_TYPE_CHOICES, DEFAULT_COLUMN_TYPE
 
 from .constants import (
     MAX_AGENT_OUTPUTS,

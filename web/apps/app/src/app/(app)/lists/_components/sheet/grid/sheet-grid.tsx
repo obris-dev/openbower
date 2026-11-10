@@ -3,7 +3,7 @@
 import { DndContext, closestCenter, type DragEndEvent, type Modifier } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ConfirmDialog } from "@bower/ui";
-import type { ColumnType, ListColumn, RenderableListRow, WebhookColumn } from "@bower/api";
+import type { ColumnType, SheetColumn, RenderableSheetRow, WebhookColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import type { AddColumnKind } from "../add-column";
@@ -37,7 +37,7 @@ import { useVirtualRows } from "./use-virtual-rows";
  * virtualizer paints only the rows near its viewport. Column widths
  * are this browser's memory per sheet; the column ORDER is the
  * server's, and a drag asks for a reorder rather than holding one.
- * AI cell states ride the ROW itself (RenderableListRow.states), so a
+ * AI cell states ride the ROW itself (RenderableSheetRow.states), so a
  * value and its state can never come from different requests and
  * disagree; `fills` adds the tracker row under the header (one cell
  * per AI column, THE per-column fill surface; the footer keeps only a
@@ -73,8 +73,8 @@ export function SheetGrid({
   selection?: RowSelectionControls;
   /** The scroll region the grid lives in; the virtualizer listens to it. */
   scrollRef: RefObject<HTMLDivElement | null>;
-  columns: ListColumn[];
-  rows: RenderableListRow[];
+  columns: SheetColumn[];
+  rows: RenderableSheetRow[];
   /** The deployment's web-search provider once the sheet has fetched it
    * (a rate-limited cell's popover composes the paid-provider nudge). */
   searchProvider?: SearchProviderChoice;
@@ -87,7 +87,7 @@ export function SheetGrid({
   onNamePending?: (label: string) => void;
   /** Resolves with the outcome, so the confirm tier that asked can
    * render a refusal (a column a webhook waits on) in place. */
-  onDeleteColumn?: (column: ListColumn) => Promise<ColumnOutcome>;
+  onDeleteColumn?: (column: SheetColumn) => Promise<ColumnOutcome>;
   /** Reopens the Send webhook drawer on an existing webhook column. */
   onEditWebhook?: (column: WebhookColumn) => void;
   fills?: SheetFills;

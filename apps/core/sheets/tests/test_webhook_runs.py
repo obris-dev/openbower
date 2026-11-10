@@ -24,7 +24,7 @@ from jobs.models import Job
 from jobs.services import JobRunner, TickReport
 from openbower_kernel.ranks import key_between
 from openbower_schema.fills import CellRunResult
-from openbower_schema.lists import ListRowsPage
+from openbower_schema.sheets import SheetRowsPage
 from sheets.cells import LandingContext, RowLanding, WebhookWrite
 from sheets.constants import CellSource, NodeRunStatus, StoredCellState
 from sheets.jobs.column_backfill import ColumnBackfillJob
@@ -898,7 +898,7 @@ class CellStateTests(_BackfilledSheet):
         with CaptureQueriesContext(connection) as queries:
             resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200, resp.content)
-        page = ListRowsPage(**resp.json())
+        page = SheetRowsPage(**resp.json())
         self.assertEqual(
             [item.states.get("crm_sync").state if "crm_sync" in item.states else None for item in page.items],
             ["pending", "pending", None],

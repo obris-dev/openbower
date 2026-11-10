@@ -26,7 +26,7 @@ from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
-from openbower_schema.lists import AiColumn, ListDetail, ListRowsPage
+from openbower_schema.sheets import AiColumn, SheetDetail, SheetRowsPage
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, JOB_FAILURE_COPY, StoredCellState
 from ..models import NodeRun
@@ -137,7 +137,7 @@ class AiColumnPostTests(FillViewsTestCase):
         # answers with the sheet, and nothing is queued until the fill.
         resp = self.post_ai()
         self.assertEqual(resp.status_code, 201, resp.content)
-        summary = ListDetail(**resp.json())
+        summary = SheetDetail(**resp.json())
         added = next(column for column in summary.columns if column.key == "answer")
         self.assertIsInstance(added, AiColumn)
         self.assertEqual(added.current_fill_id, "")
@@ -150,7 +150,7 @@ class AiColumnPostTests(FillViewsTestCase):
         body = resp.json()
         wire = FillRunWire(**body)
         self.assertEqual(wire.status, "pending")
-        self.assertEqual(wire.list_id, str(self.sheet.id))
+        self.assertEqual(wire.sheet_id, str(self.sheet.id))
         self.assertEqual(wire.column_keys, ["answer"])
         self.assertEqual(wire.target_row_count, 2)
         self.assertEqual(wire.started_by, TEST_IDENTITY["id"])
@@ -453,11 +453,11 @@ class CellStatesTests(FillViewsTestCase):
     lockstep was a client-side join carried over the network, and it
     could tear: the values and the states came from two requests."""
 
-    def _states_page(self, **params) -> ListRowsPage:
+    def _states_page(self, **params) -> SheetRowsPage:
         url = reverse("sheets_rows", kwargs={"id": str(self.sheet.id)})
         resp = self.client.get(url, params)
         self.assertEqual(resp.status_code, 200, resp.content)
-        return ListRowsPage(**resp.json())
+        return SheetRowsPage(**resp.json())
 
     def test_pending_blank_filled_and_untouched_columns(self) -> None:
         fill_run_id = self.add_and_fill().json()["id"]

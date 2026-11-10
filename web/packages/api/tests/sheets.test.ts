@@ -1,4 +1,4 @@
-// addListRows: the sheet's add row posts one row at a time; the
+// addSheetRows: the sheet's add row posts one row at a time; the
 // contract (route, body shape, the RowsAdded parse with its rows) is
 // pinned here as well, where a fixture can name every field.
 // postColumnFill: its optional max_row_count scope is pinned because
@@ -6,15 +6,15 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { ListColumnSchema, ListSummarySchema, WIRE_BOUNDS } from "@bower/schema";
+import { SheetColumnSchema, SheetSummarySchema, WIRE_BOUNDS } from "@bower/schema";
 
 import {
   CELL_STATES,
   SETTLED_CELL_STATES,
   UNKNOWN_CELL_STATE,
-  addListRows,
-  fetchList,
-  fetchListRows,
+  addSheetRows,
+  fetchSheet,
+  fetchSheetRows,
   getFills,
   DEFAULT_WEBHOOK_CADENCE_SECONDS,
   WEBHOOK_CADENCE_SECONDS,
@@ -29,9 +29,9 @@ import {
   UNKNOWN_COLUMN_KIND,
   COLUMN_LABEL_MAX_LENGTH,
   renderablePage,
-} from "../src/lists.ts";
+} from "../src/sheets.ts";
 
-test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
+test("addSheetRows posts rows and parses the RowsAdded receipt", async (t) => {
   const calls: { url: string; init: RequestInit }[] = [];
   const realFetch = globalThis.fetch;
   t.after(() => {
@@ -49,7 +49,7 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
     });
   }) as typeof fetch;
 
-  const res = await addListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", [{ a: "1" }, { a: "2" }]);
+  const res = await addSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", [{ a: "1" }, { a: "2" }]);
   assert.equal(res.status, "ok");
   if (res.status === "ok") {
     assert.equal(res.data.added, 2);
@@ -60,7 +60,7 @@ test("addListRows posts rows and parses the RowsAdded receipt", async (t) => {
     );
   }
   assert.equal(calls.length, 1);
-  assert.ok(calls[0]!.url.endsWith("/v1/lists/01AAAAAAAAAAAAAAAAAAAAAAAA/rows"));
+  assert.ok(calls[0]!.url.endsWith("/v1/sheets/01AAAAAAAAAAAAAAAAAAAAAAAA/rows"));
   assert.equal(calls[0]!.init.method, "POST");
   assert.equal(calls[0]!.init.credentials, "include");
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { rows: [{ a: "1" }, { a: "2" }] });
@@ -81,13 +81,13 @@ const RUN_ENVELOPE = {
   heartbeat_at: "2026-01-01T00:00:00Z",
   created_at: "2026-01-01T00:00:00Z",
   id: "01CCCCCCCCCCCCCCCCCCCCCCCC",
-  list_id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+  sheet_id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
   started_by: "01DDDDDDDDDDDDDDDDDDDDDDDD",
   status: "pending",
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-// The AI column create's 201: the sheet (a ListDetail) with its new column.
+// The AI column create's 201: the sheet (a SheetDetail) with its new column.
 const AI_DETAIL = {
   id: "01AAAAAAAAAAAAAAAAAAAAAAAA",
   label: "Prospects",
@@ -163,7 +163,7 @@ test("postAiColumn sends the column set alone and reads back the detail", async 
   assert.deepEqual(res.data.entry_action_ids, ["01NDAAAAAAAAAAAAAAAAAAAAAA"]);
 });
 
-test("fetchListRows hands the cursor back verbatim", async (t) => {
+test("fetchSheetRows hands the cursor back verbatim", async (t) => {
   // The cursor is the server's (`rank.id`), opaque to this client:
   // nothing here reads it, splits it, or rebuilds it from a row.
   const calls: string[] = [];
@@ -179,7 +179,7 @@ test("fetchListRows hands the cursor back verbatim", async (t) => {
     });
   }) as typeof fetch;
 
-  await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { after: "a0V.01ROWAAAAAAAAAAAAAAAAAAAA", limit: 2 });
+  await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { after: "a0V.01ROWAAAAAAAAAAAAAAAAAAAA", limit: 2 });
   assert.ok(calls[0]!.endsWith("/rows?after=a0V.01ROWAAAAAAAAAAAAAAAAAAAA&limit=2"), calls[0]);
 });
 
@@ -316,7 +316,7 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
       { status: 200, headers: { "Content-Type": "application/json" } },
     )) as typeof fetch;
 
-  const res = await fetchListRows("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  const res = await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
   const [future, degraded, bare] = res.data.items;
@@ -494,9 +494,9 @@ test("the column union is discriminated: no tag and an unknown tag both refuse",
   // member and read as plain, dropping an AI column's node on the
   // floor while the server refuses the same blob.
   const base = { key: "answer", label: "Answer", type: "text" };
-  assert.equal(ListColumnSchema.safeParse({ ...base, node_id: "01NODE" }).success, false);
-  assert.equal(ListColumnSchema.safeParse({ ...base, kind: "formula" }).success, false);
-  const ai = ListColumnSchema.safeParse({ ...base, kind: "ai", node_id: "01NODE" });
+  assert.equal(SheetColumnSchema.safeParse({ ...base, node_id: "01NODE" }).success, false);
+  assert.equal(SheetColumnSchema.safeParse({ ...base, kind: "formula" }).success, false);
+  const ai = SheetColumnSchema.safeParse({ ...base, kind: "ai", node_id: "01NODE" });
   assert.ok(ai.success && ai.data.kind === "ai" && ai.data.node_id === "01NODE");
 });
 
@@ -510,9 +510,9 @@ test("a column kind from the future reads as the unknown member; the known kinds
   const summary = { ...SUMMARY, columns };
   // The strict contract refuses the whole summary over the fourth
   // column; the tolerant read is what keeps the sheet rendering.
-  assert.equal(ListSummarySchema.safeParse(summary).success, false);
+  assert.equal(SheetSummarySchema.safeParse(summary).success, false);
   stubFetch(t, summary);
-  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  const res = await fetchSheet("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "ok");
   if (res.status !== "ok") return;
   assert.deepEqual(
@@ -532,7 +532,7 @@ test("a known kind with a broken body refuses instead of reading as unknown", as
   // strip an AI column of its node without a word.
   const summary = { ...SUMMARY, columns: [{ kind: "ai", key: "answer", label: "Answer", type: "text" }] };
   stubFetch(t, summary);
-  const res = await fetchList("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  const res = await fetchSheet("01AAAAAAAAAAAAAAAAAAAAAAAA");
   assert.equal(res.status, "error");
 });
 

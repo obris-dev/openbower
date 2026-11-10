@@ -12,7 +12,7 @@ import { type AiColumnBody,
   type AgentOutput,
   type AgentSummary,
   type AgentTools,
-  type ListColumn,
+  type SheetColumn,
   COLUMN_COLLISION_CODE,
   DERIVED_KEY_COLLISION_CODE,
   RESERVED_KEY_CODE,
@@ -92,7 +92,7 @@ export function UseAiDrawer(props: {
   open: boolean;
   onClose: () => void;
   rowCount: number;
-  columns: ListColumn[];
+  columns: SheetColumn[];
   onSubmit: (submission: AiColumnSubmission) => Promise<ColumnOutcome>;
 }) {
   // Mounted fresh per open: state resets with the gesture, autoFocus
@@ -129,7 +129,7 @@ function DrawerContent({
   afterLeave: () => void;
   onClose: () => void;
   rowCount: number;
-  columns: ListColumn[];
+  columns: SheetColumn[];
   onSubmit: (submission: AiColumnSubmission) => Promise<ColumnOutcome>;
 }) {
   const toast = useToast();

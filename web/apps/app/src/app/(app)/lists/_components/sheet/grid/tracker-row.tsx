@@ -1,6 +1,6 @@
 "use client";
 
-import type { ColumnFillSummary, ListColumn } from "@bower/api";
+import type { ColumnFillSummary, SheetColumn } from "@bower/api";
 
 import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
@@ -22,7 +22,7 @@ export type SheetFills = {
   // loading cells hold still instead of claiming progress.
   pollTrouble: boolean;
   rowCount: number;
-  // The nodes a fill may start at (the sheet's ListDetail entry actions): a column
+  // The nodes a fill may start at (the sheet's SheetDetail entry actions): a column
   // behind a barrier offers no fill of its own.
   entryActionIds: string[];
   onStop: (runId: string) => Promise<string | null>;
@@ -57,7 +57,7 @@ export function TrackerRow({
     >
       <GutterCell className="z-30 border-b" />
       {headers.map((header) => {
-        const column: ListColumn = header.column.columnDef.meta!.column;
+        const column: SheetColumn = header.column.columnDef.meta!.column;
         return (
           <div
             key={header.id}

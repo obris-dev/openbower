@@ -12,9 +12,9 @@ export default async function Home() {
   const jar = await cookies();
   const cookieHeader = jar.toString();
   const collapsed = (jar.get(COLLAPSED_COOKIE)?.value ?? "").split(".").filter(Boolean);
-  const { fetchFoldersWithCookie, fetchListsPageWithCookie } = await import("@bower/api/server");
+  const { fetchFoldersWithCookie, fetchSheetsPageWithCookie } = await import("@bower/api/server");
   const [listsRes, foldersRes] = await Promise.all([
-    fetchListsPageWithCookie(cookieHeader),
+    fetchSheetsPageWithCookie(cookieHeader),
     fetchFoldersWithCookie(cookieHeader),
   ]);
   if (listsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(loginUrl(webRoutes.home));

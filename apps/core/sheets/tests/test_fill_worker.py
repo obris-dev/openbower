@@ -35,7 +35,7 @@ from agents.tools.registry import UnknownTool
 from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 
 from ..constants import (
     AGENT_MISSING_MESSAGE,

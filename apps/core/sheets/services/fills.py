@@ -17,7 +17,7 @@ from agents.constants import ToolStatus
 from jobs.constants import OPEN_JOB_STATES
 from jobs.models import Job
 from openbower_schema.fills import ColumnFillSummary, FillCounters
-from openbower_schema.lists import AiColumn, CellStateWire
+from openbower_schema.sheets import AiColumn, CellStateWire
 
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, NodeRunStatus, StoredCellState
 from ..models import NodeRun, Sheet, SheetCellState, SheetRow

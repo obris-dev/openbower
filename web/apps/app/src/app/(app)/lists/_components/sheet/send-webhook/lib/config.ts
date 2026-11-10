@@ -2,7 +2,7 @@
 // the wire: what a fresh draft starts as, what a request carries (in
 // sheet order), and whether an edit changed anything. Pure.
 
-import type { ListColumn, WebhookColumnConfig, WebhookColumnConfigWire } from "@bower/api";
+import type { SheetColumn, WebhookColumnConfig, WebhookColumnConfigWire } from "@bower/api";
 
 import { exportableColumns } from "../../lib/exportable-columns.ts";
 
@@ -20,7 +20,7 @@ export type WebhookDraft = {
  * config intersected with the columns the sheet still has (a key the
  * sheet lost is dropped, not a phantom switch). */
 export function initialDraft(
-  columns: readonly ListColumn[],
+  columns: readonly SheetColumn[],
   config: WebhookColumnConfigWire | null,
   defaults: { intervalSeconds: number },
 ): WebhookDraft {
@@ -48,7 +48,7 @@ export function initialDraft(
  * agent fills waits together, and a picker that let one be unchecked
  * alone would show a choice the next read undoes. */
 export function withSiblings(
-  columns: readonly ListColumn[],
+  columns: readonly SheetColumn[],
   before: ReadonlySet<string>,
   after: ReadonlySet<string>,
 ): Set<string> {
@@ -63,7 +63,7 @@ export function withSiblings(
 
 /** The request's lists in SHEET order (the order the user sees; the
  * server stores what it is given). */
-export function bodyFor(draft: WebhookDraft, columns: readonly ListColumn[]): WebhookColumnConfig {
+export function bodyFor(draft: WebhookDraft, columns: readonly SheetColumn[]): WebhookColumnConfig {
   const keys = columns.map((column) => column.key);
   return {
     destination_id: draft.destinationId,

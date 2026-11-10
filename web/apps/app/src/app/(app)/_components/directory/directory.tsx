@@ -7,18 +7,18 @@ import { ChevronDown, ChevronRight, Folder as FolderIcon, Plus } from "lucide-re
 import { Button, Card, Dropdown, DropdownButton, DropdownItem, DropdownMenu, EmptyState, Input, useToast } from "@bower/ui";
 import {
   createFolder,
-  createList,
+  createSheet,
   deleteFolder,
-  deleteList,
+  deleteSheet,
   fetchFolders,
-  fetchListsPage,
-  importListCsv,
+  fetchSheetsPage,
+  importSheetCsv,
   renameFolder,
-  updateList,
+  updateSheet,
   webRoutes,
   type FolderSummary,
-  type ListsPage,
-  type ListSummary,
+  type SheetsPage,
+  type SheetSummary,
 } from "@bower/api";
 
 import { LinkButton } from "../../../_components/link-button";
@@ -50,7 +50,7 @@ export function Directory({
   initialListsFailed,
   initialFoldersFailed,
 }: {
-  initialLists: ListsPage | null;
+  initialLists: SheetsPage | null;
   initialFolders: FolderSummary[];
   initialCollapsed: string[];
   initialListsFailed: boolean;
@@ -58,7 +58,7 @@ export function Directory({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const [lists, setLists] = useState<ListSummary[]>(initialLists?.items ?? []);
+  const [lists, setLists] = useState<SheetSummary[]>(initialLists?.items ?? []);
   const [nextCursor, setNextCursor] = useState<string | null>(initialLists?.next_cursor ?? null);
   const [folders, setFolders] = useState<FolderSummary[]>(initialFolders);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initialCollapsed));
@@ -79,14 +79,14 @@ export function Directory({
     // snap a three-page view back to page one), and say so when the
     // refetch fails instead of silently keeping stale rows.
     const target = lists.length;
-    const [pageRes, folderRes] = await Promise.all([fetchListsPage(), fetchFolders()]);
+    const [pageRes, folderRes] = await Promise.all([fetchSheetsPage(), fetchFolders()]);
     // Sequential gates: a dual failure gets ONE toast, not two.
     if (!ensureOk(pageRes, toast)) return;
     if (!ensureOk(folderRes, toast)) return;
     let items = pageRes.data.items;
     let cursor = pageRes.data.next_cursor;
     while (cursor && items.length < target) {
-      const more = await fetchListsPage(cursor);
+      const more = await fetchSheetsPage(cursor);
       if (!ensureOk(more, toast)) return;
       items = [...items, ...more.data.items];
       cursor = more.data.next_cursor;
@@ -104,7 +104,7 @@ export function Directory({
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    const res = await fetchListsPage(nextCursor);
+    const res = await fetchSheetsPage(nextCursor);
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
     setLists((prev) => [...prev, ...res.data.items]);
@@ -113,21 +113,21 @@ export function Directory({
 
   async function onFile(file: File) {
     setImporting(true);
-    const res = await importListCsv(file);
+    const res = await importSheetCsv(file);
     setImporting(false);
     if (!ensureOk(res, toast)) return;
-    const { list, rows, skipped } = res.data;
+    const { sheet, rows, skipped } = res.data;
     toast.success(
       skipped > 0
         ? `${rows.toLocaleString("en-US")} rows imported, ${skipped} skipped.`
         : `${rows.toLocaleString("en-US")} rows imported.`,
-      list.label,
+      sheet.label,
     );
-    router.push(webRoutes.list(list.id));
+    router.push(webRoutes.list(sheet.id));
   }
 
   async function quickAdd(kind: "list" | "folder") {
-    const res = kind === "list" ? await createList("Untitled list") : await createFolder("New folder");
+    const res = kind === "list" ? await createSheet("Untitled list") : await createFolder("New folder");
     if (!ensureOk(res, toast)) return;
     await refresh();
     // Land in rename with the default name ready to overtype.
@@ -148,19 +148,19 @@ export function Directory({
         : folders.find((f) => f.id === target.id)?.label;
     if (label === current) return;
     const res =
-      target.kind === "list" ? await updateList(target.id, { label }) : await renameFolder(target.id, label);
+      target.kind === "list" ? await updateSheet(target.id, { label }) : await renameFolder(target.id, label);
     if (!ensureOk(res, toast)) return;
     await refresh();
   }
 
-  async function move(list: ListSummary, folderId: string) {
-    const res = await updateList(list.id, { folder_id: folderId });
+  async function move(list: SheetSummary, folderId: string) {
+    const res = await updateSheet(list.id, { folder_id: folderId });
     if (!ensureOk(res, toast)) return;
     await refresh();
   }
 
-  async function removeList(list: ListSummary) {
-    const res = await deleteList(list.id);
+  async function removeList(list: SheetSummary) {
+    const res = await deleteSheet(list.id);
     if (!ensureOk(res, toast)) return;
     toast.success("List deleted.", list.label);
     await refresh();
@@ -177,7 +177,7 @@ export function Directory({
   // as loose.
   const folderIds = new Set(folders.map((f) => f.id));
   const loose = lists.filter((l) => !l.folder_id || !folderIds.has(l.folder_id));
-  const byFolder = new Map<string, ListSummary[]>();
+  const byFolder = new Map<string, SheetSummary[]>();
   for (const list of lists) {
     if (list.folder_id && folderIds.has(list.folder_id))
       byFolder.set(list.folder_id, [...(byFolder.get(list.folder_id) ?? []), list]);
@@ -226,7 +226,7 @@ export function Directory({
     );
   }
 
-  function listRow(list: ListSummary, indent: boolean) {
+  function listRow(list: SheetSummary, indent: boolean) {
     return (
       <tr key={list.id} className="align-middle">
         <td className={`w-full max-w-0 py-2.5 pr-4 ${indent ? "pl-10" : "pl-4"}`}>
@@ -364,7 +364,7 @@ export function Directory({
                         {renameCell("folder", folder.id, folder.label)}
                         {/* The server count on purpose: it is the folder's true size;
                             rows below it fill in as pages load. */}
-                        <span className="shrink-0 text-xs text-faint">{folder.list_count}</span>
+                        <span className="shrink-0 text-xs text-faint">{folder.sheet_count}</span>
                       </span>
                     </td>
                     <td className="px-4 py-2" />
@@ -373,7 +373,7 @@ export function Directory({
                       <RowMenu
                         kind="folder"
                         folders={[]}
-                        containedCount={folder.list_count}
+                        containedCount={folder.sheet_count}
                         onRename={() => {
                           setRenaming({ kind: "folder", id: folder.id });
                           setRenameValue(folder.label);

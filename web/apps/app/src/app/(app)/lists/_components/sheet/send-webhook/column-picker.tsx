@@ -1,7 +1,7 @@
 "use client";
 
 import { Switch } from "@bower/ui";
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 /** One switch per column, two to a row, labels only (a label is unique
  * on a sheet, so the key would say nothing the label does not). The
@@ -23,7 +23,7 @@ export function ColumnPicker({
   id: string;
   legend: string;
   hint: string;
-  columns: ListColumn[];
+  columns: SheetColumn[];
   selected: ReadonlySet<string>;
   onChange: (next: Set<string>) => void;
   warned: boolean;

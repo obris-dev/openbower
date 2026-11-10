@@ -11,7 +11,7 @@ import {
   type OnChangeFn,
   type RowData,
 } from "@tanstack/react-table";
-import type { ListColumn, RenderableListRow } from "@bower/api";
+import type { SheetColumn, RenderableSheetRow } from "@bower/api";
 
 import { DEFAULT_COLUMN_WIDTH, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from "./lib/column-sizing";
 import { pendingWidth } from "./lib/column-widths";
@@ -22,11 +22,11 @@ declare module "@tanstack/react-table" {
   // of looking it up by key in a parallel array.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData extends RowData, TValue> {
-    column: ListColumn;
+    column: SheetColumn;
   }
 }
 
-export type GridHeader = Header<RenderableListRow, unknown>;
+export type GridHeader = Header<RenderableSheetRow, unknown>;
 
 /** What a cell's `width` style takes: the model's number once the
  * stored widths are in state, the pre-paint property until then. */
@@ -51,15 +51,15 @@ export function useGridTable({
   onSizingInfoChange,
 }: {
   listId: string;
-  columns: ListColumn[];
-  rows: RenderableListRow[];
+  columns: SheetColumn[];
+  rows: RenderableSheetRow[];
   widthsLoaded: boolean;
   sizing: ColumnSizingState;
   sizingInfo: ColumnSizingInfoState;
   onSizingChange: OnChangeFn<ColumnSizingState>;
   onSizingInfoChange: OnChangeFn<ColumnSizingInfoState>;
 }): { headers: GridHeader[]; totalWidth: number; widthOf: (header: GridHeader) => CellWidth } {
-  const defs = useMemo<ColumnDef<RenderableListRow>[]>(
+  const defs = useMemo<ColumnDef<RenderableSheetRow>[]>(
     () =>
       columns.map((column) => ({
         id: column.key,

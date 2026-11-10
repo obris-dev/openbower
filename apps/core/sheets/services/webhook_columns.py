@@ -14,7 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from jobs.services import JobService
-from openbower_schema.lists import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
+from openbower_schema.sheets import DEFAULT_COLUMN_TYPE, AiColumn, WebhookColumn
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookDigestData, WebhookEnvelope
 from webhooks.models import WebhookDestination
 from webhooks.services import DestinationNotFound, Sent, WebhookDestinationService, envelope_of

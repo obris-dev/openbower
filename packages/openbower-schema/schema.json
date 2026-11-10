@@ -651,7 +651,7 @@
       "type": "object"
     },
     "ColumnPromptWire": {
-      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/lists/{id}/columns/{key}/prompt). A fill reads its agent live, so\nan edit reaches a running fill's next row; surfaces peeking at\n\"what fills this column\" read HERE.",
+      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/sheets/{id}/columns/{key}/prompt). A fill reads its agent live, so\nan edit reaches a running fill's next row; surfaces peeking at\n\"what fills this column\" read HERE.",
       "properties": {
         "model": {
           "title": "Model",
@@ -822,7 +822,7 @@
       "properties": {
         "columns": {
           "default": [],
-          "description": "One summary per AI column of the list this page belongs to.",
+          "description": "One summary per AI column of the sheet this page belongs to.",
           "items": {
             "$ref": "#/$defs/ColumnFillSummary"
           },
@@ -900,8 +900,8 @@
           "title": "Id",
           "type": "string"
         },
-        "list_id": {
-          "title": "List Id",
+        "sheet_id": {
+          "title": "Sheet Id",
           "type": "string"
         },
         "started_by": {
@@ -946,7 +946,7 @@
       },
       "required": [
         "id",
-        "list_id",
+        "sheet_id",
         "agent_id",
         "status",
         "column_keys",
@@ -961,7 +961,7 @@
       "type": "object"
     },
     "FolderSummary": {
-      "description": "A flat, account-scoped bucket for lists (taxonomy, not behavior).",
+      "description": "A flat, account-scoped bucket for sheets (taxonomy, not behavior).",
       "properties": {
         "created_at": {
           "title": "Created At",
@@ -975,9 +975,9 @@
           "title": "Label",
           "type": "string"
         },
-        "list_count": {
+        "sheet_count": {
           "description": "Server-side count; consent copy must not trust loaded pages.",
-          "title": "List Count",
+          "title": "Sheet Count",
           "type": "integer"
         },
         "updated_at": {
@@ -988,7 +988,7 @@
       "required": [
         "id",
         "label",
-        "list_count",
+        "sheet_count",
         "created_at",
         "updated_at"
       ],
@@ -1014,13 +1014,13 @@
     "ImportResult": {
       "description": "What a CSV upload produced.",
       "properties": {
-        "list": {
-          "$ref": "#/$defs/ListSummary"
-        },
         "rows": {
           "description": "Rows imported.",
           "title": "Rows",
           "type": "integer"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
         },
         "skipped": {
           "description": "Blank lines and rows wider than the header, not imported.",
@@ -1029,7 +1029,7 @@
         }
       },
       "required": [
-        "list",
+        "sheet",
         "rows",
         "skipped"
       ],
@@ -1095,7 +1095,7 @@
       "type": "object"
     },
     "IngestSchema": {
-      "description": "The pushable row shape for POST /v1/lists/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
+      "description": "The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
       "properties": {
         "columns": {
           "default": [],
@@ -1108,261 +1108,6 @@
         }
       },
       "title": "IngestSchema",
-      "type": "object"
-    },
-    "ListColumn": {
-      "description": "One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), or webhook (a Send webhook column). Narrow on `kind`.",
-      "discriminator": {
-        "mapping": {
-          "ai": "#/$defs/AiColumn",
-          "plain": "#/$defs/PlainColumn",
-          "webhook": "#/$defs/WebhookColumn"
-        },
-        "propertyName": "kind"
-      },
-      "oneOf": [
-        {
-          "$ref": "#/$defs/PlainColumn"
-        },
-        {
-          "$ref": "#/$defs/AiColumn"
-        },
-        {
-          "$ref": "#/$defs/WebhookColumn"
-        }
-      ]
-    },
-    "ListDetail": {
-      "description": "One list as its SHEET holds it: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, list create, CSV import, and a saved discover run stay on\nthe summary and read no workflow.",
-      "properties": {
-        "columns": {
-          "default": [],
-          "description": "Display order.",
-          "items": {
-            "$ref": "#/$defs/ListColumn"
-          },
-          "title": "Columns",
-          "type": "array"
-        },
-        "created_at": {
-          "title": "Created At",
-          "type": "string"
-        },
-        "entry_action_ids": {
-          "description": "The sheet's entry actions: the workflow nodes an arriving row starts, each the action right behind its path's entry marker. A column whose node_id is here is one a fill may start at. Derived from the sheet's paths on every read, never stored.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Entry Action Ids",
-          "type": "array"
-        },
-        "folder_id": {
-          "default": "",
-          "description": "The containing folder; empty = loose at the root.",
-          "title": "Folder Id",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "origin": {
-          "description": "How the list came to exist.",
-          "enum": [
-            "discover",
-            "csv",
-            "manual"
-          ],
-          "title": "Origin",
-          "type": "string"
-        },
-        "origin_ref": {
-          "default": "",
-          "description": "e.g. the source run id for discover snapshots.",
-          "title": "Origin Ref",
-          "type": "string"
-        },
-        "row_count": {
-          "description": "Total rows (the sheet may page far beyond one response).",
-          "title": "Row Count",
-          "type": "integer"
-        },
-        "updated_at": {
-          "title": "Updated At",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "label",
-        "origin",
-        "row_count",
-        "created_at",
-        "updated_at",
-        "entry_action_ids"
-      ],
-      "title": "ListDetail",
-      "type": "object"
-    },
-    "ListRowWire": {
-      "description": "A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).",
-      "properties": {
-        "data": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "description": "Cell values keyed by column key.",
-          "title": "Data",
-          "type": "object"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "states": {
-          "additionalProperties": {
-            "$ref": "#/$defs/CellStateWire"
-          },
-          "default": {},
-          "description": "Cell states keyed by column key, for every node column (AI and Send webhook alike): every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean; never-attempted (an AI cell no fill reached, a webhook cell whose row was never due) is likewise an absence.",
-          "title": "States",
-          "type": "object"
-        }
-      },
-      "required": [
-        "id"
-      ],
-      "title": "ListRowWire",
-      "type": "object"
-    },
-    "ListRowsPage": {
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/ListRowWire"
-          },
-          "title": "Items",
-          "type": "array"
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "An opaque cursor for the next page when more rows exist: hand it back as ?after= verbatim (it carries what the server needs to continue; nothing about it is for the client to read).",
-          "title": "Next Cursor"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "title": "ListRowsPage",
-      "type": "object"
-    },
-    "ListSummary": {
-      "description": "One list as the index shows it (and the save-list response).",
-      "properties": {
-        "columns": {
-          "default": [],
-          "description": "Display order.",
-          "items": {
-            "$ref": "#/$defs/ListColumn"
-          },
-          "title": "Columns",
-          "type": "array"
-        },
-        "created_at": {
-          "title": "Created At",
-          "type": "string"
-        },
-        "folder_id": {
-          "default": "",
-          "description": "The containing folder; empty = loose at the root.",
-          "title": "Folder Id",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "label": {
-          "title": "Label",
-          "type": "string"
-        },
-        "origin": {
-          "description": "How the list came to exist.",
-          "enum": [
-            "discover",
-            "csv",
-            "manual"
-          ],
-          "title": "Origin",
-          "type": "string"
-        },
-        "origin_ref": {
-          "default": "",
-          "description": "e.g. the source run id for discover snapshots.",
-          "title": "Origin Ref",
-          "type": "string"
-        },
-        "row_count": {
-          "description": "Total rows (the sheet may page far beyond one response).",
-          "title": "Row Count",
-          "type": "integer"
-        },
-        "updated_at": {
-          "title": "Updated At",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "label",
-        "origin",
-        "row_count",
-        "created_at",
-        "updated_at"
-      ],
-      "title": "ListSummary",
-      "type": "object"
-    },
-    "ListsPage": {
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/ListSummary"
-          },
-          "title": "Items",
-          "type": "array"
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The last id when more lists exist.",
-          "title": "Next Cursor"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "title": "ListsPage",
       "type": "object"
     },
     "LookalikeGroup": {
@@ -1665,7 +1410,7 @@
         },
         "rows": {
           "items": {
-            "$ref": "#/$defs/ListRowWire"
+            "$ref": "#/$defs/SheetRowWire"
           },
           "title": "Rows",
           "type": "array"
@@ -1746,6 +1491,261 @@
         "discarded"
       ],
       "title": "SearchToolCall",
+      "type": "object"
+    },
+    "SheetColumn": {
+      "description": "One column, exactly one kind: plain (hand-filled), ai (an agent's node fills it), or webhook (a Send webhook column). Narrow on `kind`.",
+      "discriminator": {
+        "mapping": {
+          "ai": "#/$defs/AiColumn",
+          "plain": "#/$defs/PlainColumn",
+          "webhook": "#/$defs/WebhookColumn"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PlainColumn"
+        },
+        {
+          "$ref": "#/$defs/AiColumn"
+        },
+        {
+          "$ref": "#/$defs/WebhookColumn"
+        }
+      ]
+    },
+    "SheetDetail": {
+      "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create, CSV import, and a saved discover run stay on\nthe summary and read no workflow.",
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "Display order.",
+          "items": {
+            "$ref": "#/$defs/SheetColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "entry_action_ids": {
+          "description": "The sheet's entry actions: the workflow nodes an arriving row starts, each the action right behind its path's entry marker. A column whose node_id is here is one a fill may start at. Derived from the sheet's paths on every read, never stored.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Entry Action Ids",
+          "type": "array"
+        },
+        "folder_id": {
+          "default": "",
+          "description": "The containing folder; empty = loose at the root.",
+          "title": "Folder Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "origin": {
+          "description": "How the sheet came to exist.",
+          "enum": [
+            "discover",
+            "csv",
+            "manual"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "origin_ref": {
+          "default": "",
+          "description": "e.g. the source run id for discover snapshots.",
+          "title": "Origin Ref",
+          "type": "string"
+        },
+        "row_count": {
+          "description": "Total rows (the sheet may page far beyond one response).",
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "origin",
+        "row_count",
+        "created_at",
+        "updated_at",
+        "entry_action_ids"
+      ],
+      "title": "SheetDetail",
+      "type": "object"
+    },
+    "SheetRowWire": {
+      "description": "A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).",
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Cell values keyed by column key.",
+          "title": "Data",
+          "type": "object"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "states": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CellStateWire"
+          },
+          "default": {},
+          "description": "Cell states keyed by column key, for every node column (AI and Send webhook alike): every cell without a value, plus filled cells whose run had a degraded tool. Slim on absences by contract, so a long-filled sheet carries almost nothing here. A value in `data` with no entry here IS filled and clean; never-attempted (an AI cell no fill reached, a webhook cell whose row was never due) is likewise an absence.",
+          "title": "States",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "SheetRowWire",
+      "type": "object"
+    },
+    "SheetRowsPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SheetRowWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An opaque cursor for the next page when more rows exist: hand it back as ?after= verbatim (it carries what the server needs to continue; nothing about it is for the client to read).",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "SheetRowsPage",
+      "type": "object"
+    },
+    "SheetSummary": {
+      "description": "One sheet as the index shows it (and the save-list response).",
+      "properties": {
+        "columns": {
+          "default": [],
+          "description": "Display order.",
+          "items": {
+            "$ref": "#/$defs/SheetColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "folder_id": {
+          "default": "",
+          "description": "The containing folder; empty = loose at the root.",
+          "title": "Folder Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "origin": {
+          "description": "How the sheet came to exist.",
+          "enum": [
+            "discover",
+            "csv",
+            "manual"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "origin_ref": {
+          "default": "",
+          "description": "e.g. the source run id for discover snapshots.",
+          "title": "Origin Ref",
+          "type": "string"
+        },
+        "row_count": {
+          "description": "Total rows (the sheet may page far beyond one response).",
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "origin",
+        "row_count",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "SheetSummary",
+      "type": "object"
+    },
+    "SheetsPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SheetSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last id when more sheets exist.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "SheetsPage",
       "type": "object"
     },
     "WebhookAttemptWire": {
@@ -1873,7 +1873,7 @@
       "type": "object"
     },
     "WebhookColumnConfigWire": {
-      "description": "A Send webhook column as configured, served by GET and echoed by\nPATCH on /lists/{id}/columns/{key}/webhook: what it waits for, where\nit sends, what rides, how often, and whether it is running.",
+      "description": "A Send webhook column as configured, served by GET and echoed by\nPATCH on /sheets/{id}/columns/{key}/webhook: what it waits for, where\nit sends, what rides, how often, and whether it is running.",
       "properties": {
         "destination_id": {
           "title": "Destination Id",

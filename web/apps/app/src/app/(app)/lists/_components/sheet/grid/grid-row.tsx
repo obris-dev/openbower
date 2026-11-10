@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@bower/ui";
-import type { RenderableListRow } from "@bower/api";
+import type { RenderableSheetRow } from "@bower/api";
 
 import type { SearchProviderChoice } from "../fill";
 import { GridCell } from "./grid-cell";
@@ -29,7 +29,7 @@ export function GridRow({
   selection,
   pendingColumn = false,
 }: {
-  row: RenderableListRow;
+  row: RenderableSheetRow;
   index: number;
   headers: GridHeader[];
   widthOf: (header: GridHeader) => CellWidth;

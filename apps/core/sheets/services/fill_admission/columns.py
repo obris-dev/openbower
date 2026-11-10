@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from agents.runtime.answer import reserved_output_key
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import COLUMN_LABEL_MAX_LENGTH, AiColumn, ListColumn
+from openbower_schema.sheets import COLUMN_LABEL_MAX_LENGTH, AiColumn, SheetColumn
 
 from ...constants import MAX_ACTIVE_FILLS, MAX_SHEET_COLUMNS, RESERVED_COLUMN_KEYS
 from ...models import Sheet
@@ -69,7 +69,7 @@ def append_columns(target_sheet: Sheet, *, column_keys: list[str], config: Agent
     yet). Type is fixed from here on: land_rows gates every value
     through it."""
     outputs_by_key = {output.key: output for output in config.outputs}
-    columns: list[ListColumn] = list(target_sheet.columns)
+    columns: list[SheetColumn] = list(target_sheet.columns)
     for key in column_keys:
         output = outputs_by_key[key]
         columns.append(
@@ -126,7 +126,7 @@ def point_columns(target_sheet: Sheet, *, column_keys: list[str], fill_run_id: s
     writes learns which fill now speaks for it. Stored rather than
     derived per read, which keeps the four second poll off a walk of
     every fill the sheet has had. Nothing else about a column changes."""
-    columns: list[ListColumn] = []
+    columns: list[SheetColumn] = []
     for column in target_sheet.columns:
         if column.key in column_keys and isinstance(column, AiColumn):
             column = column.model_copy(update={"current_fill_id": fill_run_id})

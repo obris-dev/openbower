@@ -1,4 +1,4 @@
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 export type SampleStepper = {
   // The sample's place among the loaded rows, 0-based; the line the
@@ -13,7 +13,7 @@ export type SampleStepper = {
  * excluded, so an empty payload is unrepresentable rather than refused. */
 export type CellActions = {
   labels: Record<string, string>;
-  missing: ListColumn[];
+  missing: SheetColumn[];
   removable: boolean;
   onEdit: (key: string, value: string) => void;
   onRemove: (key: string) => void;

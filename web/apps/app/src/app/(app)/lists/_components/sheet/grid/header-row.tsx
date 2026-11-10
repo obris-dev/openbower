@@ -2,7 +2,7 @@
 
 import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import { Checkbox } from "@bower/ui";
-import type { ColumnType, ListColumn, WebhookColumn } from "@bower/api";
+import type { ColumnType, SheetColumn, WebhookColumn } from "@bower/api";
 
 import type { AddColumnKind } from "../add-column";
 import type { ColumnOutcome } from "../use-columns";
@@ -38,11 +38,11 @@ export function HeaderRow({
 }: {
   headers: GridHeader[];
   widthOf: (header: GridHeader) => CellWidth;
-  columns: ListColumn[];
+  columns: SheetColumn[];
   selection?: RowSelectionControls;
   onReorder?: (keys: string[]) => void;
   onRenameColumn?: (key: string, label: string) => void;
-  onDeleteColumn?: (column: ListColumn) => Promise<ColumnOutcome>;
+  onDeleteColumn?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
   pendingColumn?: { type: ColumnType } | null;
   onNamePending?: (label: string) => void;

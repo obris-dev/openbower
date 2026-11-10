@@ -1,5 +1,5 @@
 """`/v1/runs`: the run-scoped endpoints (the preview's start, a run read
-by id, run cancel). A SECOND urlconf beside `/v1/lists` because these
+by id, run cancel). A SECOND urlconf beside `/v1/sheets` because these
 routes are not sheet-scoped: a preview run has no sheet at all. Views
 stay thin dispatch; the lane lives in services.preview_runs."""
 

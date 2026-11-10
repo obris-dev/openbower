@@ -17,7 +17,7 @@ import {
   type ApiKeysList,
   type FoldersList,
 } from "@bower/schema";
-import { renderablePage, TolerantListRowsPageSchema, type RenderableListRowsPage, TolerantListsPageSchema, TolerantListDetailSchema, type ListsPage, type ListDetail } from "./lists.ts";
+import { renderablePage, TolerantSheetRowsPageSchema, type RenderableSheetRowsPage, TolerantSheetsPageSchema, TolerantSheetDetailSchema, type SheetsPage, type SheetDetail } from "./sheets.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 import {
@@ -98,34 +98,34 @@ export async function fetchWebhookWithCookie(
 }
 
 /** Server-side lists index page. */
-export async function fetchListsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<ListsPage>> {
-  return fetchParsedWithCookie(apiRoutes.lists.index, cookieHeader, TolerantListsPageSchema);
+export async function fetchSheetsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<SheetsPage>> {
+  return fetchParsedWithCookie(apiRoutes.sheets.index, cookieHeader, TolerantSheetsPageSchema);
 }
 
 /** Server-side folder set for the home directory. */
 export async function fetchFoldersWithCookie(cookieHeader: string): Promise<ServerFetchResult<FoldersList>> {
-  return fetchParsedWithCookie(apiRoutes.lists.folders, cookieHeader, FoldersListSchema);
+  return fetchParsedWithCookie(apiRoutes.sheets.folders, cookieHeader, FoldersListSchema);
 }
 
 /** Server-side list detail; the page decides what each outcome renders. */
-export async function fetchListWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<ListDetail>> {
-  return fetchParsedWithCookie(apiRoutes.lists.detail(id), cookieHeader, TolerantListDetailSchema);
+export async function fetchSheetWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<SheetDetail>> {
+  return fetchParsedWithCookie(apiRoutes.sheets.detail(id), cookieHeader, TolerantSheetDetailSchema);
 }
 
 /** Server-side first rows page, so the sheet paints with data. */
-export async function fetchListRowsWithCookie(
+export async function fetchSheetRowsWithCookie(
   cookieHeader: string,
   id: string,
   limit: number,
-): Promise<ServerFetchResult<RenderableListRowsPage>> {
+): Promise<ServerFetchResult<RenderableSheetRowsPage>> {
   // TOLERANT here too, and for a sharper reason than on the client: a
   // strict enum on the server render fails the whole PAGE, not one
   // poll, so a cause added server-side would blank the sheet for
   // every deploy still serving the old bundle.
   const res = await fetchParsedWithCookie(
-    `${apiRoutes.lists.rows(id)}?limit=${limit}`,
+    `${apiRoutes.sheets.rows(id)}?limit=${limit}`,
     cookieHeader,
-    TolerantListRowsPageSchema,
+    TolerantSheetRowsPageSchema,
   );
   return res.status === "ok" ? { ...res, data: renderablePage(res.data) } : res;
 }

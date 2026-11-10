@@ -1,4 +1,4 @@
-"""The typed column array: Sheet.columns is ListColumn values (one kind
+"""The typed column array: Sheet.columns is SheetColumn values (one kind
 each) on load and on assignment, their dumps at rest, and the field is
 a plain JSONField to migrations.
 
@@ -14,7 +14,7 @@ from django.db import connection
 from django.test import SimpleTestCase, TestCase
 from pydantic import ValidationError
 
-from openbower_schema.lists import AiColumn, ColumnBase, ListColumn, PlainColumn, WebhookColumn, WorkflowColumn
+from openbower_schema.sheets import AiColumn, ColumnBase, PlainColumn, SheetColumn, WebhookColumn, WorkflowColumn
 
 from ..fields import SheetColumnsField
 from ..models import Sheet
@@ -133,7 +133,7 @@ class WorkflowColumnTests(SimpleTestCase):
         # Both directions: a kind that declares its own node_id instead
         # of extending the base would slip past every reader that asks
         # isinstance(column, WorkflowColumn).
-        union, _ = get_args(ListColumn.__value__)
+        union, _ = get_args(SheetColumn.__value__)
         members = get_args(union)
         self.assertEqual(
             [member for member in members if issubclass(member, WorkflowColumn)], [AiColumn, WebhookColumn]

@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .agents import MAX_TOOL_CALLS, ToolCall
-from .lists import WireCellState as WireCellState
+from .sheets import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
 
@@ -152,7 +152,7 @@ class FillRunWire(BaseModel):
     (see FillRunPage)."""
 
     id: str
-    list_id: str
+    sheet_id: str
     agent_id: str
     status: FillStatusWire
     column_keys: list[str] = Field(description="The columns this run owns, frozen at consent.")
@@ -239,7 +239,7 @@ class FillRunPage(BaseModel):
         "would name neither."
     )
     columns: list[ColumnFillSummary] = Field(
-        default=[], description="One summary per AI column of the list this page belongs to."
+        default=[], description="One summary per AI column of the sheet this page belongs to."
     )
     next_cursor: str | None = Field(default=None, description="The last id when more runs exist.")
 
@@ -247,7 +247,7 @@ class FillRunPage(BaseModel):
 class ColumnPromptWire(BaseModel):
     """The column's CURRENT fill config as the server holds it (GET),
     and the echo after a column-scoped edit (PATCH
-    /lists/{id}/columns/{key}/prompt). A fill reads its agent live, so
+    /sheets/{id}/columns/{key}/prompt). A fill reads its agent live, so
     an edit reaches a running fill's next row; surfaces peeking at
     "what fills this column" read HERE."""
 

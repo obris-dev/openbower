@@ -1,5 +1,5 @@
 """The typed column array: in memory `Sheet.columns` is a list of the
-contract's ListColumn values (one kind each: plain, AI, webhook), at
+contract's SheetColumn values (one kind each: plain, AI, webhook), at
 rest it is the JSON array of their dumps. One seam, so no reader
 restates the shape by hand, and a column the contract refuses (an
 unknown kind, a missing key, a stored column with no kind) fails at
@@ -39,12 +39,12 @@ from django.db.models.fields.json import KeyTransform
 from django.db.models.query_utils import DeferredAttribute
 from pydantic import TypeAdapter
 
-from openbower_schema.lists import ListColumn
+from openbower_schema.sheets import SheetColumn
 
-_COLUMNS_ADAPTER = TypeAdapter(list[ListColumn])
+_COLUMNS_ADAPTER = TypeAdapter(list[SheetColumn])
 
 
-def parse_columns(value: Any) -> list[ListColumn]:
+def parse_columns(value: Any) -> list[SheetColumn]:
     """Typed values from whatever a caller or the database hands over:
     a JSON string, dicts, or already-typed values (idempotent)."""
     if isinstance(value, str):
@@ -62,7 +62,7 @@ class _ColumnsAttribute(DeferredAttribute):
 
 
 class SheetColumnsField(models.JSONField):
-    """The columns array: the contract's ListColumn values in memory,
+    """The columns array: the contract's SheetColumn values in memory,
     their dumps at rest, a plain JSONField to migrations."""
 
     descriptor_class = _ColumnsAttribute
@@ -74,7 +74,7 @@ class SheetColumnsField(models.JSONField):
             return value
         return parse_columns(value)
 
-    def to_python(self, value: Any) -> list[ListColumn]:
+    def to_python(self, value: Any) -> list[SheetColumn]:
         return parse_columns(value)
 
     def get_db_prep_value(self, value: Any, connection: Any, prepared: bool = False) -> Any:

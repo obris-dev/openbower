@@ -32,7 +32,7 @@ from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 
 from ..cells import AnsweredWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import NON_TERMINAL_NODE_RUN_STATES, CellSource, NodeRunStatus, StoredCellState
@@ -108,13 +108,13 @@ def chain_behind(target_sheet: Sheet, *, upstream_node_id: str, key: str) -> Nod
 
 
 def post_ai_column(client, sheet_id: str, body: dict):
-    """POST /v1/lists/{id}/columns/ai: the create alone (no fill)."""
+    """POST /v1/sheets/{id}/columns/ai: the create alone (no fill)."""
     url = reverse("sheets_columns_ai", kwargs={"id": sheet_id})
     return client.post(url, body, content_type="application/json")
 
 
 def post_column_fill(client, sheet_id: str, key: str, max_row_count: int = 0):
-    """POST /v1/lists/{id}/columns/{key}/fill, the scope key only when
+    """POST /v1/sheets/{id}/columns/{key}/fill, the scope key only when
     scoped (the drawer and the tracker send it that way)."""
     url = reverse("sheets_column_fill", kwargs={"id": sheet_id, "key": key})
     body = {"max_row_count": max_row_count} if max_row_count else {}

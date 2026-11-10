@@ -1,4 +1,4 @@
-"""Request validation + wire builders for /v1/lists and /v1/runs.
+"""Request validation + wire builders for /v1/sheets and /v1/runs.
 Wire dicts mirror
 the schema package's models one-to-one (the web types against those)."""
 
@@ -13,13 +13,13 @@ from jobs.models import Job
 from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
-from openbower_schema.lists import CellStateWire, IngestColumn, WorkflowColumn
-from openbower_schema.lists import FolderSummary as WireFolderSummary
-from openbower_schema.lists import IngestSchema as WireIngestSchema
-from openbower_schema.lists import ListDetail as WireListDetail
-from openbower_schema.lists import ListRowWire as WireListRow
-from openbower_schema.lists import ListSummary as WireListSummary
 from openbower_schema.runs import NodeRunWire as WireNodeRun
+from openbower_schema.sheets import CellStateWire, IngestColumn, WorkflowColumn
+from openbower_schema.sheets import FolderSummary as WireFolderSummary
+from openbower_schema.sheets import IngestSchema as WireIngestSchema
+from openbower_schema.sheets import SheetDetail as WireSheetDetail
+from openbower_schema.sheets import SheetRowWire as WireSheetRow
+from openbower_schema.sheets import SheetSummary as WireSheetSummary
 
 from .constants import (
     COLUMN_KEY_GRAMMAR,
@@ -150,7 +150,7 @@ class FolderRequest(serializers.Serializer):
 
 
 class AiColumnRequest(serializers.Serializer):
-    """POST /v1/lists/{id}/columns/ai: the quick tab sends `config`
+    """POST /v1/sheets/{id}/columns/ai: the quick tab sends `config`
     (validated through the agents app's shared serializer, never
     retyped), the other tab sends `agent_id`; exactly one of the two.
     No column label rides the request: the OUTPUTS are the columns
@@ -182,7 +182,7 @@ class PreviewRunRequest(serializers.Serializer):
 
 
 class ColumnFillRequest(serializers.Serializer):
-    """POST /v1/lists/{id}/columns/{key}/fill: the column names
+    """POST /v1/sheets/{id}/columns/{key}/fill: the column names
     everything except the optional scope, so the body carries at most
     `max_row_count` (the first N rows owed a run; absent = all)."""
 
@@ -190,14 +190,14 @@ class ColumnFillRequest(serializers.Serializer):
 
 
 class ColumnRenameRequest(serializers.Serializer):
-    """PATCH /v1/lists/{id}/columns/{key}: the label, and only the
+    """PATCH /v1/sheets/{id}/columns/{key}: the label, and only the
     label. The key is the path, not a field, because it never moves."""
 
     label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
 
 
 class ColumnOrderRequest(serializers.Serializer):
-    """PATCH /v1/lists/{id}/column-order: the full ordered key list.
+    """PATCH /v1/sheets/{id}/column-order: the full ordered key list.
 
     The WHOLE order, not a move instruction, because the server has to
     check the set is unchanged and a move (from, to) cannot be checked
@@ -217,7 +217,7 @@ class ColumnOrderRequest(serializers.Serializer):
 
 
 class ColumnPromptRequest(serializers.Serializer):
-    """PATCH /v1/lists/{id}/columns/{key}/prompt: the one editable fact
+    """PATCH /v1/sheets/{id}/columns/{key}/prompt: the one editable fact
     of a column's fill agent, bounded by the contract's own prompt cap
     (the same bound the agent serializers enforce)."""
 
@@ -225,7 +225,7 @@ class ColumnPromptRequest(serializers.Serializer):
 
 
 class ColumnAddRequest(serializers.Serializer):
-    """POST /v1/lists/{id}/columns: one BLANK column. The key is not a
+    """POST /v1/sheets/{id}/columns: one BLANK column. The key is not a
     field; it derives server-side from the label, by the one derivation
     rule fills also use, so an output whose label reads the same lands
     on this key and refuses rather than writing here."""
@@ -252,12 +252,12 @@ def sheet_detail_wire(target: Sheet) -> dict[str, Any]:
     actions = workflows.entry_action_ids(str(target.id))
     summary = _sheet_summary(target)
     fields = summary.model_dump()
-    detail = WireListDetail(**fields, entry_action_ids=actions)
+    detail = WireSheetDetail(**fields, entry_action_ids=actions)
     return detail.model_dump()
 
 
-def _sheet_summary(target: Sheet) -> WireListSummary:
-    return WireListSummary(
+def _sheet_summary(target: Sheet) -> WireSheetSummary:
+    return WireSheetSummary(
         id=str(target.id),
         label=target.label,
         folder_id=target.folder_id,
@@ -326,13 +326,13 @@ def validate_ingest_rows(target: Sheet, rows: list[dict[str, str]]) -> tuple[lis
     return problems, storable_rows
 
 
-def folder_wire(folder: Folder, *, list_count: int) -> dict[str, Any]:
-    # list_count is server truth: the web's folder-delete consent copy
+def folder_wire(folder: Folder, *, sheet_count: int) -> dict[str, Any]:
+    # sheet_count is server truth: the web's folder-delete consent copy
     # counts on it, and loaded pages may not cover the folder.
     return WireFolderSummary(
         id=str(folder.id),
         label=folder.label,
-        list_count=list_count,
+        sheet_count=sheet_count,
         created_at=folder.created_at.isoformat(),
         updated_at=folder.updated_at.isoformat(),
     ).model_dump()
@@ -355,7 +355,7 @@ def row_wire(row: SheetRow, states: dict[str, CellStateWire] | None = None) -> d
     """A sheet row with its cell states (every node column's) beside its
     values. ONE shape rather than paged reads walking in lockstep,
     which was a client-side join carried over the network."""
-    return WireListRow(id=str(row.id), data=row.data, states=states or {}).model_dump()
+    return WireSheetRow(id=str(row.id), data=row.data, states=states or {}).model_dump()
 
 
 def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
@@ -378,7 +378,7 @@ def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:
     error = fill_progress.error_of(fill.status, fill.error_code, fill.error)
     return WireFillRun(
         id=str(fill.id),
-        list_id=fill.target_id,
+        sheet_id=fill.target_id,
         agent_id=consent.agent_id,
         status=status,
         column_keys=consent.column_keys,
@@ -413,7 +413,7 @@ def fill_runs_wire(fills: list[Job]) -> list[dict[str, Any]]:
 
 
 class WebhookColumnTestRequest(serializers.Serializer):
-    """POST /v1/lists/{id}/columns/webhook/test: the destination, the
+    """POST /v1/sheets/{id}/columns/webhook/test: the destination, the
     columns the future column waits on, the columns it sends, the sample
     row, and the caller's values for the payload columns (the sample is
     editable). Cell values carry no length bound here: the service runs
@@ -481,14 +481,14 @@ class _WebhookColumnConfigFields(serializers.Serializer):
 
 
 class WebhookColumnPatchRequest(_WebhookColumnConfigFields):
-    """PATCH /v1/lists/{id}/columns/{key}/webhook: the whole config,
+    """PATCH /v1/sheets/{id}/columns/{key}/webhook: the whole config,
     rewritten, plus whether it runs."""
 
     enabled = serializers.BooleanField(default=True)
 
 
 class WebhookColumnAddRequest(_WebhookColumnConfigFields):
-    """POST /v1/lists/{id}/columns/webhook: the config plus the label the
+    """POST /v1/sheets/{id}/columns/webhook: the config plus the label the
     column's key derives from. A new column always runs, so `enabled` is
     not a field here: a request cannot send what the add would ignore."""
 

@@ -1,4 +1,4 @@
-import type { AgentOutput, ListColumn } from "@bower/api";
+import type { AgentOutput, SheetColumn } from "@bower/api";
 
 // Past the family's index ON PURPOSE, and with the extension: this
 // module is node-tested, and the barrel re-exports .tsx components a
@@ -24,7 +24,7 @@ export function landingKeys(outputs: AgentOutput[]): string[] {
  * refused at admission whether or not the column holds values, so a
  * key match is the whole answer and the client needs to know nothing
  * about emptiness (which paged rows could not tell it anyway). */
-export function collidingKeys(outputs: AgentOutput[], columns: ListColumn[]): string[] {
+export function collidingKeys(outputs: AgentOutput[], columns: SheetColumn[]): string[] {
   const existing = new Set(columns.map((column) => column.key));
   return landingKeys(outputs).filter((key) => existing.has(key));
 }

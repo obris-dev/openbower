@@ -1,4 +1,4 @@
-import type { RenderableListRow } from "@bower/api";
+import type { RenderableSheetRow } from "@bower/api";
 
 // The first re-read while a cell shows pending (binary): the fill
 // poll's own cadence, so a quick autofill lands about as fast as a
@@ -26,7 +26,7 @@ export function readsAreTroubled(failures: number): boolean {
  * on a pushed row, a webhook waiting for its window), so nothing else
  * re-reads the rows when it lands. A cell joining or leaving the set
  * changes the string, which is what restarts the re-read schedule. */
-export function pendingSignature(rows: readonly Pick<RenderableListRow, "id" | "states">[]): string {
+export function pendingSignature(rows: readonly Pick<RenderableSheetRow, "id" | "states">[]): string {
   const cells: string[] = [];
   for (const row of rows) {
     for (const [key, entry] of Object.entries(row.states ?? {})) {

@@ -7,18 +7,18 @@ import {
   COLUMN_WAITED_ON_CODE,
   GENERIC_FAILURE,
   deleteColumn,
-  fetchList,
+  fetchSheet,
   postAiColumn,
   postColumn,
   postColumnWebhook,
   renameColumn,
   reorderColumns,
   updateColumnWebhook,
-  updateList,
+  updateSheet,
   type AiColumnBody,
   type ColumnType,
-  type ListColumn,
-  type ListDetail,
+  type SheetColumn,
+  type SheetDetail,
   type WebhookColumnBody,
   type WebhookColumnPatchBody,
 } from "@bower/api";
@@ -48,12 +48,12 @@ const LEAVING: Extract<ColumnOutcome, { ok: false }> = { ok: false, error: "", d
  * a write means for the rest of the sheet (rows to re-read, a fill to
  * re-attach, a drawer to close) is the sheet's composition, not this
  * hook's: each op reports its outcome and stops. */
-export function useColumns(initialDetail: ListDetail): {
-  detail: ListDetail;
+export function useColumns(initialDetail: SheetDetail): {
+  detail: SheetDetail;
   pendingColumn: { type: ColumnType } | null;
   reorder: (keys: string[]) => Promise<void>;
   rename: (key: string, label: string) => Promise<void>;
-  remove: (column: ListColumn) => Promise<ColumnOutcome>;
+  remove: (column: SheetColumn) => Promise<ColumnOutcome>;
   addAi: (body: AiColumnBody) => Promise<AiColumnOutcome>;
   addWebhook: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
   saveWebhook: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
@@ -86,7 +86,7 @@ export function useColumns(initialDetail: ListDetail): {
   }, []);
 
   const reread = useCallback(async (): Promise<boolean> => {
-    const summary = await fetchList(detail.id);
+    const summary = await fetchSheet(detail.id);
     if (redirectIfUnauthenticated(summary)) return true;
     if (summary.status === "ok") setDetail(summary.data);
     return false;
@@ -159,7 +159,7 @@ export function useColumns(initialDetail: ListDetail): {
   // renders the server's sentence in place; any other failure toasts
   // here and returns an empty outcome, so the tier folds.
   const remove = useCallback(
-    async (column: ListColumn): Promise<ColumnOutcome> => {
+    async (column: SheetColumn): Promise<ColumnOutcome> => {
       const res = await deleteColumn(detail.id, column.key);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") {
@@ -246,7 +246,7 @@ export function useColumns(initialDetail: ListDetail): {
 
   const renameList = useCallback(
     async (label: string): Promise<boolean> => {
-      const res = await updateList(detail.id, { label });
+      const res = await updateSheet(detail.id, { label });
       if (!ensureOk(res, toast, { title: "List not renamed" })) return false;
       setDetail(res.data);
       return true;

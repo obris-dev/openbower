@@ -13,16 +13,16 @@ import {
 } from "@bower/ui";
 import { ChevronDown, MoreHorizontal, Pencil } from "lucide-react";
 import {
-  deleteList,
+  deleteSheet,
   fetchAgentCatalog,
   GENERIC_FAILURE,
   loginUrl, returnPath,
   postColumnFill,
-  type ListColumn,
+  type SheetColumn,
   type WebhookColumn,
   webRoutes,
-  type RenderableListRowsPage,
-  type ListDetail,
+  type RenderableSheetRowsPage,
+  type SheetDetail,
   type WebhookColumnBody,
   type WebhookColumnPatchBody,
 } from "@bower/api";
@@ -57,7 +57,7 @@ import { AddRowsBar } from "./add-rows-bar";
  * Three hooks own the three kinds of state (the summary and its
  * columns, the rows on screen, the fill attachment); this component
  * composes their reactions to each other and renders. */
-export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetail; initialRows: RenderableListRowsPage }) {
+export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDetail; initialRows: RenderableSheetRowsPage }) {
   const router = useRouter();
   const toast = useToast();
   const columns = useColumns(initialDetail);
@@ -91,7 +91,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   // Add column menu), so half-open states are unrepresentable and the
   // two drawers (the AI column, the Send webhook column) can never be
   // open together.
-  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: ListColumn | null } | null>(
+  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: SheetColumn | null } | null>(
     null,
   );
   const [lookalikesOpen, setLookalikesOpen] = useState(false);
@@ -221,7 +221,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
     addColumnInvokerRef.current = null;
   }
 
-  async function removeColumn(column: ListColumn): Promise<ColumnOutcome> {
+  async function removeColumn(column: SheetColumn): Promise<ColumnOutcome> {
     const outcome = await columns.remove(column);
     if (!outcome.ok) return outcome;
     // The values left with the column, so the loaded rows still
@@ -385,7 +385,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: ListDetai
   }
 
   async function remove() {
-    const res = await deleteList(detail.id);
+    const res = await deleteSheet(detail.id);
     if (!ensureOk(res, toast)) return;
     toast.success("List deleted.", detail.label);
     router.push(webRoutes.lists);

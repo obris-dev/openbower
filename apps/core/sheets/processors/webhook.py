@@ -28,7 +28,7 @@ from typing import ClassVar, NamedTuple
 
 from django.db import transaction
 
-from openbower_schema.lists import WebhookColumn
+from openbower_schema.sheets import WebhookColumn
 from webhooks.constants import DeliveryStatus
 from webhooks.models import WebhookDestination
 from webhooks.services import Sent, WebhookDestinationService

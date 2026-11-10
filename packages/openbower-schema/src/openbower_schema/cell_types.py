@@ -18,7 +18,7 @@ import re
 from collections.abc import Mapping
 from datetime import date
 
-from .lists import ColumnType
+from .sheets import ColumnType
 
 
 class CellTypeMismatch(Exception):

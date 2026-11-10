@@ -7,7 +7,7 @@ import { isLiveStatus, livenessRead } from "./live-status.ts";
 function run(status: FillRunWire["status"], id = "01RUN"): FillRunWire {
   return {
     id,
-    list_id: "01LIST",
+    sheet_id: "01LIST",
     agent_id: "01AGENT",
     status,
     column_keys: ["answer"],

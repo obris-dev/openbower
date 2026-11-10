@@ -1,4 +1,4 @@
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 /** Move one column to a new index, returning the resulting KEY order.
  *
@@ -11,7 +11,7 @@ import type { ListColumn } from "@bower/api";
  * to an arbitrary index, but "the order after this move" is one
  * question, and two implementations of it would drift the moment the
  * end conditions changed. */
-export function moveColumn(columns: ListColumn[], from: number, to: number): string[] {
+export function moveColumn(columns: SheetColumn[], from: number, to: number): string[] {
   const keys = columns.map((column) => column.key);
   // Out of range is a NO-OP, not a clamp: the callers below refuse at
   // the ends, and a silent clamp here would turn "move left from
@@ -25,7 +25,7 @@ export function moveColumn(columns: ListColumn[], from: number, to: number): str
 
 /** Whether a column can move that way: false at the ends, which is
  * what the menu items read to disable themselves. */
-export function canMove(columns: ListColumn[], key: string, direction: -1 | 1): boolean {
+export function canMove(columns: SheetColumn[], key: string, direction: -1 | 1): boolean {
   const index = columns.findIndex((column) => column.key === key);
   if (index < 0) return false;
   const target = index + direction;
@@ -35,7 +35,7 @@ export function canMove(columns: ListColumn[], key: string, direction: -1 | 1): 
 /** The order after nudging one column one place, or null when it
  * cannot move. Null rather than the unchanged order, so a caller
  * cannot send a no-op request believing it did something. */
-export function nudgeColumn(columns: ListColumn[], key: string, direction: -1 | 1): string[] | null {
+export function nudgeColumn(columns: SheetColumn[], key: string, direction: -1 | 1): string[] | null {
   if (!canMove(columns, key, direction)) return null;
   const index = columns.findIndex((column) => column.key === key);
   return moveColumn(columns, index, index + direction);
@@ -47,7 +47,7 @@ export function nudgeColumn(columns: ListColumn[], key: string, direction: -1 | 
  * render a teammate's add or delete may have outrun, and applying a
  * partial order optimistically would show a sheet the server is
  * about to refuse. */
-export function columnsInKeyOrder(columns: ListColumn[], keys: string[]): ListColumn[] | null {
+export function columnsInKeyOrder(columns: SheetColumn[], keys: string[]): SheetColumn[] | null {
   if (keys.length !== columns.length || new Set(keys).size !== keys.length) return null;
   const byKey = new Map(columns.map((column) => [column.key, column]));
   const moved = keys.map((key) => byKey.get(key)).filter((column) => column !== undefined);

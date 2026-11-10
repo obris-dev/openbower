@@ -1,6 +1,6 @@
-"""Lists wire shapes shared by the backend and the web client.
+"""Sheets wire shapes shared by the backend and the web client.
 
-A list is a content-agnostic SHEET: columns (a typed display schema) and
+A sheet is content-agnostic: columns (a typed display schema) and
 rows (data keyed by column keys). Nothing here references companies;
 company behavior interprets a chosen column's values at use time.
 """
@@ -25,7 +25,7 @@ DEFAULT_COLUMN_TYPE: ColumnType = "text"
 # may rely on never receiving more.
 CELL_MAX_LENGTH = 65_536
 
-ListOrigin = Literal["discover", "csv", "manual"]
+SheetOrigin = Literal["discover", "csv", "manual"]
 
 # Wire bounds on the contract (binary). The agents domain DERIVES its
 # output bounds from these: an output becomes a column when a fill
@@ -118,13 +118,13 @@ class WebhookColumn(WorkflowColumn):
 # two things at once, and a stored column with no kind is refused
 # rather than guessed. A PEP 695 alias rather than a plain one so
 # pydantic emits the union as a NAMED definition (the client gets one
-# ListColumn schema to narrow on) and the discriminator travels with
+# SheetColumn schema to narrow on) and the discriminator travels with
 # the type into every TypeAdapter that parses it. The vocabulary is
 # CLOSED on purpose, unlike the node-kind registry: the client renders
 # per kind, so a new kind is a client change, not a roster entry;
 # until that change ships, a client reads an unheard-of kind off the
 # base fields alone and claims nothing else for it.
-type ListColumn = Annotated[
+type SheetColumn = Annotated[
     PlainColumn | AiColumn | WebhookColumn,
     Field(
         discriminator="kind",
@@ -151,7 +151,7 @@ class IngestColumn(BaseModel):
 
 
 class IngestSchema(BaseModel):
-    """The pushable row shape for POST /v1/lists/{id}/ingest: a row in the
+    """The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the
     push is a dict keyed by these columns' keys, each value validated
     against the column's type on append. These are the columns a
     producer owns; the ones the system fills are not here and are
@@ -165,11 +165,11 @@ class IngestSchema(BaseModel):
 
 
 class FolderSummary(BaseModel):
-    """A flat, account-scoped bucket for lists (taxonomy, not behavior)."""
+    """A flat, account-scoped bucket for sheets (taxonomy, not behavior)."""
 
     id: str
     label: str
-    list_count: int = Field(description="Server-side count; consent copy must not trust loaded pages.")
+    sheet_count: int = Field(description="Server-side count; consent copy must not trust loaded pages.")
     created_at: str
     updated_at: str
 
@@ -178,27 +178,27 @@ class FoldersList(BaseModel):
     items: list[FolderSummary]
 
 
-class ListSummary(BaseModel):
-    """One list as the index shows it (and the save-list response)."""
+class SheetSummary(BaseModel):
+    """One sheet as the index shows it (and the save-list response)."""
 
     id: str
     label: str
     folder_id: str = Field(default="", description="The containing folder; empty = loose at the root.")
-    columns: list[ListColumn] = Field(default=[], description="Display order.")
-    origin: ListOrigin = Field(description="How the list came to exist.")
+    columns: list[SheetColumn] = Field(default=[], description="Display order.")
+    origin: SheetOrigin = Field(description="How the sheet came to exist.")
     origin_ref: str = Field(default="", description="e.g. the source run id for discover snapshots.")
     row_count: int = Field(description="Total rows (the sheet may page far beyond one response).")
     created_at: str
     updated_at: str
 
 
-class ListDetail(ListSummary):
-    """One list as its SHEET holds it: the summary plus what only the
+class SheetDetail(SheetSummary):
+    """One sheet as it opens: the summary plus what only the
     open sheet needs from its workflow. The detail door (GET and PATCH)
     and every write to the columns array (add, AI create, webhook
     create, rename, reorder, delete) answer with this; a column's own
     config doors (prompt, webhook config) answer their config, and the
-    index, list create, CSV import, and a saved discover run stay on
+    index, sheet create, CSV import, and a saved discover run stay on
     the summary and read no workflow."""
 
     entry_action_ids: list[str] = Field(
@@ -263,7 +263,7 @@ class CellStateWire(BaseModel):
     tools: dict[str, str] = {}
 
 
-class ListRowWire(BaseModel):
+class SheetRowWire(BaseModel):
     """A row in SHEET ORDER: the page's array order is the order, and a
     row number is whatever the renderer counts. Nothing about order
     rides the row itself (the server keeps a rank a move rewrites on
@@ -281,8 +281,8 @@ class ListRowWire(BaseModel):
     )
 
 
-class ListRowsPage(BaseModel):
-    items: list[ListRowWire]
+class SheetRowsPage(BaseModel):
+    items: list[SheetRowWire]
     next_cursor: str | None = Field(
         default=None,
         description="An opaque cursor for the next page when more rows exist: hand it back as ?after= "
@@ -291,9 +291,9 @@ class ListRowsPage(BaseModel):
     )
 
 
-class ListsPage(BaseModel):
-    items: list[ListSummary]
-    next_cursor: str | None = Field(default=None, description="The last id when more lists exist.")
+class SheetsPage(BaseModel):
+    items: list[SheetSummary]
+    next_cursor: str | None = Field(default=None, description="The last id when more sheets exist.")
 
 
 class RowsAdded(BaseModel):
@@ -303,7 +303,7 @@ class RowsAdded(BaseModel):
 
     added: int
     row_count: int
-    rows: list[ListRowWire]
+    rows: list[SheetRowWire]
 
 
 class RowsDeleted(BaseModel):
@@ -325,6 +325,6 @@ class IngestAccepted(BaseModel):
 class ImportResult(BaseModel):
     """What a CSV upload produced."""
 
-    list: ListSummary
+    sheet: SheetSummary
     rows: int = Field(description="Rows imported.")
     skipped: int = Field(description="Blank lines and rows wider than the header, not imported.")

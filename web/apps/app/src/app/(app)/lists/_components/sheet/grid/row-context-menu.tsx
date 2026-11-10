@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@bower/ui";
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 import { acceptsPaste } from "./lib/cell-clipboard";
 import { shortcutLabel } from "./lib/shortcut-label";
@@ -34,7 +34,7 @@ export function RowContextMenu({
   actions,
   children,
 }: {
-  columns: ListColumn[];
+  columns: SheetColumn[];
   actions: CellActions;
   children: ReactNode;
 }) {

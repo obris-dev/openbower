@@ -1,6 +1,6 @@
 "use client";
 
-import type { ListColumn, RenderableListRow } from "@bower/api";
+import type { SheetColumn, RenderableSheetRow } from "@bower/api";
 
 import type { KeyboardEvent, MouseEvent, PointerEvent } from "react";
 
@@ -21,7 +21,7 @@ const ARROWS: Record<string, Direction> = {
   ArrowRight: "right",
 };
 
-function Value({ column, value }: { column: ListColumn; value: string }) {
+function Value({ column, value }: { column: SheetColumn; value: string }) {
   const href = cellHref(column.type, value);
   if (href) {
     return (
@@ -62,8 +62,8 @@ export function GridCell({
   width,
   searchProvider,
 }: {
-  column: ListColumn;
-  row: RenderableListRow;
+  column: SheetColumn;
+  row: RenderableSheetRow;
   width: CellWidth;
   searchProvider: SearchProviderChoice;
 }) {

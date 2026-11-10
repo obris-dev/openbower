@@ -1,4 +1,4 @@
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 import { moveColumn } from "../../lib/column-order.ts";
 
@@ -15,7 +15,7 @@ export type DragLanding = {
  * new. Null so a caller cannot send a request for a move that did not
  * happen: dropping a column back where it started is a no-op, not a
  * reorder, and the endpoint would answer 200 to a write of nothing. */
-export function orderAfterDrag(columns: ListColumn[], event: DragLanding): string[] | null {
+export function orderAfterDrag(columns: SheetColumn[], event: DragLanding): string[] | null {
   const { active, over } = event;
   if (!over || active.id === over.id) return null;
   const from = columns.findIndex((column) => column.key === active.id);

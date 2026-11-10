@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Select } from "@bower/ui";
-import { webRoutes, type ListSummary } from "@bower/api";
+import { webRoutes, type SheetSummary } from "@bower/api";
 
 /** Seed Discover from this sheet: an inline disclosure (no modals in
  * this app) with a PLAIN column picker, empty until the user chooses.
@@ -15,7 +15,7 @@ export function FindLookalikes({
   open,
   onOpenChange,
 }: {
-  detail: ListSummary;
+  detail: SheetSummary;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {

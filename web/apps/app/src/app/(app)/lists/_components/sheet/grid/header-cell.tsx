@@ -4,7 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Popover, PopoverButton, PopoverPanel } from "@bower/ui";
 import { useState, type MouseEventHandler } from "react";
-import type { ListColumn, WebhookColumn } from "@bower/api";
+import type { SheetColumn, WebhookColumn } from "@bower/api";
 
 import type { ColumnOutcome } from "../use-columns";
 import { ColumnIcon } from "./column-icon";
@@ -46,11 +46,11 @@ export function HeaderCell({
 }: {
   header: GridHeader;
   width: CellWidth;
-  column: ListColumn;
-  columns: ListColumn[];
+  column: SheetColumn;
+  columns: SheetColumn[];
   onReorder?: (keys: string[]) => void;
   onRename?: (key: string, label: string) => void;
-  onDelete?: (column: ListColumn) => Promise<ColumnOutcome>;
+  onDelete?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
 }) {
   const [renaming, setRenaming] = useState(false);

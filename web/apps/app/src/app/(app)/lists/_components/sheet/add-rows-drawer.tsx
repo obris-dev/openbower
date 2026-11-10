@@ -57,7 +57,7 @@ function DrawerContent({
 }) {
   const [schema, setSchema] = useState<IngestSchema | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const url = buildApiUrl(apiRoutes.lists.ingest(listId));
+  const url = buildApiUrl(apiRoutes.sheets.ingest(listId));
 
   useEffect(() => {
     let current = true;
