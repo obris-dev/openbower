@@ -396,7 +396,7 @@ class SheetService:
         with transaction.atomic():
             # Ranks allocate after the sheet's last row, so concurrent
             # appends must serialize on the sheet row or the second one
-            # collides with the (list_id, rank) unique constraint.
+            # collides with the (sheet_id, rank) unique constraint.
             try:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
@@ -445,7 +445,7 @@ class SheetService:
         N is, and a value and the record that says what it is can
         never be written apart: the whole landing is one transaction of
         its own (a savepoint inside the caller's, which closes its runs
-        after, in the deletes' lock order: ListRow, ListCellState,
+        after, in the deletes' lock order: SheetRow, SheetCellState,
         NodeRun). One write per cell: two are refused before anything
         is written (CellWrittenTwice). Returns the verdict of each row
         that still exists: a row deleted since its writes were made has
@@ -771,7 +771,7 @@ class SheetService:
         lock; a landing locks the ROW, so one in flight on a row commits
         before the delete takes it, and a later one finds it gone). A
         page at a time, each page in the deletes' lock order, the one a
-        landing takes: ListRow, then ListCellState, then NodeRun. The
+        landing takes: SheetRow, then SheetCellState, then NodeRun. The
         rows' fill-backed and autofill runs are left alone (the sheet
         delete purges fills whole, with their runs; a row's run is the
         claimed task's to settle: it finds its row gone and settles
@@ -830,7 +830,7 @@ class SheetService:
             fills = fill_progress.fill_jobs().filter(target_id=str(target.id))
             # ROWS FIRST, then their truth, then the queue, because that
             # is the order a landing takes them: land_rows locks the
-            # ListRow and writes its ListCellState records, then the
+            # SheetRow and writes its SheetCellState records, then the
             # task settle writes the NodeRun, all in one transaction.
             # Deleting in another order is an ABBA deadlock against any
             # fill running on this sheet, which Postgres resolves by

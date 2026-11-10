@@ -161,7 +161,7 @@ class RowLanding(NamedTuple):
 
 class Landed(NamedTuple):
     """What the value pass handed back for one row: the verdict over
-    EVERY write, and the ListCellState records to write, which are the
+    EVERY write, and the SheetCellState records to write, which are the
     writes to WORKFLOW columns resolved to the one state
     each earned. A write the sheet keeps no record for lands its value
     and appears in the verdict alone."""

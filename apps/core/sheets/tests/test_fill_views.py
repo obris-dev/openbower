@@ -596,7 +596,7 @@ class CellStatesTests(FillViewsTestCase):
 class SheetDeleteTests(FillViewsTestCase):
     def test_the_purge_takes_locks_in_the_worker_s_order(self) -> None:
         # The consumer's terminal write is ONE transaction taking the
-        # ListRow (write_cells) and then the NodeRun (the task settle).
+        # SheetRow (write_cells) and then the NodeRun (the task settle).
         # A purge that took them the other way round was an ABBA
         # deadlock against any fill running on this sheet, resolved by
         # Postgres aborting one side: a 500 on the delete, or a burned

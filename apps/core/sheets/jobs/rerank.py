@@ -1,4 +1,4 @@
-"""Re-space a sheet's ranks (ListService.respace): queued once by a
+"""Re-space a sheet's ranks (SheetService.respace): queued once by a
 move that split a gap past RANK_REBALANCE_LENGTH, run as one slice.
 While the sheet has an open fill the slice waits: a walk's cursor holds
 a key of the old spacing, and a fill lasts minutes at the most."""

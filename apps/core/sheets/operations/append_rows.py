@@ -3,7 +3,7 @@ adding rows, an import, a snapshot. The rows land through the sheet
 service's primitive AND the workflow is told of the ones that hold
 something, in ONE transaction, so a row holding a value never exists
 with no work queued to fill it and no door can forget the second
-half. The primitive (ListService.add_rows) is called by nothing else
+half. The primitive (SheetService.add_rows) is called by nothing else
 in production; a pin holds that.
 
 Every door triggers, on purpose: a sheet that has no agent node yet

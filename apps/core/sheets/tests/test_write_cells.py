@@ -604,14 +604,14 @@ class LockGranularityTests(TransactionTestCase):
     """The hazard write_cells guards is a read-modify-write of ONE
     row's json, so the lock is on THAT ROW.
 
-    It used to take `select_for_update` on the LIST, and ListRow was
+    It used to take `select_for_update` on the LIST, and SheetRow was
     never locked anywhere in the codebase. That collapsed the worker's
     64 wide pool to concurrency 1 per sheet at the terminal write, and
     made two unrelated AI columns filling one sheet contend for
     nothing."""
 
     def test_a_landing_and_a_sheet_delete_take_the_tables_in_the_same_order(self) -> None:
-        # ListRow, then ListCellState, then NodeRun, on both sides: a
+        # SheetRow, then SheetCellState, then NodeRun, on both sides: a
         # landing writes the sheet (values and truth as one) and then
         # settles the run; the delete purges rows, truth, then runs. A
         # side that took them in another order is an ABBA deadlock

@@ -77,8 +77,8 @@ class PreviewRunServiceTests(TestCase):
         run = self._start()
         self.assertEqual(run.input, {"row": {"company": "acme.com"}, "config": quick_config().model_dump()})
         self.assertEqual(run.started_by, USER)
-        # row_id NULL: the row rides `input` and no ListRow exists for
-        # it; list_id "": no sheet by construction. The rank is the first
+        # row_id NULL: the row rides `input` and no SheetRow exists for
+        # it; sheet_id "": no sheet by construction. The rank is the first
         # key, as every run holds one; alone off any sheet, that is its place.
         self.assertIsNone(run.row_id)
         self.assertIsNone(run.fill_run_id)

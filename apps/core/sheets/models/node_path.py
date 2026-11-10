@@ -14,7 +14,7 @@ class NodePath(AccountScopedModel):
     is what makes "which paths does an arrival start" one indexed read
     rather than a walk of the workflow's nodes, and nothing here stores
     it: it is the head node, and the workflow writer keeps it there.
-    Deleted with its workflow by ListService.delete; nodes point at it
+    Deleted with its workflow by SheetService.delete; nodes point at it
     by id."""
 
     workflow_id = models.CharField(_("workflow id"), max_length=26)

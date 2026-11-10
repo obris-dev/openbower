@@ -56,7 +56,7 @@ class WireEnumParityTests(SimpleTestCase):
 
 class RowDoorPins(SimpleTestCase):
     def test_rows_enter_a_sheet_through_the_one_append(self):
-        # ListService.add_rows is the primitive (rows and nothing else);
+        # SheetService.add_rows is the primitive (rows and nothing else);
         # AppendRowsOperation is the door (the primitive, then the
         # workflow trigger, one transaction). In production the door is
         # the primitive's ONLY caller, so no path can add rows the

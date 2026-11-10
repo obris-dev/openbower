@@ -80,7 +80,7 @@ class ProvisionOperation:
         non-blocking), keyed by task id, the one id every lane has (a TEST
         task's row_id is NULL); an even, query-free spread, and no lane
         needs row affinity, since every terminal write already serializes
-        on the ListRow lock. Then BLOCK ONCE for the
+        on the SheetRow lock. Then BLOCK ONCE for the
         whole page's acks. The single flush amortizes the broker round-trip
         across the page instead of paying it per task (librdkafka pipelines
         the produces). Raises ProvisionPublishError when the page does not

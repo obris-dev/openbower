@@ -199,7 +199,7 @@ class WebhookColumnService:
         cells: dict[str, str],
     ) -> Sent:
         """One sample digest to a destination, sent as a test and
-        recorded. Raises ListNotFound for the sheet (the URL's
+        recorded. Raises SheetNotFound for the sheet (the URL's
         reference); everything named in the body refuses with a code."""
         destination, data = self._sample(
             target_sheet_id,

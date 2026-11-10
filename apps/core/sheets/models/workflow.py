@@ -9,7 +9,7 @@ class Workflow(AccountScopedModel):
 
     Created by admission's node get-or-create the first time a sheet
     gains an AI column, never by sheet create, so a sheet with no AI
-    column has no workflow. Deleted only by ListService.delete, in the
+    column has no workflow. Deleted only by SheetService.delete, in the
     sheet's own transaction: nodes and paths point at it by id, nothing
     cascades, and the owning service removes them in order. It carries
     only the sheet pointer: a workflow has MANY entries, and which paths

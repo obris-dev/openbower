@@ -62,7 +62,7 @@ class NodeRunFlow:
     def iter_ready(*, limit: int) -> Iterator[NodeRun]:
         """The autofill provisioner's pick, LAZILY (single-pass): up to
         `limit` READY null-run (autofill) tasks that are due (a parked
-        retry backs off in `not_before`), in (list_id, rank, id)
+        retry backs off in `not_before`), in (sheet_id, rank, id)
         order. Grouping by sheet first is breadth-first across sheets and
         is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick

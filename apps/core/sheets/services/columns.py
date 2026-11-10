@@ -201,7 +201,7 @@ class ColumnService:
 
     def rename(self, target_sheet_id: str, *, key: str, label: str) -> Sheet:
         """Relabel one column. The KEY never moves, and that is the
-        whole design: row data is a dict keyed on it, ListCellState
+        whole design: row data is a dict keyed on it, SheetCellState
         references it, and an agent output maps down to it, so a key
         that followed the label would strand every cell the column
         holds. A column relabelled "Decision maker" keeps whatever key
@@ -230,7 +230,7 @@ class ColumnService:
         tidy is the worse failure.
 
         The ORDER is the worker's order: row data first, then the
-        queue. The worker's terminal write locks the ListRow and then
+        queue. The worker's terminal write locks the SheetRow and then
         writes the NodeRun in one transaction, so taking them the
         other way round here is an ABBA deadlock against any fill
         running on this sheet, which Postgres resolves by aborting one
@@ -262,7 +262,7 @@ class ColumnService:
             # It touches rows that never held the key too, and that is
             # accepted: narrowing it means asking the blob what it
             # contains, and NOTHING in this codebase queries row data
-            # (ListCellState exists so counting filled cells never has
+            # (SheetCellState exists so counting filled cells never has
             # to). The blob is storage; the structured record is what
             # answers questions about it.
             rows = SheetRow.objects.filter(sheet_id=str(target_sheet.id))
@@ -278,7 +278,7 @@ class ColumnService:
                 SheetRow.objects.filter(id__in=held).update(data=_JsonbWithoutKey("data", Value(key)))
 
             # The column's truth goes BEFORE any run is touched: a landing
-            # takes ListRow, then ListCellState, then NodeRun, and the
+            # takes SheetRow, then SheetCellState, then NodeRun, and the
             # cancel below abandons runs, so the same order here is what
             # keeps this delete off an ABBA deadlock with a fill landing.
             cell_truth.purge_column(str(target_sheet.id), key)

@@ -56,7 +56,7 @@ class AutofillHarness(TransactionTestCase):
 
     def _ai_sheet(self, *, rows: int = 2):
         """A sheet with one AI column bound to an agent, built the real
-        way: ListService.create + admission (which mints the ephemeral
+        way: SheetService.create + admission (which mints the ephemeral
         agent, its node, and stamps the column's `fill.node_id`).
         Returns the sheet, the node id the processor will resolve, and
         the fill."""

@@ -134,7 +134,7 @@ class FillScope(BaseModel):
     fill_run_id: str = ""
 
 
-# The ListRow fields queuing ANY run reads: a run is stamped with its
+# The SheetRow fields queuing ANY run reads: a run is stamped with its
 # row's rank so the pickers take runs in sheet order. The base's, not a
 # kind's to repeat or forget. The id is the primary key, which Django
 # never defers, so it is never missing.
@@ -171,7 +171,7 @@ class FillModeUnsupported(Exception):
 
 class NodeProcessor(ABC):
     KIND: ClassVar[str]
-    # The ListRow fields THIS KIND's judgement reads off a row it is
+    # The SheetRow fields THIS KIND's judgement reads off a row it is
     # handed, beyond the ones queuing any run reads (the base's own,
     # below, added for every kind whatever a kind declares).
     REQUIRED_ROW_FIELDS: ClassVar[tuple[str, ...]] = ()
@@ -275,7 +275,7 @@ class NodeProcessor(ABC):
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         """Execute ONE run of this node that the caller already claimed
         (PROCESSING, the attempt stamped) and settle it through `flow`.
-        Raises ListNotFound / RowNotFound as they are when the sheet
+        Raises SheetNotFound / RowNotFound as they are when the sheet
         vanishes mid-landing: the consumer's story to resolve."""
         raise NotImplementedError(f"{self.KIND} runs are not executed one at a time")
 

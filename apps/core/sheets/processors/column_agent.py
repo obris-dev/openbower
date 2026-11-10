@@ -171,7 +171,7 @@ class _SheetLane(NamedTuple):
     ) -> RunOutcome:
         """The run's landing: the kind's writes onto the row and the
         ledger through the one landing, then the run closed with its
-        result, one transaction (ListRow, ListCellState, NodeRun). A
+        result, one transaction (SheetRow, SheetCellState, NodeRun). A
         close that misses rolls the landing back: a reclaimed run
         produces nothing and EXITS."""
         writes = processor.on_run_landed(self.column_keys, run_result)

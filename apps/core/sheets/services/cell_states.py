@@ -1,5 +1,5 @@
 """Account-scoped READS of cell state: the one place the tenancy filter
-over ListCellState is written, so no reader restates it. The writer is
+over SheetCellState is written, so no reader restates it. The writer is
 cell_truth; reads keyed by fill run rather than by sheet stay with the
 fill service (a run id is not a tenancy axis).
 

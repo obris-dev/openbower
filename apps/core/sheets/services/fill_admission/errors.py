@@ -196,4 +196,4 @@ class FillColumnDownstream(FillRefused):
 class FillColumnNotFound(Exception):
     """No column with that key carries a fill on this sheet. Not a
     FillRefused: refusals answer an admissible ask, a missing column
-    is 404 territory (like ListNotFound)."""
+    is 404 territory (like SheetNotFound)."""

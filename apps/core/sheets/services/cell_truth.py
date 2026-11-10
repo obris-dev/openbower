@@ -1,6 +1,6 @@
-"""The one writer of ListCellState: what a writer made of each cell.
+"""The one writer of SheetCellState: what a writer made of each cell.
 
-In production only the ListService's landing calls this module,
+In production only the SheetService's landing calls this module,
 inside the same transaction as the value write, so a sheet row and its
 truth can never be written apart. The purges are the owners' (a
 sheet's, a column's, a row's).

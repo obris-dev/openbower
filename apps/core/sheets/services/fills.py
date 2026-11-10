@@ -147,7 +147,7 @@ class FillService:
 
         Two sources, and neither is a stored "pending":
 
-        RECORDED states come from ListCellState, one indexed query,
+        RECORDED states come from SheetCellState, one indexed query,
         each with the tool statuses of the run that wrote it. FILLED
         travels ONLY when that run had a degraded tool (the value is
         the renderer's already; the mark beside it is not): a clean

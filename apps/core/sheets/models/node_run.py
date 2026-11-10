@@ -39,7 +39,7 @@ class NodeRun(AccountScopedModel):
     sheet, its result lands on itself.
 
     `status` speaks about the WORK and never about the answer; the
-    answer is diagnosed per cell on ListCellState. No word appears in
+    answer is diagnosed per cell on SheetCellState. No word appears in
     both vocabularies, which is what keeps them from reading as copies
     of each other.
 
@@ -55,7 +55,7 @@ class NodeRun(AccountScopedModel):
     # no fill job to read its sheet or user off, so it resolves them from
     # its row. A fill-backed task sets this to its fill job's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
-    # NULL on a preview run: its row rides `input` and no ListRow exists
+    # NULL on a preview run: its row rides `input` and no SheetRow exists
     # for it. NULLs are distinct under the open-run key, so an
     # account's preview runs never collide with each other.
     row_id = models.CharField(_("row id"), max_length=26, null=True, blank=True)
@@ -198,8 +198,8 @@ class NodeRun(AccountScopedModel):
                 condition=models.Q(fill_run_id__isnull=False),
             ),
             # Autofill firehose: partial on the null-run rows, so status
-            # leads straight into the (list_id, rank, id) order with no
-            # IS NULL in the key. list_id sits BEFORE the sort columns, so a
+            # leads straight into the (sheet_id, rank, id) order with no
+            # IS NULL in the key. sheet_id sits BEFORE the sort columns, so a
             # per-sheet or set-sharded pick (sheet_id = ANY(...)) SEEKS its
             # sheets rather than scanning. `kind` rides the leaf beside
             # not_before so the pick's lane filter stays index-only.

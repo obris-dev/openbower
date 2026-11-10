@@ -94,5 +94,5 @@ def validate_node_kinds() -> None:
     if missing:
         raise ImproperlyConfigured(
             f"node kinds {missing!r} are not registered (roster: {sorted(_REGISTRY) or 'empty'}); "
-            "lists.nodes must contain their modules"
+            "sheets.nodes must contain their modules"
         )

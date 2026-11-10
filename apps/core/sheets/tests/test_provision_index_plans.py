@@ -1,6 +1,6 @@
 """The provisioner picks must READ their index in order and stop at the
 LIMIT, never sort the whole READY set. This is the regression guard for
-the lane split: a single (status, fill_run_id, list_id, ...) index looks
+the lane split: a single (status, fill_run_id, sheet_id, ...) index looks
 fine but the autofill firehose filters fill_run_id IS NULL, which gives a
 btree no ordering pathkey, so it silently falls back to a full sort. Each
 assertion forces seqscan off, isolating "can the index serve the order?"
@@ -88,7 +88,7 @@ class ProvisionIndexPlanTests(TestCase):
             .order_by("sheet_id", "rank", "id")[:64]
         )
         self.assertIn("node_run_autofill_idx", plan)
-        self.assertIn("sheet_id", plan)  # list_id is an index condition (a seek), not a post-filter
+        self.assertIn("sheet_id", plan)  # sheet_id is an index condition (a seek), not a post-filter
         self.assertNotIn("Sort", plan)
 
     def test_the_fill_backed_pick_reads_its_index_in_order_never_sorts(self) -> None:

@@ -3,7 +3,7 @@ nothing downstream (the publisher, the worker) handles a bare dict.
 
 Rows are the same shape the manual-append path validates (a list of
 str->str cell maps); the worker that eventually appends them reuses
-ListService.add_rows, so the wire contract stays single.
+SheetService.add_rows, so the wire contract stays single.
 """
 
 from __future__ import annotations

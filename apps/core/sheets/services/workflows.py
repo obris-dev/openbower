@@ -497,7 +497,7 @@ class WorkflowService:
         return Node.objects.filter(account_id=self.account_id, kind=Webhook.KIND, config__destination_id=destination_id)
 
     def delete_for_sheet(self, sheet_id: str) -> None:
-        """Called from ListService.delete AFTER the runs are purged (they
+        """Called from SheetService.delete AFTER the runs are purged (they
         point at nodes): nodes, then paths, then the workflow, as one
         transaction. No-op for a sheet that never gained a node."""
         with transaction.atomic():

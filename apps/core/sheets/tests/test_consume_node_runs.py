@@ -59,7 +59,7 @@ class ProcessNodeRunTests(AutofillHarness):
         # 1) The value lands on the sheet row.
         row = SheetRow.objects.get(id=row_id)
         self.assertEqual(row.data["answer"], "found it")
-        # 2) A ListCellState, FILLED, with NO fill run (the automatic path).
+        # 2) A SheetCellState, FILLED, with NO fill run (the automatic path).
         cell = SheetCellState.objects.get(row_id=row_id, column_key="answer")
         self.assertEqual(cell.state, StoredCellState.FILLED)
         self.assertIsNone(cell.fill_run_id)

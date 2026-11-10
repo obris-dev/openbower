@@ -31,7 +31,7 @@ class Node(AccountScopedModel):
 
     A sheet node points at its workflow and path. The preview node points
     at neither (workflow_id and path_id blank, exactly as a preview run's
-    list_id is): the account's one sheetless column_agent node, the
+    sheet_id is): the account's one sheetless column_agent node, the
     bookkeeping a preview run's node_id points at, outliving every fill: an
     account-level singleton with no parent, the no-cascades rule's named
     exception, deleted by nothing.

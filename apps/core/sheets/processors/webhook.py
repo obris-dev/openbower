@@ -294,7 +294,7 @@ class WebhookProcessor(NodeProcessor):
     ) -> _LandResult:
         """The batch's landing: the kind's write for every row through
         the sheet service's one landing (ONE ledger upsert for the
-        batch), then the runs settled, one transaction, ListCellState
+        batch), then the runs settled, one transaction, SheetCellState
         before NodeRun (the order the deletes take). A run whose row was
         deleted during the send has no verdict: it retires ROW_MISSING,
         as a row gone before the send does, and the rest settle DONE
