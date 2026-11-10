@@ -11,7 +11,7 @@ package exports the fill's service and the refusals both raise.
 One room per concern: `errors` the vocabulary, `base` the model gate,
 `columns` the column machinery and `targets` the metering cap (which
 rows a fill targets is the agent processor's), `normal` the service
-(fill_column). Account-scoped like every lists service."""
+(fill_column). Account-scoped like every sheets service."""
 
 from .errors import (
     AccountFillsFull,

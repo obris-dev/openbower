@@ -1,5 +1,5 @@
 """Reconcile the Kafka broker to the ingest topic catalog
-(lists.ingest.topics): create each declared topic with its partitions,
+(sheets.ingest.topics): create each declared topic with its partitions,
 replication, and config (max.message.bytes, retention). Idempotent, so it is
 safe to run every start; a topic that already exists is left as is. Run at
 setup so a topic is never born from broker auto-create with default config

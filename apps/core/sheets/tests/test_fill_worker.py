@@ -2,7 +2,7 @@
 admission (tasks born READY) -> the provisioner publishes -> the shared
 consumer's handle_node_run claims, runs, and lands. The model is a
 scripted FunctionModel through the patched model seam; everything else
-(lists, admission, the state machine, landing, derived counters) is
+(sheets, admission, the state machine, landing, derived counters) is
 real.
 
 This module also HOSTS the shared model fixtures and `_patches` the
@@ -13,7 +13,7 @@ TransactionTestCase, NOT TestCase: the consumer opens its own DB work
 and admission takes select_for_update, which would deadlock against a
 test-wrapping transaction.
 
-Run: DJANGO_ENV=test uv run python apps/core/manage.py test lists.tests.test_fill_worker
+Run: DJANGO_ENV=test uv run python apps/core/manage.py test sheets.tests.test_fill_worker
 """
 
 from __future__ import annotations

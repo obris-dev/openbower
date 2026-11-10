@@ -1,6 +1,6 @@
 """One processor per node kind: the service that knows how a kind's
 runs come to exist for a set of rows AND how one of them executes. The
-config classes in lists/nodes are what a node IS at rest; a processor
+config classes in sheets/nodes are what a node IS at rest; a processor
 is what the kind DOES. Every walker that queues runs (the fill job, the
 column backfill, autofill, the advance) asks the factory for the processor of the node
 it holds and hands it the rows; every dispatcher that executes runs

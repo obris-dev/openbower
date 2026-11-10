@@ -7,7 +7,7 @@ from ..constants import RANK_MAX_LENGTH
 
 
 class SheetRow(BaseModel):
-    """One row of a sheet: free-form `data` (JSON keyed by the list's
+    """One row of a sheet: free-form `data` (JSON keyed by the sheet's
     column keys) and nothing else. Rows hold no entity references; any
     company behavior interprets a chosen column's values at use time.
 

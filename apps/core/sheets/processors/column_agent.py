@@ -35,14 +35,14 @@ what it carries:
   reaches the next row), the claim-time model gate fails the WHOLE
   fill (a config-tier refusal fails every row identically), the row
   comes off the sheet, and the fill job polls its runs for completion.
-- Automatic (neither): the row, its list, the node's column set, and
-  the agent's config resolved LIVE; a gone row or list settles
+- Automatic (neither): the row, its sheet, the node's column set, and
+  the agent's config resolved LIVE; a gone row or sheet settles
   ROW_MISSING or LIST_MISSING, a gone or retired agent settles the run
   unrun, a config-tier failure settles the ONE run.
 
 The tail is shared: the exhausted give-up, the runtime call, the
 retriable park, the terminal landing (the kind's cell writes through
-the list service's one landing, then the run closed, one transaction)."""
+the sheet service's one landing, then the run closed, one transaction)."""
 
 from __future__ import annotations
 
@@ -383,7 +383,7 @@ class AIColumnProcessor(NodeProcessor):
 
         job = Job.objects.filter(id=task.fill_run_id, kind=FillJob.KIND).first()
         if job is None:
-            # The owning fill is gone (its list was deleted, which purges
+            # The owning fill is gone (its sheet was deleted, which purges
             # both in one transaction); nothing to run or land.
             _settle_unrun(flow, task)
             raise _RunEnded(RunOutcome.EXITED)
@@ -416,7 +416,7 @@ class AIColumnProcessor(NodeProcessor):
         row = SheetRow.objects.filter(id=task.row_id, sheet_id=consent.sheet_id).first()
         if row is None:
             if not Sheet.objects.filter(id=consent.sheet_id).exists():
-                # The whole list went away mid-walk: a user deletion is
+                # The whole sheet went away mid-walk: a user deletion is
                 # CANCELLED, never a failure story.
                 fill_progress.cancel(str(job.id))
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})

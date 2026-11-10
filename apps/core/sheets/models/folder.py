@@ -7,7 +7,7 @@ from ..constants import LABEL_MAX_LENGTH
 
 
 class Folder(UserScopedModel):
-    """A flat, account-scoped bucket for lists: the user's own taxonomy
+    """A flat, account-scoped bucket for sheets: the user's own taxonomy
     over their sheets, nothing more (no nesting, no behavior)."""
 
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)

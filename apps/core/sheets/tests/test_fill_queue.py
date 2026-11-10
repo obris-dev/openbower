@@ -71,7 +71,7 @@ def make_run(*, rows: int = 3, sheet_id: str = SHEET, node_id: str = NODE) -> Jo
 
 class _SheetThatTakesEverything(SheetService):
     """The sheet writer as these tests need it: the fill here names no
-    real list, so the VALUE half is faked to report every key written
+    real sheet, so the VALUE half is faked to report every key written
     while the truth half stays the real one. The landing's real value
     writer is covered by the worker and view tests."""
 

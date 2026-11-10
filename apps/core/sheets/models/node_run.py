@@ -31,7 +31,7 @@ class NodeRun(AccountScopedModel):
     agent on the sheet, and `fill_run_id` is the fill JOB's id). A task
     with NO fill run (`fill_run_id` NULL) is the automatic path:
     autofill rides the same queue and the same worker, minus the
-    consent a fill job records, resolving its list and user from its
+    consent a fill job records, resolving its sheet and user from its
     row; a webhook run is DEFERRED at birth and claimed
     by the flush at its window, never by the worker. A PREVIEW run (the
     agent builder's one-row diagnostic) is an automatic run of the
@@ -52,15 +52,15 @@ class NodeRun(AccountScopedModel):
     to write on purpose."""
 
     # NULL on the automatic path (autofill): a task with no fill run has
-    # no fill job to read its list or user off, so it resolves them from
+    # no fill job to read its sheet or user off, so it resolves them from
     # its row. A fill-backed task sets this to its fill job's id.
     fill_run_id = models.CharField(_("fill run id"), max_length=26, null=True, blank=True)
     # NULL on a preview run: its row rides `input` and no ListRow exists
     # for it. NULLs are distinct under the open-run key, so an
     # account's preview runs never collide with each other.
     row_id = models.CharField(_("row id"), max_length=26, null=True, blank=True)
-    # The list this task's row lives in, DENORMALIZED from the fill
-    # (fill-backed) or the target sheet (autofill), so per-list
+    # The sheet this task's row lives in, DENORMALIZED from the fill
+    # (fill-backed) or the target sheet (autofill), so per-sheet
     # distribution and account scoping never need a join back to find it.
     # BLANK for a preview run, which points at no sheet by construction.
     sheet_id = models.CharField(_("sheet id"), max_length=26, blank=True, default="")
@@ -190,7 +190,7 @@ class NodeRun(AccountScopedModel):
             # key (below the ordering columns it cannot be one).
             #
             # Fill-backed: fill_run_id = :f seeks the fill's tasks. A fill
-            # is single-list, so list_id earns no place here.
+            # is single-sheet, so sheet_id earns no place here.
             models.Index(
                 fields=["status", "fill_run_id", "rank", "id"],
                 include=["not_before"],
@@ -200,8 +200,8 @@ class NodeRun(AccountScopedModel):
             # Autofill firehose: partial on the null-run rows, so status
             # leads straight into the (list_id, rank, id) order with no
             # IS NULL in the key. list_id sits BEFORE the sort columns, so a
-            # per-list or set-sharded pick (list_id = ANY(...)) SEEKS its
-            # lists rather than scanning. `kind` rides the leaf beside
+            # per-sheet or set-sharded pick (sheet_id = ANY(...)) SEEKS its
+            # sheets rather than scanning. `kind` rides the leaf beside
             # not_before so the pick's lane filter stays index-only.
             models.Index(
                 fields=["status", "sheet_id", "rank", "id"],

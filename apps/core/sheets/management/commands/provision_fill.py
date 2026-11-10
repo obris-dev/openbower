@@ -1,6 +1,6 @@
 """The manual fill provisioner PROCESS: signals and lifecycle, nothing
 else. The provisioning loop lives in
-lists/operations/provision/fill.py.
+sheets/operations/provision/fill.py.
 
 SIGTERM and SIGINT stop after the current task and exit; `--once` drains
 until no live fill has a READY task (the CI smoke). Restart-surviving by

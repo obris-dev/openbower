@@ -1,6 +1,6 @@
 """The pure hop between wait KEYS and inbound PATH ids.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

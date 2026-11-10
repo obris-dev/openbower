@@ -5,7 +5,7 @@ claim CAS runs against committed rows. The sender is faked at the
 destination service's seam; `now` is passed to every tick so the
 window is deterministic.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations
@@ -428,7 +428,7 @@ class FlushDeferredTests(TransactionTestCase):
     def test_a_deleted_sheet_settles_sheet_missing(self):
         self._complete(self.rows[0])
         self._add_column()
-        # The List row alone, not the service delete (which purges the
+        # The Sheet row alone, not the service delete (which purges the
         # runs): the corruption the flush must retire on its own.
         self.sheet.delete()
         fake = _FakeSender()

@@ -63,10 +63,10 @@ class NodeRunFlow:
         """The autofill provisioner's pick, LAZILY (single-pass): up to
         `limit` READY null-run (autofill) tasks that are due (a parked
         retry backs off in `not_before`), in (list_id, rank, id)
-        order. Grouping by list first is breadth-first across lists and
+        order. Grouping by sheet first is breadth-first across sheets and
         is what `node_run_autofill_idx` (partial on the null-run rows)
         serves so the LIMIT stops early, and the seam a sharded pick
-        narrows to its lists. Streamed via .iterator() so a growing queue
+        narrows to its sheets. Streamed via .iterator() so a growing queue
         never materializes as one list. The kind filter names the lane
         beside the status gate (a webhook run is never READY, but the
         pick that defines the agent lane says so itself)."""

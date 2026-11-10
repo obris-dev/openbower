@@ -2,7 +2,7 @@
 the type refuses what does not fit, a hand-filled AI cell is recorded
 as the person's and completes the barriers waiting on it.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_set_cells
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_set_cells
 """
 
 from __future__ import annotations

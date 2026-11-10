@@ -1,8 +1,8 @@
-"""The typed column array: List.columns is ListColumn values (one kind
+"""The typed column array: Sheet.columns is ListColumn values (one kind
 each) on load and on assignment, their dumps at rest, and the field is
 a plain JSONField to migrations.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_fields
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_fields
 """
 
 from __future__ import annotations

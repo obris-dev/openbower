@@ -1,7 +1,7 @@
 """The wire contract's Literals and the Django enums must name the
 same values, or valid rows fail zod client-side with no server error.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ node that starts it and names the paths it waits on), how it is added, read back
 changed, and its Test and Preview sends. The substrate persists the
 nodes it is handed (WorkflowService.create_path); this module knows
 what a webhook column's path looks like. Account-scoped like every
-lists service."""
+sheets service."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ class WebhookColumnService:
         interval_seconds: int,
     ) -> Sheet:
         """The column, its path, and its two nodes, in one transaction
-        under the list lock (the same lock every columns writer takes)."""
+        under the sheet lock (the same lock every columns writer takes)."""
         with transaction.atomic():
             target_sheet = locked_sheet(self.account_id, target_sheet_id)
             key = claim_key(target_sheet, label=label)
@@ -303,7 +303,7 @@ class WebhookColumnService:
         if not wait_keys:
             # A barrier naming no path is reached by nothing: no arrival
             # starts its path (its head is a wait, not an entry) and no
-            # landing finds it (the scan matches an inbound list that
+            # landing finds it (the scan matches an inbound sheet that
             # names the landed path). The column would sit there unable
             # to send, and nothing downstream would say why, so the
             # writer refuses the shape rather than storing it. The wire
@@ -327,7 +327,7 @@ class WebhookColumnService:
                 raise WebhookColumnNotData(column.label)
         try:
             # A binding locks the row for the caller's transaction (the
-            # add and update hold the list lock already): a destination
+            # add and update hold the sheet lock already): a destination
             # mid-delete cannot be bound, and a delete waits for the
             # binding to land and then refuses.
             if lock:

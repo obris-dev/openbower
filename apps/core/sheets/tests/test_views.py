@@ -2,7 +2,7 @@
 boundary via the shared login helper): CRUD, rows paging, and the CSV
 import upload.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

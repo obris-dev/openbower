@@ -15,7 +15,7 @@ from ..constants import (
 class SheetCellState(AccountScopedModel):
     """What was made of one AI cell: FILLED, or the cause it is blank,
     and who made it (`source`: a node's run, or a person's own write
-    through the row cells PATCH). One row per (list, row, column),
+    through the row cells PATCH). One row per (sheet, row, column),
     upserted.
 
     ABSENCE means exactly one thing: never attempted. Nothing is

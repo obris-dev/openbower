@@ -1,9 +1,9 @@
 """The workflow substrate's ONE writer: the workflow a sheet's nodes
 hang off, the path each node sits on, and the node itself, created on
-demand by the AI column create and removed only with the list.
+demand by the AI column create and removed only with the sheet.
 
 Every multi-step write here is its OWN transaction (a savepoint when a
-caller such as the column create or the list delete already holds one),
+caller such as the column create or the sheet delete already holds one),
 so a node never lands without its path and a workflow never loses only
 some of its children, whoever calls. Get-or-create is idempotent by the
 node's unique key, so it takes no lock of its own: a racing second
@@ -150,8 +150,8 @@ class WorkflowService:
         self.account_id = account_id
 
     def ensure_workflow(self, target_sheet: Sheet) -> Workflow:
-        """The sheet's workflow, minted on first use. A list already
-        owned by another account's workflow fails on the unique list
+        """The sheet's workflow, minted on first use. A sheet already
+        owned by another account's workflow fails on the unique sheet
         key, which is the loud shape corruption should take."""
         workflow, _ = Workflow.objects.get_or_create(account_id=self.account_id, sheet_id=str(target_sheet.id))
         return workflow

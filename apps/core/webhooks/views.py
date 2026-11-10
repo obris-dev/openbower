@@ -1,6 +1,6 @@
 """`/v1/webhooks`: the account's destinations, a synchronous test
 delivery, and each destination's delivery log (session-authed like
-lists). Views are thin dispatch: custody lives in the service, the
+sheets). Views are thin dispatch: custody lives in the service, the
 HTTP path in delivery/, and wire shapes construct through the contract
 models at these boundaries."""
 

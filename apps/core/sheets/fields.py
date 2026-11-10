@@ -1,4 +1,4 @@
-"""The typed column array: in memory `List.columns` is a list of the
+"""The typed column array: in memory `Sheet.columns` is a list of the
 contract's ListColumn values (one kind each: plain, AI, webhook), at
 rest it is the JSON array of their dumps. One seam, so no reader
 restates the shape by hand, and a column the contract refuses (an

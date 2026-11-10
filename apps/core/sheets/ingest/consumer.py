@@ -48,7 +48,7 @@ def _touch_heartbeat() -> None:
 
 class AppendResult(NamedTuple):
     """The side effect's report back to the orchestrator. `applied` False is
-    a terminal DROP (a deleted or full list, nothing a retry fixes), with
+    a terminal DROP (a deleted or full sheet, nothing a retry fixes), with
     its `reason`; True carries the `added` count. A TRANSIENT failure raises
     instead of returning, so the caller rolls back and redelivers."""
 
@@ -60,7 +60,7 @@ class AppendResult(NamedTuple):
 def _append_rows(event: IngestEvent) -> AppendResult:
     """The side effect: the pushed rows through the one append (rows
     and their workflow trigger, one transaction), owning its own
-    terminal-error handling (a deleted or full list is a drop, reported
+    terminal-error handling (a deleted or full sheet is a drop, reported
     for the caller to log). Only transient failures (a DatabaseError)
     raise. Rides the caller's transaction (handle_ingest_event's
     atomic), so a redelivery cannot double-apply."""
@@ -69,7 +69,7 @@ def _append_rows(event: IngestEvent) -> AppendResult:
         target = sheets.get(event.sheet_id)
         report = AppendRowsOperation(account_id=event.account_id, target_sheet=target, rows=event.rows).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable) as e:
-        # All three are TERMINAL for this event: a deleted or full list,
+        # All three are TERMINAL for this event: a deleted or full sheet,
         # and a row carrying a column whose cells are recorded (the view
         # refuses that one at the door, so an event carrying it came
         # from somewhere that skipped the door and will never become

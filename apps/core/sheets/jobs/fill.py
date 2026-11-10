@@ -24,21 +24,21 @@ The consumer never writes this job's status: a config-tier failure
 stops the job from outside through the shared stop, and the runner's
 own park and settle miss on a job stopped meanwhile.
 
-No list lock anywhere: the columns array is never written here, and
+No sheet lock anywhere: the columns array is never written here, and
 the one guarantee that matters (a row offered once however many
 walkers offer it) is the processor's insert: the fill's row key within
 this fill, the open-run key across lanes. The cursor names the last
 row walked (its id, and the rank it had), and
-the one thing that rewrites ranks, a re-space, waits for the list's
+the one thing that rewrites ranks, a re-space, waits for the sheet's
 open fills, so that rank is the truth between two slices; a row moved
 from below the cursor to above it during the seconds a walk takes is
 not walked and waits for the next fill, exactly like a row appended
 after the click, and one moved the other way is offered twice and
 dropped by the fill's row key. A fill stopped mid-walk stops the walk,
 and a slice that lands runs after the stop's sweep leaves them for
-the reclaim's orphan judgement, which abandons them by fill id. A fill whose list is gone exits: the
-list's delete purges the job, and a job the delete missed finds no
-list and ends."""
+the reclaim's orphan judgement, which abandons them by fill id. A fill whose sheet is gone exits: the
+sheet's delete purges the job, and a job the delete missed finds no
+sheet and ends."""
 
 from __future__ import annotations
 

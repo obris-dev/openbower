@@ -18,7 +18,7 @@ is a cause the client cannot name. Nothing enforced that until this
 file: the two were both called CellState, so a call site could not
 tell them apart.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

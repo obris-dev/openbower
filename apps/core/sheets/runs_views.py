@@ -1,6 +1,6 @@
 """`/v1/runs`: the run-scoped endpoints (the preview's start, a run read
 by id, run cancel). A SECOND urlconf beside `/v1/lists` because these
-routes are not list-scoped: a preview run has no sheet at all. Views
+routes are not sheet-scoped: a preview run has no sheet at all. Views
 stay thin dispatch; the lane lives in services.preview_runs."""
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """The node-run processor PROCESS: signals and lifecycle, nothing else.
 The consume loop and the claim/run/land handler live in
-lists/operations/consume_node_runs.py.
+sheets/operations/consume_node_runs.py.
 
 SIGTERM and SIGINT stop after the current message and exit; `--once`
 drains until the bus is empty (the CI smoke). Restart-surviving by

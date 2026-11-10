@@ -3,7 +3,7 @@ run, one rule per occasion, and the probe), and the fill job's walk
 over it: the consent range, the scoped limit, the settle of the
 denominator, the completion on the same tick, and the cancel mid-walk.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_enqueue_runs
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_enqueue_runs
 """
 
 from __future__ import annotations
@@ -632,7 +632,7 @@ class FillJobWalkTests(_Harness):
         self.assertEqual(set(self._runs(fill).values_list("status", flat=True)), {NodeRunStatus.ABANDONED})
 
     def test_a_walk_whose_sheet_is_gone_ends(self):
-        # A job the list's delete missed: the walk finds no list and the
+        # A job the sheet's delete missed: the walk finds no sheet and the
         # job ends DONE with nothing queued, rather than parking to its
         # attempt cap on a missing row.
         fill = self._fill(targeted=False, until_id=self._until())

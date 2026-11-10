@@ -46,7 +46,7 @@ operation, once per node whose columns it wrote.
 Reads the workflow at rest through WorkflowService and writes runs
 through the processors: the one service that imports both, so the
 graph stays one-directional (workflows -> reactions -> processors).
-Account-scoped like every lists service."""
+Account-scoped like every sheets service."""
 
 from __future__ import annotations
 

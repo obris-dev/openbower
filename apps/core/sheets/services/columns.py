@@ -3,7 +3,7 @@ column is a plain column, and its key derives through the
 runtime's ONE derivation rule, because a key the sheet already has
 refuses an AI column that would land there and two derivation rules
 would make that refusal unpredictable), the column-scoped fill-prompt
-edit, and reordering. Account-scoped like every lists service."""
+edit, and reordering. Account-scoped like every sheets service."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ class ColumnNotFound(Exception):
 
 
 def locked_sheet(account_id: str, sheet_id: str) -> Sheet:
-    """The List row every columns writer takes before touching the
+    """The Sheet row every columns writer takes before touching the
     array, so a concurrent add cannot append to the version this read
     is about to replace. Module-level: the webhook column's service
     writes the same array."""
@@ -130,7 +130,7 @@ def locked_sheet(account_id: str, sheet_id: str) -> Sheet:
 def claim_key(target_sheet: Sheet, *, label: str) -> str:
     """The key a new column takes for `label`, through the ONE
     derivation rule, refused when reserved, taken, or over the cap.
-    Under the list lock, by every path that appends a column."""
+    Under the sheet lock, by every path that appends a column."""
     key = derive_column_key(label)
     if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
         raise ReservedColumnKey(label=label)
@@ -151,7 +151,7 @@ class ColumnService:
         self.user_id = user_id
 
     def add_column(self, target_sheet_id: str, *, label: str, column_type: str) -> Sheet:
-        """Append one blank column and return the updated list."""
+        """Append one blank column and return the updated sheet."""
         with transaction.atomic():
             target_sheet = self._locked(target_sheet_id)
             key = claim_key(target_sheet, label=label)
@@ -161,7 +161,7 @@ class ColumnService:
 
     def reorder(self, target_sheet_id: str, *, keys: list[str]) -> Sheet:
         """Rewrite the columns array in the given order and return the
-        updated list.
+        updated sheet.
 
         The key SET must be unchanged, which is what keeps this from
         being a mutation path: every other columns writer decides what
@@ -170,7 +170,7 @@ class ColumnService:
         a type, and a label cannot be edited through an ordering
         request even if the caller sends them.
 
-        The same List lock every columns writer takes, for the same
+        The same Sheet lock every columns writer takes, for the same
         reason: a concurrent add appends to the array this read is
         about to replace, and without the lock one write drops the
         other's column."""
@@ -359,7 +359,7 @@ class ColumnService:
         try:
             node = WorkflowService(account_id=self.account_id).get_node(node_id)
         except NodeNotFound:
-            # Corruption (nodes die only with their list), but a sheet the
+            # Corruption (nodes die only with their sheet), but a sheet the
             # user cannot tidy is the worse failure: the delete lands and
             # the agent behind the gone node is left as litter, logged.
             logger.warning("column delete: node %s is gone; its ephemeral agent is left unretired", node_id)
@@ -379,7 +379,7 @@ class ColumnService:
         column (the column is the custody path whether the agent is
         ephemeral or roster; the builder stays the roster's full
         editor). Only the prompt moves: the rest of the config
-        round-trips through the row untouched. No List lock: the write
+        round-trips through the row untouched. No Sheet lock: the write
         lands on the agent row, and a fill reads its agent live, so the
         edit reaches a running fill's next row and every later fill by
         construction. Returns the stored config."""

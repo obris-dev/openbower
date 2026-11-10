@@ -13,7 +13,7 @@ only when no row is (a column already tried everywhere, or a prompt no
 row can feed). A fill runs the agent's CURRENT config, so an edit
 reaches its next row; admission still resolves and probes the config
 once, so a broken config refuses at the click. Account-scoped like
-every lists service."""
+every sheets service."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class FillAdmissionService:
         prompt changes nothing about that (a fill reads its agent live
         for the rows it does run).
 
-        The shape is judged against UNLOCKED reads and the List lock
+        The shape is judged against UNLOCKED reads and the Sheet lock
         comes last, over the one columns write; the locked pass
         re-runs the guards, and that re-judgement is the one that counts.
         The agent resolve and the model probe run before the transaction
@@ -84,7 +84,7 @@ class FillAdmissionService:
         # action right behind its path's entry marker. A node downstream
         # of a barrier is reached by the workflow, never started. A
         # missing NODE raises as the corruption it is (nodes die only
-        # with their list); a missing AGENT is the allowed orphaning.
+        # with their sheet); a missing AGENT is the allowed orphaning.
         front = self.workflows.marker_and_first_action(column.node_id)
         if front is None:
             raise NodeNotFound(column.node_id)
@@ -217,7 +217,7 @@ class FillAdmissionService:
             raise FreeSearchBudget(searches=MAX_TOOL_CALLS * target_row_count)
 
     def _sheet_or_raise(self, sheet_id: str, *, lock: bool = False) -> Sheet:
-        """The account-scoped list read, locked only when the caller is
+        """The account-scoped sheet read, locked only when the caller is
         about to decide something on it."""
         qs = Sheet.objects.select_for_update() if lock else Sheet.objects
         try:

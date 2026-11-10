@@ -1,5 +1,5 @@
 """The processor roster and the one way to get a processor: by the
-node's kind. The registry discipline of lists/nodes/registry.py: each
+node's kind. The registry discipline of sheets/nodes/registry.py: each
 processor module registers at its own bottom, validation before any
 mutation, a collision loud, re-registration idempotent."""
 

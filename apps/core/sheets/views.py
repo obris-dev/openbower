@@ -173,10 +173,10 @@ class _ScopedView(ScopedView):
 
 
 class SheetsView(_ScopedView):
-    # The lists collection is where a machine producer both enumerates
-    # ("which lists can I push to?") and creates a list to push into, so
+    # The sheets collection is where a machine producer both enumerates
+    # ("which sheets can I push to?") and creates a sheet to push into, so
     # BOTH methods ride the machine lane; account/user scoping (no session
-    # state) makes a machine token safe on either. Every other lists
+    # state) makes a machine token safe on either. Every other sheets
     # endpoint keeps the cookie-only default, which also proves the per-view
     # scoping. Cookie auth is listed FIRST so a browser's 401 (an expired
     # session) carries the `Cookie` challenge, not `Bearer`; the machine
@@ -269,7 +269,7 @@ class SheetRowsView(_ScopedView):
 
     def delete(self, request: Request, id: str) -> Response:
         """The rows named, or every row but the ones named: the sheet's
-        selection, deleted under the list lock; 200 with the receipt."""
+        selection, deleted under the sheet lock; 200 with the receipt."""
         target_sheet = self._sheet_or_404(id)
         serializer = RowsDeleteRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -328,13 +328,13 @@ class SheetIngestView(_ScopedView):
     """POST /v1/lists/{id}/ingest: the ASYNC row push (the webhook).
 
     A minted machine key (or a session) pushes rows; we validate them and
-    the target list (account-scoped, so a key only reaches its owner's
-    lists), publish the batch to the ingest bus, and return 202 once the
+    the target sheet (account-scoped, so a key only reaches its owner's
+    sheets), publish the batch to the ingest bus, and return 202 once the
     broker acked it. The rows are NOT in the sheet on return: the ingest
     worker appends them off the bus, deduped on `event_id`, and the append
     starts the sheet's workflow for them. A deployment with no bus
-    configured logs and drops the batch (lists.ingest.publisher). Same
-    auth pair and order as the lists collection.
+    configured logs and drops the batch (sheets.ingest.publisher). Same
+    auth pair and order as the sheets collection.
     """
 
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
@@ -391,7 +391,7 @@ class ColumnsView(_ScopedView):
     CSV-template flow, for values typed or pasted in; an AI column
     create REFUSES a key a column already holds). Refusals ride
     the sibling envelope: the client classifies by CODE and renders
-    the detail verbatim (tier 1). The 200 body is the updated list
+    the detail verbatim (tier 1). The 200 body is the updated sheet
     detail, so the sheet re-renders its columns from the response."""
 
     def post(self, request: Request, id: str) -> Response:
@@ -409,7 +409,7 @@ class ColumnsView(_ScopedView):
 
 class ColumnOrderView(_ScopedView):
     """PATCH /v1/lists/{id}/column-order {keys}: reorder the sheet's
-    columns. The 200 body is the updated list detail, the same shape
+    columns. The 200 body is the updated sheet detail, the same shape
     the sibling column writes return, so the sheet re-renders its
     columns from the response rather than trusting its own optimistic
     move."""
@@ -433,7 +433,7 @@ class ColumnOrderView(_ScopedView):
 class AiColumnView(_ScopedView):
     """POST /v1/lists/{id}/columns/ai: add the AI column set (its agent
     and node with it) in the service's one transaction, and answer with
-    the list detail, the shape every columns write returns. No fill:
+    the sheet detail, the shape every columns write returns. No fill:
     the client fills the new column next (POST .../columns/{key}/fill)."""
 
     def post(self, request: Request, id: str) -> Response:
@@ -517,7 +517,7 @@ class ColumnWebhookPreviewView(_ScopedView):
 
 class ColumnWebhookView(_ScopedView):
     """POST /v1/lists/{id}/columns/webhook: add a Send webhook column
-    (its path and two nodes with it). 201 with the list detail, the
+    (its path and two nodes with it). 201 with the sheet detail, the
     shape every columns write returns. Body references refuse 400 with
     a code; the column's own name refuses as a column add does."""
 
@@ -595,7 +595,7 @@ class ColumnDetailView(_ScopedView):
 
     Delete takes ANY column, not only an AI one: a plain column is the
     same operation with less to clean up, and a sheet the user cannot
-    tidy is the worse failure. The 200 body is the updated list
+    tidy is the worse failure. The 200 body is the updated sheet
     detail, the shape every columns write returns."""
 
     def patch(self, request: Request, id: str, key: str) -> Response:
@@ -682,7 +682,7 @@ class ColumnPromptView(_ScopedView):
 
 
 class SheetFillsView(_ScopedView):
-    """GET /v1/lists/{id}/fills?after=: the list's LIVE fill runs,
+    """GET /v1/lists/{id}/fills?after=: the sheet's LIVE fill runs,
     keyset by -id, plus the per-column summaries the tracker renders
     (server truth: the totals, the newest run's status, and its error
     when it failed, never a 4xx; a client sum over one page of runs
@@ -708,7 +708,7 @@ class FillCancelView(_ScopedView):
             fill = self.fills.get(fill_run_id)
         except FillNotFound as e:
             raise NotFound("no fill with that id") from e
-        # The route nests under a list; a fill of another sheet must not
+        # The route nests under a sheet; a fill of another sheet must not
         # be addressable through this one's URL.
         if fill.target_id != str(target_sheet.id):
             raise NotFound("no fill with that id")
@@ -759,7 +759,7 @@ class SheetImportView(_ScopedView):
 class FoldersView(_ScopedView):
     def get(self, request: Request) -> Response:
         # Folders are a small, unbounded-by-nothing user taxonomy; the
-        # whole set ships (no paging, deliberately unlike the lists).
+        # whole set ships (no paging, deliberately unlike the sheets).
         folders = self.folders.all()
         counts = self.folders.sheet_counts([str(f.id) for f in folders])
         items = [folder_wire(f, list_count=counts.get(str(f.id), 0)) for f in folders]

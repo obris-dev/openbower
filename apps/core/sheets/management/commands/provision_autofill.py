@@ -1,6 +1,6 @@
 """The autofill provisioner PROCESS: signals and lifecycle, nothing
 else. The provisioning loop lives in
-lists/operations/provision/autofill.py.
+sheets/operations/provision/autofill.py.
 
 SIGTERM and SIGINT stop after the current task and exit; `--once` drains
 until no READY autofill run remains (the CI smoke). Restart-surviving by

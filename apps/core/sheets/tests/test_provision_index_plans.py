@@ -6,7 +6,7 @@ btree no ordering pathkey, so it silently falls back to a full sort. Each
 assertion forces seqscan off, isolating "can the index serve the order?"
 from "does the planner prefer it at this data size".
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class ProvisionIndexPlanTests(TestCase):
         now = timezone.now()
         tasks = []
         ranks = keys_between(None, None, 1500)
-        for i in range(1500):  # autofill firehose across 10 lists
+        for i in range(1500):  # autofill firehose across 10 sheets
             tasks.append(
                 NodeRun(
                     account_id=ACCOUNT,

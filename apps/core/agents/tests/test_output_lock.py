@@ -1,7 +1,7 @@
 """An agent's output set is fixed while its columns are on a sheet: the
 columns ARE the outputs' shape, and a fill only writes the columns that
 exist. Through the real agents endpoint, over a real sheet whose AI
-column the agent fills (model_for patched, the lists tests' seam).
+column the agent fills (model_for patched, the sheets tests' seam).
 
 Run: DJANGO_ENV=test uv run python manage.py test agents.tests.test_output_lock
 """

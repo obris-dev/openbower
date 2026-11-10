@@ -4,7 +4,7 @@ httpx boundary via the shared login helper). model_for is the one
 patched seam, per the admission tests' precedent; responses validate
 back through the contract models (the parity idiom).
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_fill_views
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_fill_views
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ class AiColumnPostTests(FillViewsTestCase):
     def test_an_existing_column_is_400_with_the_envelope(self) -> None:
         # EXISTENCE, not occupancy: this column is empty and still
         # refuses. The old rule asked whether any cell held a value,
-        # which is an unindexed scan of the sheet under the List lock
+        # which is an unindexed scan of the sheet under the Sheet lock
         # to decide something the user can already see.
         self.sheet.columns = [
             *self.sheet.columns,

@@ -4,7 +4,7 @@ the fill's ONE columns write each (append_columns, point_columns) and
 the checks around them, two of which read the account's open fills.
 
 The create turns an agent's outputs into columns (resolve, cap, append,
-under the List lock). A fill never adds a column: an agent's output set
+under the Sheet lock). A fill never adds a column: an agent's output set
 is fixed while its columns exist (an agent save refuses a change), so a
 fill writes the columns the create made. It checks that they are free
 and the account has room, once unlocked before a queue is built and
@@ -122,7 +122,7 @@ def check_account_cap(account_id: str) -> None:
 
 
 def point_columns(target_sheet: Sheet, *, column_keys: list[str], fill_run_id: str) -> None:
-    """A fill's one columns write, under the List lock: each column it
+    """A fill's one columns write, under the Sheet lock: each column it
     writes learns which fill now speaks for it. Stored rather than
     derived per read, which keeps the four second poll off a walk of
     every fill the sheet has had. Nothing else about a column changes."""

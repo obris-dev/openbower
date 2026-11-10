@@ -1,5 +1,5 @@
 """THE way rows enter a sheet, whoever brings them: a push, a person
-adding rows, an import, a snapshot. The rows land through the list
+adding rows, an import, a snapshot. The rows land through the sheet
 service's primitive AND the workflow is told of the ones that hold
 something, in ONE transaction, so a row holding a value never exists
 with no work queued to fill it and no door can forget the second
@@ -51,7 +51,7 @@ class AppendRowsOperation:
         self.rows = list(rows)
 
     def run(self) -> AppendReport:
-        """Raises the list service's ListNotFound / ListsFull as they are:
+        """Raises the sheet service's SheetNotFound / SheetFull as they are:
         each door answers them in its own voice."""
         with transaction.atomic():
             created = SheetService(account_id=self.account_id).add_rows(self.target_sheet, self.rows)

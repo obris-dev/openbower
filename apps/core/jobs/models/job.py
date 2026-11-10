@@ -36,7 +36,7 @@ class Job(AccountScopedModel):
     opaque. `user_id` is who asked, ATTRIBUTION only (never an access
     filter), NULL when no user did (a job the system queued); `target_id`
     is what the job works on, in the
-    kind's own terms (a fill's list; blank for a job with no one
+    kind's own terms (a fill's sheet; blank for a job with no one
     target), so a surface can page a target's jobs without reading
     payloads. No worker stamp: a stale job the reclaim returned
     to READY can be settled late by its first tick, which lands on top
@@ -107,7 +107,7 @@ class Job(AccountScopedModel):
                 condition=models.Q(status__in=OPEN_JOB_STATES),
             ),
             # A target's jobs of one kind by status: the sheet's fills
-            # page and every "which fills are open on this list" read.
+            # page and every "which fills are open on this sheet" read.
             models.Index(fields=["kind", "target_id", "status", "-id"], name="job_target_idx"),
             # An account's jobs of one kind by status: the fill cap.
             models.Index(fields=["account_id", "kind", "status"], name="job_account_kind_idx"),

@@ -2,13 +2,13 @@
 and hands each to its node's processor. The consume loop lives here
 (mirroring the ingest consumer); the management command owns only
 signals; how a run executes lives on the processor of its node's kind
-(lists/processors). ONE consumer serves both lanes, told which topic to
+(sheets/processors). ONE consumer serves both lanes, told which topic to
 read.
 
 `handle_node_run` is the separable unit, testable without a broker: it
 claims the task through the state machine (READY | QUEUED -> PROCESSING,
 accepting READY so a message that outran the provisioner's mark still
-runs), hands it to its node's processor, and translates a row/list
+runs), hands it to its node's processor, and translates a row/sheet
 deletion mid-run into a terminal ROW_MISSING.
 
 The offset is committed AFTER the settle, so a consumer that dies mid-run
@@ -63,7 +63,7 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
         return None
     node = Node.objects.filter(id=task.node_id, account_id=task.account_id).first()
     if node is None:
-        # Nodes die only with their list, so a run still pointing at one
+        # Nodes die only with their sheet, so a run still pointing at one
         # is corruption; settle rather than crash-loop the consumer, but
         # say so (unlike the allowed agent orphaning, which the processor
         # settles silently).
@@ -73,7 +73,7 @@ def handle_node_run(task_id: str, worker_id: str) -> RunOutcome | None:
     try:
         return processor_for(account_id=task.account_id, node=node).process_run(task, flow=flow)
     except (SheetNotFound, RowNotFound):
-        # The row or list vanished between resolve and land (a user
+        # The row or sheet vanished between resolve and land (a user
         # deletion mid-run): terminal, nothing to diagnose. A fill-backed
         # run's fill notices on its next poll of its runs.
         flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})

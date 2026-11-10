@@ -1,6 +1,6 @@
 """The free provider's row cap: how many rows a fill may consent to
 before the free search vendor's budget refuses it. Which rows a fill
-targets is the agent processor's judgement (lists/processors/
+targets is the agent processor's judgement (sheets/processors/
 column_agent.py); this module keeps only the metering fact."""
 
 from __future__ import annotations

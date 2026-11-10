@@ -4,7 +4,7 @@ registry mutates, the boot gate refuses a roster without the kind the
 services write, and a node's config is an instance of its kind's class,
 dumped on write and parsed back on read.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_nodes_registry
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_nodes_registry
 """
 
 from __future__ import annotations

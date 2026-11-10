@@ -4,7 +4,7 @@ and the completion predicate; every body refusal with its code.
 Session auth is real; the HTTP path is patched at the destination
 service's sender seam.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

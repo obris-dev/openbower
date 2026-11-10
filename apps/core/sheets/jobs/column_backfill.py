@@ -3,7 +3,7 @@ every row the node's processor says is owed one, when a structural
 change (a webhook column added, or its wait set changed) makes rows
 owed work that no landing will ever offer. The per-kind judgement is
 the processor's, so the walker knows no kind and no column. A fill's walk
-is the fill job's own first slices (lists/jobs/fill.py); this job
+is the fill job's own first slices (sheets/jobs/fill.py); this job
 carries no consent and no range.
 
 Walking a sheet is not a request's job (a 50k-row sheet paged inside

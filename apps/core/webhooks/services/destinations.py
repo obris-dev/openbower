@@ -225,7 +225,7 @@ class WebhookDestinationService:
             self.deliveries.delete_for(destination_id)
 
     def _webhook_nodes_naming(self, destination: WebhookDestination) -> list[Node]:
-        # Imported here: the lists app already depends on this one, and a
+        # Imported here: the sheets app already depends on this one, and a
         # module-level import would make that a cycle.
         from sheets.services.workflows import WorkflowService
 

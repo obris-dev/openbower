@@ -1,7 +1,7 @@
 """CSV import: the pure parsing/typing helpers (no database) and the
 operation end to end.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

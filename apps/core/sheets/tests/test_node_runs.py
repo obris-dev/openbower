@@ -3,12 +3,12 @@ null-run NodeRuns READY (via handle_ingest_event, inside the apply
 transaction), the provisioner publishes each to the bus and marks it
 QUEUED, and the reclaim scan reclaims a consumer that died mid-run. The broker
 is mocked at its client boundary (confluent_kafka.Producer); everything
-else (lists, admission, the task rows) is real.
+else (sheets, admission, the task rows) is real.
 
 The claim/run/land half is in test_consume_node_runs.py, which reuses
 this module's AutofillHarness.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_node_runs
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_node_runs
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class EnqueueTests(AutofillHarness):
             self.assertEqual(task.kind, COLUMN_AGENT)
             self.assertEqual(task.account_id, ACCOUNT)
             # Denormalized from the target sheet: an autofill run has no
-            # Fill, so its list comes off the List it was pushed to.
+            # Fill, so its sheet comes off the Sheet it was pushed to.
             self.assertEqual(task.sheet_id, str(sheet.id))
             self.assertEqual(task.status, NodeRunStatus.READY)
             self.assertIsNotNone(task.last_state_change_at)

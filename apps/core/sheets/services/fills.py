@@ -1,7 +1,7 @@
 """User-facing fill control and reads, thin and account-scoped
-(cross-tenant access reads as not-found, like every lists service).
+(cross-tenant access reads as not-found, like every sheets service).
 A fill is a job of kind `fill`; this service reads and stops those
-jobs. Authorization is ACCOUNT MEMBERSHIP: a fill on a shared list is
+jobs. Authorization is ACCOUNT MEMBERSHIP: a fill on a shared sheet is
 a shared fill, so any teammate may cancel; `user_id` on the row is
 attribution only."""
 
@@ -121,7 +121,7 @@ class FillService:
     def page_for_sheet(self, sheet_id: str, *, after_id: str, limit: int) -> list[Job]:
         """Keyset by -id, OPEN runs only: a terminal run's story (its
         status, its error) lands on the column summary the moment it
-        leaves this list, so the poll carries in-flight work alone. A
+        leaves this sheet, so the poll carries in-flight work alone. A
         failed run is still first-class there, never a 4xx."""
         qs = fill_progress.open_fills().filter(account_id=self.account_id, target_id=sheet_id).order_by("-id")
         if after_id:

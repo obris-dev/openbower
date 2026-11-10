@@ -1,7 +1,7 @@
-"""The lists service contract: account scoping, caps, ranked rows,
+"""The sheets service contract: account scoping, caps, ranked rows,
 column reads, and child cleanup.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ class SheetServiceTests(TestCase):
         self.assertLessEqual(max(len(r.rank) for r in rows_now), 2)
         with self.assertRaises(RowNotFound):
             service.move_row(target, str(rows[0].id), after_id="01ROW" + "0" * 21)
-        # Scoped like every write: a foreign account reads the list as
+        # Scoped like every write: a foreign account reads the sheet as
         # missing, and a row or a neighbour from another sheet as missing.
         other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=SheetOrigin.CSV)
         (stranger,) = service.add_rows(other, [{"domain": "z.com", "name": "z"}])

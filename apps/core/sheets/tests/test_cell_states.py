@@ -1,7 +1,7 @@
 """The cell-state read seam: every iterator is scoped to the account it
 was built for, which is the module's entire reason to exist.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

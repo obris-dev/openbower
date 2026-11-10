@@ -2,7 +2,7 @@
 broker mocked at its client boundary), the event codec, and the worker's
 dedupe/apply handler (the idempotent inbox, no broker needed).
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_ingest_worker
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_ingest_worker
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class HandleIngestEventTests(TestCase):
         self.assertEqual(self.svc.get(self.sheet_id).row_count, 5)
 
     def test_dedupe_is_scoped_by_account(self):
-        # The same caller key from two accounts (each its own list) both apply.
+        # The same caller key from two accounts (each its own sheet) both apply.
         sheet_c = _make_sheet(account_id="01JQ" + "C" * 22)
         self.assertEqual(
             handle_ingest_event(_event(event_id="dup", account_id=_ACCT, sheet_id=self.sheet_id)), "applied"
@@ -85,7 +85,7 @@ class HandleIngestEventTests(TestCase):
         )
 
     def test_a_missing_sheet_is_dropped_not_retried(self):
-        # A list deleted after accept is terminal: mark processed, do not
+        # A sheet deleted after accept is terminal: mark processed, do not
         # redeliver forever.
         ev = _event(event_id="gone", sheet_id="01JQ" + "Z" * 22, rows=self._rows(1))
         self.assertEqual(handle_ingest_event(ev), "dropped")

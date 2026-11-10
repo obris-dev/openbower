@@ -1,7 +1,7 @@
 """The digest payload's pure shaping: the completion predicate, the
 item's event id, and what an item carries.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

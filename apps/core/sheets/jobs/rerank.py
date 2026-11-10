@@ -1,6 +1,6 @@
 """Re-space a sheet's ranks (ListService.respace): queued once by a
 move that split a gap past RANK_REBALANCE_LENGTH, run as one slice.
-While the list has an open fill the slice waits: a walk's cursor holds
+While the sheet has an open fill the slice waits: a walk's cursor holds
 a key of the old spacing, and a fill lasts minutes at the most."""
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from ..services.sheets import FillsOpen, SheetNotFound, SheetService
 
 
 class RerankProgress(BaseModel):
-    """No cursor: the re-space is one slice under the list lock, so a
+    """No cursor: the re-space is one slice under the sheet lock, so a
     reclaimed job redoes it whole."""
 
 

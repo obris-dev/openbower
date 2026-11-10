@@ -118,7 +118,7 @@ class ColumnCollision(FillRefused):
 
     Existence is the whole test, not occupancy. Adopting an empty
     column meant asking whether any of its cells held a value, which
-    is a scan of the sheet with no index behind it, run under the List
+    is a scan of the sheet with no index behind it, run under the Sheet
     lock while nothing else could add rows or import. A column is a
     thing the user can see and delete, so the cheap rule is also the
     legible one."""
@@ -194,6 +194,6 @@ class FillColumnDownstream(FillRefused):
 
 
 class FillColumnNotFound(Exception):
-    """No column with that key carries a fill on this list. Not a
+    """No column with that key carries a fill on this sheet. Not a
     FillRefused: refusals answer an admissible ask, a missing column
     is 404 territory (like ListNotFound)."""

@@ -1,11 +1,11 @@
 """The workflow substrate: one workflow per sheet, one path per node,
 one node per (agent, sheet), minted by admission on demand and removed
-only with the list; the preview node is the account's one sheetless
+only with the sheet; the preview node is the account's one sheetless
 node. Real DB and services; model_for is patched by the admission
 fixture, and the rollback tests fail NodePath's writer to prove the
 transaction.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

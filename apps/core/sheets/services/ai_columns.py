@@ -3,7 +3,7 @@ fill: filling is the column's gesture (FillAdmissionService.fill_column),
 from the drawer right after this or from the column's tracker later, so
 an AI column can exist with rows never tried, which its tracker offers
 to fill. Beside WebhookColumnService, the other workflow column's.
-Account-scoped like every lists service."""
+Account-scoped like every sheets service."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class AiColumnService:
 
     def add(self, target_sheet_id: str, *, config: AgentConfig | None = None, agent_id: str = "") -> Sheet:
         """The column set one agent's outputs make, bound to the node
-        that fills them, in one transaction under the list lock (the
+        that fills them, in one transaction under the sheet lock (the
         same lock every columns writer takes). Exactly one of `config`
         (the quick tab: an ephemeral agent is created) or `agent_id` (a
         roster agent) is given; the serializer enforces it.

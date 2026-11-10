@@ -1,13 +1,13 @@
 """The node-run state machine's processing half: handle_node_run claims
 a task (READY | QUEUED -> PROCESSING), resolves the agent live, runs it
 through the mocked model seam, and lands the cell with NO fill run. A
-duplicate delivery loses the claim CAS and is dropped; a gone row or list
+duplicate delivery loses the claim CAS and is dropped; a gone row or sheet
 settles terminally; a retriable blank parks; a run at the attempt cap
 gives up with a diagnosed blank. The model is a scripted FunctionModel
 through the same patched seam the fill worker tests use; everything else
-(lists, the state machine, landing) is real.
+(sheets, the state machine, landing) is real.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_consume_node_runs
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_consume_node_runs
 """
 
 from __future__ import annotations
@@ -91,8 +91,8 @@ class ProcessNodeRunTests(AutofillHarness):
 
     def test_a_vanished_sheet_settles_sheet_missing(self) -> None:
         sheet, task, row_id = self._one_ready_task("orphan.co")
-        # Delete ONLY the List row (no cascade): the ListRow survives, so
-        # the processor resolves the row but not its list.
+        # Delete ONLY the Sheet row (no cascade): the SheetRow survives, so
+        # the processor resolves the row but not its sheet.
         Sheet.objects.filter(id=sheet.id).delete()
 
         self.assertEqual(handle_node_run(str(task.id), WORKER), "sheet_missing")

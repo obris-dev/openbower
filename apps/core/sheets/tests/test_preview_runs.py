@@ -3,7 +3,7 @@ that owns its input. The lane's shape and supersede rule, the /v1/runs
 surface, the run end to end through the real consumer (landing on
 itself, never on a sheet), and the age prune.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_preview_runs
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_preview_runs
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ A node kind's processor emits one write per column it fills
 (`on_run_landed`); a person's typed value is a TypedWrite. A column's
 TYPE (text, number, date) shapes a value at the write and lives in the
 contract's cell_types. Writes are in-memory intents, persisted by
-nothing until the list service's `land_row` / `land_rows` lands the
+nothing until the sheet service's `land_row` / `land_rows` lands the
 values onto the row and the resolved states onto the cell ledger, in
 one lock order. The landing never branches on a node kind: it asks
 only whether a column is a workflow column (whose cells it records),

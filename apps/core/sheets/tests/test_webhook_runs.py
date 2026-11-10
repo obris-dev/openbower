@@ -5,7 +5,7 @@ is pinned on its boundaries; the advance through land_row on both
 lanes (the automatic landing, and a fill-backed settle through the
 test helper that restates it).
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations
@@ -196,7 +196,7 @@ class ProcessorTests(_SheetHarness):
         # The advance is the base's, run after the kind's half on BOTH
         # shapes: a run that LANDED on its row is offered downstream; an
         # exited, parked, or retired run is not, on a row or off; a batch
-        # advances every (list, row) it settled. FAILS if a kind is
+        # advances every (sheet, row) it settled. FAILS if a kind is
         # left to call the advance itself, or the public pair stops
         # wrapping the private one.
         from sheets.processors.base import BatchTally, RunOutcome
@@ -217,7 +217,7 @@ class ProcessorTests(_SheetHarness):
                 agent.process_run(on_row, flow=flow)
                 agent.process_run(preview, flow=flow)
         self.assertEqual(calls, [(("from_node_id", str(self.first.id)), ("row_ids", ["R1"]), ("sheet_id", "L1"))])
-        # A batch advances ONE page per list, not one call per row.
+        # A batch advances ONE page per sheet, not one call per row.
         node_id = self._add_webhook_column(["country"])
         tally = BatchTally(settled=3, settled_rows=[("L1", "R1"), ("L2", "R9"), ("L1", "R2")])
         calls.clear()

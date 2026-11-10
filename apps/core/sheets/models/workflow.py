@@ -5,14 +5,14 @@ from openbower_kernel.models import AccountScopedModel
 
 
 class Workflow(AccountScopedModel):
-    """The per-sheet container the nodes hang off: one per list.
+    """The per-sheet container the nodes hang off: one per sheet.
 
     Created by admission's node get-or-create the first time a sheet
-    gains an AI column, never by list create, so a sheet with no AI
+    gains an AI column, never by sheet create, so a sheet with no AI
     column has no workflow. Deleted only by ListService.delete, in the
-    list's own transaction: nodes and paths point at it by id, nothing
+    sheet's own transaction: nodes and paths point at it by id, nothing
     cascades, and the owning service removes them in order. It carries
-    only the list pointer: a workflow has MANY entries, and which paths
+    only the sheet pointer: a workflow has MANY entries, and which paths
     an arrival starts is read off the entry markers by (account,
     workflow, kind), so a pointer here would be a second copy of that
     fact with nothing to gain."""

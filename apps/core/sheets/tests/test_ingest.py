@@ -7,7 +7,7 @@ NOT land in the sheet yet.
 The machine path mocks the hub tokeninfo relay at core's transport
 boundary; the session path uses the shared cookie-login helper.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_ingest
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_ingest
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from sheets.services.sheets import SheetService
 
 _CORE_AUD = "openbower-core"
 # Matches TEST_IDENTITY's account, so a session and a machine key resolve to
-# the SAME account and reach the same list.
+# the SAME account and reach the same sheet.
 _ACCT = "01JQ" + "B" * 22
 _USER = "01JQ" + "A" * 22
 
@@ -101,7 +101,7 @@ class IngestMachineTests(TestCase):
         body = resp.json()
         self.assertEqual(body["accepted"], 2)
         self.assertTrue(body["event_id"])
-        # Exactly one event, carrying the rows bound to this list + account.
+        # Exactly one event, carrying the rows bound to this sheet + account.
         self.assertEqual(len(captured), 1)
         event = captured[0]
         self.assertEqual(event.sheet_id, self.sheet_id)

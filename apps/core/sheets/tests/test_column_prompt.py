@@ -3,7 +3,7 @@ through the endpoint with real cookie auth (the IdP mocked at its
 httpx boundary via the shared login helper). model_for is the one
 patched seam, per the fill views' precedent.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_column_prompt
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_column_prompt
 """
 
 from __future__ import annotations

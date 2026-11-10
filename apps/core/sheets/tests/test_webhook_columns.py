@@ -4,7 +4,7 @@ protect it (an AI column it waits on cannot go first) and the readers
 that keep it off the ingest surface. Session auth is real; the sender
 is patched at the destination service's seam for the scoped test send.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations
@@ -97,8 +97,8 @@ class WebhookColumnTests(TestCase):
         return reverse("sheets_column_webhook_config", kwargs={"id": str(self.sheet.id), "key": key})
 
     def test_the_backfill_job_names_its_sheet_as_its_target(self) -> None:
-        # A job a list's delete must find by target, like every job of
-        # a list's.
+        # A job a sheet's delete must find by target, like every job of
+        # a sheet's.
         self._add()
         (job,) = list(Job.objects.filter(kind=ColumnBackfillJob.KIND))
         self.assertEqual(job.target_id, str(self.sheet.id))

@@ -62,7 +62,7 @@ class AgentService:
 
     @cached_property
     def workflows(self) -> WorkflowService:
-        # lists imports this module at load, so the edge back is deferred
+        # sheets imports this module at load, so the edge back is deferred
         # to first use; a module-level import here is a startup cycle.
         from sheets.services.workflows import WorkflowService
 

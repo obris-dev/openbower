@@ -4,7 +4,7 @@ column's tracker, through the endpoint with real cookie auth (the IdP mocked at 
 helper). model_for is the one patched seam, per the fill views'
 precedent; responses validate back through the contract models.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_column_fill
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_column_fill
 """
 
 from __future__ import annotations
@@ -539,7 +539,7 @@ class EntryActionColumnTests(ColumnFillTestCase):
 
     def test_the_index_reads_no_workflow(self) -> None:
         # The entry actions are the open sheet's: the index (also the
-        # machine lane's "which lists can I push to") carries no node
+        # machine lane's "which sheets can I push to") carries no node
         # ids and reads no node. FAILS if the index summaries grow them.
         self.add_column()
         with CaptureQueriesContext(connection) as captured:

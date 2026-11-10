@@ -1,4 +1,4 @@
-"""List services: all ORM access for the lists domain. Account-scoped
+"""Sheet services: all ORM access for the sheets domain. Account-scoped
 instance services (cross-tenant access fails as not-found, exactly like
 a missing row, so foreign ids are not an oracle)."""
 
@@ -49,7 +49,7 @@ class FoldersFull(Exception):
 
 
 class SheetNotFound(Exception):
-    """Missing OR foreign list (cross-tenant reads as not-found)."""
+    """Missing OR foreign sheet (cross-tenant reads as not-found)."""
 
 
 class FolderNotFound(Exception):
@@ -67,7 +67,7 @@ class ColumnNotWritable(Exception):
 
 
 class RowNotFound(Exception):
-    """Missing row OR one outside the given list (reads as not-found)."""
+    """Missing row OR one outside the given sheet (reads as not-found)."""
 
 
 class CellRefused(Exception):
@@ -148,7 +148,7 @@ class RowRankTooDeep(Exception):
 
 
 class FillsOpen(Exception):
-    """A re-space refused because the list has open fills: a walk's
+    """A re-space refused because the sheet has open fills: a walk's
     cursor holds a key of the old spacing and would land somewhere else
     under the new one."""
 
@@ -237,7 +237,7 @@ class AllRowsExcept:
 
 # What a rows delete acts on, as the service names it (the wire says
 # row_ids, or all with keep; the sheet carries the same two shapes).
-# "All" is judged under the list lock, so it is every row as of that
+# "All" is judged under the sheet lock, so it is every row as of that
 # moment, a push racing it included only after.
 RowSelection = SomeRows | AllRowsExcept
 
@@ -278,7 +278,7 @@ class FolderService:
             raise FolderNotFound(folder_id) from e
 
     def sheet_counts(self, folder_ids: list[str]) -> dict[str, int]:
-        """Lists per folder, one aggregate query (the wire's list_count)."""
+        """Sheets per folder, one aggregate query (the wire's list_count)."""
         rows = (
             Sheet.objects.filter(account_id=self.account_id, folder_id__in=folder_ids)
             .values_list("folder_id")
@@ -292,7 +292,7 @@ class FolderService:
         return folder
 
     def delete(self, folder: Folder) -> None:
-        """Delete the folder; its lists go LOOSE (moved to root), never
+        """Delete the folder; its sheets go LOOSE (moved to root), never
         deleted with it: the bucket is taxonomy, the sheets are work."""
         with transaction.atomic():
             # The same folder-row lock move() takes, so a move committed
@@ -395,7 +395,7 @@ class SheetService:
         rows = stored_rows
         with transaction.atomic():
             # Ranks allocate after the sheet's last row, so concurrent
-            # appends must serialize on the list row or the second one
+            # appends must serialize on the sheet row or the second one
             # collides with the (list_id, rank) unique constraint.
             try:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
@@ -500,12 +500,12 @@ class SheetService:
         the same order), written back in ONE bulk update, and a row
         with no value to land is locked all the same: its writes still
         become ledger records, and the lock is what puts those records
-        behind a column or list purge instead of racing one.
+        behind a column or sheet purge instead of racing one.
 
         The sheet is read AFTER the locks, never before: a column
         DELETE strips its key from every row and purges its records
         while holding those same locks, so a landing that read the
-        columns first would wake holding a list that still has the
+        columns first would wake holding a sheet that still has the
         deleted column and write its value back, with a record no
         purge can reach. What a row may hold is decided from the sheet
         as it is once this call may write to it."""
@@ -654,7 +654,7 @@ class SheetService:
         that existed at the click). The cursor's rank is the truth: a
         keyset needs no row to exist (a walk's cursor row deleted
         mid-walk is fine), and the one thing that rewrites ranks, the
-        re-space a deep move queues, waits for the list's open fills
+        re-space a deep move queues, waits for the sheet's open fills
         (`respace`), while the sheet's own scroll tolerates the one
         overlapping page it could see. A row moved from below the cursor
         to above it between two pages is not walked, exactly like a row
@@ -672,7 +672,7 @@ class SheetService:
         write, on the moved row: its new rank is a key between its two
         new neighbours; none at all when it already sits there (a row
         dropped on itself or on the row it follows), so a no-op never
-        deepens a key. Under the list lock, so two moves into the same
+        deepens a key. Under the sheet lock, so two moves into the same
         gap cannot compute the same key. A key past RANK_REBALANCE_LENGTH
         means the gap has been split too many times: the sheet's ranks
         are re-spaced by a job, after this write commits."""
@@ -716,10 +716,10 @@ class SheetService:
 
     def respace(self, sheet_id: str) -> None:
         """Re-space the sheet's ranks: the same order, fresh keys with no
-        fractional tail. One transaction under the list lock, so a move
+        fractional tail. One transaction under the sheet lock, so a move
         cannot interleave a key computed against the old spacing; a
         sheet holds at most MAX_LIST_ROWS rows, so the lock is held for
-        seconds at the worst. Refused (FillsOpen) while the list has an
+        seconds at the worst. Refused (FillsOpen) while the sheet has an
         open fill, checked under the lock: a walk's cursor holds a key
         of the old spacing. A fill started after that check reads its
         first page no earlier than this transaction, and its cursor
@@ -766,13 +766,13 @@ class SheetService:
     def delete_rows(self, target: Sheet, selection: RowSelection) -> RowsRemoved:
         """Delete the selected rows with their cell states and their
         webhook runs, and recount the sheet, in one transaction under
-        the list lock (the lock an append takes, so a push racing this
+        the sheet lock (the lock an append takes, so a push racing this
         waits and lands after it, and "all" is every row as of the
         lock; a landing locks the ROW, so one in flight on a row commits
         before the delete takes it, and a later one finds it gone). A
         page at a time, each page in the deletes' lock order, the one a
         landing takes: ListRow, then ListCellState, then NodeRun. The
-        rows' fill-backed and autofill runs are left alone (the list
+        rows' fill-backed and autofill runs are left alone (the sheet
         delete purges fills whole, with their runs; a row's run is the
         claimed task's to settle: it finds its row gone and settles
         ROW_MISSING). An id the sheet does not have deletes nothing."""
@@ -813,14 +813,14 @@ class SheetService:
             raise RowNotFound(row_id)
 
     def delete(self, target: Sheet) -> None:
-        """Delete the list with its rows, fills, tasks, cell states, and
+        """Delete the sheet with its rows, fills, tasks, cell states, and
         workflow (nodes and paths) in one transaction (the service owns
         child cleanup; no
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
         account's fill slots with nothing visible to cancel)."""
         with transaction.atomic():
-            # Locked, not exists(): add_rows holds the List row while it
+            # Locked, not exists(): add_rows holds the Sheet row while it
             # inserts, so the delete must wait for it or the row cleanup
             # runs BEFORE the insert commits, orphaning rows forever (no
             # cascades). Also account-scoped: callers pre-scope, but the
@@ -843,11 +843,11 @@ class SheetService:
             # Bounded by the PARENT key alone, deliberately. The
             # account column is denormalized defence in depth for
             # READS; on a purge it is a liability, because a task whose
-            # copy of it is blank would outlive the list forever, and
+            # copy of it is blank would outlive the sheet forever, and
             # the fills queryset that produced these ids is already
-            # list-scoped under an account-scoped lock.
+            # sheet-scoped under an account-scoped lock.
             NodeRun.objects.filter(fill_run_id__in=[str(i) for i in fills.values_list("id", flat=True)]).delete()
-            # The sheet's webhook runs go the same way, by list id: no
+            # The sheet's webhook runs go the same way, by sheet id: no
             # picker ever finds one through its row, so unlike an
             # autofill run it cannot retire itself.
             webhook_runs.purge_for_sheet(str(target.id))
@@ -855,26 +855,26 @@ class SheetService:
             # owned them: nothing else can reach them once the fills are
             # gone, and they are excluded from the roster and its cap,
             # so a survivor is litter no surface can ever show. The ids
-            # come from the FILL jobs, which are list-scoped and current;
+            # come from the FILL jobs, which are sheet-scoped and current;
             # the caller's `target` may be a snapshot taken before the
             # column it is about to delete even existed.
             AgentService(account_id=self.account_id).delete_ephemeral(
                 [consent.agent_id for _fill_run_id, consent in fill_progress.iter_consents(fills)]
             )
             # The fill-backed runs went first (they point at nodes). This
-            # list's autofill runs are NOT purged: they carry list_id and a
+            # sheet's autofill runs are NOT purged: they carry sheet_id and a
             # node_id the next line orphans, and a claimed one finds its row
             # gone and settles ROW_MISSING before it reaches the node (the
             # autofill provisioner picks READY tasks globally, which is what
-            # still claims them). The workflow is list-owned, so it is purged here
+            # still claims them). The workflow is sheet-owned, so it is purged here
             # and nowhere else; the preview node has no workflow and is
             # untouched.
-            # Its preview runs carry no list and no fill, so nothing here
+            # Its preview runs carry no sheet and no fill, so nothing here
             # reaches them either; the cron prunes them by age.
             WorkflowService(account_id=self.account_id).delete_for_sheet(str(target.id))
-            # Every job of the list's goes with it, by target: the fills,
+            # Every job of the sheet's goes with it, by target: the fills,
             # a webhook backfill, a re-space (one delete; a tick holding
-            # one of them finds no list on its next slice and ends, its
+            # one of them finds no sheet on its next slice and ends, its
             # settle missing on the deleted row).
             JobService(account_id=self.account_id).delete_for_target(str(target.id))
             Sheet.objects.filter(id=target.id, account_id=self.account_id).delete()

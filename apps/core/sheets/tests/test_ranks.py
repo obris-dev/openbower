@@ -5,7 +5,7 @@ scheme refuses, and the id mint every keyset by id rests on (the
 kernel ships no test runner, so its two order primitives are pinned
 here, beside the sheet that depends on them).
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_ranks
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_ranks
 """
 
 from __future__ import annotations

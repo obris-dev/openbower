@@ -4,7 +4,7 @@ through real cookie auth (the IdP mocked at its httpx boundary via the shared lo
 helper); responses validate back through the contract models (the
 parity idiom).
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_columns
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_columns
 """
 
 from __future__ import annotations
@@ -319,7 +319,7 @@ class ColumnDeleteTests(TestCase):
         self.assertFalse(Agent.objects.filter(id=self.agent.id).exists())
 
     def test_a_column_whose_node_is_gone_still_deletes(self) -> None:
-        # Corruption (nodes die only with their list) must not make a
+        # Corruption (nodes die only with their sheet) must not make a
         # column undeletable: the tidy lands and the orphan agent is logged.
         Node.objects.filter(id=self.node.id).delete()
         self.assertEqual(self.client.delete(self.url("contact_name")).status_code, 200)

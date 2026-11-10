@@ -17,7 +17,7 @@ cancelling reach a run that has NOT been claimed; a run a consumer
 already owns runs to its own terminal write (in-flight spend is sunk
 cost, and its result still lands).
 
-Account-scoped like every lists service; the age prune is the cron's
+Account-scoped like every sheets service; the age prune is the cron's
 (operations/prune_preview_runs.py), global."""
 
 from __future__ import annotations

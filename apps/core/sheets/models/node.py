@@ -9,7 +9,7 @@ from ..constants import NODE_IDENTITY_MAX_LENGTH, NODE_KIND_MAX_LENGTH, RANK_MAX
 class Node(AccountScopedModel):
     """One typed node: an action a run executes against a row.
 
-    `kind` names a registered node kind (lists.nodes is a registry, so a
+    `kind` names a registered node kind (sheets.nodes is a registry, so a
     new kind is a new module and no migration). `config` is that kind's
     TYPED config at rest, a NodeConfig instance dumped on write and
     parsed back by its class on read (services.workflows.config_of for
@@ -38,7 +38,7 @@ class Node(AccountScopedModel):
 
     An agent node is durable: removing its column never removes it,
     because ABANDONED runs (the consent record) keep pointing at it, and
-    a node with no columns is inert; it goes only with its list. A
+    a node with no columns is inert; it goes only with its sheet. A
     webhook column's two nodes are its own and go with the column, its
     runs with them. The agent a config points at dangles after an
     agent delete exactly as the column did; that orphaning is deliberate

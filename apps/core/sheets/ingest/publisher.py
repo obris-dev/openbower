@@ -56,12 +56,12 @@ class LoggingIngestPublisher:
 
 
 class KafkaIngestPublisher:
-    """Produces the accepted batch to its topic as one message, keyed by list
-    id (so a list's pushes keep per-partition order), and BLOCKS for the
+    """Produces the accepted batch to its topic as one message, keyed by sheet
+    id (so a sheet's pushes keep per-partition order), and BLOCKS for the
     broker ack so the 202 is only returned once the event is durable on the
     bus. A whole batch is one message; the producer's message.max.bytes is
     driven from the same INGEST_MAX_MESSAGE_BYTES as the topic and broker, so
-    the three agree (see lists.ingest.topics)."""
+    the three agree (see sheets.ingest.topics)."""
 
     def __init__(self, bootstrap: str, spec: TopicSpec) -> None:
         self._bootstrap = bootstrap

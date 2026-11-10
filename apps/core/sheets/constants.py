@@ -1,4 +1,4 @@
-"""Bounds + enums for the lists domain."""
+"""Bounds + enums for the sheets domain."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from openbower_schema.webhooks import DEFAULT_WEBHOOK_CADENCE_SECONDS as DEFAULT
 from openbower_schema.webhooks import WEBHOOK_CADENCE_SECONDS as WEBHOOK_CADENCE_SECONDS
 
 LABEL_MAX_LENGTH = 120
-# Rows per list: sized to hold a full confident lead list.
+# Rows per sheet: sized to hold a full confident lead list.
 MAX_SHEET_ROWS = 50_000
 # Per-cell character ceiling, deliberately above the incumbent
 # spreadsheets (Sheets 50,000, Excel 32,767): our sheet is not bounded
@@ -50,7 +50,7 @@ MAX_ROW_IDS_PER_DELETE = MAX_SHEET_ROWS
 # well short of the bound.
 RANK_MAX_LENGTH = KERNEL_RANK_MAX_LENGTH
 RANK_REBALANCE_LENGTH = 32
-# A re-space waits for the list's open fills (a walk's cursor holds a
+# A re-space waits for the sheet's open fills (a walk's cursor holds a
 # key of the old spacing); how long a waiting rerank sleeps between looks.
 RERANK_WAIT_SECONDS = 60
 # Idempotency key a webhook caller may supply on an ingest push (else one
@@ -89,7 +89,7 @@ ORIGIN_MAX_LENGTH = 16
 
 
 class SheetOrigin(StrEnum):
-    """How a list came to exist (an index-page chip, and the tell for
+    """How a sheet came to exist (an index-page chip, and the tell for
     which columns to expect)."""
 
     DISCOVER = "discover"
@@ -255,7 +255,7 @@ class WebhookRunOutcome(StrEnum):
 FILL_SCAN_CHUNK = 1000
 # Rows per write when a service touches many at once (binary): a
 # walk's slice queues a page's runs, cancel abandons what is left
-# of it, list delete purges, the cron sweep pages its deletes, and a
+# of it, sheet delete purges, the cron sweep pages its deletes, and a
 # re-space rewrites a sheet's ranks under its lock.
 FILL_WRITE_BATCH = 1000
 # Runs per batch: what one flush tick claims for one node with DEFERRED
@@ -330,11 +330,11 @@ class NodeRunStatus(StrEnum):
     diagnose. The fill goes on without it.
 
     LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
-    path: the whole list was gone when the task came up (deleted after
+    path: the whole sheet was gone when the task came up (deleted after
     the row was pushed), so the task settles terminally with nothing to
     diagnose. A fill-backed task never sees it (its fill job was swept
-    with the list); it is the autofill worker's way to retire an orphaned
-    task instead of a delete-cascade off the list."""
+    with the sheet); it is the autofill worker's way to retire an orphaned
+    task instead of a delete-cascade off the sheet."""
 
     # The non-terminal lifecycle, in order: READY (queued, eligible,
     # not yet handed to the transport), QUEUED (handed off / published,

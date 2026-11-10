@@ -152,7 +152,7 @@ class QuickPathTests(AdmissionTestCase):
         # not frozen on the fill.
         self.assertEqual(agent.config().model, "test-model")
         self.assertEqual(len(targeted(str(fill.id))), 2)
-        # Fill-backed tasks denormalize their list off the fill job, and
+        # Fill-backed tasks denormalize their sheet off the fill job, and
         # every one is a run of the column's node from birth.
         tasks = NodeRun.objects.filter(fill_run_id=str(fill.id))
         self.assertEqual({t.sheet_id for t in tasks}, {str(self.sheet.id)})
@@ -190,7 +190,7 @@ class QuickPathTests(AdmissionTestCase):
     def test_an_existing_column_refuses_whatever_is_in_it(self) -> None:
         # EXISTENCE is the rule, not occupancy. Asking whether a column
         # held any value meant scanning the sheet with no index behind
-        # it, under the List lock, to decide something the user can see
+        # it, under the Sheet lock, to decide something the user can see
         # for themselves: the column is there.
         self.sheet.columns = [
             *self.sheet.columns,
@@ -253,7 +253,7 @@ class QuickPathTests(AdmissionTestCase):
         # or a live orphaned fill holds an account fill slot forever
         # with nothing visible to cancel.
         self.add_and_fill()
-        # A job of another kind on the same list goes with it too.
+        # A job of another kind on the same sheet goes with it too.
         JobService(account_id=ACCOUNT).enqueue_system(
             RerankJob(sheet_id=str(self.sheet.id)), target_id=str(self.sheet.id)
         )
@@ -505,7 +505,7 @@ class RosterPathTests(AdmissionTestCase):
 
 
 class ConsentUnderLockTests(AdmissionTestCase):
-    """The column set a fill owns is frozen under the List lock, from
+    """The column set a fill owns is frozen under the Sheet lock, from
     the locked copy, never from the unlocked read; and no columns
     writer adds a column under a key an open fill still writes."""
 
@@ -563,12 +563,12 @@ class ConsentUnderLockTests(AdmissionTestCase):
 
 
 class AdmissionLockSpanTests(AdmissionTestCase):
-    """Where admission takes the List row lock, and for how long.
+    """Where admission takes the Sheet row lock, and for how long.
 
     The lock exists for ONE thing, the columns array write, and the
     expensive part of admission (a NodeRun per targeted row) must not
     happen while it is held: that same lock is taken by every column
-    add, rename, reorder and delete, by add_rows, by the list delete,
+    add, rename, reorder and delete, by add_rows, by the sheet delete,
     and by another admission, so a large fill holding it stalls all of
     them.
 

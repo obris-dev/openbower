@@ -1,7 +1,7 @@
 """The one cell writer: write-if-blank under the ROW lock, the clamp,
 the per-type shape validators, and machine blanks writing nothing.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists.tests.test_write_cells
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_write_cells
 """
 
 from __future__ import annotations
@@ -486,7 +486,7 @@ class WriteIfBlankTests(TestCase):
                 _ctx(str(target.id), CellSource.MANUAL),
                 _landing("01RW" + "Z" * 22, {"name": "x"}, column_keys=("name",), blank_state=None),
             )
-        with self.assertRaises(RowNotFound):  # a row outside the list is missing too
+        with self.assertRaises(RowNotFound):  # a row outside the sheet is missing too
             service.land_row(
                 _ctx(str(other.id), CellSource.MANUAL),
                 _landing(str(row.id), {"name": "x"}, column_keys=("name",), blank_state=None),

@@ -1,5 +1,5 @@
 """The ingest worker PROCESS: signals and lifecycle, nothing else. The
-consume loop and the dedupe/apply handler live in lists/ingest/consumer.py,
+consume loop and the dedupe/apply handler live in sheets/ingest/consumer.py,
 collocated with the publisher (the two halves of one bus).
 
 SIGTERM and SIGINT stop after the current message and exit; `--once` drains

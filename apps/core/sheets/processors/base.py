@@ -77,7 +77,7 @@ class BatchTally:
     """What `_process_batch` did with a node's due runs: runs, not
     batches (one batch carries many runs). `settled` is the runs that
     reached DONE with their work done, and `settled_rows` those runs'
-    (list id, row id) pairs, for the advance; `skipped` counts a NODE
+    (sheet id, row id) pairs, for the advance; `skipped` counts a NODE
     the gates turned away without claiming."""
 
     settled: int = 0
@@ -247,7 +247,7 @@ class NodeProcessor(ABC):
     def process_batch(self, tasks: Sequence[NodeRun], *, flow: NodeRunFlow, now: datetime) -> BatchTally:
         """The flush's call: the kind's `_process_batch` over the runs
         the flush already claimed (PROCESSING, the attempt stamped),
-        then the advance for the rows it settled, one page per list (a
+        then the advance for the rows it settled, one page per sheet (a
         node's runs are one sheet's, so that is one page)."""
         tally = self._process_batch(tasks, flow=flow, now=now)
         by_sheet: dict[str, list[str]] = {}

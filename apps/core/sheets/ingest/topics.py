@@ -7,8 +7,8 @@ consumer group from it.
 Sizing: a whole accepted batch rides as ONE message, so `max.message.bytes`
 (from settings.INGEST_MAX_MESSAGE_BYTES) must exceed the endpoint's accept
 bound, and the broker/producer/consumer limits must all agree with it (the
-compose kafka env + the two client configs). Keyed by list id at produce
-time, so a list's pushes keep per-partition order.
+compose kafka env + the two client configs). Keyed by sheet id at produce
+time, so a sheet's pushes keep per-partition order.
 """
 
 from __future__ import annotations

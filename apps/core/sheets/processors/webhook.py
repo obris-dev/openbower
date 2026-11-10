@@ -142,7 +142,7 @@ class WebhookProcessor(NodeProcessor):
         disabled destination hands the batch back untouched (its window
         stays, the attempt is handed back, the next tick finds it due
         again; a skip counts a node); a gone destination, or a column
-        gone from the sheet, fails it; a gone list retires it; a
+        gone from the sheet, fails it; a gone sheet retires it; a
         barrier resolving to no column parks it (the column edit that
         mends the wait backfills again); a run whose row is gone
         retires. The rest are partitioned, sendable or incomplete, and
@@ -293,7 +293,7 @@ class WebhookProcessor(NodeProcessor):
         result: WebhookRunResult,
     ) -> _LandResult:
         """The batch's landing: the kind's write for every row through
-        the list service's one landing (ONE ledger upsert for the
+        the sheet service's one landing (ONE ledger upsert for the
         batch), then the runs settled, one transaction, ListCellState
         before NodeRun (the order the deletes take). A run whose row was
         deleted during the send has no verdict: it retires ROW_MISSING,

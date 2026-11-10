@@ -12,7 +12,7 @@ THE SAME VECTORS live in the web's mirror,
 web/apps/app/src/app/(app)/_components/agent-config/lib/output-key.test.ts.
 Changing one list without the other is the drift these exist to catch.
 
-Run: DJANGO_ENV=test uv run python manage.py test lists
+Run: DJANGO_ENV=test uv run python manage.py test sheets
 """
 
 from __future__ import annotations

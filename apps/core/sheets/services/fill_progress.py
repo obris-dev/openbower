@@ -1,6 +1,6 @@
 """A fill's lifecycle, over its JOB row: a fill is a job of kind
-`fill` (lists/jobs/fill.py), and this module is every read and write
-of that row the lists app makes outside the kind's own slices. The
+`fill` (sheets/jobs/fill.py), and this module is every read and write
+of that row the sheets app makes outside the kind's own slices. The
 lifecycle IS the job's: open while READY or PROCESSING (the walk, then
 the poll for its runs), DONE when every run settled, FAILED when a
 worker found the config cannot run, CANCELLED when a user stopped it.
@@ -84,7 +84,7 @@ def is_open(fill_run_id: str) -> bool:
 
 
 def cancel(fill_run_id: str) -> bool:
-    """The user's Stop, and the worker's list-gone resolution (a user
+    """The user's Stop, and the worker's sheet-gone resolution (a user
     deletion reads as CANCELLED, never failed: failed is config-tier
     and carries an error the UI dresses as a failure story). The
     queued runs are abandoned first (the kind's `on_stop`), then the
