@@ -86,7 +86,7 @@ auth, data and signals services live in a separate private repo.
   roster by a boot gate plus a parity pin, and any load-bearing
   ordering is a DECLARED field on the member's spec, never import
   order. Exemplars: agents tools, search providers, inference
-  providers, and lists node kinds, where the member IS a typed config
+  providers, and sheets node kinds, where the member IS a typed config
   class carrying its own kind (KIND, DISPLAY, identity()), so a consumer
   constructs an instance and works with it and the kind can never be
   mismatched with its values; a string-keyed lookup exists only for the
@@ -118,7 +118,7 @@ auth, data and signals services live in a separate private repo.
   PROCESSING so a stopped job is never resurrected. A job is never a
   NodeRun (a run is one node applied to one row) and a request never
   walks a sheet: admission decides and queues. A FILL is a job of kind
-  `fill` (lists/jobs/fill.py): the consent is its payload, the walk
+  `fill` (sheets/jobs/fill.py): the consent is its payload, the walk
   its first slices, the wait for its runs the rest; `fill_run_id` on a
   run or a cell is the job's id, and a fill reads its agent's config
   LIVE (no snapshot, no fingerprint). An agent's columns are ONE unit
@@ -138,9 +138,9 @@ auth, data and signals services live in a separate private repo.
   fixed while its columns are on a sheet (the agent save refuses a
   change), so a fill never adds a column: the create makes them all.
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
-  is the node kind's PROCESSOR (lists/processors, handed out by
+  is the node kind's PROCESSOR (sheets/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
-  target_list, rows, scope, now)`, the scope a typed `FillScope`
+  target_sheet, rows, scope, now)`, the scope a typed `FillScope`
   naming the OCCASION (manual | autofill | backfill, never the door it
   came through) as the judging call's own argument (a processor is the
   node; an executor never carries an occasion), for the walkers, which
@@ -162,11 +162,11 @@ auth, data and signals services live in a separate private repo.
   holding something (a row that arrives blank, the add-rows control's, is created and counted but not offered: an
   entry agent has nothing to read, and a fill offers it once it does): rows
   enter through one
-  operation (lists/operations/append_rows.py: the list service's
+  operation (sheets/operations/append_rows.py: the sheet service's
   primitive, then the trigger, one transaction), which every door (a
   push, a person, an import, a snapshot) calls, and a pin holds that
   nothing else in production calls the primitive.
-  The node config classes in lists/nodes stay what a node IS at rest.
+  The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
   starts with exactly one of them: `entry` (the path is fed by nothing,
   so an arrival starts it) and `wait_until` (the path is fed by the
@@ -182,18 +182,18 @@ auth, data and signals services live in a separate private repo.
   `ListDetail.entry_action_ids`). A column downstream of a barrier is
   reached by the workflow and refuses a fill of its own
   (`fill_column_downstream`).
-- How a column's CELLS change is the cell layer (lists/cells.py), and
+- How a column's CELLS change is the cell layer (sheets/cells.py), and
   every change lands as a `CellWrite` (the state a cell means to
   record, the value it lands where blank, the tools behind it): a
   node kind's run reaction (`NodeProcessor.on_run_landed`, one write
   per column the node fills); a person's typed value is a `TypedWrite`
-  (the row cells PATCH, through `lists/operations/set_cells.py`: the
+  (the row cells PATCH, through `sheets/operations/set_cells.py`: the
   ONE write that replaces a value already there, refused rather than
   flagged when the type does not fit; it owes the workflow the
   COMPLETE reaction, barriers only, never the next node, which runs
   when the person asks). Only a workflow column's cells are
   recorded (`WorkflowColumn`), so rows alone never carry one. Writes
-  are in-memory intents until `ListService.land_row` / `land_rows`
+  are in-memory intents until `SheetService.land_row` / `land_rows`
   persists them, kind-blind: values onto the row write-if-blank (a
   person's own write is the one that replaces, and one that lands the
   value already there is unchanged) through the column's type, then
