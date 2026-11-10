@@ -20,10 +20,6 @@ from django.urls import reverse
 from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
-from lists.nodes.wait_until import WaitUntil
-from lists.nodes.webhook import Webhook
-from lists.services.lists import ListService
-from lists.services.workflows import WorkflowService
 from openbower_schema.webhooks import (
     WEBHOOK_ROTATION_GRACE_SECONDS,
     WEBHOOK_SECRET_PREFIX,
@@ -33,6 +29,10 @@ from openbower_schema.webhooks import (
     WebhookEnvelope,
     WebhookProbeResponse,
 )
+from sheets.nodes.wait_until import WaitUntil
+from sheets.nodes.webhook import Webhook
+from sheets.services.sheets import SheetService
+from sheets.services.workflows import WorkflowService
 from webhooks.constants import DeliveryStatus, WebhookEnvelopeType, WebhookErrorCode
 from webhooks.delivery.protocol import DeliveryResult
 from webhooks.models import WebhookDelivery, WebhookDestination
@@ -346,8 +346,8 @@ class RotateTests(_Base):
 
 class InUseDeleteTests(_Base):
     def _column_using(self, destination_id: str) -> str:
-        lists = ListService(account_id=TEST_IDENTITY["account_id"])
-        sheet = lists.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=[], origin="manual")
+        sheets = SheetService(account_id=TEST_IDENTITY["account_id"])
+        sheet = sheets.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=[], origin="manual")
         workflows = WorkflowService(account_id=TEST_IDENTITY["account_id"])
         path, _ = workflows.create_path(
             sheet, [WaitUntil(inbound_path_ids=[]), Webhook(destination_id=destination_id, payload_keys=[])]

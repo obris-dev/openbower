@@ -1,7 +1,7 @@
 """An agent's output set is fixed while its columns are on a sheet: the
 columns ARE the outputs' shape, and a fill only writes the columns that
 exist. Through the real agents endpoint, over a real sheet whose AI
-column the agent fills (model_for patched, the lists tests' seam).
+column the agent fills (model_for patched, the sheets tests' seam).
 
 Run: DJANGO_ENV=test uv run python manage.py test agents.tests.test_output_lock
 """
@@ -16,10 +16,10 @@ from django.urls import reverse
 from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
-from lists.services.ai_columns import AiColumnService
-from lists.services.columns import ColumnService
-from lists.services.lists import ListService
-from lists.services.workflows import WorkflowService
+from sheets.services.ai_columns import AiColumnService
+from sheets.services.columns import ColumnService
+from sheets.services.sheets import SheetService
+from sheets.services.workflows import WorkflowService
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 USER = TEST_IDENTITY["id"]
@@ -39,7 +39,7 @@ CONFIG = {
 class OutputLockTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        patcher = patch("lists.services.runnable.model_for")
+        patcher = patch("sheets.services.runnable.model_for")
         patcher.start()
         self.addCleanup(patcher.stop)
         created = self.client.post(
@@ -47,8 +47,8 @@ class OutputLockTests(TestCase):
         )
         self.assertEqual(created.status_code, 201, created.content)
         self.agent_id = created.json()["id"]
-        self.lists = ListService(account_id=ACCOUNT)
-        self.sheet = self.lists.create(
+        self.sheets = SheetService(account_id=ACCOUNT)
+        self.sheet = self.sheets.create(
             owner_id=USER,
             label="Prospects",
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
@@ -85,7 +85,7 @@ class OutputLockTests(TestCase):
         )
         self.assertEqual(created.status_code, 201, created.content)
         agent_id = created.json()["id"]
-        other = self.lists.create(owner_id=USER, label="Accounts", columns=[], origin="manual")
+        other = self.sheets.create(owner_id=USER, label="Accounts", columns=[], origin="manual")
         AiColumnService(account_id=ACCOUNT, user_id=USER).add(str(other.id), agent_id=agent_id)
         return agent_id
 
@@ -108,7 +108,7 @@ class OutputLockTests(TestCase):
         # toast however many sheets use the agent. FAILS if the copy
         # lists names.
         agent_id = self._two_output_agent()
-        third = self.lists.create(owner_id=USER, label="Targets", columns=[], origin="manual")
+        third = self.sheets.create(owner_id=USER, label="Targets", columns=[], origin="manual")
         AiColumnService(account_id=ACCOUNT, user_id=USER).add(str(third.id), agent_id=agent_id)
         resp = self._patch_agent(agent_id, [OUTPUT])
         self.assertEqual(resp.status_code, 409, resp.content)
@@ -155,7 +155,7 @@ class OutputLockTests(TestCase):
         self.assertEqual(self.stored_outputs(), [("answer", "text"), ("email", "email")])
 
     def test_the_uses_name_every_sheet_in_three_reads(self) -> None:
-        other = self.lists.create(owner_id=USER, label="Accounts", columns=[], origin="manual")
+        other = self.sheets.create(owner_id=USER, label="Accounts", columns=[], origin="manual")
         AiColumnService(account_id=ACCOUNT, user_id=USER).add(str(other.id), agent_id=self.agent_id)
         with self.assertNumQueries(3):
             uses = WorkflowService(account_id=ACCOUNT).agent_column_uses(self.agent_id)

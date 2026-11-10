@@ -13,8 +13,8 @@ urlpatterns = [
     path("healthz", healthz, name="healthz"),
     api_include(f"{_V1}/auth", "auth_client.urls"),
     api_include(f"{_V1}/discover", "discover.urls"),
-    api_include(f"{_V1}/lists", "lists.urls"),
-    api_include(f"{_V1}/runs", "lists.runs_urls"),
+    api_include(f"{_V1}/lists", "sheets.urls"),
+    api_include(f"{_V1}/runs", "sheets.runs_urls"),
     api_include(f"{_V1}/agents", "agents.urls"),
     api_include(f"{_V1}/webhooks", "webhooks.urls"),
 ]

@@ -44,7 +44,7 @@ LOCAL_APPS = [
     "auth_client",
     "discover",
     "signals",
-    "lists",
+    "sheets",
     "agents",
     "webhooks",
     "jobs",
@@ -249,12 +249,12 @@ TOKENINFO_MISS_LIMIT_PER_MINUTE = int(os.environ.get("TOKENINFO_MISS_LIMIT_PER_M
 # stub (a dev stack without Kafka, and every test). The worker refuses to
 # start without a bootstrap. Topic NAMES, partitions, retention, and
 # consumer groups are declared per topic in the catalog
-# (lists.ingest.topics), not scattered here.
+# (sheets.ingest.topics), not scattered here.
 INGEST_KAFKA_BOOTSTRAP_SERVERS = os.environ.get("INGEST_KAFKA_BOOTSTRAP_SERVERS", "")
 # Bus message ceiling: a whole accepted batch rides as ONE message, so this
 # must exceed the endpoint's accept bound (today Django's body limit). The
 # topic, producer, and consumer limits are all driven from this one value
-# (lists.ingest.topics + the two clients), and the broker's message.max.bytes
+# (sheets.ingest.topics + the two clients), and the broker's message.max.bytes
 # must match it (the compose kafka env).
 INGEST_MAX_MESSAGE_BYTES = int(os.environ.get("INGEST_MAX_MESSAGE_BYTES", str(4 * 1024 * 1024)))
 
@@ -337,7 +337,7 @@ REST_FRAMEWORK = {
     # The app session cookie (opaque id -> server-side record holding the
     # user's IdP tokens) is the DEFAULT credential on this API. The machine
     # Bearer lane (resource_server.MachineTokenAuthentication) is opt-in per
-    # view, not global (see lists.ListsView).
+    # view, not global (see sheets.SheetsView).
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "auth_client.authentication.AppSessionAuthentication",
     ],

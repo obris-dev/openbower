@@ -15,9 +15,9 @@ from django.test import TestCase
 from django.urls import reverse
 
 from common.testing import login_session
-from lists.constants import ListOrigin
-from lists.models import List, ListRow
-from lists.services.lists import ListService
+from sheets.constants import SheetOrigin
+from sheets.models import Sheet, SheetRow
+from sheets.services.sheets import SheetService
 
 _RUN_ID = "01JQ" + "R" * 22
 
@@ -89,9 +89,9 @@ class SaveListTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         body = resp.json()
         self.assertEqual(body["row_count"], 3)
-        self.assertEqual(body["origin"], ListOrigin.DISCOVER)
+        self.assertEqual(body["origin"], SheetOrigin.DISCOVER)
         self.assertEqual(body["origin_ref"], _RUN_ID)
-        rows = ListRow.objects.filter(list_id=body["id"]).order_by("rank", "id")
+        rows = SheetRow.objects.filter(sheet_id=body["id"]).order_by("rank", "id")
         self.assertEqual(rows[0].data["domain"], "similar1.example")
         # The first upstream page was asked from the top of the run.
         self.assertIn(f"{_RUN_ID}:0", calls[0]["content"].decode())
@@ -104,7 +104,7 @@ class SaveListTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 404)
-        self.assertEqual(List.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
 
     def test_non_object_body_is_400(self):
         resp, _ = self._save((200, {"json": _page([], next_cursor=None)}), body=[])
@@ -121,12 +121,12 @@ class SaveListTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertEqual(List.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
 
     def test_full_list_keeps_what_fit_from_the_final_page(self):
         # Cap 3, pages of 2: the second page must part-fill to exactly
         # the cap, not drop whole.
-        with patch("discover.views.MAX_LIST_ROWS", 3):
+        with patch("discover.views.MAX_SHEET_ROWS", 3):
             resp, _ = self._save(
                 (200, {"json": _page([1, 2], next_cursor=f"{_RUN_ID}:2")}),
                 (200, {"json": _page([3, 4], next_cursor=None)}),
@@ -137,7 +137,7 @@ class SaveListTests(TestCase):
     def test_service_full_mid_save_keeps_the_partial(self):
         # The service's own cap trips (the concurrent-writer path): the
         # partial stays, honestly, with a 201.
-        with patch("lists.services.lists.MAX_LIST_ROWS", 3):
+        with patch("sheets.services.sheets.MAX_SHEET_ROWS", 3):
             resp, _ = self._save(
                 (200, {"json": _page([1, 2], next_cursor=f"{_RUN_ID}:2")}),
                 (200, {"json": _page([3, 4], next_cursor=None)}),
@@ -147,10 +147,10 @@ class SaveListTests(TestCase):
 
     def test_unexpected_error_mid_save_leaves_no_half_sheet(self):
         self.client.raise_request_exception = False
-        with patch("lists.services.lists.ListService.add_rows", side_effect=RuntimeError("mapping bug")):
+        with patch("sheets.services.sheets.SheetService.add_rows", side_effect=RuntimeError("mapping bug")):
             resp, _ = self._save((200, {"json": _page([1, 2], next_cursor=None)}))
         self.assertEqual(resp.status_code, 500)
-        self.assertEqual(List.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
 
     def test_excluded_domains_do_not_reach_the_sheet(self):
         # The rank walk stays pre-exclusion (limit means the cutoff);
@@ -163,7 +163,7 @@ class SaveListTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         body = resp.json()
         self.assertEqual(body["row_count"], 2)
-        domains = [r.data["domain"] for r in ListRow.objects.filter(list_id=body["id"]).order_by("rank", "id")]
+        domains = [r.data["domain"] for r in SheetRow.objects.filter(sheet_id=body["id"]).order_by("rank", "id")]
         self.assertEqual(domains, ["similar1.example", "similar3.example"])
 
     def test_over_cap_limit_clamps_to_201(self):
@@ -181,13 +181,13 @@ class SaveListTests(TestCase):
         # and take the partial with it.
         resp, _ = self._save((200, {"json": _page([1, 2], next_cursor=f"{_RUN_ID}:0")}))
         self.assertGreaterEqual(resp.status_code, 500)
-        self.assertEqual(List.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
 
     def test_list_deleted_mid_save_is_a_409(self):
-        from lists.services.lists import ListNotFound
+        from sheets.services.sheets import SheetNotFound
 
         self.client.raise_request_exception = False
-        with patch("lists.services.lists.ListService.add_rows", side_effect=ListNotFound("gone")):
+        with patch("sheets.services.sheets.SheetService.add_rows", side_effect=SheetNotFound("gone")):
             resp, _ = self._save((200, {"json": _page([1], next_cursor=None)}))
         self.assertEqual(resp.status_code, 409)
         self.assertIn("deleted during", resp.json()["detail"])
@@ -195,7 +195,7 @@ class SaveListTests(TestCase):
     def test_incomplete_run_is_a_400_and_saves_nothing(self):
         resp, _ = self._save((200, {"json": {**_page([], next_cursor=None), "status": "pending"}}))
         self.assertEqual(resp.status_code, 400)
-        self.assertEqual(List.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
 
     def test_upstream_failure_mid_save_deletes_the_partial_list(self):
         resp, _ = self._save(
@@ -205,8 +205,8 @@ class SaveListTests(TestCase):
         # An upstream 5xx maps to 503 data_unavailable (transient), and
         # the partial sheet must not survive it.
         self.assertEqual(resp.status_code, 503)
-        self.assertEqual(List.objects.count(), 0)
-        self.assertEqual(ListRow.objects.count(), 0)
+        self.assertEqual(Sheet.objects.count(), 0)
+        self.assertEqual(SheetRow.objects.count(), 0)
 
     def test_limit_caps_the_snapshot(self):
         resp, _ = self._save(
@@ -220,14 +220,14 @@ class SaveListTests(TestCase):
 class SeedFromListTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
-        self.service = ListService(account_id="01JQ" + "B" * 22)
+        self.service = SheetService(account_id="01JQ" + "B" * 22)
 
-    def _sheet(self, rows: list[dict]) -> List:
+    def _sheet(self, rows: list[dict]) -> Sheet:
         target = self.service.create(
             owner_id="01US" + "B" * 22,
             label="Sheet",
             columns=[{"kind": "plain", "key": "website", "label": "Website", "type": "url"}],
-            origin=ListOrigin.CSV,
+            origin=SheetOrigin.CSV,
         )
         self.service.add_rows(target, rows)
         return target
@@ -271,9 +271,9 @@ class SeedFromListTests(TestCase):
         resp, _ = self._seed({"list_id": str(target.id), "identifier_key": "website", "domains": ["acme.com", "x.com"]})
         self.assertEqual(resp.status_code, 400)
 
-    def test_foreign_list_reads_as_missing(self):
-        foreign = ListService(account_id="01AC" + "Z" * 22).create(
-            owner_id="01US" + "B" * 22, label="Not yours", columns=[], origin=ListOrigin.MANUAL
+    def test_foreign_sheet_reads_as_missing(self):
+        foreign = SheetService(account_id="01AC" + "Z" * 22).create(
+            owner_id="01US" + "B" * 22, label="Not yours", columns=[], origin=SheetOrigin.MANUAL
         )
         resp, _ = self._seed({"list_id": str(foreign.id), "identifier_key": "website"})
         self.assertEqual(resp.status_code, 400)

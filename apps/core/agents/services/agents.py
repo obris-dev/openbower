@@ -13,7 +13,7 @@ from ..constants import MAX_AGENTS, AgentErrorCode
 from ..models import Agent
 
 if TYPE_CHECKING:
-    from lists.services.workflows import AgentColumnUse, WorkflowService
+    from sheets.services.workflows import AgentColumnUse, WorkflowService
 
 
 class AgentsFull(Exception):
@@ -62,9 +62,9 @@ class AgentService:
 
     @cached_property
     def workflows(self) -> WorkflowService:
-        # lists imports this module at load, so the edge back is deferred
+        # sheets imports this module at load, so the edge back is deferred
         # to first use; a module-level import here is a startup cycle.
-        from lists.services.workflows import WorkflowService
+        from sheets.services.workflows import WorkflowService
 
         return WorkflowService(account_id=self.account_id)
 

@@ -30,7 +30,7 @@ class Agent(UserScopedModel):
     one column and deleted with it)."""
 
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
-    # Bare CharField, validated at the serializer (the lists pattern):
+    # Bare CharField, validated at the serializer (the sheets pattern):
     # choices= would turn every added provider into a migration for
     # zero DB-side enforcement.
     provider = models.CharField(_("provider"), max_length=PROVIDER_MAX_LENGTH)

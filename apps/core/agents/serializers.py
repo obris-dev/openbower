@@ -110,7 +110,7 @@ class AgentCreateRequest(serializers.Serializer):
 
 class AgentPatchRequest(serializers.Serializer):
     """Any subset: label alone (a rename) or config alone; at least
-    one field must be present (the lists idiom)."""
+    one field must be present (the sheets idiom)."""
 
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH, required=False)
     config = AgentConfigRequest(required=False)

@@ -1,0 +1,714 @@
+"""The one cell writer: write-if-blank under the ROW lock, the clamp,
+the per-type shape validators, and machine blanks writing nothing.
+
+Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_write_cells
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
+
+from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validate_cell
+from sheets.cells import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
+from sheets.constants import CELL_MAX_LENGTH, CellSource, ColumnType, SheetOrigin, StoredCellState
+from sheets.models import SheetCellState, SheetRow
+from sheets.services.sheets import CellWrittenTwice, RowNotFound, SheetNotFound, SheetService
+
+_COLUMNS = [
+    {"kind": "plain", "key": "name", "label": "Name", "type": "text"},
+    {"kind": "plain", "key": "employees", "label": "Employees", "type": "number"},
+    {"kind": "plain", "key": "revenue", "label": "Revenue", "type": "currency"},
+    {"kind": "plain", "key": "founded", "label": "Founded", "type": "date"},
+    {"kind": "plain", "key": "domain", "label": "Domain", "type": "url"},
+]
+
+
+def _service(account="01AC" + "A" * 22, user="01US" + "A" * 22) -> SheetService:
+    return SheetService(account_id=account)
+
+
+def _ctx(sheet_id: str, source=CellSource.MANUAL, fill_run_id: str | None = None) -> LandingContext:
+    return LandingContext(sheet_id=sheet_id, source=source, fill_run_id=fill_run_id)
+
+
+def _landing(row_id: str, values: dict[str, str], *, column_keys=None, blank_state=None) -> RowLanding:
+    """A landing of value writes for the values (the editor's shape, no
+    blank story), plus, when `column_keys` names more, a write with no
+    value carrying `blank_state` for each of the rest (an agent's)."""
+    # The editor's shape: a blank is no write at all (the kind's rule).
+    writes: list[CellWrite] = [TypedWrite(key, value) for key, value in values.items() if value.strip()]
+    for key in column_keys or ():
+        if key not in values and blank_state is not None:
+            writes.append(AnsweredWrite(key, None, blank_state))
+    return RowLanding(row_id, writes)
+
+
+# The same columns under a kind that RECORDS cell state, for the tests
+# whose subject is the ledger rather than the row.
+_RECORDED_COLUMNS = [{**column, "kind": "ai", "node_id": "01ND" + "A" * 22} for column in _COLUMNS]
+
+
+def _recorded_sheet(service: SheetService, rows: list[dict[str, str]]):
+    """A sheet whose columns RECORD cell state, with the rows' values
+    seeded past add_rows, which refuses a recorded column: only a
+    landing puts a value in one, and this is the state a landing would
+    have left."""
+    target = service.create(
+        owner_id="01US" + "A" * 22, label="Recorded", columns=_RECORDED_COLUMNS, origin=SheetOrigin.CSV
+    )
+    created = service.add_rows(target, [{} for _ in rows])
+    for row, data in zip(created, rows, strict=True):
+        SheetRow.objects.filter(id=str(row.id)).update(data=data)
+    return target, service.rows_page(target, limit=len(rows))
+
+
+def _sheet(service: SheetService, rows: list[dict[str, str]]):
+    target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
+    service.add_rows(target, rows)
+    return target, service.rows_page(target, limit=len(rows))
+
+
+class WriteIfBlankTests(TestCase):
+    def test_blank_cell_written(self):
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "1,200"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual(result.written, ("employees",))
+        self.assertEqual(result.occupied, ())
+        self.assertEqual(result.mismatched, ())
+        row.refresh_from_db()
+        self.assertEqual(row.data["employees"], "1200")
+
+    def test_a_column_taken_from_the_sheet_mid_landing_lands_nothing(self):
+        # The shape a column DELETE leaves: the key is gone from the
+        # sheet and its records are purged, while a run already
+        # PROCESSING is deliberately left to land (the cancel abandons
+        # READY and QUEUED only). The landing reads the columns AFTER it
+        # holds the rows, so it sees the delete and writes neither the
+        # value nor a record. FAILS if it reads the sheet before the
+        # lock, or writes a key the sheet no longer has: the value comes
+        # back under a key nothing shows, and the record outlives the
+        # purge that already took that column's.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        target.columns = [column for column in target.columns if column.key != "employees"]
+        target.save(update_fields=["columns", "updated_at"])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "1200"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual((result.written, result.occupied, result.mismatched), ((), (), ()))
+        row.refresh_from_db()
+        # The seed left the key blank; the landing added no value to it.
+        self.assertEqual(row.data.get("employees", ""), "")
+        self.assertFalse(SheetCellState.objects.filter(sheet_id=str(target.id), column_key="employees").exists())
+
+    def test_the_rows_are_held_before_the_sheet_is_read_and_a_valueless_landing_holds_them_too(self):
+        # ORDER, not just content: a column delete strips its key from
+        # every row and purges its records while holding those rows, so
+        # a landing that read the columns FIRST would wake holding a
+        # stale sheet. And a landing with no value to land still takes
+        # the locks, because its writes still become records and the
+        # lock is what puts them behind a purge instead of racing one.
+        # FAILS if the sheet is read before the rows are held, or if a
+        # valueless landing skips the lock.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        for values, keys in (({"employees": "12"}, ()), ({}, ("employees",))):
+            with self.subTest(values=values), CaptureQueriesContext(connection) as captured:
+                service.land_row(
+                    _ctx(str(target.id), CellSource.MANUAL),
+                    _landing(str(row.id), values, column_keys=keys, blank_state=StoredCellState.NO_EVIDENCE),
+                )
+            sql = [q["sql"] for q in captured.captured_queries]
+            locked = next((i for i, q in enumerate(sql) if "sheets_sheetrow" in q and "FOR UPDATE" in q), None)
+            read = next((i for i, q in enumerate(sql) if 'FROM "sheets_sheet"' in q), None)
+            self.assertIsNotNone(locked, sql)
+            self.assertIsNotNone(read, sql)
+            self.assertLess(locked, read, sql)
+
+    def test_occupied_cell_untouched_by_a_machine(self):
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.NODE),
+            RowLanding(str(row.id), [AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE)]),
+        )
+        self.assertEqual(result.occupied, ("name",))
+        self.assertEqual(result.written, ())
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme")  # the user's value survives
+
+    def test_a_persons_write_replaces_an_occupied_cell(self):
+        # The one writer that may replace a value: the person's own
+        # gesture. FAILS if the overwrite facet is dropped from the
+        # landing (the typed value would read as occupied) or from
+        # TypedWrite (it would stop asking for it).
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            RowLanding(str(row.id), [TypedWrite("name", "Acme Holdings")]),
+        )
+        self.assertEqual(result.written, ("name",))
+        self.assertEqual(result.occupied, ())
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme Holdings")
+
+    def test_a_persons_write_of_the_value_already_there_changes_nothing(self):
+        # Pasting a cell's own value back is not a write: the row keeps
+        # its stamp and the verdict says occupied, so the ledger's record
+        # is left as it is (a barrier would otherwise read a newer
+        # completion and send the row again). FAILS if an overwrite
+        # counts as written whatever it lands.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        before = row.updated_at
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            RowLanding(str(row.id), [TypedWrite("name", "Acme")]),
+        )
+        self.assertEqual(result.written, ())
+        self.assertEqual(result.occupied, ("name",))
+        row.refresh_from_db()
+        self.assertEqual(row.updated_at, before)
+
+    def test_clamp_at_cell_max_length(self):
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": ""}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"name": "x" * (CELL_MAX_LENGTH + 8)}, column_keys=("name",), blank_state=None),
+        )
+        self.assertEqual(result.written, ("name",))
+        row.refresh_from_db()
+        self.assertEqual(len(row.data["name"]), CELL_MAX_LENGTH)
+
+    def test_type_mismatch_writes_nothing(self):
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "around fifty"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual(result.written, ())
+        self.assertEqual([m.key for m in result.mismatched], ["employees"])
+        self.assertIn("around fifty", result.mismatched[0].why)
+        row.refresh_from_db()
+        self.assertNotIn("employees", row.data)
+
+    def test_a_landing_that_fails_after_its_values_writes_nothing(self):
+        # A value and its record land together or not at all, whether or
+        # not the caller opened a transaction. FAILS if land_rows leans
+        # on the caller's: the value would stay with no record behind it.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        down = patch("sheets.services.sheets.cell_truth.write_records", side_effect=RuntimeError("ledger down"))
+        with down, self.assertRaises(RuntimeError):
+            service.land_row(_ctx(str(target.id)), _landing(str(row.id), {"employees": "42"}))
+        row.refresh_from_db()
+        self.assertNotIn("employees", row.data)
+
+    def test_two_writes_for_one_cell_in_one_landing_are_refused_by_name(self):
+        # One write per cell per landing: two would be two upserts on one
+        # ledger key in one statement, which Postgres refuses mid-landing.
+        # A caller bug, named before anything is written. FAILS if the
+        # landing lets them through to the upsert.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        twice = [_landing(str(row.id), {"employees": "42"}), _landing(str(row.id), {"employees": "43"})]
+        with self.assertRaisesMessage(CellWrittenTwice, "'employees'"):
+            service.land_rows(_ctx(str(target.id)), twice)
+        row.refresh_from_db()
+        self.assertNotIn("employees", row.data)
+
+    def test_a_persons_blank_is_no_write_at_all(self):
+        # A blank never reaches the landing as a typed value: a
+        # TypedWrite refuses to be built from one, empty or whitespace.
+        # FAILS if that door lets a blank through.
+        for blank in ("", "   "):
+            with self.subTest(blank=blank), self.assertRaises(ValueError):
+                TypedWrite("employees", blank)
+
+    def test_a_column_no_workflow_fills_lands_its_value_alone(self):
+        # The ledger owns the workflow's columns. Any other column's
+        # value lands like any other and its cell never becomes a
+        # record: the same landing, told apart by whether the column is
+        # a workflow column rather than by the writer. FAILS if the landing records every
+        # key it is handed, which would put unrecorded cells in a ledger
+        # whose absence means never attempted.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"employees": "42"}, column_keys=("employees",), blank_state=None),
+        )
+        self.assertEqual(result.written, ("employees",))
+        row.refresh_from_db()
+        self.assertEqual(row.data["employees"], "42")
+        self.assertFalse(SheetCellState.objects.filter(sheet_id=str(target.id)).exists())
+
+    def test_every_write_resolves_to_the_state_the_row_earned_it(self):
+        # A value that landed is FILLED, one the type refused is
+        # TYPE_MISMATCH, one an agent had none for records its cause:
+        # each write answers for itself against the row, and every
+        # write records exactly one state. A person's blank never
+        # becomes a write (a TypedWrite refuses to be built from one).
+        # FAILS if the landing derives a state the write did
+        # not earn, or a blank slips in as a typed value.
+        from sheets.models import SheetCellState
+
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme", "employees": ""}])
+        landing = RowLanding(
+            str(row.id),
+            [
+                AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE),  # occupied: the value stays
+                TypedWrite("employees", "42"),  # lands
+                TypedWrite("founded", "next spring"),  # the date type refuses
+                AnsweredWrite("domain", None, StoredCellState.NO_EVIDENCE),  # an agent had none
+            ],
+        )
+        service.land_row(_ctx(str(target.id), CellSource.NODE), landing)
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme")
+        recorded = dict(SheetCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(
+            recorded,
+            {
+                "name": StoredCellState.FILLED,
+                "employees": StoredCellState.FILLED,
+                "founded": StoredCellState.TYPE_MISMATCH,
+                "domain": StoredCellState.NO_EVIDENCE,
+            },
+        )
+        with self.assertRaises(ValueError):
+            TypedWrite("revenue", "   ")
+
+    def test_a_persons_unanswered_column_leaves_no_record_and_an_agents_carries_its_cause(self):
+        # A person has no cause to record: the columns they left blank
+        # stay absent from the ledger (never attempted). An agent's run
+        # names why it left a column blank, and that column gets the
+        # record. FAILS if a person's blank is recorded under a
+        # borrowed cause, or an agent's blank goes unrecorded.
+        from sheets.constants import StoredCellState
+        from sheets.models import SheetCellState
+
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": ""}])
+        service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"name": "typed"}, column_keys=("name", "employees"), blank_state=None),
+        )
+        recorded = dict(SheetCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(recorded, {"name": StoredCellState.FILLED})
+        service.land_row(
+            _ctx(str(target.id), CellSource.NODE),
+            _landing(str(row.id), {}, column_keys=("employees",), blank_state=StoredCellState.NO_EVIDENCE),
+        )
+        recorded = dict(SheetCellState.objects.filter(row_id=str(row.id)).values_list("column_key", "state"))
+        self.assertEqual(recorded, {"name": StoredCellState.FILLED, "employees": StoredCellState.NO_EVIDENCE})
+
+    def _record(self, row_id: str, key: str) -> tuple:
+        return SheetCellState.objects.values_list("state", "updated_at", "source", "fill_run_id").get(
+            row_id=row_id, column_key=key
+        )
+
+    def _answered_once(self, service: SheetService, target, row_id: str, key: str, value: str) -> None:
+        """The cell's first answer, landed by a first fill: its value and
+        a FILLED record."""
+        answer = AnsweredWrite(key, value, StoredCellState.NO_EVIDENCE)
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "A" * 22), RowLanding(row_id, [answer]))
+
+    def test_an_unanswered_column_over_a_filled_cell_keeps_its_record(self):
+        # A later run with no answer for a column that already holds one
+        # found the cell occupied, the same as an answer write-if-blank
+        # refused: its record still says FILLED, when, and by whom. FAILS
+        # if a valueless write is judged only by its missing value (the
+        # record rewritten to the run's cause while the value stays).
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        later = AnsweredWrite("employees", None, StoredCellState.NO_EVIDENCE)
+        verdict = service.land_row(
+            _ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, [later])
+        )
+        self.assertEqual(verdict.occupied, ("employees",))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(before[0], StoredCellState.FILLED)
+
+    def test_a_run_answering_one_column_leaves_its_filled_sibling_alone(self):
+        # A multi-output node re-runs for its blank column: that column
+        # takes the new answer, and the sibling it did not answer again
+        # keeps the record of the answer it already had. FAILS if the
+        # sibling is restated under the run's cause.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        writes = [
+            AnsweredWrite("employees", None, StoredCellState.NO_EVIDENCE),
+            AnsweredWrite("domain", "acme.com", StoredCellState.NO_EVIDENCE),
+        ]
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, writes))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(self._record(row_id, "domain")[0], StoredCellState.FILLED)
+
+    def test_a_run_with_no_answers_records_its_cause_only_where_the_cell_is_blank(self):
+        # An exhausted run carries no cells at all: every column gets a
+        # valueless write. The blank column records the run's cause; the
+        # one holding a value keeps its record. FAILS if a landing with
+        # no value to write skips judging occupancy.
+        service = _service()
+        target, (row,) = _recorded_sheet(service, [{"name": "Acme"}])
+        row_id = str(row.id)
+        self._answered_once(service, target, row_id, "employees", "42")
+        before = self._record(row_id, "employees")
+        writes = [
+            AnsweredWrite("employees", None, StoredCellState.MODEL_ERROR),
+            AnsweredWrite("domain", None, StoredCellState.MODEL_ERROR),
+        ]
+        service.land_row(_ctx(str(target.id), CellSource.NODE, "01FL" + "B" * 22), RowLanding(row_id, writes))
+        self.assertEqual(self._record(row_id, "employees"), before)
+        self.assertEqual(self._record(row_id, "domain")[0], StoredCellState.MODEL_ERROR)
+
+    def test_a_batch_lands_in_three_statements_whatever_its_size(self):
+        # Two landings on one row merge, and rows across the batch are
+        # locked in ONE statement, written in ONE update, recorded in
+        # ONE upsert. FAILS if the landing locks, writes or records per
+        # row or per landing.
+        service = _service()
+        target, (first, second) = _recorded_sheet(service, [{"name": ""}, {"name": ""}])
+        landings = [
+            _landing(str(first.id), {"name": "Acme"}),
+            _landing(str(first.id), {"employees": "12"}),
+            _landing(str(second.id), {"name": "Example"}),
+        ]
+        with CaptureQueriesContext(connection) as captured:
+            verdicts = service.land_rows(_ctx(str(target.id)), landings)
+        self.assertEqual(verdicts[str(first.id)].written, ("name", "employees"))
+        self.assertEqual(verdicts[str(second.id)].written, ("name",))
+        sql = [q["sql"] for q in captured.captured_queries]
+        locks = [q for q in sql if "FOR UPDATE" in q.upper()]
+        updates = [q for q in sql if q.upper().startswith("UPDATE") and "sheets_sheetrow" in q]
+        upserts = [q for q in sql if "INSERT INTO" in q and "cellstate" in q]
+        self.assertEqual((len(locks), len(updates), len(upserts)), (1, 1, 1))
+        first.refresh_from_db()
+        self.assertEqual((first.data["name"], first.data["employees"]), ("Acme", "12"))
+
+    def test_the_agent_kind_writes_one_cell_per_column_it_fills(self):
+        # The run-shaped change: one write per column the node fills,
+        # FILLED with the answer or the run's cause without one; a key
+        # the run answered that the node does not fill is never written.
+        # FAILS if the kind iterates the result's keys instead of its
+        # columns.
+        from openbower_schema.fills import CellRunResult
+        from sheets.models import Node
+        from sheets.nodes.registry import COLUMN_AGENT
+        from sheets.processors.column_agent import AIColumnProcessor
+
+        node = Node(id="01ND" + "A" * 22, account_id="01AC" + "A" * 22, kind=COLUMN_AGENT)
+        processor = AIColumnProcessor(account_id="01AC" + "A" * 22, node=node)
+        result = CellRunResult(
+            cells={"answer": "yes", "stray": "x"},
+            declined_cause=StoredCellState.NO_EVIDENCE,
+            tools={"web_search": "open"},
+        )
+        self.assertEqual(
+            processor.on_run_landed(("answer", "score"), result),
+            [
+                AnsweredWrite("answer", "yes", StoredCellState.NO_EVIDENCE, tools={"web_search": "open"}),
+                AnsweredWrite("score", None, StoredCellState.NO_EVIDENCE, tools={"web_search": "open"}),
+            ],
+        )
+
+    def test_mixed_dict_partial_outcomes(self):
+        # A machine's writes, so the occupied cell is left alone; a
+        # blank answer is no value to land.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme", "employees": ""}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.NODE),
+            RowLanding(
+                str(row.id),
+                [
+                    AnsweredWrite("name", "Machine Name", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("employees", "42", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("founded", "next spring", StoredCellState.NO_EVIDENCE),
+                    AnsweredWrite("domain", "", StoredCellState.NO_EVIDENCE),
+                ],
+            ),
+        )
+        self.assertEqual(result.written, ("employees",))
+        self.assertEqual(result.occupied, ("name",))
+        self.assertEqual([m.key for m in result.mismatched], ["founded"])
+        row.refresh_from_db()
+        self.assertEqual(row.data["name"], "Acme")
+        self.assertEqual(row.data["employees"], "42")
+        self.assertNotIn("founded", row.data)
+        self.assertNotIn("domain", row.data)
+
+    def test_a_key_the_sheet_has_no_column_for_lands_nothing(self):
+        # A landing writes a cell and the record of what made it,
+        # together, and a column that is not on the sheet has neither: a
+        # value stored under it shows nowhere and a record for it
+        # outlives every purge. Every landing's keys come from a node's
+        # columns, so in production this IS the deleted-column case.
+        # The tolerance for a key with no column belongs to add_rows,
+        # where authored input arrives and mapping happens upstream.
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        result = service.land_row(
+            _ctx(str(target.id), CellSource.MANUAL),
+            _landing(str(row.id), {"note": "Series B, 2024"}, column_keys=("note",), blank_state=None),
+        )
+        self.assertEqual((result.written, result.occupied, result.mismatched), ((), (), ()))
+        row.refresh_from_db()
+        self.assertNotIn("note", row.data)
+        self.assertFalse(SheetCellState.objects.filter(sheet_id=str(target.id), column_key="note").exists())
+
+    def test_unknown_row_and_sheet_read_as_missing(self):
+        service = _service()
+        target, (row,) = _sheet(service, [{"name": "Acme"}])
+        other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=SheetOrigin.MANUAL)
+        with self.assertRaises(RowNotFound):
+            service.land_row(
+                _ctx(str(target.id), CellSource.MANUAL),
+                _landing("01RW" + "Z" * 22, {"name": "x"}, column_keys=("name",), blank_state=None),
+            )
+        with self.assertRaises(RowNotFound):  # a row outside the sheet is missing too
+            service.land_row(
+                _ctx(str(other.id), CellSource.MANUAL),
+                _landing(str(row.id), {"name": "x"}, column_keys=("name",), blank_state=None),
+            )
+        with self.assertRaises(SheetNotFound):
+            service.land_row(
+                _ctx("01LS" + "Z" * 22, CellSource.MANUAL),
+                _landing(str(row.id), {"name": "x"}, column_keys=("name",), blank_state=None),
+            )
+        with self.assertRaises(SheetNotFound):  # cross-tenant reads as missing
+            _service(account="01AC" + "Z" * 22).land_row(
+                _ctx(str(target.id), CellSource.MANUAL),
+                _landing(str(row.id), {"name": "x"}, column_keys=("name",), blank_state=None),
+            )
+
+
+class NumberValidatorTests(TestCase):
+    def test_accepts_and_normalizes(self):
+        for raw, stored in [
+            ("1234", "1234"),
+            ("1,234,567", "1234567"),
+            ("-12.5", "-12.5"),
+            ("+3.14", "+3.14"),
+            (" 42 ", "42"),
+            ("1,234.50", "1234.50"),
+        ]:
+            self.assertEqual(validate_cell(ColumnType.NUMBER, raw), stored)
+
+    def test_refuses_non_numbers(self):
+        for raw in ["around fifty", "12a", "1.2.3", "1,23", "1 234", "", "1e5"]:
+            with self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.NUMBER, raw)
+
+    def test_refusal_carries_key_and_why(self):
+        with self.assertRaises(CellTypeMismatch) as caught:
+            validate_cell(ColumnType.NUMBER, "12a", key="employees")
+        self.assertEqual(caught.exception.key, "employees")
+        self.assertIn("12a", caught.exception.why)
+
+
+class CurrencyValidatorTests(TestCase):
+    def test_accepts_and_normalizes(self):
+        for raw, stored in [
+            ("$1,234.50", "$1234.50"),
+            ("€ 42", "€42"),
+            ("£999", "£999"),
+            ("12.00", "12.00"),
+        ]:
+            self.assertEqual(validate_cell(ColumnType.CURRENCY, raw), stored)
+
+    def test_refuses_non_amounts(self):
+        for raw in ["$", "$$5", "USD 100", "100 USD", "5$", "$1,23"]:
+            with self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.CURRENCY, raw)
+
+
+class DateValidatorTests(TestCase):
+    def test_accepts_year_first_and_normalizes_to_iso(self):
+        for raw, stored in [
+            ("2024-08-21", "2024-08-21"),
+            ("2024/8/3", "2024-08-03"),
+            ("2024.12.01", "2024-12-01"),
+        ]:
+            self.assertEqual(validate_cell(ColumnType.DATE, raw), stored)
+
+    def test_refuses_ambiguous_forms(self):
+        # 03/04/2024 reads two ways; refusing beats storing a guess.
+        for raw in ["03/04/2024", "21-08-2024", "August 21, 2024", "2024-08/21", "someday"]:
+            with self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.DATE, raw)
+
+    def test_refuses_impossible_calendar_dates(self):
+        for raw in ["2024-13-01", "2024-02-30"]:
+            with self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.DATE, raw)
+
+
+class PassThroughTests(TestCase):
+    def test_untyped_shapes_pass_untouched(self):
+        for column_type in [ColumnType.TEXT, ColumnType.URL, ColumnType.EMAIL]:
+            self.assertEqual(validate_cell(column_type, "  as written  "), "  as written  ")
+
+
+class NormalizeRowTests(TestCase):
+    """normalize_row is THE shared shape funnel every write path uses, so
+    it is unit-tested directly like the validators it wraps, not only
+    incidentally through its callers."""
+
+    TYPES = {"score": "number", "when": "date", "name": "text"}
+
+    def test_normalizes_typed_values_and_reports_no_mismatch(self):
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "1,234", "when": "2024/8/3", "name": "Acme"})
+        self.assertEqual(normalized, {"score": "1234", "when": "2024-08-03", "name": "Acme"})
+        self.assertEqual(mismatches, [])
+
+    def test_a_refused_value_is_returned_raw_and_recorded(self):
+        # The raw value stays in the map (so a caller can tolerate or flag
+        # it) AND the mismatch is recorded (so a caller can reject it).
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "banana"})
+        self.assertEqual(normalized["score"], "banana")
+        self.assertEqual([m.key for m in mismatches], ["score"])
+
+    def test_blank_and_unknown_keys_pass_through_without_mismatch(self):
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "", "mystery": "x"})
+        self.assertEqual(normalized, {"score": "", "mystery": "x"})  # blank kept; untyped key untouched
+        self.assertEqual(mismatches, [])
+
+    def test_zero_is_a_value_not_blank(self):
+        # "0" strips truthy, so it is a provided value a number accepts.
+        normalized, mismatches = normalize_row(self.TYPES, {"score": "0"})
+        self.assertEqual((normalized, mismatches), ({"score": "0"}, []))
+
+
+class LockGranularityTests(TransactionTestCase):
+    """The hazard write_cells guards is a read-modify-write of ONE
+    row's json, so the lock is on THAT ROW.
+
+    It used to take `select_for_update` on the LIST, and SheetRow was
+    never locked anywhere in the codebase. That collapsed the worker's
+    64 wide pool to concurrency 1 per sheet at the terminal write, and
+    made two unrelated AI columns filling one sheet contend for
+    nothing."""
+
+    def test_a_landing_and_a_sheet_delete_take_the_tables_in_the_same_order(self) -> None:
+        # SheetRow, then SheetCellState, then NodeRun, on both sides: a
+        # landing writes the sheet (values and truth as one) and then
+        # settles the run; the delete purges rows, truth, then runs. A
+        # side that took them in another order is an ABBA deadlock
+        # against a fill landing mid-delete. FAILS if either side
+        # reorders.
+        from django.db import transaction
+
+        from sheets.constants import NodeRunStatus
+        from sheets.models import NodeRun
+        from sheets.nodes.registry import COLUMN_AGENT
+        from sheets.services.node_runs import NodeRunFlow
+
+        sheets = SheetService(account_id="01AC" + "A" * 22)
+        # Recorded columns, so the landing writes the ledger: a column
+        # no workflow fills lands its value alone.
+        sheet = sheets.create(
+            owner_id="01US" + "A" * 22, label="Sheet", columns=_RECORDED_COLUMNS, origin=SheetOrigin.MANUAL
+        )
+        sheets.add_rows(sheet, [{}])
+        row = SheetRow.objects.get(sheet_id=str(sheet.id))
+        flow = NodeRunFlow(worker_id="test:order")
+        task = NodeRun.objects.create(
+            account_id="01AC" + "A" * 22,
+            node_id="01ND" + "A" * 22,
+            kind=COLUMN_AGENT,
+            row_id=str(row.id),
+            sheet_id=str(sheet.id),
+            rank=row.rank,
+            status=NodeRunStatus.READY,
+        )
+        assert flow.claim(str(task.id)) is not None
+        ctx = _ctx(str(sheet.id), CellSource.NODE)
+
+        def order(queries, *verbs):
+            touched = []
+            for q in queries:
+                sql = q["sql"].lower()
+                for table in ("sheets_sheetrow", "sheets_sheetcellstate", "sheets_noderun"):
+                    if any(sql.startswith(verb) for verb in verbs) and table in sql.split(" where ")[0]:
+                        if table not in touched:
+                            touched.append(table)
+            return touched
+
+        with CaptureQueriesContext(connection) as captured, transaction.atomic():
+            # The processor's landing: the writes, then the close.
+            sheets.land_row(ctx, _landing(str(row.id), {"employees": "12"}))
+            assert flow.settle(str(task.id), result={}, status=NodeRunStatus.DONE)
+        self.assertEqual(
+            order(captured.captured_queries, "update", "insert"),
+            ["sheets_sheetrow", "sheets_sheetcellstate", "sheets_noderun"],
+        )
+        # The row delete purges the same three tables for one row, in
+        # the same order, against the same landing.
+        from sheets.models import SheetCellState
+        from sheets.nodes.registry import WEBHOOK
+
+        (other,) = sheets.add_rows(sheet, [{}])
+        SheetCellState.objects.create(
+            account_id="01AC" + "A" * 22,
+            sheet_id=str(sheet.id),
+            row_id=str(other.id),
+            column_key="employees",
+            state=StoredCellState.FILLED,
+            source=CellSource.MANUAL,
+        )
+        NodeRun.objects.create(
+            account_id="01AC" + "A" * 22,
+            node_id="01ND" + "B" * 22,
+            kind=WEBHOOK,
+            row_id=str(other.id),
+            sheet_id=str(sheet.id),
+            rank=other.rank,
+            status=NodeRunStatus.READY,
+        )
+        with CaptureQueriesContext(connection) as captured:
+            sheets.delete_row(sheet, str(other.id))
+        self.assertEqual(
+            order(captured.captured_queries, "delete"), ["sheets_sheetrow", "sheets_sheetcellstate", "sheets_noderun"]
+        )
+        with CaptureQueriesContext(connection) as captured:
+            sheets.delete(sheet)
+        self.assertEqual(
+            order(captured.captured_queries, "delete"), ["sheets_sheetrow", "sheets_sheetcellstate", "sheets_noderun"]
+        )
+
+    def test_the_write_locks_the_row_and_not_the_sheet(self) -> None:
+        sheets = SheetService(account_id="01AC" + "A" * 22)
+        sheet = sheets.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.MANUAL)
+        sheets.add_rows(sheet, [{"name": "acme"}])
+        row = SheetRow.objects.get(sheet_id=str(sheet.id))
+        with CaptureQueriesContext(connection) as captured:
+            sheets.land_row(
+                _ctx(str(sheet.id), CellSource.MANUAL),
+                _landing(str(row.id), {"employees": "12"}, column_keys=("employees",), blank_state=None),
+            )
+        locked = [q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"].upper()]
+        self.assertTrue(locked, "the write took no row lock at all")
+        for sql in locked:
+            self.assertIn("sheets_sheetrow", sql.lower())
+            self.assertNotIn('sheets_sheet"', sql.lower())

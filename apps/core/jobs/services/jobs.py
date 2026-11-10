@@ -82,7 +82,7 @@ class JobService:
         the user who asked. Rides the caller's transaction when it has
         one, so a job is never visible before the write it works on (a
         column that does not exist yet). `target_id` is what the job
-        works on (a fill's list), for the surfaces that page a target's
+        works on (a fill's sheet), for the surfaces that page a target's
         jobs."""
         return self._enqueue(kind, user_id=user_id, target_id=target_id)
 

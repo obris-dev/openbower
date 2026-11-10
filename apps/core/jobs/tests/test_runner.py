@@ -374,7 +374,7 @@ class _Cursor(BaseModel):
 
 
 class RegistryTests(SimpleTestCase):
-    def test_the_lists_kinds_are_on_the_roster_at_boot(self):
+    def test_the_sheets_kinds_are_on_the_roster_at_boot(self):
         kinds = [cls.KIND for cls in all_kinds()]
         self.assertIn("column_backfill", kinds)
         self.assertIn("fill", kinds)

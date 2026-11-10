@@ -1,5 +1,5 @@
 """`/v1/agents`: the roster's CRUD and the runnable-models catalog
-(session-authed like lists). Views are thin dispatch:
+(session-authed like sheets). Views are thin dispatch:
 persistence lives in the services, execution in the runtime, and wire
 shapes construct through the contract models at these boundaries."""
 

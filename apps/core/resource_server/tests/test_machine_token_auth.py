@@ -51,28 +51,28 @@ class MachineTokenAuthTests(TestCase):
         caches["default"].clear()
         caches["tokeninfo"].clear()
 
-    def _get_lists(self, token="obw_live", claims=None):
+    def _get_sheets(self, token="obw_live", claims=None):
         with patch(
             "resource_server.idp.transport.httpx.get",
             return_value=FakeResponse(200, claims if claims is not None else _claims()),
         ) as get:
-            resp = self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION=f"Bearer {token}")
+            resp = self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION=f"Bearer {token}")
         return resp, get
 
     @override_settings(SELF_HOSTED=False)
     def test_an_ungranted_account_is_refused_on_the_hosted_machine_lane(self):
-        resp, _ = self._get_lists(claims=_claims(hosted_access=False))
+        resp, _ = self._get_sheets(claims=_claims(hosted_access=False))
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json()["error"], "hosted_access_required")
-        resp, _ = self._get_lists(token="obw_granted", claims=_claims(hosted_access=True))
+        resp, _ = self._get_sheets(token="obw_granted", claims=_claims(hosted_access=True))
         self.assertNotEqual(resp.status_code, 403)
         # An identity service that predates the claim: taken as granted.
-        resp, _ = self._get_lists(token="obw_older", claims=_claims())
+        resp, _ = self._get_sheets(token="obw_older", claims=_claims())
         self.assertNotEqual(resp.status_code, 403)
 
     @override_settings(SELF_HOSTED=True)
     def test_a_self_hosted_install_never_checks_the_gate(self):
-        resp, _ = self._get_lists(claims=_claims(hosted_access=False))
+        resp, _ = self._get_sheets(claims=_claims(hosted_access=False))
         self.assertNotEqual(resp.status_code, 403)
 
     def test_a_forgotten_key_is_verified_again_at_once(self):
@@ -80,68 +80,68 @@ class MachineTokenAuthTests(TestCase):
         # (a revoke) makes the next request ask the identity service,
         # which now says inactive.
         key_id = "01JQ" + "C" * 22
-        resp, _ = self._get_lists(claims=_claims(key_id=key_id))
+        resp, _ = self._get_sheets(claims=_claims(key_id=key_id))
         self.assertNotEqual(resp.status_code, 401)
-        resp, get = self._get_lists(claims={"active": False})
+        resp, get = self._get_sheets(claims={"active": False})
         self.assertNotEqual(resp.status_code, 401)
         self.assertEqual(get.call_count, 0)
         forget_machine_key(key_id)
-        resp, get = self._get_lists(claims={"active": False})
+        resp, get = self._get_sheets(claims={"active": False})
         self.assertEqual(resp.status_code, 401)
         self.assertEqual(get.call_count, 1)
 
     def test_a_valid_bound_token_authenticates(self):
-        resp, _ = self._get_lists()
+        resp, _ = self._get_sheets()
         self.assertEqual(resp.status_code, 200)
 
     def test_the_relay_carries_the_token_as_bearer_and_no_client_secret(self):
         # The whole point: core holds no secret. The presented token is
         # relayed as the ONLY credential, never confidential-client Basic auth.
-        _, get = self._get_lists(token="obw_relayme")
+        _, get = self._get_sheets(token="obw_relayme")
         _, kwargs = get.call_args
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer obw_relayme")
         self.assertNotIn("auth", kwargs)  # no (client_id, secret) Basic tuple
 
     def test_wrong_audience_is_401(self):
         # A token minted for a different service (its aud is not this core).
-        resp, _ = self._get_lists(claims=_claims(aud=["https://data.openbower.ai"]))
+        resp, _ = self._get_sheets(claims=_claims(aud=["https://data.openbower.ai"]))
         self.assertEqual(resp.status_code, 401)
 
     def test_inactive_token_is_401(self):
-        resp, _ = self._get_lists(claims={"active": False})
+        resp, _ = self._get_sheets(claims={"active": False})
         self.assertEqual(resp.status_code, 401)
 
     def test_missing_account_is_403(self):
-        resp, _ = self._get_lists(claims=_claims(account_id=None))
+        resp, _ = self._get_sheets(claims=_claims(account_id=None))
         self.assertEqual(resp.status_code, 403)
 
     def test_hub_unreachable_is_503(self):
         import httpx
 
         with patch("resource_server.idp.transport.httpx.get", side_effect=httpx.ConnectError("down")):
-            resp = self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_x")
+            resp = self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION="Bearer obw_x")
         self.assertEqual(resp.status_code, 503)
 
     def test_a_cache_hit_makes_one_relay_call(self):
         with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, _claims())) as get:
-            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_same")
-            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_same")
+            self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION="Bearer obw_same")
+            self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION="Bearer obw_same")
         self.assertEqual(get.call_count, 1)
 
     def test_a_dead_token_is_relayed_once_then_negative_cached(self):
         # A repeated invalid token must not re-hit the hub each time.
         with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, {"active": False})) as get:
-            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
-            self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
+            self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
+            self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION="Bearer obw_dead")
         self.assertEqual(get.call_count, 1)
 
     def test_bare_string_audience_is_exact_not_substring(self):
         # `aud` as a bare string must normalize to one value, not be
         # char-substring matched: a superstring CONTAINING the audience 401s...
-        resp, _ = self._get_lists(token="obw_super", claims=_claims(aud="openbower-core-not-really"))
+        resp, _ = self._get_sheets(token="obw_super", claims=_claims(aud="openbower-core-not-really"))
         self.assertEqual(resp.status_code, 401)
         # ...while a bare-string EXACT match authenticates.
-        resp2, _ = self._get_lists(token="obw_exact", claims=_claims(aud=_CORE_AUD))
+        resp2, _ = self._get_sheets(token="obw_exact", claims=_claims(aud=_CORE_AUD))
         self.assertEqual(resp2.status_code, 200)
 
     @override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=2)
@@ -150,7 +150,7 @@ class MachineTokenAuthTests(TestCase):
         # budget; past the limit the pre-auth guard trips to 429.
         with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, {"active": False})):
             statuses = [
-                self.client.get(reverse("lists_index"), HTTP_AUTHORIZATION=f"Bearer obw_flood{i}").status_code
+                self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION=f"Bearer obw_flood{i}").status_code
                 for i in range(4)
             ]
         self.assertEqual(statuses, [401, 401, 429, 429])

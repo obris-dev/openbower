@@ -264,7 +264,7 @@ class StoredConfigCoercionTests(TestCase):
         self.assertEqual(config.outputs[0].description, "")
 
 
-class ListWireTests(TestCase):
+class SheetWireTests(TestCase):
     def setUp(self) -> None:
         login_session(self.client)
 

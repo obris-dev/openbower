@@ -1,6 +1,6 @@
 """`/v1/webhooks`: the account's destinations, a synchronous test
 delivery, and each destination's delivery log (session-authed like
-lists). Views are thin dispatch: custody lives in the service, the
+sheets). Views are thin dispatch: custody lives in the service, the
 HTTP path in delivery/, and wire shapes construct through the contract
 models at these boundaries."""
 
@@ -14,9 +14,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from common.views import ScopedView
-from lists.services.workflows import WorkflowService
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.webhooks import WebhookDestinationCreated, WebhookDestinationsList
+from sheets.services.workflows import WorkflowService
 
 from .constants import DEFAULT_DELIVERIES_PAGE, MAX_DELIVERIES_PAGE, WebhookErrorCode
 from .models import WebhookDestination
