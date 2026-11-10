@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.9](https://github.com/obris-dev/openbower/compare/v0.0.8...v0.0.9) (2026-11-10)
+
+
+### Features
+
+* **core:** sheets all the way down: the app, its tables, stored job payloads and topics say sheet (upgrade with the app stopped; bower-admin upgrade does) ([#131](https://github.com/obris-dev/openbower/issues/131)) ([712486b](https://github.com/obris-dev/openbower/commit/712486bfa9f5b40456773e505fb6e1c8429bf219))
+
+
+### Chores
+
+* remove the List to Sheet codemod ([#132](https://github.com/obris-dev/openbower/issues/132)) ([5bcec99](https://github.com/obris-dev/openbower/commit/5bcec99054ad43104f68f3f225f2aec3a300cef8))
+
 ## [0.0.8](https://github.com/obris-dev/openbower/compare/v0.0.7...v0.0.8) (2026-11-09)
 
 
