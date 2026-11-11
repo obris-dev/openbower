@@ -142,6 +142,11 @@ class CellWrittenTwice(Exception):
         self.keys = list(keys)
 
 
+class LogRowsFixed(Exception):
+    """A move on a log: its sheet order is arrival order, fixed at append
+    (newest first), and every reader of it relies on that."""
+
+
 class RowRankTooDeep(Exception):
     """A move would write a rank past the column bound: the gap has been
     split past what a re-space has caught up with. The move must wait
@@ -739,11 +744,14 @@ class SheetService:
         deepens a key. Under the sheet lock, so two moves into the same
         gap cannot compute the same key. A key past RANK_REBALANCE_LENGTH
         means the gap has been split too many times: the sheet's ranks
-        are re-spaced by a job, after this write commits."""
+        are re-spaced by a job, after this write commits. A log's rows
+        never move (LogRowsFixed)."""
         with transaction.atomic():
             locked = Sheet.objects.select_for_update().filter(id=str(target.id), account_id=self.account_id).first()
             if locked is None:
                 raise SheetNotFound(str(target.id))
+            if locked.kind == SheetKind.LOG:
+                raise LogRowsFixed(str(locked.id))
             row = SheetRow.objects.filter(id=row_id, sheet_id=str(locked.id)).first()
             if row is None:
                 raise RowNotFound(row_id)

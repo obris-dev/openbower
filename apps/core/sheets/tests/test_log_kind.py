@@ -22,6 +22,7 @@ from sheets.services.sheets import (
     FOLDER_SERVICES,
     FolderService,
     LogFolderService,
+    LogRowsFixed,
     RowCursor,
     SheetService,
     StandardFolderService,
@@ -82,6 +83,16 @@ class LogKindTests(TestCase):
         while rows := self.sheets.rows_page(self.log, after=after, limit=2):
             walked += [str(row.id) for row in rows]
             after = RowCursor(str(rows[-1].id), rows[-1].rank)
+        self.assertEqual(walked, self.newest_first)
+
+    def test_a_log_row_never_moves(self):
+        # FAILS if move_row takes a log: a moved row would break newest first.
+        oldest, newest = self.first[0], self.third[-1]
+        with self.assertRaises(LogRowsFixed):
+            self.sheets.move_row(self.log, oldest, after_id=None)
+        with self.assertRaises(LogRowsFixed):
+            self.sheets.move_row(self.log, newest, after_id=oldest)
+        walked = [str(row.id) for row in self.sheets.rows_page(self.log, limit=10)]
         self.assertEqual(walked, self.newest_first)
 
     def test_a_standard_sheet_still_appends_at_the_end(self):
