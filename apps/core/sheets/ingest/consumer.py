@@ -20,7 +20,7 @@ from django.conf import settings
 from django.db import transaction
 
 from ..models import ProcessedIngestEvent
-from ..operations.append_rows import AppendRowsOperation, LogAppendRefused
+from ..operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from ..services.sheets import ColumnNotWritable, SheetFull, SheetNotFound, SheetService
 from .events import IngestEvent, from_wire
 from .topics import SHEET_ROWS_INGESTED
@@ -68,7 +68,7 @@ def _append_rows(event: IngestEvent) -> AppendResult:
     try:
         target = sheets.get(event.sheet_id)
         report = AppendRowsOperation(account_id=event.account_id, target_sheet=target, rows=event.rows).run()
-    except (SheetNotFound, SheetFull, ColumnNotWritable, LogAppendRefused) as e:
+    except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,
         # a row carrying a column whose cells are recorded, and a push to
         # a log (the view refuses those two at the door, so an event

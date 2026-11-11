@@ -52,7 +52,7 @@ from .constants import (
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation, LogAppendRefused, require_appendable
+from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
 from .serializers import (
@@ -287,7 +287,7 @@ class SheetRowsView(_ScopedView):
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
             ).run()
-        except LogAppendRefused as e:
+        except SheetNotAppendable as e:
             return Response({"error": e.code, "detail": str(e)}, status=409)
         except (SheetFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
@@ -388,7 +388,7 @@ class SheetIngestView(_ScopedView):
         # the only place a log can answer the producer with a 409.
         try:
             require_appendable(target_sheet)
-        except LogAppendRefused as e:
+        except SheetNotAppendable as e:
             return Response({"error": e.code, "detail": str(e)}, status=409)
         # Validate the push against the sheet's columns BEFORE accepting it:
         # the append is async (202), so the POST is the only place a

@@ -19,8 +19,9 @@ column to fill (a fill whose prompt reads columns skips it as BLOCKED
 until it holds something); an edit starts nothing, by the standing
 rule.
 
-A LOG takes rows from its signal only: every other door is refused
-(LogAppendRefused), and the signal's poller says so with `into_log`.
+A LOG takes rows from its source only (what feeds it: a signal's
+matches today): every other door is refused (SheetNotAppendable), and the
+source says so with `from_source`.
 `react=False` lands the rows without the trigger (a log whose autofill
 is off): they arrive blank of work, and a person fills them."""
 
@@ -37,23 +38,24 @@ from ..services.sheets import SheetService
 from ..services.workflow_reactions import WorkflowReactions
 
 
-class LogAppendRefused(Exception):
-    """An append to a log from a door other than its signal (a person, a
-    push), refused: a log's rows are what its signal found."""
+class SheetNotAppendable(Exception):
+    """An append refused because the sheet takes rows from its source
+    only (a log, whose rows are what its source brought) and the caller
+    is another door (a person, a push)."""
 
-    code = IngestErrorCode.LOG_ROWS_FROM_SIGNAL
+    code = IngestErrorCode.NOT_APPENDABLE
 
     def __init__(self, sheet_id: str) -> None:
-        super().__init__("a log's rows arrive from its signal; add rows to a sheet instead")
+        super().__init__("a log's rows arrive from its source; add rows to a sheet instead")
         self.sheet_id = sheet_id
 
 
-def require_appendable(target_sheet: Sheet, *, into_log: bool = False) -> None:
+def require_appendable(target_sheet: Sheet, *, from_source: bool = False) -> None:
     """The one rule for who may append: any door to a standard sheet, only
-    the signal (`into_log`) to a log. The operation checks it, and a door
+    the log's source (`from_source`) to a log. The operation checks it, and a door
     whose append happens later (the ingest push) checks it first too."""
-    if target_sheet.kind == SheetKind.LOG and not into_log:
-        raise LogAppendRefused(str(target_sheet.id))
+    if target_sheet.kind == SheetKind.LOG and not from_source:
+        raise SheetNotAppendable(str(target_sheet.id))
 
 
 @dataclass
@@ -76,20 +78,20 @@ class AppendRowsOperation:
         account_id: str,
         target_sheet: Sheet,
         rows: Sequence[dict[str, str]],
-        into_log: bool = False,
+        from_source: bool = False,
         react: bool = True,
     ) -> None:
         self.account_id = account_id
         self.target_sheet = target_sheet
         self.rows = list(rows)
-        self.into_log = into_log
+        self.from_source = from_source
         self.react = react
 
     def run(self) -> AppendReport:
-        """Raises LogAppendRefused for a log the caller is not the signal
+        """Raises SheetNotAppendable for a log the caller is not the source
         of, and the sheet service's SheetNotFound / SheetFull as they are:
         each door answers them in its own voice."""
-        require_appendable(self.target_sheet, into_log=self.into_log)
+        require_appendable(self.target_sheet, from_source=self.from_source)
         with transaction.atomic():
             created = SheetService(account_id=self.account_id).add_rows(self.target_sheet, self.rows)
             if not self.react:

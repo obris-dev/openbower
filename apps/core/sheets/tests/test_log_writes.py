@@ -22,7 +22,7 @@ from sheets.constants import CellErrorCode, FillErrorCode, IngestErrorCode, Shee
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun, Sheet
-from sheets.operations.append_rows import AppendRowsOperation, LogAppendRefused
+from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from sheets.processors.base import queue_rank
 from sheets.services.node_runs import NodeRunFlow
 from sheets.services.sheets import SheetService
@@ -46,7 +46,7 @@ class ImmutableColumnTests(TestCase):
             kind=SheetKind.LOG,
         )
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], from_source=True
         ).run()
         self.row_id = str(report.created[0].id)
 
@@ -129,7 +129,7 @@ def _log_with_an_ai_column() -> Sheet:
 
 
 class LogAppendTests(TestCase):
-    """A log's rows arrive from its signal only, and its autofill switch
+    """A log's rows arrive from its source only, and its autofill switch
     decides whether they are offered to its columns."""
 
     def setUp(self) -> None:
@@ -144,7 +144,7 @@ class LogAppendTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 409, resp.content)
-        self.assertEqual(resp.json()["error"], IngestErrorCode.LOG_ROWS_FROM_SIGNAL)
+        self.assertEqual(resp.json()["error"], IngestErrorCode.NOT_APPENDABLE)
         self.assertEqual(SheetService(account_id=ACCOUNT).rows_page(self.log, limit=10), [])
 
     def test_a_push_to_a_log_is_refused_before_the_bus(self):
@@ -154,7 +154,7 @@ class LogAppendTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 409, resp.content)
-        self.assertEqual(resp.json()["error"], IngestErrorCode.LOG_ROWS_FROM_SIGNAL)
+        self.assertEqual(resp.json()["error"], IngestErrorCode.NOT_APPENDABLE)
 
     def test_a_pushed_event_for_a_log_is_dropped(self):
         # An event that skipped the door: terminal, never redelivered.
@@ -168,9 +168,9 @@ class LogAppendTests(TestCase):
         )
         self.assertEqual(handle_ingest_event(event), "dropped")
 
-    def test_the_signal_appends_and_its_rows_autofill(self):
+    def test_the_source_appends_and_its_rows_autofill(self):
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], from_source=True
         ).run()
         self.assertEqual(report.added, 1)
         self.assertEqual(report.queued, 1)
@@ -179,13 +179,13 @@ class LogAppendTests(TestCase):
     def test_autofill_off_lands_the_rows_with_no_work(self):
         # FAILS if react is ignored: the row would queue a run.
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True, react=False
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], from_source=True, react=False
         ).run()
         self.assertEqual((report.added, report.queued), (1, 0))
         self.assertFalse(NodeRun.objects.filter(sheet_id=str(self.log.id)).exists())
 
     def test_the_refusal_names_the_log(self):
-        with self.assertRaises(LogAppendRefused) as caught:
+        with self.assertRaises(SheetNotAppendable) as caught:
             AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}]).run()
         self.assertEqual(caught.exception.sheet_id, str(self.log.id))
 
@@ -201,7 +201,7 @@ class LogQueueOrderTests(TestCase):
         arrivals: list[str] = []
         for names in (["first.example"], ["second.example", "third.example"], ["fourth.example"]):
             report = AppendRowsOperation(
-                account_id=ACCOUNT, target_sheet=log, rows=[{"company": n} for n in names], into_log=True
+                account_id=ACCOUNT, target_sheet=log, rows=[{"company": n} for n in names], from_source=True
             ).run()
             arrivals += [str(row.id) for row in report.created]
             time.sleep(0.003)
@@ -211,7 +211,7 @@ class LogQueueOrderTests(TestCase):
     def test_the_queue_position_follows_the_kind(self):
         log = _log_with_an_ai_column()
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=log, rows=[{"company": "acme.example"}], into_log=True
+            account_id=ACCOUNT, target_sheet=log, rows=[{"company": "acme.example"}], from_source=True
         ).run()
         [row] = report.created
         self.assertEqual(queue_rank(log, row), str(row.id))
