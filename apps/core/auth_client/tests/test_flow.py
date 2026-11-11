@@ -117,8 +117,8 @@ class LoginLogoutFlowTests(TestCase):
         self.assertTrue(self.client.cookies[SESSION_COOKIE_NAME].value)
 
     def test_a_next_with_a_space_lands_there_re_encoded(self):
-        cb = self._callback_for(self._state_from_login_to("/discover?q=acme corp"))
-        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/discover?q=acme%20corp")
+        cb = self._callback_for(self._state_from_login_to("/agents?q=acme corp"))
+        self.assertEqual(cb["Location"], f"{settings.APP_BASE_URL}/agents?q=acme%20corp")
 
     def test_login_without_a_next_lands_on_home(self):
         cb = self._callback_for(self._state_from_login())
@@ -226,6 +226,19 @@ class SessionRefreshTests(TestCase):
             resolved = AppSessionService.Global.resolve(raw)
         self.assertEqual(resolved.access_token, "access-abc")
         idp.assert_not_called()
+
+    def test_authorize_request_carries_scope_and_resources(self):
+        # The authorize redirect is the seam static checks can't cover: a
+        # regression in the scope string or the doseq resource encoding would
+        # silently break an audience binding, or ask for a scope nothing uses.
+        resp = self.client.get(reverse("auth_login"))
+        query = parse_qs(urlparse(resp["Location"]).query)
+        self.assertEqual(query["scope"], ["profile signals:read signals:write"])
+        # RFC 8707: every resource indicator (IdP, signals) present as
+        # repeated params, so the minted token is bound to each audience.
+        self.assertEqual(
+            sorted(query["resource"]), sorted([settings.OPENBOWER_AUTH_URL, settings.OPENBOWER_SIGNALS_URL])
+        )
 
     def test_refresh_grant_carries_resource_indicators(self):
         # RFC 8707: audience is minted at TOKEN time. If the indicator only

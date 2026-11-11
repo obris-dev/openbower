@@ -33,7 +33,6 @@ import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
 import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
-import { FindLookalikes } from "./find-lookalikes";
 import { AddRowsDrawer } from "./add-rows-drawer";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
@@ -94,7 +93,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
   const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: SheetColumn | null } | null>(
     null,
   );
-  const [lookalikesOpen, setLookalikesOpen] = useState(false);
   const [addRowsOpen, setAddRowsOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
@@ -462,10 +460,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
             />
           ) : (
             <>
-              {/* Column work holds the primary slot now that fills
-                  exist; the discover seed lives in the menu and its
-                  disclosure opens here when summoned. */}
-              <FindLookalikes detail={detail} open={lookalikesOpen} onOpenChange={setLookalikesOpen} />
               <AddRowsDrawer sheetId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
               {/* A MENU button: the kind is chosen at
                   the gesture, so the drawer opens already knowing
@@ -488,12 +482,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
                 </DropdownButton>
                 <DropdownMenu anchor="bottom end">
                   {/* Workflow verbs above management verbs. */}
-                  <DropdownItem
-                    disabled={detail.columns.length === 0 || detail.row_count === 0}
-                    onClick={() => setLookalikesOpen(true)}
-                  >
-                    Find lookalikes
-                  </DropdownItem>
                   <DropdownItem onClick={() => setAddRowsOpen(true)}>Add rows via API</DropdownItem>
                   <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
                     {exporting ? "Exporting…" : "Export CSV"}

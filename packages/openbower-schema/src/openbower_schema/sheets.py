@@ -25,7 +25,7 @@ DEFAULT_COLUMN_TYPE: ColumnType = "text"
 # may rely on never receiving more.
 CELL_MAX_LENGTH = 65_536
 
-SheetOrigin = Literal["discover", "csv", "manual"]
+SheetOrigin = Literal["csv", "manual"]
 
 # Wire bounds on the contract (binary). The agents domain DERIVES its
 # output bounds from these: an output becomes a column when a fill
@@ -186,7 +186,9 @@ class SheetSummary(BaseModel):
     folder_id: str = Field(default="", description="The containing folder; empty = loose at the root.")
     columns: list[SheetColumn] = Field(default=[], description="Display order.")
     origin: SheetOrigin = Field(description="How the sheet came to exist.")
-    origin_ref: str = Field(default="", description="e.g. the source run id for discover snapshots.")
+    origin_ref: str = Field(
+        default="", description="A reference to what the sheet was made from, when its origin has one."
+    )
     row_count: int = Field(description="Total rows (the sheet may page far beyond one response).")
     created_at: str
     updated_at: str
@@ -198,8 +200,8 @@ class SheetDetail(SheetSummary):
     and every write to the columns array (add, AI create, webhook
     create, rename, reorder, delete) answer with this; a column's own
     config doors (prompt, webhook config) answer their config, and the
-    index, sheet create, CSV import, and a saved discover run stay on
-    the summary and read no workflow."""
+    index, sheet create and CSV import stay on the summary and read no
+    workflow."""
 
     entry_action_ids: list[str] = Field(
         description="The sheet's entry actions: the workflow nodes an arriving row starts, each the "

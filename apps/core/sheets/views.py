@@ -1,6 +1,6 @@
 """`/v1/sheets`: the sheets CRUD + rows + CSV import.
 
-Session-authed like discover; every query scopes through the caller's
+Session-authed; every query scopes through the caller's
 account via the service (foreign ids read as not-found). No export
 endpoint on purpose: exports build client-side from the rows pages."""
 

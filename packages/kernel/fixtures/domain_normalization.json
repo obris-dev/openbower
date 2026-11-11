@@ -1,5 +1,5 @@
 {
-  "description": "Domain normalization agreement vectors. Both normalizers (packages/kernel/src/openbower_kernel/domains.py and web/packages/api/src/domains.ts) must map input to expected exactly; empty string means refused.",
+  "description": "Domain normalization vectors. The normalizer (packages/kernel/src/openbower_kernel/domains.py) must map input to expected exactly; empty string means refused.",
   "vectors": [
     {
       "input": "acme.com",

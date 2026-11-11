@@ -16,7 +16,7 @@ default here or in base.py). (S) = secret, store in the secret manager.
                                  if unset (rotating either re-logs sessions in)
 
 Defaulted to the openbower.ai deployment (override via env for another):
-    BASE_URL, APP_BASE_URL, OPENBOWER_AUTH_URL, OPENBOWER_DATA_URL, OPENBOWER_SIGNALS_URL, ALLOWED_HOSTS,
+    BASE_URL, APP_BASE_URL, OPENBOWER_AUTH_URL, OPENBOWER_SIGNALS_URL, ALLOWED_HOSTS,
     CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS.
 This instance's own IP is auto-added to ALLOWED_HOSTS at runtime for health
 checks.
@@ -34,7 +34,6 @@ import socket
 os.environ.setdefault("BASE_URL", "https://api.openbower.ai")
 os.environ.setdefault("APP_BASE_URL", "https://app.openbower.ai")
 os.environ.setdefault("OPENBOWER_AUTH_URL", "https://auth.openbower.ai")
-os.environ.setdefault("OPENBOWER_DATA_URL", "https://data.openbower.ai")
 os.environ.setdefault("OPENBOWER_SIGNALS_URL", "https://signals.openbower.ai")
 # Parent-domain cookie scope: the web app's middleware and server-side
 # guard read bwr_session on the APP origin, so a host-only cookie on the

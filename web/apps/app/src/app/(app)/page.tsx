@@ -6,8 +6,7 @@ import { loginUrl, webRoutes } from "@bower/api";
 import { COLLAPSED_COOKIE, Directory } from "./_components/directory";
 
 /** Home IS the directory of sheets: they are the unit of work, so the
- * workspace opens on them (Discover is a tool that feeds sheets, not
- * the center). Sheet details live under /sheets/[id]. */
+ * workspace opens on them. Sheet details live under /sheets/[id]. */
 export default async function Home() {
   const jar = await cookies();
   const cookieHeader = jar.toString();

@@ -1,4 +1,4 @@
-"""The signals-service client, shaped like discover's index_client:
+"""The signals-service client, in three parts:
 transport (the wire calls + error normalization + contract validation,
 with the session credential attached by the shared
 auth_client.services.sessions.SessionTokenAuth flow), client (the session

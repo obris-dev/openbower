@@ -60,8 +60,8 @@ export default function PrivacyPage() {
       <Section title="4. Where your rows go">
         <p>
           When an agent fills a column, the rows it works on are sent to the model and search providers you have
-          configured, under your keys and their terms. The hosted company universe behind look-alike discovery is
-          built from data licensed to us; nothing you add to it comes from another user&apos;s keys.
+          configured, under your keys and their terms. The hosted signals are compiled from public and licensed
+          sources, never from anything another user&apos;s keys returned.
         </p>
       </Section>
 

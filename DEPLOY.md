@@ -43,7 +43,7 @@ The database and the web dependencies survive in named volumes; the Python venv 
 Environment facts (`apps/core/.env.example` carries the full annotated list):
 
 - `DJANGO_ENV` is always explicit (`local` for a machine you own, `cloud` for a deployed instance; unset refuses to start). The api and the workers read the same settings profile, so they see the same providers and search configuration.
-- Repointing the app at a different identity provider means setting both halves: `OPENBOWER_AUTH_URL`, the identity (the browser's authorize target, and the audience the token names), and `OPENBOWER_AUTH_INTERNAL_URL`, the transport this process dials. The data service takes the matching pair.
+- Repointing the app at a different identity provider means setting both halves: `OPENBOWER_AUTH_URL`, the identity (the browser's authorize target, and the audience the token names), and `OPENBOWER_AUTH_INTERNAL_URL`, the transport this process dials. The signals service takes the matching pair.
 
 Run ONE consumer process per lane per deploy (manual, autofill, preview), which is what the compose file ships. The row-claim design is multi-worker safe, but each process enforces a source's declared concurrency ceiling on its own, so a second consumer of the same lane would double the load on that source. Multi-worker scale-out ships as an operated story (docs and compose profiles) when it lands.
 

@@ -1,5 +1,5 @@
 """normalize_domain (openbower_kernel): the one spelling of domain
-identity, pinned to the web normalizer by the shared fixture.
+identity, its cases pinned by the fixture.
 
 Run: DJANGO_ENV=test uv run python manage.py test common
 """

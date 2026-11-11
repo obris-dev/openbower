@@ -1,6 +1,6 @@
-// Lists: the sheets CRUD the app backend serves locally. Same result
-// -union philosophy as discover: the client names outcomes, the caller
-// decides what each means for the UI.
+// Sheets: the sheets CRUD the app backend serves locally. The client
+// names outcomes as a result union; the caller decides what each means
+// for the UI.
 
 import {
   CellStateWireSchema,
@@ -449,16 +449,6 @@ export async function importSheetCsv(file: File, label?: string): Promise<ApiRes
   form.set("file", file);
   if (label) form.set("label", label);
   return http.post(apiRoutes.sheets.import, TolerantImportResultSchema, form);
-}
-
-export async function saveRunAsSheet(
-  runId: string,
-  opts: { label: string; limit?: number; exclude?: string[] },
-): Promise<ApiResult<SheetSummary>> {
-  const body: Record<string, unknown> = { label: opts.label };
-  if (opts.limit) body.limit = opts.limit;
-  if (opts.exclude?.length) body.exclude = opts.exclude;
-  return http.post(apiRoutes.discover.lookalikeRunSaveList(runId), TolerantSheetSummarySchema, body);
 }
 
 /** Append one BLANK column (no fill): the key derives server-side

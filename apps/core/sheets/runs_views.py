@@ -38,8 +38,7 @@ class PreviewRunView(_ScopedView):
     """POST /v1/runs/preview {config, row} -> 202: the preview's one-row
     diagnostic as a run that owns its input; the autofill consumer runs
     it and the result lands on GET /v1/runs/{id}. 202 on purpose: this
-    is the polled-run idiom (accepted, watch the run), the same answer
-    discover's lookalike run gives."""
+    is the polled-run idiom (accepted, watch the run)."""
 
     def post(self, request: Request) -> Response:
         serializer = PreviewRunRequest(data=request.data)

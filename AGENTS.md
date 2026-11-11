@@ -2,11 +2,11 @@
 
 **What this is.** OpenBower is an open-source, self-hostable prospecting
 workspace: a spreadsheet for GTM work where AI research agents fill columns
-with evidence-grounded answers, plus an optional hosted company universe
-(lookalike discovery) behind an OAuth seam. The open app runs standalone
-(CSV import + local models + self-hosted search) at zero cost; the hosted
-data service is the paid layer. This repo is the PUBLIC one; the hosted
-auth, data and signals services live in a separate private repo.
+with evidence-grounded answers, plus optional hosted signals behind an
+OAuth seam. The open app runs standalone (CSV import + local models +
+self-hosted search) at zero cost; the hosted signals service is the paid
+layer. This repo is the PUBLIC one; the hosted auth and signals services
+live in a separate private repo.
 
 ## Conventions
 
@@ -287,6 +287,6 @@ auth, data and signals services live in a separate private repo.
   store, never expose it to other users, never build a feature that
   depends on passing it along (paid providers' licenses forbid
   redistribution, and this rule is what keeps the product safe to
-  open-source). The hosted company universe is a separate thing entirely:
-  it is built from data licensed to its operator, never from anything a
-  user's key returned.
+  open-source). The hosted signals are a separate thing entirely: they
+  are built from sources licensed to their operator, never from anything
+  a user's key returned.

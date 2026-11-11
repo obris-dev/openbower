@@ -16,12 +16,6 @@ from .agents import (
     CatalogModel,
 )
 from .auth import API_KEY_NAME_MAX_LENGTH, MAX_API_KEYS, ApiKeyMinted, ApiKeysList, ApiKeyWire, AuthUser
-from .discover import (
-    Company,
-    LookalikeGroup,
-    LookalikeItem,
-    LookalikeListResponse,
-)
 from .fills import (
     CellRunResult,
     ColumnFillSummary,
@@ -108,7 +102,6 @@ __all__ = [
     "CellRunResult",
     "ColumnFillSummary",
     "ColumnPromptWire",
-    "Company",
     "EventSource",
     "FillCounters",
     "FillError",
@@ -128,9 +121,6 @@ __all__ = [
     "ListenerVersionsPage",
     "ListenerWire",
     "ListenersPage",
-    "LookalikeGroup",
-    "LookalikeItem",
-    "LookalikeListResponse",
     "MatchWire",
     "MatchesPage",
     "NodeRunWire",

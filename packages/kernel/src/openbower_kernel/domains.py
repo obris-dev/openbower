@@ -1,9 +1,6 @@
 """Domain normalization: the app's one spelling of domain identity.
 
-Agreement with the web normalizer is pinned by the shared fixture
-(fixtures/domain_normalization.json); the data service's canonicalizer
-is a superset-tolerant sibling (values this refuses cannot exist as
-universe keys, so extra strictness only saves doomed lookups)."""
+Its cases are pinned by the fixture (fixtures/domain_normalization.json)."""
 
 from __future__ import annotations
 
@@ -23,9 +20,8 @@ def _is_canonical_ipv4(value: str) -> bool:
 
 
 # LDH hostname labels (RFC 952/1123): 1-63 chars, no leading/trailing
-# hyphen. Stricter than the data service's normalizer is SAFE: values
-# this refuses (spaces, commas, underscores) cannot exist as universe
-# keys, so refusing them here only saves a doomed lookup.
+# hyphen. Values this refuses (spaces, commas, underscores) are not
+# hostnames, so a column of them is not a domain column.
 _HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
 # DNS's own bound on a full name; anything longer cannot be a real
 # domain, so it is unusable as a key.

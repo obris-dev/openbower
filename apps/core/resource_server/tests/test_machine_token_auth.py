@@ -104,7 +104,7 @@ class MachineTokenAuthTests(TestCase):
 
     def test_wrong_audience_is_401(self):
         # A token minted for a different service (its aud is not this core).
-        resp, _ = self._get_sheets(claims=_claims(aud=["https://data.openbower.ai"]))
+        resp, _ = self._get_sheets(claims=_claims(aud=["https://signals.openbower.ai"]))
         self.assertEqual(resp.status_code, 401)
 
     def test_inactive_token_is_401(self):
@@ -163,12 +163,7 @@ class MachineTokenAuthTests(TestCase):
         self.assertEqual(user.account_id, "01JQ" + "B" * 22)
 
     def test_a_machine_token_is_refused_off_the_attached_view(self):
-        # Discover is cookie-only; a machine token there must not pass.
+        # The agents roster is cookie-only; a machine token there must not pass.
         with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, _claims())):
-            resp = self.client.post(
-                reverse("discover_lookalikes"),
-                {"domains": ["acme.com"]},
-                content_type="application/json",
-                HTTP_AUTHORIZATION="Bearer obw_live",
-            )
+            resp = self.client.get(reverse("agents_index"), HTTP_AUTHORIZATION="Bearer obw_live")
         self.assertEqual(resp.status_code, 401)

@@ -92,7 +92,6 @@ class SheetOrigin(StrEnum):
     """How a sheet came to exist (an index-page chip, and the tell for
     which columns to expect)."""
 
-    DISCOVER = "discover"
     CSV = "csv"
     MANUAL = "manual"
 
