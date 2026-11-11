@@ -15,7 +15,7 @@ from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_kernel.fields import new_ulid
-from sheets.constants import SheetOrigin
+from sheets.constants import SheetKind, SheetOrigin
 from sheets.jobs.rerank import RerankJob
 from sheets.models import Sheet, SheetRow
 from sheets.services.sheets import (
@@ -49,9 +49,9 @@ class SheetServiceTests(TestCase):
         # Ids mint monotonic even within a millisecond, so creation
         # order IS id order, and the page (newest first) shows it.
         self.assertGreater(str(b.id), str(a.id))
-        page = service.page(after_id="", limit=10)
+        page = service.page(kind=SheetKind.STANDARD, after_id="", limit=10)
         self.assertEqual([x.id for x in page], [b.id, a.id])
-        older = service.page(after_id=str(b.id), limit=10)
+        older = service.page(kind=SheetKind.STANDARD, after_id=str(b.id), limit=10)
         self.assertEqual([x.id for x in older], [a.id])
         service.rename(a, label="Renamed")
         self.assertEqual(service.get(str(a.id)).label, "Renamed")
@@ -65,7 +65,7 @@ class SheetServiceTests(TestCase):
         theirs = _service(account="01AC" + "Z" * 22)
         with self.assertRaises(SheetNotFound):
             theirs.get(str(mine.id))
-        self.assertEqual(theirs.page(after_id="", limit=10), [])
+        self.assertEqual(theirs.page(kind=SheetKind.STANDARD, after_id="", limit=10), [])
 
     def test_rows_are_ranked_in_order_and_page_by_a_row_cursor(self):
         service = _service()
@@ -395,10 +395,10 @@ class RecordedColumnTests(TestCase):
 
 class FolderServiceTests(TestCase):
     def test_crud_and_delete_sets_sheets_loose(self):
-        from sheets.services.sheets import FolderService
+        from sheets.services.sheets import StandardFolderService
 
         sheets = _service()
-        folders = FolderService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22)
+        folders = StandardFolderService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22)
         bucket = folders.create(label="Clients")
         folders.rename(bucket, label="Customers")
         self.assertEqual(folders.get(str(bucket.id)).label, "Customers")
@@ -416,12 +416,12 @@ class FolderServiceTests(TestCase):
         self.assertEqual(folders.all(), [])
 
     def test_move_validates_folder_ownership(self):
-        from sheets.services.sheets import FolderService
+        from sheets.services.sheets import StandardFolderService
 
         sheets = _service()
         target = sheets.create(owner_id="01US" + "A" * 22, label="Sheet", columns=[], origin=SheetOrigin.MANUAL)
-        mine = FolderService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22).create(label="Mine")
-        theirs = FolderService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(label="Theirs")
+        mine = StandardFolderService(account_id="01AC" + "A" * 22, user_id="01US" + "A" * 22).create(label="Mine")
+        theirs = StandardFolderService(account_id="01AC" + "Z" * 22, user_id="01US" + "Z" * 22).create(label="Theirs")
 
         sheets.move(target, folder_id=str(mine.id))
         self.assertEqual(sheets.get(str(target.id)).folder_id, str(mine.id))

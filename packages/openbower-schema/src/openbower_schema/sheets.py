@@ -26,6 +26,7 @@ DEFAULT_COLUMN_TYPE: ColumnType = "text"
 CELL_MAX_LENGTH = 65_536
 
 SheetOrigin = Literal["csv", "manual"]
+SheetKind = Literal["standard", "log"]
 
 # Wire bounds on the contract (binary). The agents domain DERIVES its
 # output bounds from these: an output becomes a column when a fill
@@ -179,10 +180,13 @@ class FoldersList(BaseModel):
 
 
 class SheetSummary(BaseModel):
-    """One sheet as the index shows it (and the save-list response)."""
+    """One sheet as the index shows it (and the create response)."""
 
     id: str
     label: str
+    kind: SheetKind = Field(
+        description="standard: rows sit where people put them. log: rows arrive over time, newest first."
+    )
     folder_id: str = Field(default="", description="The containing folder; empty = loose at the root.")
     columns: list[SheetColumn] = Field(default=[], description="Display order.")
     origin: SheetOrigin = Field(description="How the sheet came to exist.")
@@ -272,6 +276,7 @@ class SheetRowWire(BaseModel):
     one row; a client never needs it)."""
 
     id: str
+    created_at: str = Field(description="When the row arrived (a log's Logged time).")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},

@@ -1262,6 +1262,15 @@
           "title": "Id",
           "type": "string"
         },
+        "kind": {
+          "description": "standard: rows sit where people put them. log: rows arrive over time, newest first.",
+          "enum": [
+            "standard",
+            "log"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "label": {
           "title": "Label",
           "type": "string"
@@ -1294,6 +1303,7 @@
       "required": [
         "id",
         "label",
+        "kind",
         "origin",
         "row_count",
         "created_at",
@@ -1306,6 +1316,11 @@
     "SheetRowWire": {
       "description": "A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).",
       "properties": {
+        "created_at": {
+          "description": "When the row arrived (a log's Logged time).",
+          "title": "Created At",
+          "type": "string"
+        },
         "data": {
           "additionalProperties": {
             "type": "string"
@@ -1330,7 +1345,8 @@
         }
       },
       "required": [
-        "id"
+        "id",
+        "created_at"
       ],
       "title": "SheetRowWire",
       "type": "object"
@@ -1365,7 +1381,7 @@
       "type": "object"
     },
     "SheetSummary": {
-      "description": "One sheet as the index shows it (and the save-list response).",
+      "description": "One sheet as the index shows it (and the create response).",
       "properties": {
         "columns": {
           "default": [],
@@ -1388,6 +1404,15 @@
         },
         "id": {
           "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "description": "standard: rows sit where people put them. log: rows arrive over time, newest first.",
+          "enum": [
+            "standard",
+            "log"
+          ],
+          "title": "Kind",
           "type": "string"
         },
         "label": {
@@ -1422,6 +1447,7 @@
       "required": [
         "id",
         "label",
+        "kind",
         "origin",
         "row_count",
         "created_at",

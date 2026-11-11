@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
 from agents.services import AgentService
@@ -31,6 +31,7 @@ from ..constants import (
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
     CellErrorCode,
+    SheetKind,
 )
 from ..models import Folder, NodeRun, Sheet, SheetRow
 from . import cell_truth, fill_progress, webhook_runs
@@ -257,33 +258,42 @@ class RowsRemoved(NamedTuple):
 
 
 class FolderService:
-    def __init__(self, *, account_id: str, user_id: str) -> None:
+    """An account's folders, seen from ONE kind of sheet. Folders are
+    shared (a folder is a place sheets point at, whatever their kind);
+    the kind scopes the CONTENT this service reports, a folder's sheet
+    count. `kind=None` counts every kind."""
+
+    def __init__(self, *, account_id: str, user_id: str, kind: SheetKind | None) -> None:
         self.account_id = account_id
         self.user_id = user_id
+        self.kind = kind
+
+    def _folders(self) -> QuerySet[Folder]:
+        return Folder.objects.filter(account_id=self.account_id)
+
+    def _sheets(self) -> QuerySet[Sheet]:
+        sheets = Sheet.objects.filter(account_id=self.account_id)
+        return sheets if self.kind is None else sheets.filter(kind=self.kind)
 
     def create(self, *, label: str) -> Folder:
         # A cap, not paging: the folder GET deliberately ships the whole
         # taxonomy, which is only sane while it is bounded.
-        if Folder.objects.filter(account_id=self.account_id).count() >= MAX_FOLDERS:
+        if self._folders().count() >= MAX_FOLDERS:
             raise FoldersFull(f"an account holds at most {MAX_FOLDERS} folders")
         return Folder.objects.create(account_id=self.account_id, user_id=self.user_id, label=label)
 
     def all(self) -> list[Folder]:
-        return list(Folder.objects.filter(account_id=self.account_id).order_by("-id"))
+        return list(self._folders().order_by("-id"))
 
     def get(self, folder_id: str) -> Folder:
         try:
-            return Folder.objects.get(id=folder_id, account_id=self.account_id)
+            return self._folders().get(id=folder_id)
         except Folder.DoesNotExist as e:
             raise FolderNotFound(folder_id) from e
 
     def sheet_counts(self, folder_ids: list[str]) -> dict[str, int]:
         """Sheets per folder, one aggregate query (the wire's sheet_count)."""
-        rows = (
-            Sheet.objects.filter(account_id=self.account_id, folder_id__in=folder_ids)
-            .values_list("folder_id")
-            .annotate(n=Count("id"))
-        )
+        rows = self._sheets().filter(folder_id__in=folder_ids).values_list("folder_id").annotate(n=Count("id"))
         return dict(rows)
 
     def rename(self, folder: Folder, *, label: str) -> Folder:
@@ -298,10 +308,37 @@ class FolderService:
             # The same folder-row lock move() takes, so a move committed
             # first is seen by the loose-ing update and one committed
             # after finds the folder gone.
-            if not Folder.objects.select_for_update().filter(id=folder.id, account_id=self.account_id):
+            if not self._folders().select_for_update().filter(id=folder.id):
                 return
             Sheet.objects.filter(account_id=self.account_id, folder_id=str(folder.id)).update(folder_id="")
-            Folder.objects.filter(id=folder.id, account_id=self.account_id).delete()
+            self._folders().filter(id=folder.id).delete()
+
+
+class StandardFolderService(FolderService):
+    """The folders as the sheets home shows them (counting its sheets)."""
+
+    def __init__(self, *, account_id: str, user_id: str) -> None:
+        super().__init__(account_id=account_id, user_id=user_id, kind=SheetKind.STANDARD)
+
+
+class LogFolderService(FolderService):
+    """The folders as the logs home shows them (counting its logs)."""
+
+    def __init__(self, *, account_id: str, user_id: str) -> None:
+        super().__init__(account_id=account_id, user_id=user_id, kind=SheetKind.LOG)
+
+
+# Each kind's folder service; complete over SheetKind (pinned by a test).
+FOLDER_SERVICES: dict[SheetKind, type[StandardFolderService | LogFolderService]] = {
+    SheetKind.STANDARD: StandardFolderService,
+    SheetKind.LOG: LogFolderService,
+}
+
+
+def folder_service_for(kind: SheetKind, *, account_id: str, user_id: str) -> FolderService:
+    """The folder service that counts one kind of sheet."""
+    service_class = FOLDER_SERVICES[kind]
+    return service_class(account_id=account_id, user_id=user_id)
 
 
 class SheetService:
@@ -322,19 +359,23 @@ class SheetService:
         origin: str,
         origin_ref: str = "",
         folder_id: str = "",
+        kind: SheetKind = SheetKind.STANDARD,
     ) -> Sheet:
         return Sheet.objects.create(
             account_id=self.account_id,
             user_id=owner_id,
             label=label,
+            kind=kind,
             columns=columns,
             origin=origin,
             origin_ref=origin_ref,
             folder_id=folder_id,
         )
 
-    def page(self, *, after_id: str, limit: int) -> list[Sheet]:
-        qs = Sheet.objects.filter(account_id=self.account_id).order_by("-id")
+    def page(self, *, kind: SheetKind, after_id: str, limit: int) -> list[Sheet]:
+        """One kind's index, newest first (the sheets home lists the
+        standard ones; logs list apart)."""
+        qs = Sheet.objects.filter(account_id=self.account_id, kind=kind).order_by("-id")
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
@@ -404,20 +445,29 @@ class SheetService:
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
             if current + len(rows) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
-            last = (
-                SheetRow.objects.filter(sheet_id=str(locked.id))
-                .order_by("-rank", "-id")
-                .values_list("rank", flat=True)
-                .first()
-            )
             created = [
                 SheetRow(sheet_id=str(locked.id), rank=rank, data=data)
-                for rank, data in zip(keys_between(last, None, len(rows)), rows, strict=True)
+                for rank, data in zip(self._append_ranks(locked, len(rows)), rows, strict=True)
             ]
             SheetRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
         return created
+
+    def _append_ranks(self, locked: Sheet, n: int) -> list[str]:
+        """The ranks of `n` rows about to be appended, in the batch's
+        order (ids mint in that order too). A standard sheet ranks them
+        after its last row. A log ranks them BEFORE its first, the batch's
+        last row first, so rank order is id order descending: its sheet
+        order is newest first for every reader that pages in sheet order
+        (the grid, a fill's walk, the export). That holds only while a
+        log's rows are never moved. Called under the sheet lock."""
+        rows = SheetRow.objects.filter(sheet_id=str(locked.id))
+        if locked.kind == SheetKind.LOG:
+            first = rows.order_by("rank", "id").values_list("rank", flat=True).first()
+            return list(reversed(keys_between(None, first, n)))
+        last = rows.order_by("-rank", "-id").values_list("rank", flat=True).first()
+        return keys_between(last, None, n)
 
     def row(self, target: Sheet, row_id: str) -> SheetRow:
         """One row of a sheet, as it reads now. Raises RowNotFound for a
@@ -645,7 +695,14 @@ class SheetService:
         return landed
 
     def rows_page(
-        self, target: Sheet, *, after: RowCursor | None = None, limit: int, until_id: str = ""
+        self,
+        target: Sheet,
+        *,
+        after: RowCursor | None = None,
+        limit: int,
+        until_id: str = "",
+        since_id: str = "",
+        before_id: str = "",
     ) -> list[SheetRow]:
         """A page of rows in SHEET ORDER after a cursor: ranks are unique
         per sheet, so the keyset is on the rank alone (the id rides the
@@ -659,10 +716,17 @@ class SheetService:
         overlapping page it could see. A row moved from below the cursor
         to above it between two pages is not walked, exactly like a row
         appended after the click; one moved the other way is offered
-        twice, and the open-run key drops the second."""
+        twice, and the open-run key drops the second. `since_id` and
+        `before_id` bound a log's time window by id (ids are time): on a
+        log, sheet order IS id order, so a window is one run of it and the
+        keyset pages through it unchanged."""
         rows = SheetRow.objects.filter(sheet_id=str(target.id))
         if until_id:
             rows = rows.filter(id__lte=until_id)
+        if since_id:
+            rows = rows.filter(id__gte=since_id)
+        if before_id:
+            rows = rows.filter(id__lt=before_id)
         if after is not None:
             rows = rows.filter(rank__gt=after.rank)
         return list(rows.order_by("rank", "id")[:limit])
