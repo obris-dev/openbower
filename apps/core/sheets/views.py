@@ -47,6 +47,7 @@ from .constants import (
     MAX_ROWS_PAGE,
     FillErrorCode,
     IngestErrorCode,
+    RowSource,
     SheetKind,
     SheetOrigin,
 )
@@ -286,6 +287,7 @@ class SheetRowsView(_ScopedView):
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
+                source=RowSource.PERSON,
             ).run()
         except SheetNotAppendable as e:
             return Response({"error": e.code, "detail": str(e)}, status=409)
@@ -387,7 +389,7 @@ class SheetIngestView(_ScopedView):
         # Refused BEFORE the bus: the append happens later, so the push is
         # the only place a log can answer the producer with a 409.
         try:
-            require_appendable(target_sheet)
+            require_appendable(target_sheet, source=RowSource.PUSH)
         except SheetNotAppendable as e:
             return Response({"error": e.code, "detail": str(e)}, status=409)
         # Validate the push against the sheet's columns BEFORE accepting it:

@@ -398,6 +398,18 @@ FILL_POLL_SECONDS = JOB_LOOP_IDLE_SECONDS
 CELL_SOURCE_MAX_LENGTH = 8
 
 
+class RowSource(StrEnum):
+    """Where an append's rows come from, named at every call of the one
+    append (the row side of CellSource). A LOG takes rows from its FEED
+    only (what feeds it: a signal's matches today); a standard sheet
+    takes rows from anything but a feed."""
+
+    PERSON = "person"  # POST rows, the add-rows bar
+    PUSH = "push"  # the ingest consumer (an API key's push)
+    IMPORT = "import"  # a CSV import, into the sheet it creates
+    FEED = "feed"  # what feeds a log
+
+
 class CellSource(StrEnum):
     """Who wrote a cell's state: a NODE's run (an agent's, a webhook's;
     which fill, if any, is the record's fill_run_id) or a person

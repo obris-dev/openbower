@@ -33,6 +33,7 @@ from sheets.constants import (
     CellSource,
     FillFailureCode,
     NodeRunStatus,
+    RowSource,
     StoredCellState,
 )
 from sheets.jobs.fill import FillJob
@@ -447,7 +448,9 @@ class PushedRuleTests(_Harness):
         ColumnService(account_id=ACCOUNT, user_id=USER).delete(str(self.sheet.id), key="answer")
         self.sheet.refresh_from_db()
         before = NodeRun.objects.count()
-        report = AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "new.io"}]).run()
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "new.io"}], source=RowSource.PERSON
+        ).run()
         self.assertEqual(report.added, 1)
         self.assertEqual(NodeRun.objects.count(), before)
 
@@ -463,7 +466,10 @@ class PushedRuleTests(_Harness):
         self.sheet.refresh_from_db()
         rows_before = self.sheet.row_count
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{}, {"company": "   "}, {"company": "new.io"}, {}]
+            account_id=ACCOUNT,
+            target_sheet=self.sheet,
+            rows=[{}, {"company": "   "}, {"company": "new.io"}, {}],
+            source=RowSource.PERSON,
         ).run()
         self.assertEqual(report.added, 4)
         self.assertEqual(report.queued, 1)

@@ -19,11 +19,11 @@ column to fill (a fill whose prompt reads columns skips it as BLOCKED
 until it holds something); an edit starts nothing, by the standing
 rule.
 
-A LOG takes rows from its source only (what feeds it: a signal's
-matches today): every other door is refused (SheetNotAppendable), and the
-source says so with `from_source`.
-`react=False` lands the rows without the trigger (a log whose autofill
-is off): they arrive blank of work, and a person fills them."""
+Every caller names where its rows come from (`source`, a RowSource): a
+LOG takes rows from its FEED only, and a standard sheet from anything but
+a feed (SheetNotAppendable otherwise). `autofill=False` lands the rows
+without the trigger (a log whose autofill is off): nothing is queued for
+them, and a person fills them."""
 
 from __future__ import annotations
 
@@ -32,30 +32,36 @@ from dataclasses import dataclass
 
 from django.db import transaction
 
-from ..constants import IngestErrorCode, SheetKind
+from ..constants import IngestErrorCode, RowSource, SheetKind
 from ..models import Sheet, SheetRow
 from ..services.sheets import SheetService
 from ..services.workflow_reactions import WorkflowReactions
 
 
 class SheetNotAppendable(Exception):
-    """An append refused because the sheet takes rows from its source
-    only (a log, whose rows are what its source brought) and the caller
-    is another door (a person, a push)."""
+    """An append refused by where its rows come from: a log takes rows
+    from its feed only, and only a log takes a feed's rows."""
 
     code = IngestErrorCode.NOT_APPENDABLE
 
-    def __init__(self, sheet_id: str) -> None:
-        super().__init__("a log's rows arrive from its source; add rows to a sheet instead")
+    def __init__(self, sheet_id: str, *, source: RowSource) -> None:
+        if source == RowSource.FEED:
+            detail = "only a log takes rows from a feed"
+        else:
+            detail = "a log's rows arrive from its feed; add rows to a sheet instead"
+        super().__init__(detail)
         self.sheet_id = sheet_id
+        self.source = source
 
 
-def require_appendable(target_sheet: Sheet, *, from_source: bool = False) -> None:
-    """The one rule for who may append: any door to a standard sheet, only
-    the log's source (`from_source`) to a log. The operation checks it, and a door
-    whose append happens later (the ingest push) checks it first too."""
-    if target_sheet.kind == SheetKind.LOG and not from_source:
-        raise SheetNotAppendable(str(target_sheet.id))
+def require_appendable(target_sheet: Sheet, *, source: RowSource) -> None:
+    """The one rule for who may append: a log takes rows from its feed
+    only, a standard sheet from anything else. The operation checks it,
+    and a door whose append happens later (the ingest push) checks it
+    first too."""
+    from_feed = source == RowSource.FEED
+    if (target_sheet.kind == SheetKind.LOG) != from_feed:
+        raise SheetNotAppendable(str(target_sheet.id), source=source)
 
 
 @dataclass
@@ -78,23 +84,23 @@ class AppendRowsOperation:
         account_id: str,
         target_sheet: Sheet,
         rows: Sequence[dict[str, str]],
-        from_source: bool = False,
-        react: bool = True,
+        source: RowSource,
+        autofill: bool = True,
     ) -> None:
         self.account_id = account_id
         self.target_sheet = target_sheet
         self.rows = list(rows)
-        self.from_source = from_source
-        self.react = react
+        self.source = source
+        self.autofill = autofill
 
     def run(self) -> AppendReport:
-        """Raises SheetNotAppendable for a log the caller is not the source
-        of, and the sheet service's SheetNotFound / SheetFull as they are:
-        each door answers them in its own voice."""
-        require_appendable(self.target_sheet, from_source=self.from_source)
+        """Raises SheetNotAppendable when the source does not fit the sheet
+        (require_appendable), and the sheet service's SheetNotFound /
+        SheetFull as they are: each door answers them in its own voice."""
+        require_appendable(self.target_sheet, source=self.source)
         with transaction.atomic():
             created = SheetService(account_id=self.account_id).add_rows(self.target_sheet, self.rows)
-            if not self.react:
+            if not self.autofill:
                 return AppendReport(created=created, queued=0)
             arrived = [row for row in created if _holds_something(row)]
             queued = WorkflowReactions(account_id=self.account_id).trigger(self.target_sheet, arrived)

@@ -172,10 +172,12 @@ live in a separate private repo.
   operation (sheets/operations/append_rows.py: the sheet service's
   primitive, then the trigger, one transaction), which every door (a
   push, a person, an import, a snapshot) calls, and a pin holds that
-  nothing else in production calls the primitive. A LOG takes rows from
-  its source only (`from_source`, a signal's matches today; every other door is refused,
-  `SheetNotAppendable`, and the push checks before the bus), and
-  `react=False` lands rows without the trigger (a log's autofill off).
+  nothing else in production calls the primitive. Every caller names
+  where its rows come from (`source`, a `RowSource`): a LOG takes rows
+  from its FEED only (a signal's matches today), a standard sheet from
+  anything but a feed (`SheetNotAppendable` otherwise; the push checks
+  before the bus), and `autofill=False` lands rows without the trigger
+  (a log's autofill off).
   The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
   starts with exactly one of them: `entry` (the path is fed by nothing,
