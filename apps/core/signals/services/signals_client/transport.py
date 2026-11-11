@@ -2,8 +2,8 @@
 protocol failures normalized into the package's named errors and bodies
 validated into the SHARED contract models (openbower_schema) before
 anyone downstream touches them. Addresses come from the package's
-urls, the credential from the shared session flow
-(auth_client.services.sessions.SessionTokenAuth).
+urls, the credential from the caller (the shared session flow,
+auth_client.services.sessions.SessionTokenAuth, or an API key, KeyAuth).
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from django.conf import settings
 from pydantic import BaseModel, ValidationError
 
 from auth_client.downstream import DownstreamTokenRejected
-from auth_client.services.sessions import SessionTokenAuth
 from openbower_schema import (
     ListenersPage,
     ListenerVersionsPage,
@@ -46,12 +45,24 @@ def _httpx_transport() -> httpx.BaseTransport | None:
     return None
 
 
-def client_for(session) -> httpx.Client:
-    """A signals client acting as the session's user. The auth flow owns
-    token attachment and the single refresh-retry; everything else here is
-    plain HTTP."""
+class KeyAuth(httpx.Auth):
+    """An API key as the bearer, as it is: a key has no refresh, so a
+    rejection is final for this key (the key client names it)."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
+def client_for(auth: httpx.Auth) -> httpx.Client:
+    """A signals client acting with `auth`: the session's flow (which owns
+    token attachment and the single refresh-retry) or an API key.
+    Everything else here is plain HTTP."""
     kwargs: dict[str, Any] = {
-        "auth": SessionTokenAuth(session),
+        "auth": auth,
         "timeout": settings.SIGNALS_HTTP_TIMEOUT_SECONDS,
     }
     override = _httpx_transport()

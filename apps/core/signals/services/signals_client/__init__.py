@@ -1,14 +1,14 @@
 """The signals-service client, in three parts:
 transport (the wire calls + error normalization + contract validation,
-with the session credential attached by the shared
-auth_client.services.sessions.SessionTokenAuth flow), client (the session
-binding), errors (the failure taxonomy callers dispatch on)."""
+with the credential the caller binds), client (a session's, or an API
+key's), errors (the failure taxonomy callers dispatch on)."""
 
-from .client import SessionSignalsClient, SignalsClientService
+from .client import KeySignalsClient, SessionSignalsClient, SignalsClientService
 from .errors import (
     SignalsAccessDenied,
     SignalsClientError,
     SignalsClientRequestError,
+    SignalsKeyRejected,
     SignalsLimitReached,
     SignalsPreviewRunning,
     SignalsUpstreamError,
@@ -16,11 +16,13 @@ from .errors import (
 )
 
 __all__ = [
+    "KeySignalsClient",
     "SessionSignalsClient",
     "SignalsAccessDenied",
     "SignalsClientError",
     "SignalsClientRequestError",
     "SignalsClientService",
+    "SignalsKeyRejected",
     "SignalsLimitReached",
     "SignalsPreviewRunning",
     "SignalsUpstreamError",

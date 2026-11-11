@@ -40,6 +40,13 @@ class SignalsAccessDenied(SignalsClientError):
     session's refresh-and-retry."""
 
 
+class SignalsKeyRejected(SignalsClientError):
+    """The service refused an API key (401 or 403): revoked, expired, or
+    minted without signals:read. A key has no refresh, so nothing here
+    retries it; a person reconnects (mints a fresh one through their
+    session)."""
+
+
 class SignalsClientRequestError(SignalsClientError):
     """The service judged the REQUEST wrong (400 a setup it refuses, 404 no
     such listener or preview, 409 a conflict). Carries the upstream
