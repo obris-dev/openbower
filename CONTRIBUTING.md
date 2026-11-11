@@ -59,14 +59,14 @@ Rename a branch with `git branch -m <new-name>`.
 ## Commit messages
 
 Use Conventional-Commits types for commit subjects, e.g.
-`feat(lists): add the csv import`. The subject of the commit that lands
+`feat(sheets): add the csv import`. The subject of the commit that lands
 on `main` is what the release automation reads: on a squash merge that
 is the PR title when the PR has more than one commit, else that commit's
 own subject. It writes the CHANGELOG entry and decides the version bump.
 Before 1.0, any type with a changelog section (`feat`, `fix`, `perf`,
-`revert`) bumps the patch; a breaking change (`<type>!:` or a
+`revert`, `refactor`) bumps the patch; a breaking change (`<type>!:` or a
 `BREAKING CHANGE:` footer) bumps the minor; `docs`, `chore`, `ci`,
-`refactor`, `test`, `build` and `style` alone release nothing. Changes
+`test`, `build` and `style` alone release nothing. Changes
 exclusive to `web/apps/marketing` do not trigger new releases or
 changelog updates. A subject that is not a Conventional Commit is left
 out of the changelog and bumps nothing.
