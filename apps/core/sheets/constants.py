@@ -231,6 +231,8 @@ class PreviewErrorCode(StrEnum):
 class IngestErrorCode(StrEnum):
     INGEST_INVALID = "ingest_invalid"
     INGEST_UNAVAILABLE = "ingest_unavailable"
+    # A log's rows arrive from its signal, never a push or a person (409).
+    LOG_ROWS_FROM_SIGNAL = "log_rows_from_signal"
 
 
 # The Send webhook column's refusals, all 400: each names something in

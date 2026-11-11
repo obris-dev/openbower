@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
+from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
+from openbower_kernel.fields import new_ulid
+from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import PlainColumn
-from sheets.constants import CellErrorCode, FillErrorCode, SheetKind, SheetOrigin
-from sheets.operations.append_rows import AppendRowsOperation
+from sheets.constants import CellErrorCode, FillErrorCode, IngestErrorCode, SheetKind, SheetOrigin
+from sheets.ingest.consumer import handle_ingest_event
+from sheets.ingest.events import IngestEvent
+from sheets.models import NodeRun, Sheet
+from sheets.operations.append_rows import AppendRowsOperation, LogRowsFromSignal
 from sheets.services.sheets import SheetService
+from sheets.services.workflows import WorkflowService
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 
@@ -34,7 +42,7 @@ class ImmutableColumnTests(TestCase):
             kind=SheetKind.LOG,
         )
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}]
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True
         ).run()
         self.row_id = str(report.created[0].id)
 
@@ -83,3 +91,96 @@ class ImmutableColumnTests(TestCase):
         self.assertEqual(
             [(c.key, c.label, c.immutable) for c in self.log.columns][1], ("company", "Company name", True)
         )
+
+
+def _log_with_an_ai_column() -> Sheet:
+    """A log whose AI column is an entry action, so an arriving row that
+    holds something is offered to it."""
+    sheets = SheetService(account_id=ACCOUNT)
+    log = sheets.create(
+        owner_id=TEST_IDENTITY["id"],
+        label="Funding log",
+        columns=[PlainColumn(key="company", label="Company", type="text", immutable=True)],
+        origin=SheetOrigin.MANUAL,
+        kind=SheetKind.LOG,
+    )
+    config = AgentConfig(
+        prompt="Find the answer for {{company}}",
+        provider="openai_compatible",
+        source="ollama",
+        model="scripted",
+        tools=AgentTools(),
+        outputs=[AgentOutput(key="answer", label="Answer", type="text")],
+    )
+    agent = AgentService(account_id=ACCOUNT).create_ephemeral(
+        owner_id=TEST_IDENTITY["id"], label="Answer", config=config
+    )
+    node = WorkflowService(account_id=ACCOUNT).get_or_create_column_agent_node(log, agent_id=str(agent.id))
+    log.columns = [
+        *log.columns,
+        {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(node.id)},
+    ]
+    log.save(update_fields=["columns", "updated_at"])
+    return log
+
+
+class LogAppendTests(TestCase):
+    """A log's rows arrive from its signal only, and its autofill switch
+    decides whether they are offered to its columns."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.log = _log_with_an_ai_column()
+
+    def test_a_person_cannot_add_rows_to_a_log(self):
+        # FAILS if the operation takes a log from any door.
+        resp = self.client.post(
+            reverse("sheets_rows", kwargs={"id": str(self.log.id)}),
+            {"rows": [{"company": "acme.example"}]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.assertEqual(resp.json()["error"], IngestErrorCode.LOG_ROWS_FROM_SIGNAL)
+        self.assertEqual(SheetService(account_id=ACCOUNT).rows_page(self.log, limit=10), [])
+
+    def test_a_push_to_a_log_is_refused_before_the_bus(self):
+        resp = self.client.post(
+            reverse("sheets_ingest", kwargs={"id": str(self.log.id)}),
+            {"rows": [{"company": "acme.example"}]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.assertEqual(resp.json()["error"], IngestErrorCode.LOG_ROWS_FROM_SIGNAL)
+
+    def test_a_pushed_event_for_a_log_is_dropped(self):
+        # An event that skipped the door: terminal, never redelivered.
+        event = IngestEvent(
+            event_id=new_ulid(),
+            sheet_id=str(self.log.id),
+            account_id=ACCOUNT,
+            user_id=TEST_IDENTITY["id"],
+            rows=[{"company": "acme.example"}],
+            received_at=timezone.now(),
+        )
+        self.assertEqual(handle_ingest_event(event), "dropped")
+
+    def test_the_signal_appends_and_its_rows_autofill(self):
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True
+        ).run()
+        self.assertEqual(report.added, 1)
+        self.assertEqual(report.queued, 1)
+        self.assertEqual(NodeRun.objects.filter(sheet_id=str(self.log.id)).count(), 1)
+
+    def test_autofill_off_lands_the_rows_with_no_work(self):
+        # FAILS if react is ignored: the row would queue a run.
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], into_log=True, react=False
+        ).run()
+        self.assertEqual((report.added, report.queued), (1, 0))
+        self.assertFalse(NodeRun.objects.filter(sheet_id=str(self.log.id)).exists())
+
+    def test_the_refusal_names_the_log(self):
+        with self.assertRaises(LogRowsFromSignal) as caught:
+            AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}]).run()
+        self.assertEqual(caught.exception.sheet_id, str(self.log.id))

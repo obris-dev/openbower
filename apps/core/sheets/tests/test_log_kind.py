@@ -34,7 +34,12 @@ COLUMNS = [{"kind": "plain", "key": "company", "label": "Company", "type": "text
 
 
 def _batch(target: Sheet, *names: str) -> list[str]:
-    report = AppendRowsOperation(account_id=ACCOUNT, target_sheet=target, rows=[{"company": n} for n in names]).run()
+    report = AppendRowsOperation(
+        account_id=ACCOUNT,
+        target_sheet=target,
+        rows=[{"company": n} for n in names],
+        into_log=target.kind == SheetKind.LOG,
+    ).run()
     # The next batch mints its ids in a later millisecond, so a window
     # cut at a batch's first id separates the batches exactly.
     time.sleep(0.003)

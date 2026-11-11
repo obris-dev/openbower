@@ -52,7 +52,7 @@ from .constants import (
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation
+from .operations.append_rows import AppendRowsOperation, LogRowsFromSignal, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
 from .serializers import (
@@ -287,6 +287,8 @@ class SheetRowsView(_ScopedView):
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
             ).run()
+        except LogRowsFromSignal as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         except (SheetFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
         except SheetNotFound as e:
@@ -382,6 +384,12 @@ class SheetIngestView(_ScopedView):
         target_sheet = self._sheet_or_404(id)
         serializer = IngestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # Refused BEFORE the bus: the append happens later, so the push is
+        # the only place a log can answer the producer with a 409.
+        try:
+            require_appendable(target_sheet)
+        except LogRowsFromSignal as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         # Validate the push against the sheet's columns BEFORE accepting it:
         # the append is async (202), so the POST is the only place a
         # malformed value can reach the producer as a 400 it can fix, rather
