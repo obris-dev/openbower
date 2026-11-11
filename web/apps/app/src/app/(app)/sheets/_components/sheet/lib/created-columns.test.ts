@@ -3,12 +3,12 @@ import { test } from "node:test";
 
 import { createdColumnKey } from "./created-columns.ts";
 
-const plain = (key: string) => ({ key, label: key, type: "text" as const, kind: "plain" as const });
+const plain = (key: string) => ({ key, label: key, type: "text" as const, kind: "plain" as const, immutable: false });
 const ai = (key: string, node_id: string) => ({
   key,
   label: key,
   type: "text" as const,
-  kind: "ai" as const,
+  kind: "ai" as const, immutable: false,
   node_id,
   current_fill_id: "",
 });

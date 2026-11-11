@@ -117,7 +117,9 @@ _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
 # the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
+_COLUMN_CONFLICT_CODES = frozenset(
+    {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
+)
 
 
 def _window_bound(request: Request, name: str) -> str:

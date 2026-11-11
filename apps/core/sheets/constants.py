@@ -180,6 +180,9 @@ class FillErrorCode(StrEnum):
     # A Send webhook column waits on this column's path; the user edits
     # or deletes those columns first (409).
     COLUMN_WAITED_ON = "column_waited_on"
+    # An immutable column: its source keeps writing that key, so it
+    # stays (409).
+    COLUMN_IMMUTABLE = "column_immutable"
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"

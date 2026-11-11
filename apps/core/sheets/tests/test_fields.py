@@ -62,7 +62,7 @@ class SheetColumnsFieldTests(TestCase):
         self.assertEqual(
             json.loads(stored) if isinstance(stored, str) else stored,
             [
-                {"kind": "plain", "key": "company", "label": "Company", "type": "text"},
+                {"kind": "plain", "key": "company", "label": "Company", "type": "text", "immutable": False},
                 {
                     "kind": "ai",
                     "key": "answer",
@@ -70,10 +70,12 @@ class SheetColumnsFieldTests(TestCase):
                     "type": "text",
                     "node_id": NODE_ID,
                     "current_fill_id": "01RUN" + "A" * 21,
+                    "immutable": False,
                 },
                 {
                     "kind": "webhook",
                     "key": "crm_sync",
+                    "immutable": False,
                     "label": "CRM sync",
                     "type": "text",
                     "node_id": "01HOOK" + "A" * 20,

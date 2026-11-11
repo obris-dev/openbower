@@ -274,6 +274,12 @@
           "title": "Current Fill Id",
           "type": "string"
         },
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,
@@ -1070,6 +1076,12 @@
     "PlainColumn": {
       "description": "A column the user or an import fills by hand.",
       "properties": {
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,
@@ -1563,6 +1575,12 @@
     "WebhookColumn": {
       "description": "A Send webhook column. It IS the second node of its own path\n(the wait node before it names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
       "properties": {
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,

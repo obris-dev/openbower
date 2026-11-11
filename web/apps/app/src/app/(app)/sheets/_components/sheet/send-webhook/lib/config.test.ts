@@ -4,10 +4,10 @@ import { test } from "node:test";
 import { bodyFor, initialDraft, isDirty, withSiblings } from "./config.ts";
 
 const COLUMNS = [
-  { key: "company", label: "Company", type: "text" as const, kind: "plain" as const },
-  { key: "answer", label: "Answer", type: "text" as const, kind: "ai" as const, node_id: "01NODE", current_fill_id: "" },
-  { key: "score", label: "Score", type: "text" as const, kind: "ai" as const, node_id: "01NODE", current_fill_id: "" },
-  { key: "crm_sync", label: "CRM sync", type: "text" as const, kind: "webhook" as const, node_id: "01HOOK" },
+  { key: "company", label: "Company", type: "text" as const, kind: "plain" as const, immutable: false },
+  { key: "answer", label: "Answer", type: "text" as const, kind: "ai" as const, immutable: false, node_id: "01NODE", current_fill_id: "" },
+  { key: "score", label: "Score", type: "text" as const, kind: "ai" as const, immutable: false, node_id: "01NODE", current_fill_id: "" },
+  { key: "crm_sync", label: "CRM sync", type: "text" as const, kind: "webhook" as const, immutable: false, node_id: "01HOOK" },
 ];
 const SAVED = {
   node_id: "01HOOK",
