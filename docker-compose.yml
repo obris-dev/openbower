@@ -43,7 +43,6 @@ x-core-env: &core_env
   # disagree). Deliberately NOT in apps/core/.env: that file does not
   # reach the web container.
   OPENBOWER_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
-  OPENBOWER_DATA_URL: ${OPENBOWER_DATA_URL:-https://data.openbower.ai}
   OPENBOWER_SIGNALS_URL: ${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}
   # By SERVICE NAME over the shared suite network, not through the host
   # gateway: a loopback-published port (which is how those services are
@@ -54,7 +53,6 @@ x-core-env: &core_env
   # services are sibling containers reached by service name, so that setup sets these
   # alongside the identity URLs (the root .env.example has the block).
   OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}}
-  OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-${OPENBOWER_DATA_URL:-https://data.openbower.ai}}
   OPENBOWER_SIGNALS_INTERNAL_URL: ${OPENBOWER_SIGNALS_INTERNAL_URL:-${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}}
   # The ingest bus, by service name over this stack's default network. Set
   # here (not in local.py's localhost seeds) because only the containers
@@ -222,7 +220,7 @@ services:
     environment: *core_env
     extra_hosts: *host_gateway
     # Deliberately NOT on the suite network: nothing in the fill path
-    # calls the IdP or the data service.
+    # calls the IdP or the signals service.
     depends_on:
       core-setup:
         condition: service_completed_successfully
@@ -592,7 +590,7 @@ services:
       retries: 12
       start_period: 600s
 
-# The cross-stack network: the identity provider and data service are a
+# The cross-stack network: the identity provider and signals service are a
 # SEPARATE stack (a private repo in dev, the hosted services otherwise),
 # and containers reach them by service name over this network. Declared
 # external so neither stack owns it; `make up` creates it. With those

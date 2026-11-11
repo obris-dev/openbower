@@ -33,16 +33,6 @@ export const apiRoutes = {
     // DELETE: revoke one key.
     apiKey: (id: string) => `/${API_VERSION}/auth/api-keys/${id}`,
   },
-  discover: {
-    // POST: the look-alike query (202 + run for cold cohorts, 200 cached).
-    lookalikes: `/${API_VERSION}/discover/lookalikes`,
-    // GET: poll the run to a terminal status.
-    lookalikeRun: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}`,
-    // POST: stop a pending/running run (terminal runs no-op).
-    lookalikeRunCancel: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/cancel`,
-    // POST: snapshot a COMPLETE run into a local list.
-    lookalikeRunSaveList: (id: string) => `/${API_VERSION}/discover/lookalikes/runs/${id}/save-list`,
-  },
   agents: {
     // GET the roster / POST create.
     index: `/${API_VERSION}/agents`,
@@ -147,7 +137,6 @@ export const webRoutes = {
   // The detail prefix: nav highlighting matches on it, sheet() builds on it.
   sheetPrefix: SHEET_PREFIX,
   sheet: (id: string) => `${SHEET_PREFIX}/${id}`,
-  discover: "/discover",
   agents: "/agents",
   agentNew: "/agents/new",
   agent: (id: string) => `/agents/${id}`,

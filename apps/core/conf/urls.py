@@ -12,7 +12,6 @@ _V1 = settings.API_VERSION_PREFIX
 urlpatterns = [
     path("healthz", healthz, name="healthz"),
     api_include(f"{_V1}/auth", "auth_client.urls"),
-    api_include(f"{_V1}/discover", "discover.urls"),
     api_include(f"{_V1}/sheets", "sheets.urls"),
     # The sheets' old path, for API keys still pushing there; to come out a
     # release after the web stopped calling it. Namespaced so the

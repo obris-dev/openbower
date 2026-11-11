@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, Compass, House } from "lucide-react";
+import { Bot, House } from "lucide-react";
 import { Sidebar, ThemeToggle } from "@bower/ui";
 import { webRoutes } from "@bower/api";
 import { useUser } from "@bower/auth";
@@ -22,7 +22,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       icon: House,
       current: pathname === webRoutes.home || pathname.startsWith(webRoutes.sheetPrefix),
     },
-    { name: "Discover", href: webRoutes.discover, icon: Compass, current: pathname.startsWith(webRoutes.discover) },
     { name: "Agents", href: webRoutes.agents, icon: Bot, current: pathname.startsWith(webRoutes.agents) },
   ];
 

@@ -57,8 +57,8 @@ export async function request<T>(
   const { res, body } = fetched;
   // 403 lands with 401: the app's endpoints never answer 403 for a
   // signed-in user except when the session predates a required scope,
-  // and only a fresh login can mint it (the discover proxy's
-  // data_access_denied on save is the live case).
+  // and only a fresh login can mint it (a session from before
+  // signals, calling a route that reads them).
   if (res.status === 401 || res.status === 403) return { status: "unauthenticated" };
   if (!res.ok) {
     // Only a 400's or 409's detail is user copy (the request was

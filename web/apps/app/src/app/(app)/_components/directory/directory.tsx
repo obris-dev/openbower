@@ -260,7 +260,7 @@ export function Directory({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">All sheets</h1>
-          {empty && <p className="mt-1 text-sm text-muted">Sheets of anything: imported CSVs, saved Discover runs.</p>}
+          {empty && <p className="mt-1 text-sm text-muted">Sheets of anything, from a CSV or by hand.</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -311,14 +311,14 @@ export function Directory({
       ) : empty ? (
         <EmptyState
           title="No sheets yet"
-          subtitle="Import a CSV to start a sheet, or save a Discover search as a sheet from its results."
+          subtitle="Import a CSV to start a sheet, or create one and type into it."
         >
           <Button size="sm" loading={importing} onClick={() => fileInput.current?.click()}>
             Import CSV
           </Button>
-          <LinkButton size="sm" variant="ghost" href={webRoutes.discover}>
-            Open Discover
-          </LinkButton>
+          <Button size="sm" variant="ghost" onClick={() => void quickAdd("sheet")}>
+            Create sheet
+          </Button>
         </EmptyState>
       ) : (
         <Card className="p-0">
