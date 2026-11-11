@@ -16,8 +16,8 @@ class Sheet(UserScopedModel):
     interpretation of a column (nothing here stores company
     references)."""
 
-    # db_default as well: a process still on the code before this column
-    # inserts without it, and the column must take the value then too.
+    # db_default as well: an insert that names no kind (an older release
+    # during a rolling deploy) must land standard, not NULL.
     kind = models.CharField(
         _("kind"),
         max_length=KIND_MAX_LENGTH,
@@ -39,9 +39,8 @@ class Sheet(UserScopedModel):
     class Meta:
         verbose_name = _("sheet")
         verbose_name_plural = _("sheets")
-        # Every listing reads one kind of an account newest first (the
-        # sheets index, folder counts, the logs list); account_id alone
-        # is this index's prefix.
+        # A listing reads one kind of an account newest first (the sheets
+        # index); account_id alone is this index's prefix.
         indexes = [models.Index(fields=["account_id", "kind", "id"], name="sheet_account_kind_idx")]
 
     def __str__(self) -> str:

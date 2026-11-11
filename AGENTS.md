@@ -56,7 +56,11 @@ live in a separate private repo.
   dropped by the fill's row key. A rank is only ever compared, never
   interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
   `rerank` job re-spaces the sheet. Rank columns carry the C collation
-  (byte order is the scheme's order).
+  (byte order is the scheme's order). A LOG (a sheet of kind `log`) ranks
+  each append BEFORE its first row, so its sheet order is arrival order,
+  newest first, through the same one paging path; its rows never move
+  (`move_row` refuses), and a time window on it is an id range (ids are
+  time) filtered on every page.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -201,11 +205,14 @@ live in a separate private repo.
   upsert, FILLED and TYPE_MISMATCH derived from what the row reported
   and every other state the write's own. Processors never touch a row
   or a cell record; the landing never branches on a node kind.
-- An additive NOT NULL column is a STOP-THE-WORLD deploy or a
-  three-step (add nullable, deploy the code that writes it, backfill
-  then set NOT NULL). Django drops the default after adding the
-  column, so any process still running the old code inserts NULL and
-  fails until it restarts.
+- An additive NOT NULL column is a STOP-THE-WORLD deploy, a three-step
+  (add nullable, deploy the code that writes it, backfill then set NOT
+  NULL), or a column with `db_default` beside `default` (the same
+  literal). A plain `default` is dropped after Django adds the column,
+  so any process still running the old code inserts NULL and fails
+  until it restarts; `db_default` keeps the default in the database, so
+  an insert that names no value still lands (`Sheet.kind` is the
+  precedent).
 - Unreleased migration chains are COLLAPSED, not accumulated: while
   nothing is released, an app ships one `0001_initial` expressing the end
   state (a chain that records the path, a model created then renamed then

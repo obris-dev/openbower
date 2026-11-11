@@ -410,8 +410,9 @@ class SheetService:
         return target
 
     def add_rows(self, target: Sheet, rows: list[dict[str, str]]) -> list[SheetRow]:
-        """Append rows (each a data dict keyed by column keys), ranked
-        after the sheet's last row; the count ceiling AND the cell clamp
+        """Append rows (each a data dict keyed by column keys), ranked by
+        `_append_ranks` (after the last row, or before the first on a
+        log); the count ceiling AND the cell clamp
         live here so every entry path (import, snapshot, manual) hits one
         writer's rules (authored values clamp, never reject). Returns the
         created rows (WITH ids, a ULID assigned before insert). The
@@ -440,9 +441,10 @@ class SheetService:
             stored_rows.append(stored)
         rows = stored_rows
         with transaction.atomic():
-            # Ranks allocate after the sheet's last row, so concurrent
-            # appends must serialize on the sheet row or the second one
-            # collides with the (sheet_id, rank) unique constraint.
+            # Ranks allocate off the sheet's last (or a log's first) row,
+            # so concurrent appends must serialize on the sheet row or the
+            # second one collides with the (sheet_id, rank) unique
+            # constraint.
             try:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
@@ -463,10 +465,12 @@ class SheetService:
         """The ranks of `n` rows about to be appended, in the batch's
         order (ids mint in that order too). A standard sheet ranks them
         after its last row. A log ranks them BEFORE its first, the batch's
-        last row first, so rank order is id order descending: its sheet
-        order is newest first for every reader that pages in sheet order
-        (the grid, a fill's walk, the export). That holds only while a
-        log's rows are never moved. Called under the sheet lock."""
+        last row first, so its sheet order is arrival order, newest first,
+        for every reader that pages in sheet order (the grid, a fill's
+        walk, the export); move_row refuses a log so it stays that way.
+        Arrival is the lock order: ids track it, and two processes'
+        clocks can disagree by a millisecond. Called under the sheet
+        lock."""
         rows = SheetRow.objects.filter(sheet_id=str(locked.id))
         if locked.kind == SheetKind.LOG:
             first = rows.order_by("rank", "id").values_list("rank", flat=True).first()
@@ -722,9 +726,10 @@ class SheetService:
         to above it between two pages is not walked, exactly like a row
         appended after the click; one moved the other way is offered
         twice, and the open-run key drops the second. `since_id` and
-        `before_id` bound a log's time window by id (ids are time): on a
-        log, sheet order IS id order, so a window is one run of it and the
-        keyset pages through it unchanged."""
+        `before_id` bound a log's time window by id (ids are time). The
+        bounds are filters on every page, so a window returns exactly its
+        rows in sheet order; on a log, where sheet order is arrival
+        order, they are one run of it."""
         rows = SheetRow.objects.filter(sheet_id=str(target.id))
         if until_id:
             rows = rows.filter(id__lte=until_id)

@@ -91,9 +91,9 @@ KIND_MAX_LENGTH = 16
 
 class SheetKind(StrEnum):
     """What a sheet is. A STANDARD sheet's rows sit where people put
-    them; a LOG's rows arrive over time and its sheet order is newest
-    first, fixed at append (rank order is id order, descending), so
-    every reader that pages in sheet order reads a log newest first."""
+    them; a LOG's rows arrive over time and its sheet order is arrival
+    order, newest first, fixed at append and never moved, so every reader
+    that pages in sheet order reads a log newest first."""
 
     STANDARD = "standard"
     LOG = "log"
