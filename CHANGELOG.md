@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.10](https://github.com/obris-dev/openbower/compare/v0.0.9...v0.0.10) (2026-11-11)
+
+
+### Refactoring
+
+* the wire and API say sheet, with /v1/lists kept for API keys ([#134](https://github.com/obris-dev/openbower/issues/134)) ([883d5e8](https://github.com/obris-dev/openbower/commit/883d5e8f17af821bbd503449e1801d920fa1c31c))
+
 ## [0.0.9](https://github.com/obris-dev/openbower/compare/v0.0.8...v0.0.9) (2026-11-10)
 
 
