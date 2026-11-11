@@ -5,6 +5,8 @@ present), and each method is one transport call on a short-lived client."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from auth_client.downstream import DownstreamTokenRejected
@@ -78,28 +80,35 @@ class SessionSignalsClient:
             return transport.cancel_preview(client, preview_id=preview_id)
 
 
-class KeySignalsClient:
-    """The reads a feed makes with an API key (the account's sync key):
-    a listener and its matches. A rejected key (401 or 403) is
-    SignalsKeyRejected, final for this key, since a key cannot refresh;
-    every other outcome maps as the session client's does."""
+@contextmanager
+def _key_refusals(key_id: str) -> Iterator[None]:
+    """A key's 401 or 403 as SignalsKeyRejected naming it: the session
+    lane's meanings (log in again, access denied) do not apply to a key."""
+    try:
+        yield
+    except DownstreamTokenRejected as e:
+        raise SignalsKeyRejected(key_id=key_id, status=401) from e
+    except SignalsAccessDenied as e:
+        raise SignalsKeyRejected(key_id=key_id, status=403) from e
 
-    def __init__(self, token: str) -> None:
+
+class KeySignalsClient:
+    """The reads a feed makes with an API key (the account's sync key): a
+    listener and its matches. A refused key is SignalsKeyRejected naming
+    the key, final for it, since a key cannot refresh; every other outcome
+    maps as the session client's does."""
+
+    def __init__(self, *, token: str, key_id: str) -> None:
         self._auth = transport.KeyAuth(token)
+        self.key_id = key_id
 
     def listener(self, *, listener_id: str) -> ListenerWire:
-        try:
-            with transport.client_for(self._auth) as client:
-                return transport.listener(client, listener_id=listener_id)
-        except (DownstreamTokenRejected, SignalsAccessDenied) as e:
-            raise SignalsKeyRejected(str(e)) from e
+        with _key_refusals(self.key_id), transport.client_for(self._auth) as client:
+            return transport.listener(client, listener_id=listener_id)
 
     def listener_matches(self, *, listener_id: str, after: str | None = None, limit: int | None = None) -> MatchesPage:
-        try:
-            with transport.client_for(self._auth) as client:
-                return transport.listener_matches(client, listener_id=listener_id, after=after, limit=limit)
-        except (DownstreamTokenRejected, SignalsAccessDenied) as e:
-            raise SignalsKeyRejected(str(e)) from e
+        with _key_refusals(self.key_id), transport.client_for(self._auth) as client:
+            return transport.listener_matches(client, listener_id=listener_id, after=after, limit=limit)
 
 
 class SignalsClientService:
@@ -110,7 +119,7 @@ class SignalsClientService:
         return SessionSignalsClient(session)
 
     @staticmethod
-    def for_key(token: str) -> KeySignalsClient:
+    def for_key(*, token: str, key_id: str) -> KeySignalsClient:
         """A client acting with an API key, for a job with no person present
         (the account's sync key, through SyncKeyService)."""
-        return KeySignalsClient(token)
+        return KeySignalsClient(token=token, key_id=key_id)
