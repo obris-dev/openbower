@@ -404,7 +404,7 @@ class RowSource(StrEnum):
     only (what feeds it: a signal's matches today); a standard sheet
     takes rows from anything but a feed."""
 
-    PERSON = "person"  # POST rows, the add-rows bar
+    MANUAL = "manual"  # a person: POST rows, the add-rows bar (as CellSource.MANUAL)
     PUSH = "push"  # the ingest consumer (an API key's push)
     IMPORT = "import"  # a CSV import, into the sheet it creates
     FEED = "feed"  # what feeds a log

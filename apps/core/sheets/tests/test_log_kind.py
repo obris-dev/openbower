@@ -38,7 +38,7 @@ def _batch(target: Sheet, *names: str) -> list[str]:
         account_id=ACCOUNT,
         target_sheet=target,
         rows=[{"company": n} for n in names],
-        source=RowSource.FEED if target.kind == SheetKind.LOG else RowSource.PERSON,
+        source=RowSource.FEED if target.kind == SheetKind.LOG else RowSource.MANUAL,
     ).run()
     # The next batch mints its ids in a later millisecond, so a window
     # cut at a batch's first id separates the batches exactly.

@@ -23,7 +23,7 @@ from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun, Sheet
 from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendable
-from sheets.processors.base import queue_rank
+from sheets.processors.base import queue_position
 from sheets.services.node_runs import NodeRunFlow
 from sheets.services.sheets import SheetService
 from sheets.services.workflows import WorkflowService
@@ -203,7 +203,7 @@ class LogAppendTests(TestCase):
     def test_the_refusal_names_the_log(self):
         with self.assertRaises(SheetNotAppendable) as caught:
             AppendRowsOperation(
-                account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}], source=RowSource.PERSON
+                account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}], source=RowSource.MANUAL
             ).run()
         self.assertEqual(caught.exception.sheet_id, str(self.log.id))
 
@@ -232,9 +232,9 @@ class LogQueueOrderTests(TestCase):
             account_id=ACCOUNT, target_sheet=log, rows=[{"company": "acme.example"}], source=RowSource.FEED
         ).run()
         [row] = report.created
-        self.assertEqual(queue_rank(log, row), str(row.id))
+        self.assertEqual(queue_position(log, row), str(row.id))
         sheet = SheetService(account_id=ACCOUNT).create(
             owner_id=TEST_IDENTITY["id"], label="Sheet", columns=[], origin=SheetOrigin.MANUAL
         )
         [standard_row] = SheetService(account_id=ACCOUNT).add_rows(sheet, [{"company": "acme.example"}])
-        self.assertEqual(queue_rank(sheet, standard_row), standard_row.rank)
+        self.assertEqual(queue_position(sheet, standard_row), standard_row.rank)

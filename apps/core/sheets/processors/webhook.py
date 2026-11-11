@@ -45,7 +45,7 @@ from ..services.sheets import SheetService
 from ..services.webhook_paths import wait_keys_for
 from ..services.webhook_runs import WebhookRunResult
 from ..services.workflows import NodeNotFound, WorkflowService, config_as
-from .base import BatchTally, FillScope, NodeProcessor, queue_rank
+from .base import BatchTally, FillScope, NodeProcessor, queue_position
 from .factory import register
 
 # What a run's result says when its column or destination is gone
@@ -375,7 +375,7 @@ class WebhookProcessor(NodeProcessor):
                     kind=WEBHOOK,
                     row_id=str(row.id),
                     sheet_id=sheet_id,
-                    rank=queue_rank(target_sheet, row),
+                    rank=queue_position(target_sheet, row),
                     status=NodeRunStatus.DEFERRED,
                     not_before=window,
                     queued_at=now,

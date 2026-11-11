@@ -287,7 +287,7 @@ class SheetRowsView(_ScopedView):
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
-                source=RowSource.PERSON,
+                source=RowSource.MANUAL,
             ).run()
         except SheetNotAppendable as e:
             return Response({"error": e.code, "detail": str(e)}, status=409)

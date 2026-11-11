@@ -134,14 +134,14 @@ class FillScope(BaseModel):
     fill_run_id: str = ""
 
 
-# The SheetRow fields queuing ANY run reads: a run is stamped with its
-# queue position (queue_rank) so the pickers take runs in order. The
+# The SheetRow fields queuing ANY run reads: a run's rank is stamped by
+# queue_position() so the pickers take runs in order. The
 # base's, not a kind's to repeat or forget. The id is the primary key,
 # which Django never defers, so it is never missing.
 _RUN_ROW_FIELDS: tuple[str, ...] = ("rank",)
 
 
-def queue_rank(target_sheet: Sheet, row: SheetRow) -> str:
+def queue_position(target_sheet: Sheet, row: SheetRow) -> str:
     """Where a run for `row` waits in line, the value every picker orders
     by. A standard sheet's runs go in SHEET order (its row's rank), so a
     fill marches down the sheet the user is watching. A log's go in

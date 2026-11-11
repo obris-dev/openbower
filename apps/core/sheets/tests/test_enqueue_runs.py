@@ -449,7 +449,7 @@ class PushedRuleTests(_Harness):
         self.sheet.refresh_from_db()
         before = NodeRun.objects.count()
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "new.io"}], source=RowSource.PERSON
+            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "new.io"}], source=RowSource.MANUAL
         ).run()
         self.assertEqual(report.added, 1)
         self.assertEqual(NodeRun.objects.count(), before)
@@ -469,7 +469,7 @@ class PushedRuleTests(_Harness):
             account_id=ACCOUNT,
             target_sheet=self.sheet,
             rows=[{}, {"company": "   "}, {"company": "new.io"}, {}],
-            source=RowSource.PERSON,
+            source=RowSource.MANUAL,
         ).run()
         self.assertEqual(report.added, 4)
         self.assertEqual(report.queued, 1)

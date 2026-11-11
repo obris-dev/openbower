@@ -426,7 +426,7 @@ class ManualFillTestCase(TransactionTestCase):
         self.sheet.save(update_fields=["columns", "updated_at"])
         # The live lane: an arriving row, run through the consumer.
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "late.io"}], source=RowSource.PERSON
+            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "late.io"}], source=RowSource.MANUAL
         ).run()
         (arrived,) = report.created
         (run,) = list(NodeRun.objects.filter(row_id=str(arrived.id), fill_run_id=None))
