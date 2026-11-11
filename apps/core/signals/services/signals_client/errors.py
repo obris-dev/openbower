@@ -40,6 +40,19 @@ class SignalsAccessDenied(SignalsClientError):
     session's refresh-and-retry."""
 
 
+class SignalsKeyRejected(SignalsClientError):
+    """The service refused an API key (401 or 403): revoked, expired, or
+    minted without signals:read. A key has no refresh, so nothing here
+    retries it; a person reconnects (mints a fresh one through their
+    session). `key_id` names the key refused, so the caller marks THAT key
+    and never its successor (a reconnect can land while a call is out)."""
+
+    def __init__(self, *, key_id: str, status: int) -> None:
+        super().__init__(f"signals service refused key {key_id} ({status})")
+        self.key_id = key_id
+        self.status = status
+
+
 class SignalsClientRequestError(SignalsClientError):
     """The service judged the REQUEST wrong (400 a setup it refuses, 404 no
     such listener or preview, 409 a conflict). Carries the upstream

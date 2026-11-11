@@ -1,8 +1,12 @@
-"""Wire-level constants for the signals client."""
+"""Wire-level constants for the signals client and its feed's key."""
 
 from __future__ import annotations
 
 from enum import StrEnum
+
+# What the account's sync key may do beyond profile: read listeners and
+# their matches, never change them (a person does that as themselves).
+SYNC_KEY_SCOPES = ("signals:read",)
 
 
 # The signals service's 409 codes the client tells apart: each is its own

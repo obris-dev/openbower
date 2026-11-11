@@ -41,6 +41,7 @@ class ApiKeyWire(BaseModel):
     last_four: str = Field(description="The token's last four characters, for recognition only.")
     created_at: str = Field(description="ISO 8601, when the key was created.")
     revoked_at: str | None = Field(default=None, description="When the key stopped working; null while it works.")
+    scopes: list[str] = Field(default=[], description="What the key may do (profile, plus any it was minted with).")
 
 
 class ApiKeysList(BaseModel):

@@ -1,12 +1,15 @@
 """Machine API keys, proxied to the identity service AS the signed-in
 user: the browser never holds the user's upstream token, so the app
 dials the service with the session's token (the same auth flow the data
-client uses, refresh-retry included) and relays what it says. Core
-stores nothing about keys; a key is verified on the machine lane by
-introspection (resource_server), never by anything kept here."""
+client uses, refresh-retry included) and relays what it says. This proxy
+stores nothing; the one key core keeps is the signals feed's, held by the
+app that spends it (signals.SignalsSyncKey). A key is verified on the
+machine lane by introspection (resource_server), never by anything kept
+here."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -100,8 +103,11 @@ class ApiKeyService:
         except ValidationError as e:
             raise AuthUpstreamError(f"api keys list invalid: {e.error_count()} error(s)") from e
 
-    def mint(self, name: str) -> ApiKeyMinted:
-        body = _call(self.session, "POST", idp_urls.api_keys_url(), json={"name": name})
+    def mint(self, name: str, *, scopes: Sequence[str] = ()) -> ApiKeyMinted:
+        """A new key as the signed-in user. `scopes` are the ones a key may
+        add beyond profile (the identity service refuses any other); none
+        is a key that reaches this app's own machine lane only."""
+        body = _call(self.session, "POST", idp_urls.api_keys_url(), json={"name": name, "scopes": list(scopes)})
         try:
             return ApiKeyMinted.model_validate(body)
         except ValidationError as e:

@@ -2,8 +2,8 @@
 protocol failures normalized into the package's named errors and bodies
 validated into the SHARED contract models (openbower_schema) before
 anyone downstream touches them. Addresses come from the package's
-urls, the credential from the shared session flow
-(auth_client.services.sessions.SessionTokenAuth).
+urls, the credential from the caller (the shared session flow,
+auth_client.services.sessions.SessionTokenAuth, or an API key, KeyAuth).
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from django.conf import settings
 from pydantic import BaseModel, ValidationError
 
 from auth_client.downstream import DownstreamTokenRejected
-from auth_client.services.sessions import SessionTokenAuth
 from openbower_schema import (
     ListenersPage,
     ListenerVersionsPage,
@@ -46,12 +45,24 @@ def _httpx_transport() -> httpx.BaseTransport | None:
     return None
 
 
-def client_for(session) -> httpx.Client:
-    """A signals client acting as the session's user. The auth flow owns
-    token attachment and the single refresh-retry; everything else here is
-    plain HTTP."""
+class KeyAuth(httpx.Auth):
+    """An API key as the bearer, as it is: a key has no refresh, so a
+    rejection is final for this key (the key client names it)."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
+def client_for(auth: httpx.Auth) -> httpx.Client:
+    """A signals client acting with `auth`: the session's flow (which owns
+    token attachment and the single refresh-retry) or an API key.
+    Everything else here is plain HTTP."""
     kwargs: dict[str, Any] = {
-        "auth": SessionTokenAuth(session),
+        "auth": auth,
         "timeout": settings.SIGNALS_HTTP_TIMEOUT_SECONDS,
     }
     override = _httpx_transport()
@@ -84,15 +95,17 @@ def _conflict(body: dict[str, Any]) -> SignalsClientRequestError:
 
 def _outcome(response: httpx.Response, *, ok: int) -> dict[str, Any] | None:
     """Map a response to a parsed body (None for an expected 204) or a named
-    error. 401 here means the auth flow's refresh-retry already happened
-    (or the session is dead): callers resolve it with a fresh login."""
+    error. 401 and 403 are the credential's: on the session lane a 401
+    means the auth flow's refresh-retry already happened (or the session
+    is dead) and a 403 a missing scope, both resolved by a fresh login;
+    the key client renames both SignalsKeyRejected."""
     status = response.status_code
     if status >= 500 or status in (408, 429):
         raise SignalsUpstreamUnavailable(f"signals service returned {status}")
     if status == 401:
         raise DownstreamTokenRejected()
     if status == 403:
-        # Valid token, missing scope: a refresh will not add it -> re-login.
+        # Valid token, missing scope: a refresh will not add it.
         raise SignalsAccessDenied()
     if ok == 204 and status == 204:
         return None
