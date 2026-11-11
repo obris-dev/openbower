@@ -6,9 +6,9 @@ from openbower_kernel.models import UserScopedModel
 
 
 class SignalsSyncKey(UserScopedModel):
-    """The ONE credential a background job holds for an account: an API
-    key with signals:read, minted through a person's session (user_id is
-    who minted it) so the account's feeds read signals with no one present.
+    """The key the account's signals feeds read with when no person is
+    present: an API key with signals:read, minted through a person's
+    session (user_id is who minted it).
 
     `token` is encrypted at rest and recoverable, not hashed, because the
     feed replays it on every call; ciphertext is non-deterministic, so it

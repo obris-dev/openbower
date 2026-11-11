@@ -308,10 +308,11 @@ live in a separate private repo.
   open-source). The hosted signals are a separate thing entirely: they
   are built from sources licensed to their operator, never from anything
   a user's key returned.
-- A background job never holds a person's session. The ONE credential one
-  holds is an account's signals sync key (`signals.SignalsSyncKey`): an
-  API key with signals:read, minted only through a person's session
-  (`SyncKeyService.ensure`), encrypted at rest, one per account, read
-  through `KeySignalsClient`. A key the service refuses is
-  `SignalsKeyRejected`: the account's feeds stop until a person
-  reconnects (`SyncKeyService.reconnect`), never a retry.
+- A background job never holds a person's session. A job that calls a
+  hosted service as an account holds that service's key for the account,
+  kept by the app that talks to the service; today that is the signals
+  feed's (`signals.SignalsSyncKey`): an API key with signals:read, minted
+  only through a person's session (`SyncKeyService.ensure`), encrypted at
+  rest, one per account, read through `KeySignalsClient`. A key the
+  service refuses is `SignalsKeyRejected`: the account's feeds stop until
+  a person reconnects (`SyncKeyService.reconnect`), never a retry.
