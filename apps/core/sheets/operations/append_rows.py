@@ -20,7 +20,7 @@ until it holds something); an edit starts nothing, by the standing
 rule.
 
 A LOG takes rows from its signal only: every other door is refused
-(LogRowsFromSignal), and the signal's poller says so with `into_log`.
+(LogAppendRefused), and the signal's poller says so with `into_log`.
 `react=False` lands the rows without the trigger (a log whose autofill
 is off): they arrive blank of work, and a person fills them."""
 
@@ -37,9 +37,9 @@ from ..services.sheets import SheetService
 from ..services.workflow_reactions import WorkflowReactions
 
 
-class LogRowsFromSignal(Exception):
-    """Rows for a log from a door other than its signal (a person, a
-    push): a log's rows are what its signal found."""
+class LogAppendRefused(Exception):
+    """An append to a log from a door other than its signal (a person, a
+    push), refused: a log's rows are what its signal found."""
 
     code = IngestErrorCode.LOG_ROWS_FROM_SIGNAL
 
@@ -53,7 +53,7 @@ def require_appendable(target_sheet: Sheet, *, into_log: bool = False) -> None:
     the signal (`into_log`) to a log. The operation checks it, and a door
     whose append happens later (the ingest push) checks it first too."""
     if target_sheet.kind == SheetKind.LOG and not into_log:
-        raise LogRowsFromSignal(str(target_sheet.id))
+        raise LogAppendRefused(str(target_sheet.id))
 
 
 @dataclass
@@ -86,7 +86,7 @@ class AppendRowsOperation:
         self.react = react
 
     def run(self) -> AppendReport:
-        """Raises LogRowsFromSignal for a log the caller is not the signal
+        """Raises LogAppendRefused for a log the caller is not the signal
         of, and the sheet service's SheetNotFound / SheetFull as they are:
         each door answers them in its own voice."""
         require_appendable(self.target_sheet, into_log=self.into_log)

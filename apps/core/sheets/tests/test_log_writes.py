@@ -22,7 +22,7 @@ from sheets.constants import CellErrorCode, FillErrorCode, IngestErrorCode, Shee
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun, Sheet
-from sheets.operations.append_rows import AppendRowsOperation, LogRowsFromSignal
+from sheets.operations.append_rows import AppendRowsOperation, LogAppendRefused
 from sheets.processors.base import queue_rank
 from sheets.services.node_runs import NodeRunFlow
 from sheets.services.sheets import SheetService
@@ -185,7 +185,7 @@ class LogAppendTests(TestCase):
         self.assertFalse(NodeRun.objects.filter(sheet_id=str(self.log.id)).exists())
 
     def test_the_refusal_names_the_log(self):
-        with self.assertRaises(LogRowsFromSignal) as caught:
+        with self.assertRaises(LogAppendRefused) as caught:
             AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}]).run()
         self.assertEqual(caught.exception.sheet_id, str(self.log.id))
 

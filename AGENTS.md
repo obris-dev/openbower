@@ -174,7 +174,7 @@ live in a separate private repo.
   push, a person, an import, a snapshot) calls, and a pin holds that
   nothing else in production calls the primitive. A LOG takes rows from
   its signal only (`into_log`; every other door is refused,
-  `LogRowsFromSignal`, and the push checks before the bus), and
+  `LogAppendRefused`, and the push checks before the bus), and
   `react=False` lands rows without the trigger (a log's autofill off).
   The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
