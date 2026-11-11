@@ -132,7 +132,8 @@ OPENBOWER_AUTH_API_VERSION = os.environ.get("OPENBOWER_AUTH_API_VERSION", "v1")
 
 # The signals service (listeners on funding news and the matches they
 # find). Called server-to-server on the user's behalf with the session's
-# access token (signals:read, and signals:write to change a listener).
+# access token (signals:read, and signals:write to change a listener), or
+# by an account's feed with its sync key (signals:read).
 # Same identity/transport split as the IdP: the URL is the audience the
 # token names, the INTERNAL one the transport this process dials.
 # Required; local.py / cloud.py supply env defaults.

@@ -312,7 +312,14 @@ live in a separate private repo.
   hosted service as an account holds that service's key for the account,
   kept by the app that talks to the service; today that is the signals
   feed's (`signals.SignalsSyncKey`): an API key with signals:read, minted
-  only through a person's session (`SyncKeyService.ensure`), encrypted at
-  rest, one per account, read through `KeySignalsClient`. A key the
-  service refuses is `SignalsKeyRejected`: the account's feeds stop until
-  a person reconnects (`SyncKeyService.reconnect`), never a retry.
+  only through a person's session (`SyncKeyService.ensure`, `reconnect`),
+  encrypted at rest, one per account, read through `KeySignalsClient`.
+  No identity-service call runs inside a transaction (a call can spend
+  the session's refresh token): a replacement mints, swaps the row in one
+  compare-and-set, then revokes the old key, and only when that person
+  minted it (the service revokes an owner's keys alone; another member's
+  is reported as left live). A key the service refuses is
+  `SignalsKeyRejected`, naming the key; its caller marks THAT key
+  (`mark_rejected(key_id)`), never a retry, and the key serves again only
+  once a person's `reconnect`, or `ensure` on their next feed, replaces
+  it.

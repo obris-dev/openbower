@@ -95,15 +95,17 @@ def _conflict(body: dict[str, Any]) -> SignalsClientRequestError:
 
 def _outcome(response: httpx.Response, *, ok: int) -> dict[str, Any] | None:
     """Map a response to a parsed body (None for an expected 204) or a named
-    error. 401 here means the auth flow's refresh-retry already happened
-    (or the session is dead): callers resolve it with a fresh login."""
+    error. 401 and 403 are the credential's: on the session lane a 401
+    means the auth flow's refresh-retry already happened (or the session
+    is dead) and a 403 a missing scope, both resolved by a fresh login;
+    the key client renames both SignalsKeyRejected."""
     status = response.status_code
     if status >= 500 or status in (408, 429):
         raise SignalsUpstreamUnavailable(f"signals service returned {status}")
     if status == 401:
         raise DownstreamTokenRejected()
     if status == 403:
-        # Valid token, missing scope: a refresh will not add it -> re-login.
+        # Valid token, missing scope: a refresh will not add it.
         raise SignalsAccessDenied()
     if ok == 204 and status == 204:
         return None
