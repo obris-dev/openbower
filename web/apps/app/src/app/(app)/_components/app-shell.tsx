@@ -20,7 +20,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       name: "Home",
       href: webRoutes.home,
       icon: House,
-      current: pathname === webRoutes.home || pathname.startsWith(webRoutes.listPrefix),
+      current: pathname === webRoutes.home || pathname.startsWith(webRoutes.sheetPrefix),
     },
     { name: "Discover", href: webRoutes.discover, icon: Compass, current: pathname.startsWith(webRoutes.discover) },
     { name: "Agents", href: webRoutes.agents, icon: Bot, current: pathname.startsWith(webRoutes.agents) },

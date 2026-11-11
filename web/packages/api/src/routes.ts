@@ -80,7 +80,7 @@ export const apiRoutes = {
     index: `/${API_VERSION}/sheets`,
     // GET: the whole folder set. POST: create.
     folders: `/${API_VERSION}/sheets/folders`,
-    // PATCH {label} / DELETE (lists inside go loose).
+    // PATCH {label} / DELETE (sheets inside go loose).
     folder: (id: string) => `/${API_VERSION}/sheets/folders/${id}`,
     // POST multipart {file, label?}: a CSV becomes a sheet.
     import: `/${API_VERSION}/sheets/import`,
@@ -136,17 +136,17 @@ export const authRoutes = {
   socialStart: (provider: string) => `/social/${provider}/start`,
 } as const;
 
-const LIST_PREFIX = "/lists";
+const SHEET_PREFIX = "/sheets";
 const SETTINGS_PREFIX = "/settings";
 
 // Next.js frontend paths the browser navigates to programmatically.
 export const webRoutes = {
-  // Home IS the lists index (sheets are the unit of work).
+  // Home IS the sheets index (sheets are the unit of work).
   home: "/",
-  lists: "/",
-  // The detail prefix: nav highlighting matches on it, list() builds on it.
-  listPrefix: LIST_PREFIX,
-  list: (id: string) => `${LIST_PREFIX}/${id}`,
+  sheets: "/",
+  // The detail prefix: nav highlighting matches on it, sheet() builds on it.
+  sheetPrefix: SHEET_PREFIX,
+  sheet: (id: string) => `${SHEET_PREFIX}/${id}`,
   discover: "/discover",
   agents: "/agents",
   agentNew: "/agents/new",

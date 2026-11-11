@@ -17,7 +17,7 @@ type View = "root" | "move" | "delete";
  * return come from the primitive. The panel unmounts on close, which
  * resets the tier for free. */
 export function RowMenu(props: {
-  kind: "list" | "folder";
+  kind: "sheet" | "folder";
   folders: FolderSummary[];
   currentFolderId?: string;
   containedCount?: number;
@@ -82,7 +82,7 @@ function MenuBody({
           </PopoverItem>
           {/* Only when a destination exists: a tier with nothing focusable
               strands keyboard focus on body. */}
-          {kind === "list" && onMove && (folders.length > 0 || Boolean(currentFolderId)) && (
+          {kind === "sheet" && onMove && (folders.length > 0 || Boolean(currentFolderId)) && (
             <PopoverItem data-opens="move" onClick={() => setView("move")}>
               Move to…
             </PopoverItem>
@@ -147,12 +147,12 @@ function MenuBody({
       )}
       {view === "delete" && (
         <ConfirmDelete
-          question={kind === "folder" ? "Delete this folder?" : "Delete this list?"}
+          question={kind === "folder" ? "Delete this folder?" : "Delete this sheet?"}
           consequence={
             kind === "folder"
               ? containedCount === 1
-                ? "Its list moves back to Home."
-                : `Its ${containedCount.toLocaleString("en-US")} lists move back to Home.`
+                ? "Its sheet moves back to Home."
+                : `Its ${containedCount.toLocaleString("en-US")} sheets move back to Home.`
               : "This can't be undone."
           }
           onCancel={() => setView("root")}

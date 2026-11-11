@@ -83,8 +83,8 @@ type Props = {
   column: SheetColumn | null;
   onAdd: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
   onSave: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
-  listId: string;
-  listLabel: string;
+  sheetId: string;
+  sheetLabel: string;
   columns: SheetColumn[];
   sampleRows: SampleRow[];
 };
@@ -111,7 +111,7 @@ function DrawerContent(props: Props & { afterLeave: () => void }) {
   // never changes type: a swap would remount the panel mid-transition,
   // replay its entrance, and on an Escape during the load leave
   // `afterLeave` unfired and this snapshot alive for the next open.
-  const { load, retry } = useWebhookConfig(props.listId, column?.key ?? null);
+  const { load, retry } = useWebhookConfig(props.sheetId, column?.key ?? null);
   return <WebhookEditor {...props} column={column} load={load} retryLoad={retry} />;
 }
 
@@ -141,7 +141,7 @@ function WebhookEditor({
   retryLoad,
   onAdd,
   onSave,
-  listId,
+  sheetId,
   columns,
   sampleRows,
 }: Props & { afterLeave: () => void; load: WebhookConfigLoad; retryLoad: () => void }) {
@@ -205,7 +205,7 @@ function WebhookEditor({
           ...(column ? { key: column.key } : {}),
         }
       : null;
-  const preview = usePreview(listId, previewBody);
+  const preview = usePreview(sheetId, previewBody);
   const previewLinesNow = preview.envelope
     ? previewLines(
         withEditableCells(preview.envelope, {
@@ -305,7 +305,7 @@ function WebhookEditor({
     // under a row still claiming the previous send got through.
     setSent(null);
     clearRefusals();
-    const res = await postColumnWebhookTest(listId, {
+    const res = await postColumnWebhookTest(sheetId, {
       destination_id: body.destination_id,
       wait_keys: body.wait_keys,
       payload_keys: body.payload_keys,

@@ -72,13 +72,13 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   );
   const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
   const [catalogFailed, setCatalogFailed] = useState(false);
-  const [lists, setLists] = useState<SheetSummary[]>([]);
-  const [listsLoading, setListsLoading] = useState(true);
-  const [listsTruncated, setListsTruncated] = useState(false);
+  const [sheets, setSheets] = useState<SheetSummary[]>([]);
+  const [sheetsLoading, setSheetsLoading] = useState(true);
+  const [sheetsTruncated, setSheetsTruncated] = useState(false);
   const [testRow, setTestRow] = useState<Record<string, string>>(draft?.testRow ?? {});
   // Lifted from the prompt editor and preview so Clear draft resets them.
-  const [variablesListId, setVariablesListId] = useState("");
-  const [borrowListId, setBorrowListId] = useState("");
+  const [variablesSheetId, setVariablesSheetId] = useState("");
+  const [borrowSheetId, setBorrowSheetId] = useState("");
   const [testResult, setTestResult] = useState<CellRunResult | null>(draft?.testResult ?? null);
   // The tools state THAT PRODUCED the stored result: the preview's
   // no-searches diagnosis must describe the run, not today's toggles.
@@ -128,19 +128,19 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
   }, [catalogAttempt]);
 
   useEffect(() => {
-    async function loadLists() {
+    async function loadSheets() {
       const res = await fetchAllSheets();
       if (ensureOk(res, toast, { title: "Sheets unavailable" })) {
-        setLists(res.data.items);
+        setSheets(res.data.items);
         // Surfaced AT the sheet pickers, not as a mount toast: a
         // degradation note belongs beside the control it degrades.
-        setListsTruncated(res.data.truncated);
+        setSheetsTruncated(res.data.truncated);
       }
       // Loading ends either way: a failed fetch leaves empty selects
       // with their own copy, never an eternal loading dress.
-      setListsLoading(false);
+      setSheetsLoading(false);
     }
-    void loadLists();
+    void loadSheets();
     // Mount-only: the sheets are a page-load snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -217,8 +217,8 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
     setTestResult(null);
     setTestToolsOn(false);
     setTestOutputs([]);
-    setVariablesListId("");
-    setBorrowListId("");
+    setVariablesSheetId("");
+    setBorrowSheetId("");
     setEditorEpoch((epoch) => epoch + 1);
   }
 
@@ -377,25 +377,25 @@ export function BuilderForm({ agent }: { agent?: AgentSummary }) {
             warned={problems.prompt}
             source={{
               kind: "picker",
-              lists,
-              listsLoading,
-              listsTruncated,
-              sourceListId: variablesListId,
-              onSourceList: setVariablesListId,
+              sheets,
+              sheetsLoading,
+              sheetsTruncated,
+              sourceSheetId: variablesSheetId,
+              onSourceSheet: setVariablesSheetId,
             }}
           />
           <TestPreview
             inputKeys={inputKeys}
-            lists={lists}
-            listsLoading={listsLoading}
-            listsTruncated={listsTruncated}
+            sheets={sheets}
+            sheetsLoading={sheetsLoading}
+            sheetsTruncated={sheetsTruncated}
             testRow={testRow}
             onTestRow={setTestRow}
             result={testResult}
             busy={testBusy}
             stale={testStale}
-            sourceListId={borrowListId}
-            onSourceList={setBorrowListId}
+            sourceSheetId={borrowSheetId}
+            onSourceSheet={setBorrowSheetId}
             onRemoveKey={removeTestKey}
             toolsOn={testToolsOn}
             outputs={testOutputs}

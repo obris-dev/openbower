@@ -41,7 +41,7 @@ export type AiColumnOutcome = { ok: true; key: string } | Extract<ColumnOutcome,
 // copy, so no surface renders a refusal while navigation lands.
 const LEAVING: Extract<ColumnOutcome, { ok: false }> = { ok: false, error: "", detail: "" };
 
-/** The list detail and every write to it. Column writes echo the
+/** The sheet detail and every write to it. Column writes echo the
  * WHOLE detail back (columns, row count, label, entry actions), so one owner holds
  * it and every op replaces it from the response; the title rename is
  * the one non-column write and rides here for the same reason. What
@@ -59,7 +59,7 @@ export function useColumns(initialDetail: SheetDetail): {
   saveWebhook: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
-  renameList: (label: string) => Promise<boolean>;
+  renameSheet: (label: string) => Promise<boolean>;
   /** Re-read the summary in place (a row removed elsewhere moved its
    * count); true when the page is leaving for login. */
   reread: () => Promise<boolean>;
@@ -244,10 +244,10 @@ export function useColumns(initialDetail: SheetDetail): {
     [detail.id, pendingColumn, toast],
   );
 
-  const renameList = useCallback(
+  const renameSheet = useCallback(
     async (label: string): Promise<boolean> => {
       const res = await updateSheet(detail.id, { label });
-      if (!ensureOk(res, toast, { title: "List not renamed" })) return false;
+      if (!ensureOk(res, toast, { title: "Sheet not renamed" })) return false;
       setDetail(res.data);
       return true;
     },
@@ -265,7 +265,7 @@ export function useColumns(initialDetail: SheetDetail): {
     saveWebhook,
     startPending,
     namePending,
-    renameList,
+    renameSheet,
     reread,
     setRowCount,
   };

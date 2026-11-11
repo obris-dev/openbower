@@ -6,7 +6,7 @@ import { AGENT_OUTPUT_KEY_MAX_LENGTH } from "@bower/api";
 import { outputKey, outputsProblem } from "./output-key.ts";
 
 // (label, key) pairs. THE SAME VECTORS live on the server side, in
-// apps/core/lists/tests/test_column_keys.py, against the one function
+// apps/core/sheets/tests/test_column_keys.py, against the one function
 // this file mirrors. Changing one list without the other is the drift
 // they exist to catch: a fill matches an output against a column BY
 // KEY, so a derivation that disagrees judges it against a different

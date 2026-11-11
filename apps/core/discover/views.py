@@ -342,7 +342,7 @@ class LookalikeRunSaveListView(ScopedView):
             # The target was deleted mid-save: a conflict with a
             # concurrent action, not a bad request.
             return Response(
-                {"error": str(DiscoverErrorCode.CONFLICT), "detail": "the list was deleted during the save"},
+                {"error": str(DiscoverErrorCode.CONFLICT), "detail": "the sheet was deleted during the save"},
                 status=409,
             )
         except _UPSTREAM_ERRORS as e:

@@ -36,7 +36,7 @@ const MAX_POLL_BACKOFF_MS = 65_536;
  * the in-flight work, and polling ends when BOTH halves of the
  * payload read quiet (see tick's liveness note). */
 export function useFill(
-  listId: string,
+  sheetId: string,
 ): {
   runs: LiveRun[];
   summaries: ColumnFillSummary[];
@@ -53,7 +53,7 @@ export function useFill(
 
   const tick = useCallback(
     async (generation: number): Promise<"ok-live" | "ok-idle" | "blip" | "unauthenticated" | "superseded"> => {
-      const fills = await getFills(listId);
+      const fills = await getFills(sheetId);
       if (generationRef.current !== generation) return "superseded";
       if (fills.status === "unauthenticated") return "unauthenticated";
       if (fills.status !== "ok") return "blip";
@@ -73,7 +73,7 @@ export function useFill(
       // the sheet re-reads those on its own schedule (lib/pending-refresh).
       return read.live ? "ok-live" : "ok-idle";
     },
-    [listId],
+    [sheetId],
   );
 
   const refresh = useCallback(async () => {
@@ -138,7 +138,7 @@ export function useFill(
 
   const stop = useCallback(
     async (runId: string): Promise<string | null> => {
-      const res = await postFillCancel(listId, runId);
+      const res = await postFillCancel(sheetId, runId);
       if (redirectIfUnauthenticated(res)) return null;
       if (res.status !== "ok") return res.message;
       // The cancel echo is terminal and `runs` is the LIVE set, so the
@@ -149,7 +149,7 @@ export function useFill(
       void refresh();
       return null;
     },
-    [listId, refresh],
+    [sheetId, refresh],
   );
 
   return { runs, summaries, pollTrouble, refresh, stop };

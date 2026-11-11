@@ -43,7 +43,7 @@ import { useVirtualRows } from "./use-virtual-rows";
  * per AI column, THE per-column fill surface; the footer keeps only a
  * passive glance). */
 export function SheetGrid({
-  listId,
+  sheetId,
   scrollRef,
   columns,
   rows,
@@ -60,7 +60,7 @@ export function SheetGrid({
   selection,
   searchProvider = null,
 }: {
-  listId: string;
+  sheetId: string;
   /** A person's values on one row (a paste); resolves with the outcome
    * so a refusal can be shown in the server's words. Its presence,
    * with `onRemoveRow`, is what arms the right-click menu and the
@@ -96,11 +96,11 @@ export function SheetGrid({
   const sensors = useColumnSensors();
   const gridRef = useRef<HTMLDivElement>(null);
   const { loaded, sizing, sizingInfo, onSizingChange, onSizingInfoChange } = useColumnWidths(
-    listId,
+    sheetId,
     columns.map((column) => column.key),
   );
   const { headers, widthOf } = useGridTable({
-    listId,
+    sheetId,
     columns,
     rows,
     widthsLoaded: loaded,
@@ -215,10 +215,10 @@ export function SheetGrid({
   const focusNeighbour = useCallback(
     (rowId: string, columnKey: string, direction: Direction, over: Over = "all"): boolean => {
       const target = neighbour(columns, rowIds, { rowId, columnKey }, direction, over);
-      const root = document.querySelector(`[data-grid-id="${listId}"]`);
+      const root = document.querySelector(`[data-grid-id="${sheetId}"]`);
       return target !== null && focusCell(root, target.rowId, target.columnKey);
     },
-    [columns, rowIds, listId],
+    [columns, rowIds, sheetId],
   );
   const actions = useMemo<CellActions | null>(() => {
     if (!onSetCells || !onRemoveRow) return null;
@@ -285,7 +285,7 @@ export function SheetGrid({
           container the sticky bands look for): the resize guide runs
           down the grid and must stop at its bottom edge rather than
           stretch the scroll region's extent under the pointer. */}
-      <div ref={gridRef} data-grid-id={listId} className="relative isolate w-max min-w-full overflow-clip text-sm">
+      <div ref={gridRef} data-grid-id={sheetId} className="relative isolate w-max min-w-full overflow-clip text-sm">
         <HeaderRow
           headers={headers}
           widthOf={widthOf}

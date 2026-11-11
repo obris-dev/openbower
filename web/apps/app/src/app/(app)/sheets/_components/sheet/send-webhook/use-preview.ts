@@ -25,7 +25,7 @@ type Answer = { key: string; envelope: WebhookEnvelopeJson | null; failure: Prev
  * shows nothing. The state held is the last ANSWER and the body it
  * answered; everything else derives, so the effect only schedules the
  * request and a superseded answer (an older generation) is dropped. */
-export function usePreview(listId: string, body: WebhookColumnTestBody | null): PreviewState {
+export function usePreview(sheetId: string, body: WebhookColumnTestBody | null): PreviewState {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
@@ -44,7 +44,7 @@ export function usePreview(listId: string, body: WebhookColumnTestBody | null): 
       void request();
     }, PREVIEW_DEBOUNCE_MS);
     async function request() {
-      const res = await postColumnWebhookPreview(listId, JSON.parse(bodyKey) as WebhookColumnTestBody);
+      const res = await postColumnWebhookPreview(sheetId, JSON.parse(bodyKey) as WebhookColumnTestBody);
       if (mine !== generation.current) return;
       if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") {
@@ -59,7 +59,7 @@ export function usePreview(listId: string, body: WebhookColumnTestBody | null): 
       }));
     }
     return () => clearTimeout(timer);
-  }, [listId, bodyKey, requestKey]);
+  }, [sheetId, bodyKey, requestKey]);
 
   const active = bodyKey !== "";
   const answered = active && answer !== null && answer.key === requestKey;

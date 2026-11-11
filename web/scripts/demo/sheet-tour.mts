@@ -223,7 +223,7 @@ async function login(context: BrowserContext): Promise<Cookie[]> {
 }
 
 interface Built {
-  listId: string;
+  sheetId: string;
   agentIds: string[];
   aiKeys: string[];
 }
@@ -247,14 +247,14 @@ async function buildSheet(api: Api): Promise<Built> {
     });
     agentIds.push(created.id);
   }
-  const list = await api<{ id: string }>("POST", "/lists", {
+  const sheet = await api<{ id: string }>("POST", "/sheets", {
     label: SHEET_LABEL,
     columns: [{ key: COMPANY_KEY, label: "Company", type: "text" }],
   });
   for (const agentId of agentIds) {
-    await api("POST", `/lists/${list.id}/columns/ai`, { agent_id: agentId });
+    await api("POST", `/sheets/${sheet.id}/columns/ai`, { agent_id: agentId });
   }
-  return { listId: list.id, agentIds, aiKeys: TOUR_AGENTS.flatMap((a) => a.outputs.map((o) => o.key)) };
+  return { sheetId: sheet.id, agentIds, aiKeys: TOUR_AGENTS.flatMap((a) => a.outputs.map((o) => o.key)) };
 }
 
 interface RowWire {
@@ -269,13 +269,13 @@ function settled(row: RowWire, key: string): boolean {
   return state !== undefined && state !== "pending";
 }
 
-async function waitForCells(api: Api, listId: string, aiKeys: string[], expected: number): Promise<void> {
+async function waitForCells(api: Api, sheetId: string, aiKeys: string[], expected: number): Promise<void> {
   const deadline = Date.now() + SETTLE_TIMEOUT_MS;
   const total = expected * aiKeys.length;
   let sawWork = false;
   let lastReported = -1;
   while (Date.now() < deadline) {
-    const page = await api<{ items: RowWire[] }>("GET", `/lists/${listId}/rows?limit=200`);
+    const page = await api<{ items: RowWire[] }>("GET", `/sheets/${sheetId}/rows?limit=200`);
     const rows = page.items;
     const touched = rows.some((row) => aiKeys.some((key) => key in row.data || key in row.states));
     sawWork = sawWork || touched;
@@ -296,7 +296,7 @@ async function waitForCells(api: Api, listId: string, aiKeys: string[], expected
 
 async function teardown(api: Api, built: Built): Promise<void> {
   // The sheet first (its columns hold the agents), then the agents.
-  await api("DELETE", `/lists/${built.listId}`);
+  await api("DELETE", `/sheets/${built.sheetId}`);
   for (const agentId of built.agentIds) await api("DELETE", `/agents/${agentId}`);
 }
 
@@ -324,7 +324,7 @@ async function main(): Promise<void> {
     await setup.close();
     api = apiWith(cookies);
     built = await buildSheet(api);
-    console.error(`sheet-tour: built sheet ${built.listId} with ${built.agentIds.length} agents`);
+    console.error(`sheet-tour: built sheet ${built.sheetId} with ${built.agentIds.length} agents`);
 
     const recording = await browser.newContext({
       viewport: VIEWPORT,
@@ -334,7 +334,7 @@ async function main(): Promise<void> {
     await recording.addCookies(cookies);
     await recording.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [SIDEBAR_COLLAPSE_KEY, "1"]);
     const page = await recording.newPage();
-    await page.goto(`${APP_URL}/lists/${built.listId}`);
+    await page.goto(`${APP_URL}/sheets/${built.sheetId}`);
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(OPENING_HOLD_MS);
 
@@ -343,9 +343,9 @@ async function main(): Promise<void> {
     // so it would never learn the rows landed on its own: one reload
     // right after the post brings the grid in with its cells pending,
     // and from there the page's own refresh follows them to settled.
-    await api("POST", `/lists/${built.listId}/rows`, { rows: ROWS.map((company) => ({ [COMPANY_KEY]: company })) });
+    await api("POST", `/sheets/${built.sheetId}/rows`, { rows: ROWS.map((company) => ({ [COMPANY_KEY]: company })) });
     await page.reload({ waitUntil: "networkidle" });
-    await waitForCells(api, built.listId, built.aiKeys, ROWS.length);
+    await waitForCells(api, built.sheetId, built.aiKeys, ROWS.length);
     // The page's own refresh backs off while cells are pending, so the
     // last cell can settle on the server a beat before the page shows
     // it; one reload lands the finished sheet before the closing hold.

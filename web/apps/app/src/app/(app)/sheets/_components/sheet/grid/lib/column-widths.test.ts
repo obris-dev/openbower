@@ -54,11 +54,11 @@ test("a pending width reads the sheet-scoped property with the model's width as 
 test("the sheet path the script matches is the one the app routes to, and the id is its capture", () => {
   const id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
   const pattern = new RegExp(SHEET_PATH);
-  const sheet = webRoutes.list(id);
+  const sheet = webRoutes.sheet(id);
   const match = sheet.match(pattern);
   assert.equal(match?.[1], id);
   assert.equal("/agents".match(pattern), null);
-  const bogus = webRoutes.list("not-an-id");
+  const bogus = webRoutes.sheet("not-an-id");
   assert.equal(bogus.match(pattern), null);
 });
 
@@ -76,7 +76,7 @@ function stamped(id: string, raw: string): Record<string, string> {
   const set: Record<string, string> = {};
   const localStorage = { getItem: (key: string) => (key === storageKey(id) ? raw : null) };
   const document = { documentElement: { style: { setProperty: (name: string, value: string) => void (set[name] = value) } } };
-  const location = { pathname: webRoutes.list(id) };
+  const location = { pathname: webRoutes.sheet(id) };
   const script = new Function("localStorage", "document", "location", source);
   script(localStorage, document, location);
   return set;

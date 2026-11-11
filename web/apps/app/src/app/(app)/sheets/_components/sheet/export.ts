@@ -30,6 +30,6 @@ export async function downloadSheetCsv(
     if (res.data.next_cursor === cursor) throw new Error("export cursor did not advance");
     cursor = res.data.next_cursor;
   }
-  const slug = detail.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "list";
+  const slug = detail.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sheet";
   saveCsvFile(`${slug}.csv`, lines.join("\r\n") + "\r\n");
 }

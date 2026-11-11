@@ -77,7 +77,7 @@ violation shipped once and got caught).
 - Every fetch result goes through `ensureOk` (or an explicit rendered
   failure state); a swallowed non-ok is a silent dead feature.
 - A table-shaped surface is the sheet grid family
-  (`lists/_components/sheet/grid`), never a `<table>`: fixed-width
+  (`sheets/_components/sheet/grid`), never a `<table>`: fixed-width
   columns off a headless table model (`use-grid-table`, the ONE module
   that knows TanStack Table), rows placed by a virtualizer
   (`use-virtual-rows`, the one that knows TanStack Virtual), reorder
@@ -204,7 +204,7 @@ per action across the product, so a person learns the vocabulary once.
   footer). A tab or mode label is not an action ("New prompt" names a
   mode), so the verb rules do not reach it.
 - **Create** makes something from nothing that then has its own
-  identity: Create API key, Create agent, Create list, Create folder,
+  identity: Create API key, Create agent, Create sheet, Create folder,
   Create account. **Add** brings in something that already exists, or
   attaches a part to a parent: Add destination (the receiver exists
   before we know it), Add column, Add rows, Add AI column. "New",
@@ -215,7 +215,7 @@ per action across the product, so a person learns the vocabulary once.
   to match. A drawer or page that creates or adds names the result on
   its primary ("Add destination", "Create agent"), not Save: nothing is
   being kept for later. Save is for an edit of something that exists.
-- **Delete** destroys an object (Delete list, Delete agent, Delete
+- **Delete** destroys an object (Delete sheet, Delete agent, Delete
   column, Delete destination); **Remove** takes a part away from a
   parent and leaves it existing elsewhere. **Revoke** is a key's own
   verb. The confirm ritual asks a {verb} + {noun} question ("Revoke this

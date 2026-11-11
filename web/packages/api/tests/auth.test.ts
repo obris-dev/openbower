@@ -49,7 +49,7 @@ test("a resume stays on the identity service: relative kept, its own origin kept
 
 test("the login kickoff carries the page to come back to as an encoded next, or nothing", () => {
   assert.equal(loginUrl(), "http://localhost:8002/v1/auth/login");
-  assert.equal(loginUrl("/lists/42?after=abc"), "http://localhost:8002/v1/auth/login?next=%2Flists%2F42%3Fafter%3Dabc");
+  assert.equal(loginUrl("/sheets/42?after=abc"), "http://localhost:8002/v1/auth/login?next=%2Fsheets%2F42%3Fafter%3Dabc");
   assert.equal(loginUrl(""), "http://localhost:8002/v1/auth/login");
 });
 

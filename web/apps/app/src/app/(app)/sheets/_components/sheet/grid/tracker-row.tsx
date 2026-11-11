@@ -13,7 +13,7 @@ import type { CellWidth, GridHeader } from "./use-grid-table";
 export type SheetFills = {
   // The sheet's own id: the popover's prompt edit calls the
   // column-scoped endpoint.
-  listId: string;
+  sheetId: string;
   runs: LiveRun[];
   // Server truth per column (current run and its status, the newest
   // failure, canonical totals).
@@ -66,7 +66,7 @@ export function TrackerRow({
           >
             {column.kind === "ai" && (
               <FillTrackerCell
-                listId={fills.listId}
+                sheetId={fills.sheetId}
                 column={column}
                 summary={fills.summaries.find((entry) => entry.column_key === column.key)}
                 pollTrouble={fills.pollTrouble}

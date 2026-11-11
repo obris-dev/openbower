@@ -5,4 +5,4 @@
 // A COOKIE, not localStorage: collapse shapes the server-rendered rows,
 // and only a cookie is visible to that render, so the first paint is
 // already right. A UX preference, not a credential, hence script-readable.
-export const COLLAPSED_COOKIE = "bwr_lists_collapsed";
+export const COLLAPSED_COOKIE = "bwr_sheets_collapsed";

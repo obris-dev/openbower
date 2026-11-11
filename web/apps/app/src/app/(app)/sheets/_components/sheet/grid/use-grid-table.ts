@@ -41,7 +41,7 @@ export type CellWidth = number | string;
  * returns, widths through `widthOf`, which hands out the pre-paint
  * property until the stored widths are loaded. */
 export function useGridTable({
-  listId,
+  sheetId,
   columns,
   rows,
   widthsLoaded,
@@ -50,7 +50,7 @@ export function useGridTable({
   onSizingChange,
   onSizingInfoChange,
 }: {
-  listId: string;
+  sheetId: string;
   columns: SheetColumn[];
   rows: RenderableSheetRow[];
   widthsLoaded: boolean;
@@ -83,9 +83,9 @@ export function useGridTable({
   const widthOf = useCallback(
     (header: GridHeader): CellWidth => {
       const size = header.getSize();
-      return widthsLoaded ? size : pendingWidth(listId, header.id, size);
+      return widthsLoaded ? size : pendingWidth(sheetId, header.id, size);
     },
-    [listId, widthsLoaded],
+    [sheetId, widthsLoaded],
   );
   return { headers, totalWidth: table.getTotalSize(), widthOf };
 }

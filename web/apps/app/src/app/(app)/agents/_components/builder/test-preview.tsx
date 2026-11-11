@@ -51,25 +51,25 @@ function describeSearch(search: NonNullable<CellRunResult["tool_calls"]>[number]
  * primary verbs. */
 export function TestPreview({
   inputKeys,
-  lists,
-  listsLoading = false,
-  listsTruncated = false,
+  sheets,
+  sheetsLoading = false,
+  sheetsTruncated = false,
   testRow,
   onTestRow,
   result,
   busy,
   stale,
-  sourceListId,
-  onSourceList,
+  sourceSheetId,
+  onSourceSheet,
   onRemoveKey,
   toolsOn,
   outputs,
   supportFollowup,
 }: {
   inputKeys: string[];
-  lists: SheetSummary[];
-  listsLoading?: boolean;
-  listsTruncated?: boolean;
+  sheets: SheetSummary[];
+  sheetsLoading?: boolean;
+  sheetsTruncated?: boolean;
   testRow: Record<string, string>;
   onTestRow: (next: Record<string, string>) => void;
   result: CellRunResult | null;
@@ -78,8 +78,8 @@ export function TestPreview({
   // fact, never presented as failure (the loop ends on terminal
   // status; quiet may just mean queued).
   stale: boolean;
-  sourceListId: string;
-  onSourceList: (id: string) => void;
+  sourceSheetId: string;
+  onSourceSheet: (id: string) => void;
   onRemoveKey: (key: string) => void;
   toolsOn: boolean;
   outputs: AgentOutput[];
@@ -88,10 +88,10 @@ export function TestPreview({
   const toast = useToast();
   const [borrowing, setBorrowing] = useState(false);
 
-  async function fillFromList() {
-    if (!sourceListId || borrowing) return;
+  async function fillFromSheet() {
+    if (!sourceSheetId || borrowing) return;
     setBorrowing(true);
-    const res = await fetchSheetRows(sourceListId, { limit: 1 });
+    const res = await fetchSheetRows(sourceSheetId, { limit: 1 });
     setBorrowing(false);
     if (!ensureOk(res, toast)) return;
     const first = res.data.items[0];
@@ -114,7 +114,7 @@ export function TestPreview({
     onTestRow(next);
   }
 
-  const sourceList = lists.find((l) => l.id === sourceListId) ?? null;
+  const sourceSheet = sheets.find((l) => l.id === sourceSheetId) ?? null;
   // Normalized once: a localStorage DRAFT can hold a result from before
   // this field existed, so absence must degrade, never crash.
   const searches = result?.tool_calls ?? [];
@@ -165,24 +165,24 @@ export function TestPreview({
           )}
           <div className="flex flex-wrap items-center gap-2">
             <CompactSelect
-              value={sourceListId}
-              onChange={(e) => onSourceList(e.target.value)}
-              disabled={listsLoading}
-              aria-label="Borrow test values from list"
+              value={sourceSheetId}
+              onChange={(e) => onSourceSheet(e.target.value)}
+              disabled={sheetsLoading}
+              aria-label="Borrow test values from sheet"
             >
-              <option value="">{listsLoading ? "Loading sheets…" : "Borrow values from…"}</option>
-              {lists.map((l) => (
+              <option value="">{sheetsLoading ? "Loading sheets…" : "Borrow values from…"}</option>
+              {sheets.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.label}
                 </option>
               ))}
             </CompactSelect>
-            {sourceList && (
-              <Button type="button" variant="ghost" size="sm" loading={borrowing} onClick={() => void fillFromList()}>
+            {sourceSheet && (
+              <Button type="button" variant="ghost" size="sm" loading={borrowing} onClick={() => void fillFromSheet()}>
                 Fill from its first row
               </Button>
             )}
-            {listsTruncated && <span className="text-xs text-faint">{sheetsTruncatedNote(lists.length)}</span>}
+            {sheetsTruncated && <span className="text-xs text-faint">{sheetsTruncatedNote(sheets.length)}</span>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {inputKeys.map((key) => (

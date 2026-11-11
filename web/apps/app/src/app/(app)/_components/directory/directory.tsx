@@ -32,7 +32,7 @@ function day(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-type Renaming = { kind: "list" | "folder"; id: string } | null;
+type Renaming = { kind: "sheet" | "folder"; id: string } | null;
 
 function writeCollapsed(ids: Set<string>): void {
   const secure = window.location.protocol === "https:" ? "; secure" : "";
@@ -44,29 +44,29 @@ function writeCollapsed(ids: Set<string>): void {
  * Folders are sticky section headers inside the one table, not a nav
  * tree: they are the user's taxonomy over their work. */
 export function Directory({
-  initialLists,
+  initialSheets,
   initialFolders,
   initialCollapsed,
-  initialListsFailed,
+  initialSheetsFailed,
   initialFoldersFailed,
 }: {
-  initialLists: SheetsPage | null;
+  initialSheets: SheetsPage | null;
   initialFolders: FolderSummary[];
   initialCollapsed: string[];
-  initialListsFailed: boolean;
+  initialSheetsFailed: boolean;
   initialFoldersFailed: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
-  const [lists, setLists] = useState<SheetSummary[]>(initialLists?.items ?? []);
-  const [nextCursor, setNextCursor] = useState<string | null>(initialLists?.next_cursor ?? null);
+  const [sheets, setSheets] = useState<SheetSummary[]>(initialSheets?.items ?? []);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialSheets?.next_cursor ?? null);
   const [folders, setFolders] = useState<FolderSummary[]>(initialFolders);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initialCollapsed));
   // These describe the SERVER RENDER's two legs; a successful
   // refresh() clears them. Deliberately one-way: a failing refetch
   // toasts (transient, retryable in place) rather than re-raising the
   // full failure surface, and later prop updates don't re-seed state.
-  const [listsFailed, setListsFailed] = useState(initialListsFailed);
+  const [sheetsFailed, setSheetsFailed] = useState(initialSheetsFailed);
   const [foldersFailed, setFoldersFailed] = useState(initialFoldersFailed);
   const [renaming, setRenaming] = useState<Renaming>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -78,7 +78,7 @@ export function Directory({
     // Re-cover the depth the user had loaded (a mutation must not
     // snap a three-page view back to page one), and say so when the
     // refetch fails instead of silently keeping stale rows.
-    const target = lists.length;
+    const target = sheets.length;
     const [pageRes, folderRes] = await Promise.all([fetchSheetsPage(), fetchFolders()]);
     // Sequential gates: a dual failure gets ONE toast, not two.
     if (!ensureOk(pageRes, toast)) return;
@@ -91,10 +91,10 @@ export function Directory({
       items = [...items, ...more.data.items];
       cursor = more.data.next_cursor;
     }
-    setLists(items);
+    setSheets(items);
     setNextCursor(cursor);
     setFolders(folderRes.data.items);
-    setListsFailed(false);
+    setSheetsFailed(false);
     setFoldersFailed(false);
     // The server-rendered payload is stale now; refresh it so back-nav
     // does not resurrect the pre-mutation workspace.
@@ -107,7 +107,7 @@ export function Directory({
     const res = await fetchSheetsPage(nextCursor);
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
-    setLists((prev) => [...prev, ...res.data.items]);
+    setSheets((prev) => [...prev, ...res.data.items]);
     setNextCursor(res.data.next_cursor);
   }
 
@@ -123,11 +123,11 @@ export function Directory({
         : `${rows.toLocaleString("en-US")} rows imported.`,
       sheet.label,
     );
-    router.push(webRoutes.list(sheet.id));
+    router.push(webRoutes.sheet(sheet.id));
   }
 
-  async function quickAdd(kind: "list" | "folder") {
-    const res = kind === "list" ? await createSheet("Untitled list") : await createFolder("New folder");
+  async function quickAdd(kind: "sheet" | "folder") {
+    const res = kind === "sheet" ? await createSheet("Untitled sheet") : await createFolder("New folder");
     if (!ensureOk(res, toast)) return;
     await refresh();
     // Land in rename with the default name ready to overtype.
@@ -143,26 +143,26 @@ export function Directory({
     if (!label) return;
     // An untouched rename is a no-op, not a PATCH plus a refetch.
     const current =
-      target.kind === "list"
-        ? lists.find((l) => l.id === target.id)?.label
+      target.kind === "sheet"
+        ? sheets.find((l) => l.id === target.id)?.label
         : folders.find((f) => f.id === target.id)?.label;
     if (label === current) return;
     const res =
-      target.kind === "list" ? await updateSheet(target.id, { label }) : await renameFolder(target.id, label);
+      target.kind === "sheet" ? await updateSheet(target.id, { label }) : await renameFolder(target.id, label);
     if (!ensureOk(res, toast)) return;
     await refresh();
   }
 
-  async function move(list: SheetSummary, folderId: string) {
-    const res = await updateSheet(list.id, { folder_id: folderId });
+  async function move(sheet: SheetSummary, folderId: string) {
+    const res = await updateSheet(sheet.id, { folder_id: folderId });
     if (!ensureOk(res, toast)) return;
     await refresh();
   }
 
-  async function removeList(list: SheetSummary) {
-    const res = await deleteSheet(list.id);
+  async function removeSheet(sheet: SheetSummary) {
+    const res = await deleteSheet(sheet.id);
     if (!ensureOk(res, toast)) return;
-    toast.success("List deleted.", list.label);
+    toast.success("Sheet deleted.", sheet.label);
     await refresh();
   }
 
@@ -173,16 +173,16 @@ export function Directory({
   }
 
   // A folder_id pointing nowhere (folders fetch failed, or a move-vs-
-  // delete race) must not orphan the list off the page: unknown reads
+  // delete race) must not orphan the sheet off the page: unknown reads
   // as loose.
   const folderIds = new Set(folders.map((f) => f.id));
-  const loose = lists.filter((l) => !l.folder_id || !folderIds.has(l.folder_id));
+  const loose = sheets.filter((l) => !l.folder_id || !folderIds.has(l.folder_id));
   const byFolder = new Map<string, SheetSummary[]>();
-  for (const list of lists) {
-    if (list.folder_id && folderIds.has(list.folder_id))
-      byFolder.set(list.folder_id, [...(byFolder.get(list.folder_id) ?? []), list]);
+  for (const sheet of sheets) {
+    if (sheet.folder_id && folderIds.has(sheet.folder_id))
+      byFolder.set(sheet.folder_id, [...(byFolder.get(sheet.folder_id) ?? []), sheet]);
   }
-  function renameCell(kind: "list" | "folder", id: string, label: string) {
+  function renameCell(kind: "sheet" | "folder", id: string, label: string) {
     if (renaming?.kind === kind && renaming.id === id) {
       return (
         <form
@@ -217,7 +217,7 @@ export function Directory({
     }
     return (
       <Link
-        href={webRoutes.list(id)}
+        href={webRoutes.sheet(id)}
         title={label}
         className="block truncate font-medium text-foreground hover:text-signal"
       >
@@ -226,40 +226,40 @@ export function Directory({
     );
   }
 
-  function listRow(list: SheetSummary, indent: boolean) {
+  function sheetRow(sheet: SheetSummary, indent: boolean) {
     return (
-      <tr key={list.id} className="align-middle">
+      <tr key={sheet.id} className="align-middle">
         <td className={`w-full max-w-0 py-2.5 pr-4 ${indent ? "pl-10" : "pl-4"}`}>
-          {renameCell("list", list.id, list.label)}
+          {renameCell("sheet", sheet.id, sheet.label)}
         </td>
         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-muted">
-          {list.row_count.toLocaleString("en-US")}
+          {sheet.row_count.toLocaleString("en-US")}
         </td>
-        <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">{day(list.updated_at)}</td>
+        <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">{day(sheet.updated_at)}</td>
         <td className="py-2.5 pl-2 pr-3 text-right">
           <RowMenu
-            kind="list"
+            kind="sheet"
             folders={folders}
-            currentFolderId={list.folder_id || undefined}
+            currentFolderId={sheet.folder_id || undefined}
             onRename={() => {
-              setRenaming({ kind: "list", id: list.id });
-              setRenameValue(list.label);
+              setRenaming({ kind: "sheet", id: sheet.id });
+              setRenameValue(sheet.label);
             }}
-            onMove={(folderId) => void move(list, folderId)}
-            onDelete={() => void removeList(list)}
+            onMove={(folderId) => void move(sheet, folderId)}
+            onDelete={() => void removeSheet(sheet)}
           />
         </td>
       </tr>
     );
   }
 
-  const empty = lists.length === 0 && folders.length === 0;
+  const empty = sheets.length === 0 && folders.length === 0;
 
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">All lists</h1>
+          <h1 className="text-2xl font-bold text-foreground">All sheets</h1>
           {empty && <p className="mt-1 text-sm text-muted">Sheets of anything: imported CSVs, saved Discover runs.</p>}
         </div>
         <div className="flex items-center gap-2">
@@ -278,40 +278,40 @@ export function Directory({
             Import CSV
           </Button>
           <Dropdown>
-            <DropdownButton as={Button} variant="secondary" aria-label="Create list or folder">
+            <DropdownButton as={Button} variant="secondary" aria-label="Create sheet or folder">
               <Plus aria-hidden className="h-4 w-4" />
             </DropdownButton>
             <DropdownMenu anchor="bottom end">
-              <DropdownItem onClick={() => void quickAdd("list")}>Create list</DropdownItem>
+              <DropdownItem onClick={() => void quickAdd("sheet")}>Create sheet</DropdownItem>
               <DropdownItem onClick={() => void quickAdd("folder")}>Create folder</DropdownItem>
             </DropdownMenu>
           </Dropdown>
         </div>
       </div>
 
-      {foldersFailed && !listsFailed && (
+      {foldersFailed && !sheetsFailed && (
         // Folders down: whatever renders below is folderless; the
-        // flattening must be SAID even when no lists loaded.
+        // flattening must be SAID even when no sheets loaded.
         <Card className="flex flex-wrap items-center justify-between gap-2 p-3">
-          <p className="text-sm text-muted">Folders could not be loaded, so lists are shown without them.</p>
+          <p className="text-sm text-muted">Folders could not be loaded, so sheets are shown without them.</p>
           <Button size="sm" variant="ghost" onClick={() => window.location.reload()}>
             Retry
           </Button>
         </Card>
       )}
-      {listsFailed && lists.length === 0 ? (
+      {sheetsFailed && sheets.length === 0 ? (
         // A down backend is NOT an empty workspace; say what happened.
         // Regardless of folders: headers over zero rows would read as
         // an emptied workspace.
-        <EmptyState title="Your lists could not be loaded" subtitle="The server did not answer. Retry in a moment.">
+        <EmptyState title="Your sheets could not be loaded" subtitle="The server did not answer. Retry in a moment.">
           <Button size="sm" onClick={() => window.location.reload()}>
             Retry
           </Button>
         </EmptyState>
       ) : empty ? (
         <EmptyState
-          title="No lists yet"
-          subtitle="Import a CSV to start a sheet, or save a Discover search as a list from its results."
+          title="No sheets yet"
+          subtitle="Import a CSV to start a sheet, or save a Discover search as a sheet from its results."
         >
           <Button size="sm" loading={importing} onClick={() => fileInput.current?.click()}>
             Import CSV
@@ -332,7 +332,7 @@ export function Directory({
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
-              {loose.map((list) => listRow(list, false))}
+              {loose.map((sheet) => sheetRow(sheet, false))}
               {folders.map((folder) => {
                 const inside = byFolder.get(folder.id) ?? [];
                 const isCollapsed = collapsed.has(folder.id);
@@ -382,7 +382,7 @@ export function Directory({
                       />
                     </td>
                   </tr>,
-                  ...(isCollapsed ? [] : inside.map((list) => listRow(list, true))),
+                  ...(isCollapsed ? [] : inside.map((sheet) => sheetRow(sheet, true))),
                 ];
               })}
             </tbody>

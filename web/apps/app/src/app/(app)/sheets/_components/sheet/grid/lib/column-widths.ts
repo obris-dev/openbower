@@ -8,20 +8,20 @@ export type ColumnWidths = Record<string, number>;
 
 /** The three facts the pre-paint script shares with this module: it
  * finds the sheet in the URL (the first capture group is the id, a
- * ULID, on the path `webRoutes.list` builds), reads the entry under
+ * ULID, on the path `webRoutes.sheet` builds), reads the entry under
  * `STORAGE_KEY_PREFIX + id`, and stamps `WIDTH_PROPERTY_PREFIX + id +
  * "-" + key`. The script builds the names in the browser from these
  * prefixes, and `storageKey` and `widthVariablePrefix` build the same
  * names here, so nothing is derived twice by hand. */
-export const SHEET_PATH = "^/lists/([0-9A-Z]{26})$";
+export const SHEET_PATH = "^/sheets/([0-9A-Z]{26})$";
 export const STORAGE_KEY_PREFIX = "bower.sheet.widths:";
 export const WIDTH_PROPERTY_PREFIX = "--sheet-width-";
 
 /** One storage entry per sheet: a width is a fact about a column on
  * THIS sheet, and two sheets sharing a key ("name") have nothing to
  * say to each other. */
-export function storageKey(listId: string): string {
-  return `${STORAGE_KEY_PREFIX}${listId}`;
+export function storageKey(sheetId: string): string {
+  return `${STORAGE_KEY_PREFIX}${sheetId}`;
 }
 
 /** The widths worth applying from a stored string. Storage is writable
@@ -64,14 +64,14 @@ export function serializeWidths(widths: ColumnWidths): string {
 /** The custom property a stored width is stamped under before first
  * paint, one name per sheet AND column: scoped by sheet, so the
  * properties of one sheet can never be read as another's. */
-export function widthVariablePrefix(listId: string): string {
-  return `${WIDTH_PROPERTY_PREFIX}${listId}-`;
+export function widthVariablePrefix(sheetId: string): string {
+  return `${WIDTH_PROPERTY_PREFIX}${sheetId}-`;
 }
 
 /** The one column's property: what the script stamps and a pending
  * cell reads, built here and nowhere else on this side. */
-export function widthVariable(listId: string, key: string): string {
-  const prefix = widthVariablePrefix(listId);
+export function widthVariable(sheetId: string, key: string): string {
+  const prefix = widthVariablePrefix(sheetId);
   return `${prefix}${key}`;
 }
 
@@ -82,7 +82,7 @@ export function widthVariable(listId: string, key: string): string {
  * into the name as it is: the contract's column key grammar
  * (lowercase letters, digits and underscores) is a subset of a CSS
  * identifier, which is what keeps the declaration valid. */
-export function pendingWidth(listId: string, key: string, fallback: number): string {
-  const name = widthVariable(listId, key);
+export function pendingWidth(sheetId: string, key: string, fallback: number): string {
+  const name = widthVariable(sheetId, key);
   return `var(${name}, ${fallback}px)`;
 }

@@ -52,7 +52,7 @@ const PROMPT_TOGGLE_CHARS = 256;
  * making. A column with no exposed run shows the header line alone,
  * naming the work. */
 export function FillTrackerCell({
-  listId,
+  sheetId,
   column,
   summary,
   pollTrouble,
@@ -62,7 +62,7 @@ export function FillTrackerCell({
   onStop,
   onFill,
 }: {
-  listId: string;
+  sheetId: string;
   column: AiColumn;
   summary: ColumnFillSummary | undefined;
   pollTrouble: boolean;
@@ -165,7 +165,7 @@ export function FillTrackerCell({
             ) : (
               <p className="text-xs text-muted">Fills after the columns it waits on.</p>
             ))}
-          <PromptPeek listId={listId} columnKey={column.key} live={live} />
+          <PromptPeek sheetId={sheetId} columnKey={column.key} live={live} />
         </div>
       </PopoverPanel>
     </Popover>
@@ -183,7 +183,7 @@ export function FillTrackerCell({
  * edit mid-walk would mix two asks in one run's rows; stopping first
  * keeps one run one ask. Mounted per
  * popover open, so each open re-reads the current truth. */
-function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: string; live: boolean }) {
+function PromptPeek({ sheetId, columnKey, live }: { sheetId: string; columnKey: string; live: boolean }) {
   const [config, setConfig] = useState<ColumnPromptWire | null>(null);
   const [unreadable, setUnreadable] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -198,7 +198,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
     let stale = false;
     async function read() {
       setUnreadable(false);
-      const res = await getColumnPrompt(listId, columnKey);
+      const res = await getColumnPrompt(sheetId, columnKey);
       if (stale) return;
       if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") {
@@ -213,7 +213,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
     return () => {
       stale = true;
     };
-  }, [listId, columnKey, attempt]);
+  }, [sheetId, columnKey, attempt]);
 
   function beginEdit() {
     if (config === null) return;
@@ -231,7 +231,7 @@ function PromptPeek({ listId, columnKey, live }: { listId: string; columnKey: st
     if (saving) return;
     setSaving(true);
     setRefusal("");
-    const res = await updateColumnPrompt(listId, columnKey, draft);
+    const res = await updateColumnPrompt(sheetId, columnKey, draft);
     setSaving(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status !== "ok") {
