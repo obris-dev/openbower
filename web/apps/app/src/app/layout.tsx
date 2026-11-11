@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Geist_Mono, Poppins } from "next/font/google";
 import { SidebarHeadScript, ThemeHeadScript } from "@bower/ui";
 
-import { ColumnWidthsHeadScript } from "./(app)/lists/_components/sheet";
+import { ColumnWidthsHeadScript } from "./(app)/sheets/_components/sheet";
 import { Providers } from "./providers";
 
 const poppins = Poppins({

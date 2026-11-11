@@ -14,7 +14,7 @@ type SavePhase =
   | { at: "creating"; label: string; count: number }
   | { at: "landed"; label: string; listId: string; rows: number };
 
-/** Save the results as a list: ONE header surface owning the whole
+/** Save the results as a sheet: ONE header surface owning the whole
  * lifecycle (invite -> name -> creating -> a doorway to the sheet). The
  * count is not asked here: the results limit and the confidence cutoff
  * already decided what "the results" are; saving keeps that number. */
@@ -39,7 +39,7 @@ export function SaveAsList({ runId, count, exclude }: { runId: string; count: nu
   if (phase.at === "invite") {
     return (
       <Button size="sm" variant="secondary" onClick={() => setPhase({ at: "naming" })}>
-        Save as list
+        Save as sheet
       </Button>
     );
   }
@@ -57,8 +57,8 @@ export function SaveAsList({ runId, count, exclude }: { runId: string; count: nu
           autoFocus
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="List name"
-          aria-label="List name"
+          placeholder="Sheet name"
+          aria-label="Sheet name"
           className="w-44"
         />
         <Button size="sm" type="submit" disabled={!label.trim()}>
@@ -95,8 +95,8 @@ export function SaveAsList({ runId, count, exclude }: { runId: string; count: nu
         </span>
         <span className="whitespace-nowrap">is ready | {phase.rows.toLocaleString("en-US")} rows</span>
       </span>
-      <Link href={webRoutes.list(phase.listId)} className="font-medium text-signal hover:underline">
-        Open list
+      <Link href={webRoutes.sheet(phase.listId)} className="font-medium text-signal hover:underline">
+        Open sheet
       </Link>
       <button
         type="button"

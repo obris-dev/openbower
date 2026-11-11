@@ -1,7 +1,7 @@
 import { AGENT_OUTPUT_KEY_MAX_LENGTH, RESERVED_OUTPUT_KEYS, RESERVED_OUTPUT_MARKER, type AgentOutput } from "@bower/api";
 
 /** The result-cell key an output will land under, MIRRORING the ONE
- * server derivation (openbower_schema/lists.py derive_column_key,
+ * server derivation (openbower_schema/sheets.py derive_column_key,
  * which the CSV importer, the blank-column add, and the output
  * serializer all call). Keys fall back to the slugified label, so the
  * preview can match cells for outputs whose key the user left blank

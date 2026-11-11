@@ -50,7 +50,7 @@ const NO_RESIZE: ColumnSizingInfoState = {
  * instead, the widths before the progress, and every move paints the
  * move before it. */
 export function useColumnWidths(
-  listId: string,
+  sheetId: string,
   keys: readonly string[],
 ): {
   /** Whether storage has been read: until then a cell paints the
@@ -74,7 +74,7 @@ export function useColumnWidths(
   useLayoutEffect(() => {
     let raw: string | null = null;
     try {
-      raw = window.localStorage.getItem(storageKey(listId));
+      raw = window.localStorage.getItem(storageKey(sheetId));
     } catch {
       raw = null;
     }
@@ -82,16 +82,16 @@ export function useColumnWidths(
     sizingRef.current = sizing;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWidths({ loaded: true, sizing });
-  }, [listId, keyList]);
+  }, [sheetId, keyList]);
 
   useEffect(() => {
     if (!widths.loaded) return;
     try {
-      window.localStorage.setItem(storageKey(listId), serializeWidths(widths.sizing));
+      window.localStorage.setItem(storageKey(sheetId), serializeWidths(widths.sizing));
     } catch {
       // Storage unavailable: the widths hold for this page only.
     }
-  }, [listId, widths]);
+  }, [sheetId, widths]);
 
   const onSizingChange = useCallback<OnChangeFn<ColumnSizingState>>((updater) => {
     const next = typeof updater === "function" ? updater(sizingRef.current) : updater;

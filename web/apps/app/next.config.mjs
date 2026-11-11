@@ -17,5 +17,13 @@ const nextConfig = {
   // build` ships it untranspiled and its env-derived origins resolve
   // undefined in production (dev hides this behind localhost fallbacks).
   transpilePackages: ["@bower/ui", "@bower/api", "@bower/auth", "@bower/schema"],
+  // Sheets lived under /lists; bookmarks and shared links still point
+  // there. Served before middleware and rendering, query string kept.
+  async redirects() {
+    return [
+      { source: "/lists", destination: "/sheets", permanent: true },
+      { source: "/lists/:id", destination: "/sheets/:id", permanent: true },
+    ];
+  },
 };
 export default nextConfig;

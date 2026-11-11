@@ -26,11 +26,11 @@ import { insertVariable, isVariableRoot, stripVariable, usesVariable } from "./l
 export type VariableSource =
   | {
       kind: "picker";
-      lists: SheetSummary[];
-      listsLoading: boolean;
-      listsTruncated: boolean;
-      sourceListId: string;
-      onSourceList: (id: string) => void;
+      sheets: SheetSummary[];
+      sheetsLoading: boolean;
+      sheetsTruncated: boolean;
+      sourceSheetId: string;
+      onSourceSheet: (id: string) => void;
     }
   | { kind: "sheet"; columns: SheetColumn[] };
 
@@ -84,7 +84,7 @@ export function PromptEditor({
   const columns: SheetColumn[] | null =
     source.kind === "sheet"
       ? source.columns
-      : (source.lists.find((l) => l.id === source.sourceListId)?.columns ?? null);
+      : (source.sheets.find((l) => l.id === source.sourceSheetId)?.columns ?? null);
   const variableKeys = useMemo(() => (columns ?? []).map((c) => c.key).filter(isVariableRoot), [columns]);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -189,20 +189,20 @@ export function PromptEditor({
         {source.kind === "picker" && (
           <>
             <CompactSelect
-              value={source.sourceListId}
-              onChange={(e) => source.onSourceList(e.target.value)}
-              disabled={source.listsLoading}
-              aria-label="Show variables from list"
+              value={source.sourceSheetId}
+              onChange={(e) => source.onSourceSheet(e.target.value)}
+              disabled={source.sheetsLoading}
+              aria-label="Show variables from sheet"
             >
-              <option value="">{source.listsLoading ? "Loading sheets…" : "Variables from…"}</option>
-              {source.lists.map((l) => (
+              <option value="">{source.sheetsLoading ? "Loading sheets…" : "Variables from…"}</option>
+              {source.sheets.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.label}
                 </option>
               ))}
             </CompactSelect>
-            {source.listsTruncated && (
-              <span className="text-xs text-faint">{sheetsTruncatedNote(source.lists.length)}</span>
+            {source.sheetsTruncated && (
+              <span className="text-xs text-faint">{sheetsTruncatedNote(source.sheets.length)}</span>
             )}
           </>
         )}

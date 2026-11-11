@@ -7,28 +7,28 @@ import { COLLAPSED_COOKIE, Directory } from "./_components/directory";
 
 /** Home IS the directory of sheets: they are the unit of work, so the
  * workspace opens on them (Discover is a tool that feeds sheets, not
- * the center). Sheet details live under /lists/[id]. */
+ * the center). Sheet details live under /sheets/[id]. */
 export default async function Home() {
   const jar = await cookies();
   const cookieHeader = jar.toString();
   const collapsed = (jar.get(COLLAPSED_COOKIE)?.value ?? "").split(".").filter(Boolean);
   const { fetchFoldersWithCookie, fetchSheetsPageWithCookie } = await import("@bower/api/server");
-  const [listsRes, foldersRes] = await Promise.all([
+  const [sheetsRes, foldersRes] = await Promise.all([
     fetchSheetsPageWithCookie(cookieHeader),
     fetchFoldersWithCookie(cookieHeader),
   ]);
-  if (listsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(loginUrl(webRoutes.home));
-  // The two legs fail separately: no lists is a full failure surface,
-  // no folders means lists still render (flattened loose) UNDER a
+  if (sheetsRes.status === "unauthenticated" || foldersRes.status === "unauthenticated") redirect(loginUrl(webRoutes.home));
+  // The two legs fail separately: no sheets is a full failure surface,
+  // no folders means sheets still render (flattened loose) UNDER a
   // banner saying so, never silently.
   return (
     <div className="p-6">
       <div className="mx-auto w-full max-w-5xl space-y-6 pb-24 pt-2">
         <Directory
-          initialLists={listsRes.status === "ok" ? listsRes.data : null}
+          initialSheets={sheetsRes.status === "ok" ? sheetsRes.data : null}
           initialFolders={foldersRes.status === "ok" ? foldersRes.data.items : []}
           initialCollapsed={collapsed}
-          initialListsFailed={listsRes.status !== "ok"}
+          initialSheetsFailed={sheetsRes.status !== "ok"}
           initialFoldersFailed={foldersRes.status !== "ok"}
         />
       </div>

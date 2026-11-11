@@ -30,13 +30,13 @@ const NO_COLUMNS =
  * row is keyed on. CONTROLLED: the actions menu summons it. Mounted
  * fresh per open, so a failed read never outlives the gesture and the
  * schema is read once per open; the unmount trails the leave motion. */
-export function AddRowsDrawer(props: { listId: string; open: boolean; onClose: () => void }) {
+export function AddRowsDrawer(props: { sheetId: string; open: boolean; onClose: () => void }) {
   const [mounted, setMounted] = useState(props.open);
   if (props.open && !mounted) setMounted(true);
   if (!mounted) return null;
   return (
     <DrawerContent
-      listId={props.listId}
+      sheetId={props.sheetId}
       open={props.open}
       afterLeave={() => setMounted(props.open)}
       onClose={props.onClose}
@@ -45,24 +45,24 @@ export function AddRowsDrawer(props: { listId: string; open: boolean; onClose: (
 }
 
 function DrawerContent({
-  listId,
+  sheetId,
   open,
   afterLeave,
   onClose,
 }: {
-  listId: string;
+  sheetId: string;
   open: boolean;
   afterLeave: () => void;
   onClose: () => void;
 }) {
   const [schema, setSchema] = useState<IngestSchema | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const url = buildApiUrl(apiRoutes.sheets.ingest(listId));
+  const url = buildApiUrl(apiRoutes.sheets.ingest(sheetId));
 
   useEffect(() => {
     let current = true;
     async function load() {
-      const res = await fetchIngestSchema(listId);
+      const res = await fetchIngestSchema(sheetId);
       if (!current) return;
       if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") setSchema(res.data);
@@ -72,7 +72,7 @@ function DrawerContent({
     return () => {
       current = false;
     };
-  }, [listId]);
+  }, [sheetId]);
 
   const command = schema && schema.columns.length > 0 ? curlFor(url, schema.columns) : null;
 

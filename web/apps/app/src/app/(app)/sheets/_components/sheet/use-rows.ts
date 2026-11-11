@@ -31,7 +31,7 @@ const SCROLL_PREFETCH_MARGIN = "256px";
  * CALLER's to attach (the scroll region and the sentinel inside it);
  * the observer never arms while either is loose. */
 export function useRows(
-  listId: string,
+  sheetId: string,
   initialRows: RenderableSheetRowsPage,
 ): {
   rows: RenderableSheetRow[];
@@ -80,7 +80,7 @@ export function useRows(
       let after: string | undefined;
       let cursor: string | null = null;
       for (;;) {
-        const res = await fetchSheetRows(listId, { after, limit: ROWS_PAGE_LIMIT });
+        const res = await fetchSheetRows(sheetId, { after, limit: ROWS_PAGE_LIMIT });
         if (redirectIfUnauthenticated(res)) return true;
         if (res.status !== "ok") return false;
         items.push(...res.data.items);
@@ -95,17 +95,17 @@ export function useRows(
     } finally {
       refreshBusyRef.current = false;
     }
-  }, [listId]);
+  }, [sheetId]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    const res = await fetchSheetRows(listId, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
+    const res = await fetchSheetRows(sheetId, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
     setRows((prev) => [...prev, ...res.data.items]);
     setNextCursor(res.data.next_cursor);
-  }, [listId, nextCursor, loadingMore, toast]);
+  }, [sheetId, nextCursor, loadingMore, toast]);
 
   // A person's write on one row: the server answers with the row as it
   // now reads, states included, so it is swapped in whole and nothing
@@ -113,28 +113,28 @@ export function useRows(
   // caller to show; a transport failure as the generic one.
   const setCells = useCallback(
     async (rowId: string, data: Record<string, string>): Promise<RowOutcome> => {
-      const res = await setSheetRowCells(listId, rowId, data);
+      const res = await setSheetRowCells(sheetId, rowId, data);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
       setRows((prev) => prev.map((row) => (row.id === rowId ? res.data : row)));
       return { ok: true };
     },
-    [listId],
+    [sheetId],
   );
 
   // A row's removal: gone from the page the moment the server agrees.
   // The count in the footer is the detail's, which the caller refreshes.
   const removeRow = useCallback(
     async (rowId: string): Promise<RowOutcome> => {
-      const res = await deleteSheetRow(listId, rowId);
+      const res = await deleteSheetRow(sheetId, rowId);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
       setRows((prev) => prev.filter((row) => row.id !== rowId));
       return { ok: true };
     },
-    [listId],
+    [sheetId],
   );
 
   // A selection's removal. Named rows drop out; under "all", only the
@@ -143,7 +143,7 @@ export function useRows(
   // spent: nothing is left beyond it.
   const removeRows = useCallback(
     async (body: RowSelectionBody): Promise<RowsOutcome> => {
-      const res = await deleteSheetRows(listId, body);
+      const res = await deleteSheetRows(sheetId, body);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
@@ -157,7 +157,7 @@ export function useRows(
       }
       return { ok: true, deleted: res.data.deleted, rowCount: res.data.row_count };
     },
-    [listId],
+    [sheetId],
   );
 
   // Blank rows from the add-rows control: the receipt carries them in
@@ -166,7 +166,7 @@ export function useRows(
   // is loaded) and nothing is re-read.
   const addRows = useCallback(
     async (count: number): Promise<AddRowsOutcome> => {
-      const res = await addSheetRows(listId, Array.from({ length: count }, () => ({})));
+      const res = await addSheetRows(sheetId, Array.from({ length: count }, () => ({})));
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       const made = res.data.rows;
@@ -176,7 +176,7 @@ export function useRows(
       setRows((prev) => [...prev, ...made]);
       return { ok: true, firstRowId: first.id, added: made.length, rowCount: res.data.row_count };
     },
-    [listId],
+    [sheetId],
   );
 
   // Infinite scroll: the sentinel drives loadMore as it comes into

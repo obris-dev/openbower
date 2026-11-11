@@ -18,7 +18,7 @@ export const EXAMPLE_SEEDS = "marriott.com, hilton.com, hyatt.com";
 
 /** The results surface: ONE card owning the whole outcome. The header
  * states what was found ("Found N similar matches", the engine's
- * confidence cutoff) and carries Save as list; the meta line holds the
+ * confidence cutoff) and carries Save as sheet; the meta line holds the
  * caveats; the table lives in a bounded scroll region below. Rendered
  * inside a persistent aria-live region owned by the page, so the arrival
  * of results is announced. */
@@ -65,7 +65,7 @@ export function ResultsPanel({
       <Card className="p-6">
         <div className="mb-4 flex items-center gap-3 text-sm text-muted">
           <Spinner className="text-signal" />
-          <span>{computing ? "Building your list; a first search can take a few minutes." : "Searching…"}</span>
+          <span>{computing ? "Finding lookalikes; a first search can take a few minutes." : "Searching…"}</span>
         </div>
         <GhostTable pulsing />
       </Card>

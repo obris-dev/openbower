@@ -381,14 +381,14 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
     const next = titleDraft?.trim() ?? "";
     setTitleDraft(null);
     if (!next || next === detail.label) return;
-    if (await columns.renameList(next)) router.refresh();
+    if (await columns.renameSheet(next)) router.refresh();
   }
 
   async function remove() {
     const res = await deleteSheet(detail.id);
     if (!ensureOk(res, toast)) return;
-    toast.success("List deleted.", detail.label);
-    router.push(webRoutes.lists);
+    toast.success("Sheet deleted.", detail.label);
+    router.push(webRoutes.sheets);
     router.refresh();
   }
 
@@ -432,7 +432,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
                   if (e.key === "Escape") setTitleDraft(null);
                 }}
                 className="max-w-xs py-1 text-sm font-semibold"
-                aria-label="List name"
+                aria-label="Sheet name"
               />
             </form>
           ) : (
@@ -455,7 +455,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
             // from), naming what dies; the ONE shared ritual, no modal.
             <ConfirmDelete
               layout="inline"
-              question="Delete this list?"
+              question="Delete this sheet?"
               consequence="This can't be undone."
               onCancel={() => setConfirmingDelete(false)}
               onDelete={() => void remove()}
@@ -466,7 +466,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
                   exist; the discover seed lives in the menu and its
                   disclosure opens here when summoned. */}
               <FindLookalikes detail={detail} open={lookalikesOpen} onOpenChange={setLookalikesOpen} />
-              <AddRowsDrawer listId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
+              <AddRowsDrawer sheetId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
               {/* A MENU button: the kind is chosen at
                   the gesture, so the drawer opens already knowing
                   what it is; new column kinds land here later. */}
@@ -481,7 +481,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
               </Dropdown>
               <Dropdown>
                 <DropdownButton
-                  aria-label="List actions"
+                  aria-label="Sheet actions"
                   className="rounded-md p-2 text-faint hover:bg-wash hover:text-foreground"
                 >
                   <MoreHorizontal aria-hidden className="h-5 w-5" />
@@ -499,7 +499,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
                     {exporting ? "Exporting…" : "Export CSV"}
                   </DropdownItem>
                   <DropdownItem className="text-danger" onClick={() => setConfirmingDelete(true)}>
-                    Delete list
+                    Delete sheet
                   </DropdownItem>
                 </DropdownMenu>
               </Dropdown>
@@ -525,8 +525,8 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
           closeAddColumn();
           openAddColumn("ai");
         }}
-        listId={detail.id}
-        listLabel={detail.label}
+        sheetId={detail.id}
+        sheetLabel={detail.label}
         columns={detail.columns}
         sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
@@ -536,13 +536,13 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} className="h-full overflow-auto">
           <SheetGrid
-            listId={detail.id}
+            sheetId={detail.id}
             scrollRef={scrollRef}
             columns={detail.columns}
             rows={rows}
             searchProvider={searchProvider}
             fills={{
-              listId: detail.id,
+              sheetId: detail.id,
               runs: fill.runs,
               summaries: fill.summaries,
               pollTrouble,

@@ -16,7 +16,7 @@ export type WebhookConfigLoad =
  * and seeds its draft when `ready` arrives; a failed read renders as
  * such with a Retry (bumps `attempt`). */
 export function useWebhookConfig(
-  listId: string,
+  sheetId: string,
   columnKey: string | null,
 ): { load: WebhookConfigLoad; retry: () => void } {
   const [load, setLoad] = useState<WebhookConfigLoad>(
@@ -27,7 +27,7 @@ export function useWebhookConfig(
     if (columnKey === null) return;
     let live = true;
     async function read() {
-      const res = await getColumnWebhook(listId, columnKey as string);
+      const res = await getColumnWebhook(sheetId, columnKey as string);
       if (!live) return;
       if (redirectIfUnauthenticated(res)) return;
       setLoad(res.status === "ok" ? { status: "ready", config: res.data } : { status: "failed" });
@@ -36,7 +36,7 @@ export function useWebhookConfig(
     return () => {
       live = false;
     };
-  }, [listId, columnKey, attempt]);
+  }, [sheetId, columnKey, attempt]);
   return {
     load,
     retry: () => {
