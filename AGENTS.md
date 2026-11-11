@@ -60,7 +60,10 @@ live in a separate private repo.
   each append BEFORE its first row, so its sheet order is arrival order,
   newest first, through the same one paging path; its rows never move
   (`move_row` refuses), and a time window on it is an id range (ids are
-  time) filtered on every page.
+  time) filtered on every page. Its RUNS wait in arrival order instead,
+  oldest first (`processors.base.queue_rank` stamps a log's run with
+  its row's id, a standard sheet's with its rank), so a backlog drains
+  FIFO.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -169,7 +172,12 @@ live in a separate private repo.
   operation (sheets/operations/append_rows.py: the sheet service's
   primitive, then the trigger, one transaction), which every door (a
   push, a person, an import, a snapshot) calls, and a pin holds that
-  nothing else in production calls the primitive.
+  nothing else in production calls the primitive. Every caller names
+  where its rows come from (`source`, a `RowSource`): a LOG takes rows
+  from its FEED only (a signal's matches today), a standard sheet from
+  anything but a feed (`SheetNotAppendable` otherwise; the push checks
+  before the bus), and `autofill=False` lands rows without the trigger
+  (a log's autofill off).
   The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
   starts with exactly one of them: `entry` (the path is fed by nothing,
@@ -193,7 +201,10 @@ live in a separate private repo.
   per column the node fills); a person's typed value is a `TypedWrite`
   (the row cells PATCH, through `sheets/operations/set_cells.py`: the
   ONE write that replaces a value already there, refused rather than
-  flagged when the type does not fit; it owes the workflow the
+  flagged when the type does not fit, and refused on an IMMUTABLE
+  column, whose values arrive with the row: `immutable` is a flag on
+  any column, beside its `type` (the data) and its `kind` (who fills
+  it); it owes the workflow the
   COMPLETE reaction, barriers only, never the next node, which runs
   when the person asks). Only a workflow column's cells are
   recorded (`WorkflowColumn`), so rows alone never carry one. Writes

@@ -69,6 +69,11 @@ class ColumnBase(BaseModel):
         max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label, as the user (or the CSV header) wrote it."
     )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
+    immutable: bool = Field(
+        default=False,
+        description="Its values arrive with the row and are never edited by a person (a log's base columns). "
+        "Any kind may carry it: the kind says who fills a column, this says a person never does.",
+    )
 
 
 class PlainColumn(ColumnBase):

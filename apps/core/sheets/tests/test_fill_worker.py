@@ -43,6 +43,7 @@ from ..constants import (
     PROVIDER_RETIRED_MESSAGE,
     FillFailureCode,
     NodeRunStatus,
+    RowSource,
     StoredCellState,
 )
 from ..models import NodeRun, Sheet, SheetCellState, SheetRow
@@ -424,7 +425,9 @@ class ManualFillTestCase(TransactionTestCase):
         self.sheet.columns = [*self.sheet.columns, unbacked]
         self.sheet.save(update_fields=["columns", "updated_at"])
         # The live lane: an arriving row, run through the consumer.
-        report = AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "late.io"}]).run()
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "late.io"}], source=RowSource.MANUAL
+        ).run()
         (arrived,) = report.created
         (run,) = list(NodeRun.objects.filter(row_id=str(arrived.id), fill_run_id=None))
         with _patches(answering_model(lambda prompt: "found")):

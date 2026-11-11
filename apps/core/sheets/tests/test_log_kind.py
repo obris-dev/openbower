@@ -15,7 +15,7 @@ from django.urls import reverse
 from ulid import ULID
 
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import SheetKind, SheetOrigin
+from sheets.constants import RowSource, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.operations.append_rows import AppendRowsOperation
 from sheets.services.sheets import (
@@ -34,7 +34,12 @@ COLUMNS = [{"kind": "plain", "key": "company", "label": "Company", "type": "text
 
 
 def _batch(target: Sheet, *names: str) -> list[str]:
-    report = AppendRowsOperation(account_id=ACCOUNT, target_sheet=target, rows=[{"company": n} for n in names]).run()
+    report = AppendRowsOperation(
+        account_id=ACCOUNT,
+        target_sheet=target,
+        rows=[{"company": n} for n in names],
+        source=RowSource.FEED if target.kind == SheetKind.LOG else RowSource.MANUAL,
+    ).run()
     # The next batch mints its ids in a later millisecond, so a window
     # cut at a batch's first id separates the batches exactly.
     time.sleep(0.003)

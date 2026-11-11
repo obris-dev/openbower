@@ -101,6 +101,16 @@ class CellNotWritable(CellRefused):
         super().__init__(f"{column_label} holds its send state, not a value you can set.")
 
 
+class CellImmutable(CellRefused):
+    """The column is immutable: its values arrive with the row (a log's
+    base column), and no person edits them."""
+
+    code = CellErrorCode.COLUMN_NOT_WRITABLE
+
+    def __init__(self, *, column_label: str) -> None:
+        super().__init__(f"{column_label} comes with the row and cannot be edited.")
+
+
 class CellBlank(CellRefused):
     """The value is blank: nothing to write."""
 

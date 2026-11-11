@@ -97,6 +97,17 @@ class ColumnKeysNotUnique(ColumnRefused):
         super().__init__("That reorder named the same column twice.")
 
 
+class ColumnImmutable(ColumnRefused):
+    """An immutable column (a log's base column): its values arrive with
+    every row, so deleting it would only strand what comes next (a 409:
+    the column belongs to its source)."""
+
+    code = FillErrorCode.COLUMN_IMMUTABLE
+
+    def __init__(self, *, label: str) -> None:
+        super().__init__(f"{label} comes with every row this sheet receives and cannot be deleted.")
+
+
 class ColumnWaitedOn(ColumnRefused):
     """A Send webhook column waits on this one: deleting it would leave
     that webhook waiting on nothing, so the webhook columns go first
@@ -242,6 +253,8 @@ class ColumnService:
             doomed = next((column for column in target_sheet.columns if column.key == key), None)
             if doomed is None:
                 raise ColumnNotFound(key)
+            if doomed.immutable:
+                raise ColumnImmutable(label=doomed.label)
             # Read BEFORE the column leaves the array; afterwards there
             # is nothing left to read it from.
             node_id = doomed.node_id if isinstance(doomed, AiColumn) else ""

@@ -47,12 +47,13 @@ from .constants import (
     MAX_ROWS_PAGE,
     FillErrorCode,
     IngestErrorCode,
+    RowSource,
     SheetKind,
     SheetOrigin,
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation
+from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
 from .serializers import (
@@ -117,7 +118,9 @@ _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
 # the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
+_COLUMN_CONFLICT_CODES = frozenset(
+    {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
+)
 
 
 def _window_bound(request: Request, name: str) -> str:
@@ -284,7 +287,10 @@ class SheetRowsView(_ScopedView):
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
+                source=RowSource.MANUAL,
             ).run()
+        except SheetNotAppendable as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         except (SheetFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
         except SheetNotFound as e:
@@ -380,6 +386,12 @@ class SheetIngestView(_ScopedView):
         target_sheet = self._sheet_or_404(id)
         serializer = IngestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # Refused BEFORE the bus: the append happens later, so the push is
+        # the only place a log can answer the producer with a 409.
+        try:
+            require_appendable(target_sheet, source=RowSource.PUSH)
+        except SheetNotAppendable as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         # Validate the push against the sheet's columns BEFORE accepting it:
         # the append is async (202), so the POST is the only place a
         # malformed value can reach the producer as a 400 it can fix, rather

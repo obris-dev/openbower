@@ -22,7 +22,14 @@ from openbower_schema.sheets import AiColumn, PlainColumn
 from ..cells import CellWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import CellSource
 from ..models import Sheet, SheetRow
-from ..services.sheets import CellBlank, CellColumnUnknown, CellNotWritable, CellTypeRefused, SheetService
+from ..services.sheets import (
+    CellBlank,
+    CellColumnUnknown,
+    CellImmutable,
+    CellNotWritable,
+    CellTypeRefused,
+    SheetService,
+)
 from ..services.workflow_reactions import WorkflowReactions
 
 
@@ -57,6 +64,8 @@ class SetCellsOperation:
             # no value until it says it does.
             if not isinstance(column, PlainColumn | AiColumn):
                 raise CellNotWritable(column_label=column.label)
+            if column.immutable:
+                raise CellImmutable(column_label=column.label)
             if not value.strip():
                 raise CellBlank(column_label=column.label)
         writes: list[CellWrite] = [TypedWrite(key, value) for key, value in self.cells.items()]
