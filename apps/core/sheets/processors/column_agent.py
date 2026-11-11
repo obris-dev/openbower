@@ -84,7 +84,7 @@ from ..services.node_runs import NodeRunFlow
 from ..services.runnable import CONFIG_TIER_ERRORS
 from ..services.sheets import RowCursor, SheetService
 from ..services.workflows import agent_id_of, columns_for_node, written_columns
-from .base import FillMode, FillModeUnsupported, FillScope, NodeFillsNoColumn, NodeProcessor, RunOutcome
+from .base import FillMode, FillModeUnsupported, FillScope, NodeFillsNoColumn, NodeProcessor, RunOutcome, queue_rank
 from .factory import register
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ class AIColumnProcessor(NodeProcessor):
                 kind=COLUMN_AGENT,
                 row_id=str(row.id),
                 sheet_id=str(target_sheet.id),
-                rank=row.rank,
+                rank=queue_rank(target_sheet, row),
                 status=NodeRunStatus.READY,
                 last_state_change_at=now,
             )

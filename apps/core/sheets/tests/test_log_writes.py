@@ -7,6 +7,8 @@ Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_log_writes
 
 from __future__ import annotations
 
+import time
+
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -21,6 +23,8 @@ from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun, Sheet
 from sheets.operations.append_rows import AppendRowsOperation, LogRowsFromSignal
+from sheets.processors.base import queue_rank
+from sheets.services.node_runs import NodeRunFlow
 from sheets.services.sheets import SheetService
 from sheets.services.workflows import WorkflowService
 
@@ -184,3 +188,35 @@ class LogAppendTests(TestCase):
         with self.assertRaises(LogRowsFromSignal) as caught:
             AppendRowsOperation(account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "x.example"}]).run()
         self.assertEqual(caught.exception.sheet_id, str(self.log.id))
+
+
+class LogQueueOrderTests(TestCase):
+    """A log's runs wait in ARRIVAL order (oldest first), so a backlog
+    drains FIFO; a standard sheet's still wait in sheet order."""
+
+    def test_a_logs_autofill_backlog_drains_oldest_first(self):
+        # FAILS if a log's runs are stamped with the row's rank: on a log
+        # that is newest first, so the newest batch would be claimed first.
+        log = _log_with_an_ai_column()
+        arrivals: list[str] = []
+        for names in (["first.example"], ["second.example", "third.example"], ["fourth.example"]):
+            report = AppendRowsOperation(
+                account_id=ACCOUNT, target_sheet=log, rows=[{"company": n} for n in names], into_log=True
+            ).run()
+            arrivals += [str(row.id) for row in report.created]
+            time.sleep(0.003)
+        claimed = [run.row_id for run in NodeRunFlow.iter_ready(limit=10) if run.sheet_id == str(log.id)]
+        self.assertEqual(claimed, arrivals)
+
+    def test_the_queue_position_follows_the_kind(self):
+        log = _log_with_an_ai_column()
+        report = AppendRowsOperation(
+            account_id=ACCOUNT, target_sheet=log, rows=[{"company": "acme.example"}], into_log=True
+        ).run()
+        [row] = report.created
+        self.assertEqual(queue_rank(log, row), str(row.id))
+        sheet = SheetService(account_id=ACCOUNT).create(
+            owner_id=TEST_IDENTITY["id"], label="Sheet", columns=[], origin=SheetOrigin.MANUAL
+        )
+        [standard_row] = SheetService(account_id=ACCOUNT).add_rows(sheet, [{"company": "acme.example"}])
+        self.assertEqual(queue_rank(sheet, standard_row), standard_row.rank)

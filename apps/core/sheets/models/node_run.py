@@ -89,10 +89,12 @@ class NodeRun(AccountScopedModel):
     # default: a CharField stores "" when a writer forgets it, and the
     # check constraint below turns that into a failed insert.
     kind = models.CharField(_("kind"), max_length=NODE_KIND_MAX_LENGTH)
-    # WHERE this task's row sits: the row's rank as it was when the run
-    # was queued, so claims ordered by it march TOP TO BOTTOM down the
-    # sheet the user is watching (a move after that reorders nothing
-    # already queued; the next fill reads the new order). A preview run,
+    # WHERE this run waits in line, stamped at queue time by
+    # processors.base.queue_rank: on a standard sheet the row's rank as it
+    # was then, so claims march TOP TO BOTTOM down the sheet the user is
+    # watching (a move after that reorders nothing already queued; the
+    # next fill reads the new order); on a log the row's id, so a log's
+    # claims run in ARRIVAL order, oldest first. A preview run,
     # which has no sheet, carries the first key as a constant (preview
     # runs order among themselves by id); every run has one, and the
     # check constraint below refuses the "" a forgotten writer would
