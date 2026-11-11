@@ -123,13 +123,19 @@ _COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorC
 def _window_bound(request: Request, name: str) -> str:
     """A time-window bound off `?<name>=`, as the id cutoff it means
     (ids are time, `min_ulid_at`), or "" when absent. An instant with an
-    offset: the client computes its tabs in the user's own time zone."""
+    offset: the client computes its tabs in the user's own time zone.
+    Every unusable value is a 400: a well-formed but impossible date makes
+    the parser raise, and an instant before 1970 has no ULID."""
     raw = request.query_params.get(name, "")
     if not raw:
         return ""
-    at = parse_datetime(raw)
-    if at is None or timezone.is_naive(at):
-        raise ValidationError(f"?{name}= must be an ISO 8601 instant with an offset")
+    refusal = ValidationError(f"?{name}= must be an ISO 8601 instant with an offset, from 1970 on")
+    try:
+        at = parse_datetime(raw)
+    except ValueError:
+        raise refusal from None
+    if at is None or timezone.is_naive(at) or at.timestamp() < 0:
+        raise refusal
     return min_ulid_at(at)
 
 

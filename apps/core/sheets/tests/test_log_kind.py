@@ -116,7 +116,9 @@ class LogKindTests(TestCase):
         self.assertIn("applies to a log", resp.content.decode())
 
     def test_a_window_bound_must_be_an_instant_with_an_offset(self):
-        for raw in ("yesterday", "2026-11-11T00:00:00"):
+        # FAILS (a 500) if an impossible date or a pre-1970 instant escapes
+        # the parser: the first raises ValueError, the second has no ULID.
+        for raw in ("yesterday", "2026-11-11T00:00:00", "2026-02-30T00:00:00+00:00", "1969-12-31T23:59:59+00:00"):
             with self.subTest(raw=raw):
                 resp = self.client.get(reverse("sheets_rows", kwargs={"id": str(self.log.id)}), {"since": raw})
                 self.assertEqual(resp.status_code, 400)
