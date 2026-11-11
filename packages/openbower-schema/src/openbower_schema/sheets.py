@@ -25,7 +25,7 @@ DEFAULT_COLUMN_TYPE: ColumnType = "text"
 # may rely on never receiving more.
 CELL_MAX_LENGTH = 65_536
 
-SheetOrigin = Literal["discover", "csv", "manual"]
+SheetOrigin = Literal["csv", "manual"]
 
 # Wire bounds on the contract (binary). The agents domain DERIVES its
 # output bounds from these: an output becomes a column when a fill
@@ -186,7 +186,9 @@ class SheetSummary(BaseModel):
     folder_id: str = Field(default="", description="The containing folder; empty = loose at the root.")
     columns: list[SheetColumn] = Field(default=[], description="Display order.")
     origin: SheetOrigin = Field(description="How the sheet came to exist.")
-    origin_ref: str = Field(default="", description="e.g. the source run id for discover snapshots.")
+    origin_ref: str = Field(
+        default="", description="A reference to what the sheet was made from, when its origin has one."
+    )
     row_count: int = Field(description="Total rows (the sheet may page far beyond one response).")
     created_at: str
     updated_at: str
