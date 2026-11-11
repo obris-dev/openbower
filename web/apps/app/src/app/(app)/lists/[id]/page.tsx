@@ -8,10 +8,10 @@ import { Sheet } from "../_components/sheet";
 export default async function ListDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const cookieHeader = (await cookies()).toString();
-  const { fetchListRowsWithCookie, fetchListWithCookie } = await import("@bower/api/server");
+  const { fetchSheetRowsWithCookie, fetchSheetWithCookie } = await import("@bower/api/server");
   const [detail, rows] = await Promise.all([
-    fetchListWithCookie(cookieHeader, id),
-    fetchListRowsWithCookie(cookieHeader, id, ROWS_FIRST_PAGE),
+    fetchSheetWithCookie(cookieHeader, id),
+    fetchSheetRowsWithCookie(cookieHeader, id, ROWS_FIRST_PAGE),
   ]);
   // Each outcome renders as itself: only a real 404 is notFound; a down
   // backend is the error boundary, never a lying "not found".

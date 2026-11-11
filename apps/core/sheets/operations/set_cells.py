@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from django.db import transaction
 
-from openbower_schema.lists import AiColumn, PlainColumn
+from openbower_schema.sheets import AiColumn, PlainColumn
 
 from ..cells import CellWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import CellSource

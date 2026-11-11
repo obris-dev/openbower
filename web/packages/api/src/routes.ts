@@ -75,51 +75,51 @@ export const apiRoutes = {
     // POST: abandon an unclaimed preview run; a running or terminal run no-ops.
     cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
-  lists: {
+  sheets: {
     // GET: keyset index (?after=). POST: create.
-    index: `/${API_VERSION}/lists`,
+    index: `/${API_VERSION}/sheets`,
     // GET: the whole folder set. POST: create.
-    folders: `/${API_VERSION}/lists/folders`,
+    folders: `/${API_VERSION}/sheets/folders`,
     // PATCH {label} / DELETE (lists inside go loose).
-    folder: (id: string) => `/${API_VERSION}/lists/folders/${id}`,
+    folder: (id: string) => `/${API_VERSION}/sheets/folders/${id}`,
     // POST multipart {file, label?}: a CSV becomes a sheet.
-    import: `/${API_VERSION}/lists/import`,
+    import: `/${API_VERSION}/sheets/import`,
     // GET / PATCH {label} / DELETE.
-    detail: (id: string) => `/${API_VERSION}/lists/${id}`,
+    detail: (id: string) => `/${API_VERSION}/sheets/${id}`,
     // GET: keyset rows in sheet order (?after=<the page's next_cursor, verbatim>&limit=). POST: append rows.
-    rows: (id: string) => `/${API_VERSION}/lists/${id}/rows`,
+    rows: (id: string) => `/${API_VERSION}/sheets/${id}/rows`,
     // PATCH {data}: a person's cell values on one row, replacing what is
     // there; 200 with the row. DELETE: the row, its cell states and its
     // webhook runs; 204.
-    row: (id: string, rowId: string) => `/${API_VERSION}/lists/${id}/rows/${rowId}`,
+    row: (id: string, rowId: string) => `/${API_VERSION}/sheets/${id}/rows/${rowId}`,
     // GET: the push schema (the columns a producer may send). POST {rows, event_id?}
     // with a machine API key: the webhook push; 202, rows land off the bus.
-    ingest: (id: string) => `/${API_VERSION}/lists/${id}/ingest`,
+    ingest: (id: string) => `/${API_VERSION}/sheets/${id}/ingest`,
     // POST: append one blank column (no fill attached).
-    columns: (id: string) => `/${API_VERSION}/lists/${id}/columns`,
+    columns: (id: string) => `/${API_VERSION}/sheets/${id}/columns`,
     // PATCH {keys}: reorder the sheet's columns (the whole order; the
     // server refuses anything that is not a permutation of what it
     // holds).
-    columnOrder: (id: string) => `/${API_VERSION}/lists/${id}/column-order`,
-    column: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${encodeURIComponent(key)}`,
+    columnOrder: (id: string) => `/${API_VERSION}/sheets/${id}/column-order`,
+    column: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${encodeURIComponent(key)}`,
     // POST {config | agent_id}: add an AI column set (no fill); 201 with the list detail.
-    aiColumn: (id: string) => `/${API_VERSION}/lists/${id}/columns/ai`,
+    aiColumn: (id: string) => `/${API_VERSION}/sheets/${id}/columns/ai`,
     // POST: one sample digest to a destination, sent now; 200 with the delivery.
-    columnWebhookTest: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/test`,
+    columnWebhookTest: (id: string) => `/${API_VERSION}/sheets/${id}/columns/webhook/test`,
     // POST {label, destination_id, wait_keys, payload_keys, interval_seconds}: add a webhook column; 201 with the list detail.
-    columnWebhook: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook`,
+    columnWebhook: (id: string) => `/${API_VERSION}/sheets/${id}/columns/webhook`,
     // POST: the envelope a test of this body would carry, rendered server-side, sent nowhere.
-    columnWebhookPreview: (id: string) => `/${API_VERSION}/lists/${id}/columns/webhook/preview`,
+    columnWebhookPreview: (id: string) => `/${API_VERSION}/sheets/${id}/columns/webhook/preview`,
     // GET / PATCH one webhook column's config.
-    columnWebhookConfig: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/webhook`,
+    columnWebhookConfig: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/webhook`,
     // POST {max_row_count?}: fill a column's rows never attempted (a NEW fill); 201 with the run.
-    columnFill: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/fill`,
+    columnFill: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/fill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).
-    columnPrompt: (id: string, key: string) => `/${API_VERSION}/lists/${id}/columns/${key}/prompt`,
+    columnPrompt: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/prompt`,
     // GET: keyset fill runs by -id (?after=), ALL states first-class.
-    fills: (id: string) => `/${API_VERSION}/lists/${id}/fills`,
+    fills: (id: string) => `/${API_VERSION}/sheets/${id}/fills`,
     // POST: stop a live fill (an already-terminal run no-ops).
-    fillCancel: (id: string, runId: string) => `/${API_VERSION}/lists/${id}/fills/${runId}/cancel`,
+    fillCancel: (id: string, runId: string) => `/${API_VERSION}/sheets/${id}/fills/${runId}/cancel`,
   },
 } as const;
 

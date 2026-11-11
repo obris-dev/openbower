@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from openbower_schema.lists import ListColumn, WorkflowColumn
+from openbower_schema.sheets import SheetColumn, WorkflowColumn
 
 
 def inbound_paths_for(
-    wait_keys: list[str], *, columns: Sequence[ListColumn], path_by_node: Mapping[str, str]
+    wait_keys: list[str], *, columns: Sequence[SheetColumn], path_by_node: Mapping[str, str]
 ) -> list[str]:
     """The paths the given workflow columns' nodes sit on, first-seen order,
     deduplicated: two outputs of one agent share a node and a path, so
@@ -27,7 +27,7 @@ def inbound_paths_for(
 
 
 def wait_keys_for(
-    inbound_path_ids: list[str], *, columns: Sequence[ListColumn], node_by_path: Mapping[str, str]
+    inbound_path_ids: list[str], *, columns: Sequence[SheetColumn], node_by_path: Mapping[str, str]
 ) -> list[str]:
     """The columns ending the given paths, in SHEET order (the order a
     user sees), every column of a multi-output node included: waiting

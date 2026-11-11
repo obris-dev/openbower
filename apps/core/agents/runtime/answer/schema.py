@@ -17,7 +17,7 @@ from openbower_schema.agents import (
     AgentOutput,
 )
 from openbower_schema.cell_types import shape_hint
-from openbower_schema.lists import CELL_MAX_LENGTH
+from openbower_schema.sheets import CELL_MAX_LENGTH
 
 # Whitespace strips and the cell ceiling CLAMPS in the schema itself
 # (a clamp, deliberately not max_length: rejection would burn a retry

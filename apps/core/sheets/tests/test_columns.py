@@ -1,5 +1,5 @@
-"""The sheet's column writes, POST /v1/lists/{id}/columns (the
-blank-column add) and PATCH /v1/lists/{id}/column-order (the reorder),
+"""The sheet's column writes, POST /v1/sheets/{id}/columns (the
+blank-column add) and PATCH /v1/sheets/{id}/column-order (the reorder),
 through real cookie auth (the IdP mocked at its httpx boundary via the shared login
 helper); responses validate back through the contract models (the
 parity idiom).
@@ -17,7 +17,7 @@ from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn, ListSummary, PlainColumn
+from openbower_schema.sheets import AiColumn, PlainColumn, SheetSummary
 
 from ..constants import MAX_SHEET_COLUMNS, StoredCellState
 from ..models import Node, SheetCellState, SheetRow
@@ -64,7 +64,7 @@ class ColumnsViewTests(TestCase):
     def test_appends_the_blank_column_with_the_derived_key(self) -> None:
         resp = self.post_column()
         self.assertEqual(resp.status_code, 200, resp.content)
-        wire = ListSummary(**resp.json())
+        wire = SheetSummary(**resp.json())
         self.assertEqual(wire.id, str(self.sheet.id))
         added = wire.columns[-1]
         self.assertEqual(added.key, "contact_email")
@@ -114,7 +114,7 @@ class ColumnsViewTests(TestCase):
 
 
 class ColumnOrderTests(TestCase):
-    """PATCH /v1/lists/{id}/column-order: the one columns write that
+    """PATCH /v1/sheets/{id}/column-order: the one columns write that
     may only decide WHERE a column sits."""
 
     def setUp(self) -> None:
@@ -144,7 +144,7 @@ class ColumnOrderTests(TestCase):
     def test_reorders_and_echoes_the_new_order(self) -> None:
         resp = self.reorder(["notes", "company", "contact"])
         self.assertEqual(resp.status_code, 200, resp.content)
-        wire = ListSummary(**resp.json())
+        wire = SheetSummary(**resp.json())
         self.assertEqual([c.key for c in wire.columns], ["notes", "company", "contact"])
         self.sheet.refresh_from_db()
         self.assertEqual([c.key for c in self.sheet.columns], ["notes", "company", "contact"])
@@ -225,7 +225,7 @@ class ColumnOrderTests(TestCase):
 
 
 class ColumnDeleteTests(TestCase):
-    """DELETE and PATCH /v1/lists/{id}/columns/{key}: the column's own
+    """DELETE and PATCH /v1/sheets/{id}/columns/{key}: the column's own
     life. Delete takes any column, not only an AI one."""
 
     def setUp(self) -> None:
@@ -446,4 +446,4 @@ class ColumnDeleteTests(TestCase):
         # And the sheet still reads back through the contract.
         read = self.client.get(reverse("sheets_detail", kwargs={"id": str(self.sheet.id)}))
         self.assertEqual(read.status_code, 200, read.content)
-        ListSummary.model_validate(read.json())
+        SheetSummary.model_validate(read.json())

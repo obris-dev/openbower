@@ -5,13 +5,13 @@ import { useToast } from "@bower/ui";
 import {
   GENERIC_FAILURE,
   ROWS_PAGE_LIMIT,
-  addListRows,
-  deleteListRow,
-  deleteListRows,
-  fetchListRows,
-  setListRowCells,
-  type RenderableListRow,
-  type RenderableListRowsPage,
+  addSheetRows,
+  deleteSheetRow,
+  deleteSheetRows,
+  fetchSheetRows,
+  setSheetRowCells,
+  type RenderableSheetRow,
+  type RenderableSheetRowsPage,
   type RowSelectionBody,
 } from "@bower/api";
 
@@ -32,9 +32,9 @@ const SCROLL_PREFETCH_MARGIN = "256px";
  * the observer never arms while either is loose. */
 export function useRows(
   listId: string,
-  initialRows: RenderableListRowsPage,
+  initialRows: RenderableSheetRowsPage,
 ): {
-  rows: RenderableListRow[];
+  rows: RenderableSheetRow[];
   hasMore: boolean;
   loadingMore: boolean;
   loadMore: () => Promise<void>;
@@ -47,7 +47,7 @@ export function useRows(
   sentinelRef: RefObject<HTMLDivElement | null>;
 } {
   const toast = useToast();
-  const [rows, setRows] = useState<RenderableListRow[]>(initialRows.items);
+  const [rows, setRows] = useState<RenderableSheetRow[]>(initialRows.items);
   const [nextCursor, setNextCursor] = useState<string | null>(initialRows.next_cursor);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -76,11 +76,11 @@ export function useRows(
     try {
       const generation = writeGenerationRef.current;
       const target = Math.max(rowsRef.current.length, 1);
-      const items: RenderableListRow[] = [];
+      const items: RenderableSheetRow[] = [];
       let after: string | undefined;
       let cursor: string | null = null;
       for (;;) {
-        const res = await fetchListRows(listId, { after, limit: ROWS_PAGE_LIMIT });
+        const res = await fetchSheetRows(listId, { after, limit: ROWS_PAGE_LIMIT });
         if (redirectIfUnauthenticated(res)) return true;
         if (res.status !== "ok") return false;
         items.push(...res.data.items);
@@ -100,7 +100,7 @@ export function useRows(
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    const res = await fetchListRows(listId, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
+    const res = await fetchSheetRows(listId, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
     setRows((prev) => [...prev, ...res.data.items]);
@@ -113,7 +113,7 @@ export function useRows(
   // caller to show; a transport failure as the generic one.
   const setCells = useCallback(
     async (rowId: string, data: Record<string, string>): Promise<RowOutcome> => {
-      const res = await setListRowCells(listId, rowId, data);
+      const res = await setSheetRowCells(listId, rowId, data);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
@@ -127,7 +127,7 @@ export function useRows(
   // The count in the footer is the detail's, which the caller refreshes.
   const removeRow = useCallback(
     async (rowId: string): Promise<RowOutcome> => {
-      const res = await deleteListRow(listId, rowId);
+      const res = await deleteSheetRow(listId, rowId);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
@@ -143,7 +143,7 @@ export function useRows(
   // spent: nothing is left beyond it.
   const removeRows = useCallback(
     async (body: RowSelectionBody): Promise<RowsOutcome> => {
-      const res = await deleteListRows(listId, body);
+      const res = await deleteSheetRows(listId, body);
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       writeGenerationRef.current += 1;
@@ -166,7 +166,7 @@ export function useRows(
   // is loaded) and nothing is re-read.
   const addRows = useCallback(
     async (count: number): Promise<AddRowsOutcome> => {
-      const res = await addListRows(listId, Array.from({ length: count }, () => ({})));
+      const res = await addSheetRows(listId, Array.from({ length: count }, () => ({})));
       if (redirectIfUnauthenticated(res)) return LEAVING;
       if (res.status !== "ok") return { ok: false, detail: res.message, refused: res.code !== undefined };
       const made = res.data.rows;

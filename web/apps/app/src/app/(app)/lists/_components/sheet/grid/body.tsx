@@ -1,7 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
-import type { RenderableListRow } from "@bower/api";
+import type { RenderableSheetRow } from "@bower/api";
 import type { VirtualItem } from "@tanstack/react-virtual";
 
 import type { SearchProviderChoice } from "../fill";
@@ -27,7 +27,7 @@ export function Body({
   pendingColumn,
 }: {
   bodyRef: RefObject<HTMLDivElement | null>;
-  rows: RenderableListRow[];
+  rows: RenderableSheetRow[];
   items: VirtualItem[];
   totalSize: number;
   scrollMargin: number;

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Check, X } from "lucide-react";
 import { Button, Input, Spinner, useToast } from "@bower/ui";
-import { saveRunAsList, webRoutes } from "@bower/api";
+import { saveRunAsSheet, webRoutes } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 
@@ -27,7 +27,7 @@ export function SaveAsList({ runId, count, exclude }: { runId: string; count: nu
     const name = label.trim();
     if (!name) return;
     setPhase({ at: "creating", label: name, count });
-    const res = await saveRunAsList(runId, { label: name, limit: count, exclude });
+    const res = await saveRunAsSheet(runId, { label: name, limit: count, exclude });
     if (!ensureOk(res, toast, { title: "Save failed" })) {
       setPhase({ at: "naming" });
       return;

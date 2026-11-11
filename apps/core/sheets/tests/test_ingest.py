@@ -1,4 +1,4 @@
-"""The async row-push webhook: POST /v1/lists/{id}/ingest accepts a batch
+"""The async row-push webhook: POST /v1/sheets/{id}/ingest accepts a batch
 from a minted machine key (or a session), publishes it to the ingest bus,
 and returns 202 WITHOUT appending (a worker does that off the bus). The
 interim publisher logs and drops, so these tests also pin that the rows do
@@ -108,6 +108,28 @@ class IngestMachineTests(TestCase):
         self.assertEqual(event.account_id, _ACCT)
         self.assertEqual([r["domain"] for r in event.rows], ["acme.com", "example.io"])
         self.assertEqual(event.event_id, body["event_id"])
+
+    def test_the_old_path_still_takes_a_key_push(self):
+        # API keys pushed to /v1/lists before the rename; the alias keeps
+        # that path working, and every name still reverses to /v1/sheets.
+        self.assertEqual(reverse("sheets_index"), "/v1/sheets")
+        self.assertTrue(reverse("sheets_ingest", kwargs={"id": self.sheet_id}).startswith("/v1/sheets"))
+        captured: list = []
+        with (
+            patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)),
+            patch("resource_server.idp.transport.httpx.get", return_value=_FakeResponse(200, _claims())),
+        ):
+            listed = self.client.get("/v1/lists", HTTP_AUTHORIZATION="Bearer obw_live")
+            pushed = self.client.post(
+                f"/v1/lists/{self.sheet_id}/ingest",
+                {"rows": [{"domain": "acme.com"}]},
+                content_type="application/json",
+                HTTP_AUTHORIZATION="Bearer obw_live",
+            )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual([item["id"] for item in listed.json()["items"]], [self.sheet_id])
+        self.assertEqual(pushed.status_code, 202)
+        self.assertEqual([event.sheet_id for event in captured], [self.sheet_id])
 
     def test_a_caller_supplied_event_id_is_used_as_the_idempotency_key(self):
         captured: list = []

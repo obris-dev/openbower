@@ -3,7 +3,7 @@
 import { ArrowUpRight, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
 import { PopoverItem } from "@bower/ui";
 import { useState } from "react";
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "../send-webhook";
@@ -31,8 +31,8 @@ export function ColumnMenu({
   onEditWebhook,
   onDelete,
 }: {
-  column: ListColumn;
-  columns: ListColumn[];
+  column: SheetColumn;
+  columns: SheetColumn[];
   close: () => void;
   onMove: (direction: -1 | 1) => void;
   onRename?: () => void;

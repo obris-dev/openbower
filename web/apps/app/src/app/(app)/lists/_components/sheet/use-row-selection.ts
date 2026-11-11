@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RenderableListRow } from "@bower/api";
+import type { RenderableSheetRow } from "@bower/api";
 
 import {
   NONE,
@@ -24,7 +24,7 @@ import {
  * once every row is picked. The selection is pruned as the rows under
  * it change, so a row gone on a re-read never keeps counting. */
 export function useRowSelection(
-  rows: RenderableListRow[],
+  rows: RenderableSheetRow[],
   rowCount: number,
 ): {
   selection: RowSelection;

@@ -1,4 +1,4 @@
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 import { acceptsPaste } from "./cell-clipboard.ts";
 
@@ -9,7 +9,7 @@ export type CellAt = { rowId: string; columnKey: string };
 export type Over = "all" | "editable";
 
 /** A cell a person can type into: the one predicate a paste uses. */
-export function isEditable(column: ListColumn): boolean {
+export function isEditable(column: SheetColumn): boolean {
   return acceptsPaste(column);
 }
 
@@ -17,7 +17,7 @@ export function isEditable(column: ListColumn): boolean {
  * move steps over; null at an edge, so a key there does nothing
  * rather than wrapping. */
 export function neighbour(
-  columns: ListColumn[],
+  columns: SheetColumn[],
   rowIds: readonly string[],
   at: CellAt,
   direction: Direction,

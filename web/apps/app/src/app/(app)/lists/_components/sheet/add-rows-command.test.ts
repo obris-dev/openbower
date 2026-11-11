@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { curlFor, sampleValue } from "./add-rows-command.ts";
 
-const url = "https://api.example.io/v1/lists/01ABC/ingest";
+const url = "https://api.example.io/v1/sheets/01ABC/ingest";
 
 test("the command carries one sample row keyed on every settable column", () => {
   const command = curlFor(url, [

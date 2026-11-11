@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 
 from openbower_kernel.domains import normalize_domain
-from openbower_schema.lists import PlainColumn, derive_column_key
+from openbower_schema.sheets import PlainColumn, derive_column_key
 
 from ..constants import (
     COLUMN_KEY_MAX_LENGTH,
@@ -38,7 +38,7 @@ _NUMBER_SHAPE = re.compile(r"^-?[\d,]+(\.\d+)?$")
 
 
 class CsvTooLarge(Exception):
-    """The upload exceeds MAX_CSV_BYTES or MAX_LIST_ROWS."""
+    """The upload exceeds MAX_CSV_BYTES or MAX_SHEET_ROWS."""
 
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ def parse_csv(raw: bytes) -> tuple[list[PlainColumn], list[dict], int]:
     # sheet that answers 201.
     if len(labels) > MAX_SHEET_COLUMNS:
         raise CsvUnusable(
-            f"the file has {len(labels)} columns; a list holds at most {MAX_SHEET_COLUMNS}. "
+            f"the file has {len(labels)} columns; a sheet holds at most {MAX_SHEET_COLUMNS}. "
             "Remove columns from the file and import again"
         )
 
@@ -147,7 +147,7 @@ def parse_csv(raw: bytes) -> tuple[list[PlainColumn], list[dict], int]:
         padded = list(cells) + [""] * (len(labels) - len(cells))
         rows.append({key: value.strip() for key, value in zip(keys, padded, strict=True)})
         if len(rows) > MAX_SHEET_ROWS:
-            raise CsvTooLarge(f"a list holds at most {MAX_SHEET_ROWS} rows")
+            raise CsvTooLarge(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
 
     columns = [
         PlainColumn(key=key, label=label or key, type=infer_type([r[key] for r in rows]))

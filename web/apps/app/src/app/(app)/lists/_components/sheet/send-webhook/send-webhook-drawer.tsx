@@ -15,7 +15,7 @@ import {
   COLUMN_LABEL_MAX_LENGTH,
   postColumnWebhookTest,
   type ApiResult,
-  type ListColumn,
+  type SheetColumn,
   type WebhookColumnBody,
   type WebhookColumnConfigWire,
   type WebhookColumnPatchBody,
@@ -80,12 +80,12 @@ type Props = {
    * AI column has nothing to wait for, and the next step is adding one. */
   onAddAiColumn: () => void;
   /** The webhook column being edited; null means Add. */
-  column: ListColumn | null;
+  column: SheetColumn | null;
   onAdd: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
   onSave: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
   listId: string;
   listLabel: string;
-  columns: ListColumn[];
+  columns: SheetColumn[];
   sampleRows: SampleRow[];
 };
 

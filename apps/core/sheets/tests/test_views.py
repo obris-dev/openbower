@@ -1,4 +1,4 @@
-"""/v1/lists through real cookie auth (the IdP mocked at its httpx
+"""/v1/sheets through real cookie auth (the IdP mocked at its httpx
 boundary via the shared login helper): CRUD, rows paging, and the CSV
 import upload.
 
@@ -158,9 +158,9 @@ class SheetsViewsTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         body = resp.json()
         self.assertEqual(body["rows"], 2)
-        self.assertEqual(body["list"]["label"], "prospects")  # filename is the default label
-        self.assertEqual(body["list"]["origin"], "csv")
-        self.assertEqual(Sheet.objects.get(id=body["list"]["id"]).row_count, 2)
+        self.assertEqual(body["sheet"]["label"], "prospects")  # filename is the default label
+        self.assertEqual(body["sheet"]["origin"], "csv")
+        self.assertEqual(Sheet.objects.get(id=body["sheet"]["id"]).row_count, 2)
 
     def test_import_rejects_junk(self):
         upload = io.BytesIO(b"\xff\xfe nope")
@@ -189,11 +189,11 @@ class FoldersViewsTests(TestCase):
                 content_type="application/json",
             )
         items = self.client.get(reverse("sheets_folders")).json()["items"]
-        self.assertEqual([f["list_count"] for f in items if f["id"] == folder_id], [3])
+        self.assertEqual([f["sheet_count"] for f in items if f["id"] == folder_id], [3])
 
 
 class RowViewTests(TestCase):
-    """PATCH and DELETE /v1/lists/{id}/rows/{row_id}: a person's cell
+    """PATCH and DELETE /v1/sheets/{id}/rows/{row_id}: a person's cell
     writes and a row's removal."""
 
     def setUp(self) -> None:

@@ -1,4 +1,4 @@
-import type { ColumnType, ListColumn } from "@bower/api";
+import type { ColumnType, SheetColumn } from "@bower/api";
 import { ArrowUpRight, Sparkles, type LucideIcon } from "lucide-react";
 
 import { COLUMN_TYPE_META } from "../../../../../_components/column-type-meta.ts";
@@ -8,7 +8,7 @@ import { COLUMN_TYPE_META } from "../../../../../_components/column-type-meta.ts
  * values take), else its value type. */
 export type ColumnIconName = "ai" | "webhook" | ColumnType;
 
-export function columnIconName(column: ListColumn): ColumnIconName {
+export function columnIconName(column: SheetColumn): ColumnIconName {
   if (column.kind === "ai" || column.kind === "webhook") return column.kind;
   return column.type;
 }

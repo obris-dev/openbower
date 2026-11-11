@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ListColumn } from "@bower/api";
+import type { SheetColumn } from "@bower/api";
 
 import { isEditable, neighbour } from "./cell-navigation.ts";
 
-const columns: ListColumn[] = [
+const columns: SheetColumn[] = [
   { key: "name", label: "Name", type: "text", kind: "plain" },
   { key: "w", label: "W", type: "text", kind: "webhook", node_id: "n" },
   { key: "a", label: "A", type: "text", kind: "ai", node_id: "n", current_fill_id: "" },

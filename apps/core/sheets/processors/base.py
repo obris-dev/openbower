@@ -63,7 +63,7 @@ class RunOutcome(StrEnum):
     do for that row. EXITED: the run ended and wrote nothing the
     workflow should act on (skipped unrun, a config that cannot run, a
     preview landing on itself, a crash past its attempts). PARKED: a
-    retry later. ROW_MISSING | LIST_MISSING: retired, its subject gone."""
+    retry later. ROW_MISSING | SHEET_MISSING: retired, its subject gone."""
 
     LANDED = "landed"
     EXITED = "exited"

@@ -21,7 +21,7 @@ from django.test import TestCase, override_settings
 
 from agents.models import Agent
 from openbower_schema.fills import CellRunResult
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 
 from ..constants import NODE_RUN_ATTEMPTS, NodeRunStatus, StoredCellState
 from ..models import Node, NodeRun, Sheet, SheetCellState, SheetRow

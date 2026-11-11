@@ -15,14 +15,14 @@ from openbower_schema.fills import (
 from openbower_schema.fills import (
     ROW_LEASE_STALE_SECONDS as ROW_LEASE_STALE_SECONDS,
 )
-from openbower_schema.lists import CELL_MAX_LENGTH as WIRE_CELL_MAX_LENGTH
-from openbower_schema.lists import (
+from openbower_schema.sheets import CELL_MAX_LENGTH as WIRE_CELL_MAX_LENGTH
+from openbower_schema.sheets import (
     COLUMN_KEY_GRAMMAR as COLUMN_KEY_GRAMMAR,
 )
-from openbower_schema.lists import (
+from openbower_schema.sheets import (
     COLUMN_KEY_MAX_LENGTH as COLUMN_KEY_MAX_LENGTH,
 )
-from openbower_schema.lists import (
+from openbower_schema.sheets import (
     COLUMN_LABEL_MAX_LENGTH as COLUMN_LABEL_MAX_LENGTH,
 )
 from openbower_schema.webhooks import DEFAULT_WEBHOOK_CADENCE_SECONDS as DEFAULT_WEBHOOK_CADENCE_SECONDS
@@ -177,7 +177,7 @@ class FillErrorCode(StrEnum):
 
 # A person's cell write's refusals, its own lane (one row's cells,
 # never a fill or a column): the machine leg of the {error, detail}
-# envelope PATCH /v1/lists/{id}/rows/{row_id} answers with, the detail
+# envelope PATCH /v1/sheets/{id}/rows/{row_id} answers with, the detail
 # server-authored copy the client renders verbatim (tier 1).
 class CellErrorCode(StrEnum):
     # The generic leg a refusal carries until a subclass names its own.
@@ -329,7 +329,7 @@ class NodeRunStatus(StrEnum):
     the row was gone when the task came up, so there is nothing to
     diagnose. The fill goes on without it.
 
-    LIST_MISSING is ROW_MISSING's coarser sibling for the automatic
+    SHEET_MISSING is ROW_MISSING's coarser sibling for the automatic
     path: the whole sheet was gone when the task came up (deleted after
     the row was pushed), so the task settles terminally with nothing to
     diagnose. A fill-backed task never sees it (its fill job was swept

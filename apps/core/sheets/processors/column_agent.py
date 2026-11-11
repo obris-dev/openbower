@@ -37,7 +37,7 @@ what it carries:
   comes off the sheet, and the fill job polls its runs for completion.
 - Automatic (neither): the row, its sheet, the node's column set, and
   the agent's config resolved LIVE; a gone row or sheet settles
-  ROW_MISSING or LIST_MISSING, a gone or retired agent settles the run
+  ROW_MISSING or SHEET_MISSING, a gone or retired agent settles the run
   unrun, a config-tier failure settles the ONE run.
 
 The tail is shared: the exhausted give-up, the runtime call, the

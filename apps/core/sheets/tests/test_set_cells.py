@@ -14,7 +14,7 @@ from django.test import TestCase
 from agents.services import AgentService
 from openbower_kernel.fields import new_ulid
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 from webhooks.services import WebhookDestinationService
 
 from ..constants import CellSource, StoredCellState

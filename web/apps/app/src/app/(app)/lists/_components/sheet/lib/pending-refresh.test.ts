@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RenderableListRow } from "@bower/api";
+import type { RenderableSheetRow } from "@bower/api";
 
 import {
   MAX_POLL_ERRORS,
@@ -11,7 +11,7 @@ import {
   readsAreTroubled,
 } from "./pending-refresh.ts";
 
-function row(id: string, states: RenderableListRow["states"]): Pick<RenderableListRow, "id" | "states"> {
+function row(id: string, states: RenderableSheetRow["states"]): Pick<RenderableSheetRow, "id" | "states"> {
   return { id, states };
 }
 

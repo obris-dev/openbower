@@ -20,7 +20,7 @@ from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
-from openbower_schema.lists import ListColumn, WorkflowColumn
+from openbower_schema.sheets import SheetColumn, WorkflowColumn
 
 from ..cells import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class SheetFull(Exception):
-    """Adding rows would exceed MAX_LIST_ROWS."""
+    """Adding rows would exceed MAX_SHEET_ROWS."""
 
 
 class FoldersFull(Exception):
@@ -278,7 +278,7 @@ class FolderService:
             raise FolderNotFound(folder_id) from e
 
     def sheet_counts(self, folder_ids: list[str]) -> dict[str, int]:
-        """Sheets per folder, one aggregate query (the wire's list_count)."""
+        """Sheets per folder, one aggregate query (the wire's sheet_count)."""
         rows = (
             Sheet.objects.filter(account_id=self.account_id, folder_id__in=folder_ids)
             .values_list("folder_id")
@@ -318,7 +318,7 @@ class SheetService:
         *,
         owner_id: str,
         label: str,
-        columns: Sequence[ListColumn],
+        columns: Sequence[SheetColumn],
         origin: str,
         origin_ref: str = "",
         folder_id: str = "",
@@ -403,7 +403,7 @@ class SheetService:
                 raise SheetNotFound(str(target.id)) from e
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
             if current + len(rows) > MAX_SHEET_ROWS:
-                raise SheetFull(f"a list holds at most {MAX_SHEET_ROWS} rows")
+                raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
             last = (
                 SheetRow.objects.filter(sheet_id=str(locked.id))
                 .order_by("-rank", "-id")
@@ -718,7 +718,7 @@ class SheetService:
         """Re-space the sheet's ranks: the same order, fresh keys with no
         fractional tail. One transaction under the sheet lock, so a move
         cannot interleave a key computed against the old spacing; a
-        sheet holds at most MAX_LIST_ROWS rows, so the lock is held for
+        sheet holds at most MAX_SHEET_ROWS rows, so the lock is held for
         seconds at the worst. Refused (FillsOpen) while the sheet has an
         open fill, checked under the lock: a walk's cursor holds a key
         of the old spacing. A fill started after that check reads its

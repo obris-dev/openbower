@@ -16,7 +16,7 @@ from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_kernel.batches import iter_id_pages
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import AiColumn, ListColumn, PlainColumn, WebhookColumn, derive_column_key
+from openbower_schema.sheets import AiColumn, PlainColumn, SheetColumn, WebhookColumn, derive_column_key
 
 from ..constants import FILL_WRITE_BATCH, MAX_SHEET_COLUMNS, RESERVED_COLUMN_KEYS, FillErrorCode
 from ..models import Sheet, SheetRow
@@ -317,7 +317,7 @@ class ColumnService:
                     workflows.delete_path(webhook_node.path_id)
         return target_sheet
 
-    def _prune_payload_key(self, columns: list[ListColumn], workflows: WorkflowService, *, key: str) -> None:
+    def _prune_payload_key(self, columns: list[SheetColumn], workflows: WorkflowService, *, key: str) -> None:
         """The sheet's webhook columns stop naming a column that is
         gone, in the delete's own transaction, so a stored payload never
         lies about the sheet. Bounded by the sheet: a payload key can

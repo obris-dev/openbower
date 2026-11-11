@@ -17,7 +17,7 @@ from jobs.constants import JobStatus
 from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 
 from ..constants import (
     FREE_SEARCH_FILL_BUDGET,

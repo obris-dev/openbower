@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from openbower_schema.lists import AiColumn, PlainColumn
+from openbower_schema.sheets import AiColumn, PlainColumn
 
 from ..services.webhook_paths import inbound_paths_for, wait_keys_for
 

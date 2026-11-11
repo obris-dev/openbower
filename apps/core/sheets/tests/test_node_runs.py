@@ -23,7 +23,7 @@ from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
 from jobs.services import JobRunner
-from openbower_schema.lists import AiColumn
+from openbower_schema.sheets import AiColumn
 
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..ingest.consumer import handle_ingest_event

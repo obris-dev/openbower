@@ -51,7 +51,7 @@ from django.db.models import QuerySet, Subquery
 
 from openbower_kernel.ranks import first_key, key_between, keys_between, respace_keys
 from openbower_schema.agents import AgentConfig
-from openbower_schema.lists import WorkflowColumn
+from openbower_schema.sheets import WorkflowColumn
 
 from ..constants import RANK_REBALANCE_LENGTH
 from ..models import Node, NodePath, Sheet, Workflow

@@ -28,7 +28,7 @@ from typing import get_args
 from django.test import SimpleTestCase
 
 from openbower_schema.fills import SETTLED_CELL_STATES
-from openbower_schema.lists import WireCellState
+from openbower_schema.sheets import WireCellState
 
 from ..constants import CELL_STATE_MAX_LENGTH, StoredCellState
 

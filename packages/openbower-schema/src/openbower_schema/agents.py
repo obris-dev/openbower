@@ -6,7 +6,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
-from .lists import COLUMN_KEY_MAX_LENGTH, COLUMN_LABEL_MAX_LENGTH, ColumnType
+from .sheets import COLUMN_KEY_MAX_LENGTH, COLUMN_LABEL_MAX_LENGTH, ColumnType
 
 AgentProvider = Literal["openai_compatible", "anthropic_compatible"]
 # The SPEC coercion falls back to when a stored draft names a provider

@@ -18,7 +18,7 @@ from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
 from jobs.models import Job
-from openbower_schema.lists import ListSummary, derive_column_key
+from openbower_schema.sheets import SheetSummary, derive_column_key
 from openbower_schema.webhooks import WebhookColumnConfigWire, WebhookEnvelope
 from sheets.constants import CellSource, FillErrorCode, StoredCellState, WebhookColumnErrorCode
 from sheets.jobs.column_backfill import ColumnBackfillJob
@@ -106,7 +106,7 @@ class WebhookColumnTests(TestCase):
     def test_add_persists_the_column_with_its_path_and_two_nodes(self):
         resp = self._add()
         self.assertEqual(resp.status_code, 201, resp.content)
-        summary = ListSummary(**resp.json())
+        summary = SheetSummary(**resp.json())
         column = next(c for c in summary.columns if c.key == "crm_sync")
         self.assertEqual((column.type, column.kind), ("text", "webhook"))
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (self.baseline[0] + 2, self.baseline[1] + 1))
@@ -199,7 +199,7 @@ class WebhookColumnTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 200, resp.content)
-        first = ListSummary(**resp.json()).columns[0]
+        first = SheetSummary(**resp.json()).columns[0]
         self.assertEqual(first.key, "crm_sync")
         self.assertEqual(first.kind, "webhook")
 

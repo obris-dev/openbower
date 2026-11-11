@@ -11,7 +11,7 @@ from rest_framework import serializers
 
 from openbower_schema.agents import AGENT_PROVIDER_CHOICES, AgentListItem, AgentTools
 from openbower_schema.agents import AgentSummary as WireAgentSummary
-from openbower_schema.lists import COLUMN_TYPE_CHOICES
+from openbower_schema.sheets import COLUMN_TYPE_CHOICES
 
 from .constants import (
     LABEL_MAX_LENGTH,
@@ -36,7 +36,7 @@ class OutputDef(serializers.Serializer):
 def _clean_outputs(outputs: list[dict]) -> list[dict]:
     """Keys derive from labels when absent; distinct keys required
     (cells key on them, collisions would silently merge columns)."""
-    from openbower_schema.lists import derive_column_key
+    from openbower_schema.sheets import derive_column_key
 
     from .runtime.answer import reserved_output_key
 

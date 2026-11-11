@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .agents import LABEL_MAX_LENGTH
-from .lists import WireCellState
+from .sheets import WireCellState
 
 # Wire bounds live ON the contract (Field constraints below) so both
 # sides enforce one number. Values are binary by house rule.
@@ -132,7 +132,7 @@ class WebhookDigestData(BaseModel):
     )
 
 
-# A PEP 695 alias for the same reason as ListColumn: one named definition
+# A PEP 695 alias for the same reason as SheetColumn: one named definition
 # the client narrows on, the discriminator travelling with the type.
 type WebhookEnvelopeData = Annotated[WebhookPingData | WebhookDigestData, Field(discriminator="type")]
 
@@ -270,7 +270,7 @@ class WebhookColumnPreviewResponse(BaseModel):
 
 class WebhookColumnConfigWire(BaseModel):
     """A Send webhook column as configured, served by GET and echoed by
-    PATCH on /lists/{id}/columns/{key}/webhook: what it waits for, where
+    PATCH on /sheets/{id}/columns/{key}/webhook: what it waits for, where
     it sends, what rides, how often, and whether it is running."""
 
     node_id: str = Field(description="The webhook node the column is; the drawer's test send scopes to it.")

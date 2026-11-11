@@ -38,7 +38,7 @@ from discover.services.index_client import (
 from openbower_kernel.domains import normalize_domain
 from openbower_kernel.fields import is_valid_ulid
 from openbower_schema import LookalikeListResponse
-from openbower_schema.lists import PlainColumn
+from openbower_schema.sheets import PlainColumn
 from sheets.constants import LABEL_MAX_LENGTH as LIST_LABEL_MAX_LENGTH
 from sheets.constants import MAX_SHEET_ROWS, ColumnType, SheetOrigin
 from sheets.operations.append_rows import AppendRowsOperation
