@@ -200,8 +200,8 @@ class SheetDetail(SheetSummary):
     and every write to the columns array (add, AI create, webhook
     create, rename, reorder, delete) answer with this; a column's own
     config doors (prompt, webhook config) answer their config, and the
-    index, sheet create, CSV import, and a saved discover run stay on
-    the summary and read no workflow."""
+    index, sheet create and CSV import stay on the summary and read no
+    workflow."""
 
     entry_action_ids: list[str] = Field(
         description="The sheet's entry actions: the workflow nodes an arriving row starts, each the "

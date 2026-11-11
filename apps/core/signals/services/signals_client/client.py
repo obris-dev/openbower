@@ -1,6 +1,5 @@
 """The signals client bound to an app session: callers name the OPERATION,
-not the credential. The same shape as discover's SessionIndexClient: one
-construction binds the session (the auth flow owns token attachment and
+not the credential. One construction binds the session (the auth flow owns token attachment and
 refresh-retry), and each method is one transport call on a short-lived
 client."""
 

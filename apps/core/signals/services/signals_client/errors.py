@@ -1,7 +1,6 @@
 """The signals client's failure taxonomy.
 
-The same split as discover.services.index_client.errors: callers choose
-behavior by TYPE. Catch order matters where both are handled:
+Callers choose behavior by TYPE. Catch order matters where both are handled:
 SignalsUpstreamUnavailable subclasses SignalsUpstreamError, and the two
 409s subclass SignalsClientRequestError, so the narrower case is caught
 first.

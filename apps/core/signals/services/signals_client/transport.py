@@ -1,8 +1,7 @@
 """The wire layer: every signals-service HTTP call, with transport and
 protocol failures normalized into the package's named errors and bodies
 validated into the SHARED contract models (openbower_schema) before
-anyone downstream touches them. The same shape as
-discover.services.index_client.transport: addresses from the package's
+anyone downstream touches them. Addresses come from the package's
 urls, the credential from the shared session flow
 (auth_client.services.sessions.SessionTokenAuth).
 """

@@ -1229,7 +1229,7 @@
       ]
     },
     "SheetDetail": {
-      "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create, CSV import, and a saved discover run stay on\nthe summary and read no workflow.",
+      "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create and CSV import stay on the summary and read no\nworkflow.",
       "properties": {
         "columns": {
           "default": [],

@@ -56,7 +56,7 @@ violation shipped once and got caught).
   `.then` is `dynamic(() => import(...).then(...))`.
 - Poll loops carry a generation counter checked after EVERY await
   (including the first) and a hard, stated budget when the BROWSER is
-  the run's supervisor (discover's lookalike run); a DURABLE,
+  the run's supervisor; a DURABLE,
   worker-supervised run (a fill, the preview's test run included) polls
   open-ended against the worker's heartbeat instead,
   each poll a short bounded request, staleness rendered as a warning
