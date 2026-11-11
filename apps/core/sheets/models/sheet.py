@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 
 from openbower_kernel.models import UserScopedModel
 
-from ..constants import LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH
+from ..constants import KIND_MAX_LENGTH, LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH, SheetKind
 from ..fields import SheetColumnsField
 
 
@@ -16,6 +16,15 @@ class Sheet(UserScopedModel):
     interpretation of a column (nothing here stores company
     references)."""
 
+    # db_default as well: an insert that names no kind (an older release
+    # during a rolling deploy) must land standard, not NULL.
+    kind = models.CharField(
+        _("kind"),
+        max_length=KIND_MAX_LENGTH,
+        default=SheetKind.STANDARD.value,
+        db_default=SheetKind.STANDARD.value,
+        help_text=_("SheetKind"),
+    )
     folder_id = models.CharField(_("folder id"), max_length=26, blank=True, default="")
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
     columns = SheetColumnsField(
@@ -30,7 +39,9 @@ class Sheet(UserScopedModel):
     class Meta:
         verbose_name = _("sheet")
         verbose_name_plural = _("sheets")
-        indexes = [models.Index(fields=["account_id", "id"], name="sheet_account_idx")]
+        # A listing reads one kind of an account newest first (the sheets
+        # index); account_id alone is this index's prefix.
+        indexes = [models.Index(fields=["account_id", "kind", "id"], name="sheet_account_kind_idx")]
 
     def __str__(self) -> str:
         return self.label

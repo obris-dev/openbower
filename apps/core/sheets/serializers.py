@@ -260,6 +260,7 @@ def _sheet_summary(target: Sheet) -> WireSheetSummary:
     return WireSheetSummary(
         id=str(target.id),
         label=target.label,
+        kind=target.kind,
         folder_id=target.folder_id,
         columns=target.columns,
         origin=target.origin,
@@ -355,7 +356,9 @@ def row_wire(row: SheetRow, states: dict[str, CellStateWire] | None = None) -> d
     """A sheet row with its cell states (every node column's) beside its
     values. ONE shape rather than paged reads walking in lockstep,
     which was a client-side join carried over the network."""
-    return WireSheetRow(id=str(row.id), data=row.data, states=states or {}).model_dump()
+    return WireSheetRow(
+        id=str(row.id), created_at=row.created_at.isoformat(), data=row.data, states=states or {}
+    ).model_dump()
 
 
 def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:

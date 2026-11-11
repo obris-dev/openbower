@@ -11,6 +11,7 @@ from functools import cached_property
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -18,7 +19,7 @@ from rest_framework.response import Response
 from agents.services import AgentNotFound
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
-from openbower_kernel.fields import new_ulid
+from openbower_kernel.fields import min_ulid_at, new_ulid
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
@@ -46,6 +47,7 @@ from .constants import (
     MAX_ROWS_PAGE,
     FillErrorCode,
     IngestErrorCode,
+    SheetKind,
     SheetOrigin,
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
@@ -88,7 +90,6 @@ from .services.sheets import (
     CellRefused,
     ColumnNotWritable,
     FolderNotFound,
-    FolderService,
     FoldersFull,
     InvalidRowCursor,
     RowCursor,
@@ -98,6 +99,7 @@ from .services.sheets import (
     SheetNotFound,
     SheetService,
     SomeRows,
+    StandardFolderService,
 )
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 from .services.workflows import NodeNotFound
@@ -118,6 +120,25 @@ _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS
 _COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
 
 
+def _window_bound(request: Request, name: str) -> str:
+    """A time-window bound off `?<name>=`, as the id cutoff it means
+    (ids are time, `min_ulid_at`), or "" when absent. An instant with an
+    offset: the client computes its tabs in the user's own time zone.
+    Every unusable value is a 400: a well-formed but impossible date makes
+    the parser raise, and an instant before 1970 has no ULID."""
+    raw = request.query_params.get(name, "")
+    if not raw:
+        return ""
+    refusal = ValidationError(f"?{name}= must be an ISO 8601 instant with an offset, from 1970 on")
+    try:
+        at = parse_datetime(raw)
+    except ValueError:
+        raise refusal from None
+    if at is None or timezone.is_naive(at) or at.timestamp() < 0:
+        raise refusal
+    return min_ulid_at(at)
+
+
 def _fill_refusal_status(e: FillRefused) -> int:
     """One classifier for every fill refusal, so a code added to the
     conflict set reaches every endpoint that answers one."""
@@ -136,8 +157,9 @@ class _ScopedView(ScopedView):
         return SheetService(account_id=self.request.user.account_id)
 
     @cached_property
-    def folders(self) -> FolderService:
-        return FolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+    def folders(self) -> StandardFolderService:
+        # The sheets home's folders: /v1/sheets lists standard sheets.
+        return StandardFolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
 
     @cached_property
     def columns(self) -> ColumnService:
@@ -187,7 +209,7 @@ class SheetsView(_ScopedView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        rows = self.sheets.page(after_id=after, limit=limit)
+        rows = self.sheets.page(kind=SheetKind.STANDARD, after_id=after, limit=limit)
         page = SheetsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
         return Response(page.model_dump())
 
@@ -240,7 +262,13 @@ class SheetRowsView(_ScopedView):
             cursor = RowCursor.parse(after) if after else None
         except InvalidRowCursor as e:
             raise ValidationError("?after= must be a cursor this sheet handed out") from e
-        rows = self.sheets.rows_page(target_sheet, after=cursor, limit=limit)
+        # ?since= is inclusive, ?until= exclusive (Yesterday is since
+        # yesterday's midnight until today's).
+        since_id = _window_bound(request, "since")
+        before_id = _window_bound(request, "until")
+        if (since_id or before_id) and target_sheet.kind != SheetKind.LOG:
+            raise ValidationError("a time window applies to a log")
+        rows = self.sheets.rows_page(target_sheet, after=cursor, limit=limit, since_id=since_id, before_id=before_id)
         states = self.fills.cell_states_for_rows(target_sheet, rows)
         next_cursor = next_cursor_from(rows, limit=limit, cursor=lambda row: RowCursor(str(row.id), row.rank).wire())
         items = [row_wire(r, states.get(str(r.id), {})) for r in rows]

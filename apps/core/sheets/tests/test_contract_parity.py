@@ -14,6 +14,7 @@ from jobs.constants import JobStatus
 from openbower_schema.fills import FillStatusWire
 from openbower_schema.runs import OPEN_NODE_RUN_STATES, NodeRunStatusWire
 from openbower_schema.sheets import ColumnType as WireColumnType
+from openbower_schema.sheets import SheetKind as WireSheetKind
 from openbower_schema.sheets import SheetOrigin as WireSheetOrigin
 from openbower_schema.sheets import WireCellState
 from sheets import constants
@@ -26,6 +27,9 @@ class WireEnumParityTests(SimpleTestCase):
 
     def test_sheet_origin_parity(self):
         self.assertEqual(set(get_args(WireSheetOrigin)), {v.value for v in constants.SheetOrigin})
+
+    def test_sheet_kind_parity(self):
+        self.assertEqual(set(get_args(WireSheetKind)), {v.value for v in constants.SheetKind})
 
     def test_cell_state_parity(self):
         # The wire adds `pending` (derived, never stored) and otherwise
