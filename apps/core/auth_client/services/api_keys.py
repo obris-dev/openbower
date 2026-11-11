@@ -7,6 +7,7 @@ introspection (resource_server), never by anything kept here."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -100,8 +101,11 @@ class ApiKeyService:
         except ValidationError as e:
             raise AuthUpstreamError(f"api keys list invalid: {e.error_count()} error(s)") from e
 
-    def mint(self, name: str) -> ApiKeyMinted:
-        body = _call(self.session, "POST", idp_urls.api_keys_url(), json={"name": name})
+    def mint(self, name: str, *, scopes: Sequence[str] = ()) -> ApiKeyMinted:
+        """A new key as the signed-in user. `scopes` are the ones a key may
+        add beyond profile (the identity service refuses any other); none
+        is a key that reaches this app's own machine lane only."""
+        body = _call(self.session, "POST", idp_urls.api_keys_url(), json={"name": name, "scopes": list(scopes)})
         try:
             return ApiKeyMinted.model_validate(body)
         except ValidationError as e:

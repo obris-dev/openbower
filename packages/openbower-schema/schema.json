@@ -380,6 +380,15 @@
           "default": null,
           "description": "When the key stopped working; null while it works.",
           "title": "Revoked At"
+        },
+        "scopes": {
+          "default": [],
+          "description": "What the key may do (profile, plus any it was minted with).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
         }
       },
       "required": [

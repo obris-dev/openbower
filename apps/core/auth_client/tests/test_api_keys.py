@@ -16,6 +16,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from auth_client.models import AppSession
+from auth_client.services.api_keys import ApiKeyService
 from common.testing import login_session
 from resource_server.claims_cache import get_claims, remember_claims
 
@@ -25,6 +26,7 @@ KEY = {
     "last_four": "k9ZQ",
     "created_at": "2026-10-20T17:00:00+00:00",
     "revoked_at": None,
+    "scopes": ["profile"],
 }
 
 
@@ -82,7 +84,15 @@ class ApiKeyProxyTests(TestCase):
         self.assertEqual(resp.json()["token"], "obk_live_x")
         self.assertEqual(resp.json()["key"]["name"], "import script")
         (request,) = upstream.requests
-        self.assertEqual(json.loads(request.content), {"name": "import script"})
+        self.assertEqual(json.loads(request.content), {"name": "import script", "scopes": []})
+
+    def test_a_mint_asks_for_the_scopes_it_names(self):
+        # FAILS if the scopes never reach the identity service: the key
+        # would carry profile only and every signals call would be a 403.
+        upstream = self._with(httpx.Response(201, json={"token": "obk_live_s", "key": KEY}))
+        ApiKeyService(self.session).mint("Signals feed (sync)", scopes=["signals:read"])
+        (request,) = upstream.requests
+        self.assertEqual(json.loads(request.content), {"name": "Signals feed (sync)", "scopes": ["signals:read"]})
 
     def test_refusals_relay_verbatim(self):
         self._with(httpx.Response(409, json={"error": "key_limit_reached", "detail": "key limit reached (8)"}))
