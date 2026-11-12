@@ -8,18 +8,21 @@ Run: DJANGO_ENV=test uv run python manage.py test signals.tests.test_log_routes
 
 from __future__ import annotations
 
+import datetime
 from unittest.mock import patch
 
 import httpx
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import SheetErrorCode, SheetKind, SheetOrigin
+from sheets.constants import MAX_SHEET_ROWS, SheetErrorCode, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.services.sheets import FolderService, SheetService
-from signals.constants import KEY_LIMIT_DETAIL, SignalsErrorCode
+from signals.constants import KEY_LIMIT_DETAIL, LogStatus, SignalsErrorCode
+from signals.models import LogFeed, SignalsSyncKey
 
 from .fakes import FakeIdentity, FakeSignals, install
 from .test_client import _CATALOG, _EVENT, _EVENT_ID, _PREVIEW, _PREVIEW_ID
@@ -182,6 +185,116 @@ class LogRouteTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual((moved.status_code, moved.json()["folder_id"]), (200, str(folder.id)))
+
+
+class LogStatusTests(TestCase):
+    """Where a log stands, derived on every read: listener gone, waiting on
+    a reconnect, full, or active."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.signals = FakeSignals()
+        install(self, self.signals, FakeIdentity())
+        resp = self.client.post(reverse("logs_index"), _CREATE, content_type="application/json")
+        self.log_id = resp.json()["sheet"]["id"]
+        self.url = reverse("logs_detail", kwargs={"id": self.log_id})
+
+    def _status(self) -> str:
+        page = self.client.get(reverse("logs_index")).json()
+        return page["items"][0]["status"]
+
+    def test_a_new_log_is_active(self):
+        self.assertEqual(self._status(), LogStatus.ACTIVE)
+        page = self.client.get(reverse("logs_index")).json()
+        self.assertIsNone(page["items"][0]["last_polled_at"])
+
+    def test_a_refused_key_waits_on_a_reconnect(self):
+        # FAILS if the state ignores the key: a log would read active while
+        # nothing can fill it.
+        SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
+        self.assertEqual(self._status(), LogStatus.RECONNECT)
+
+    def test_a_log_at_the_row_cap_is_full(self):
+        Sheet.objects.filter(id=self.log_id).update(row_count=MAX_SHEET_ROWS)
+        self.assertEqual(self._status(), LogStatus.FULL)
+
+    def test_the_first_state_that_holds_wins(self):
+        # FAILS if the order changes: the poller skips its read on reconnect,
+        # and a gone listener is final whatever else holds.
+        SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
+        Sheet.objects.filter(id=self.log_id).update(row_count=MAX_SHEET_ROWS)
+        self.assertEqual(self._status(), LogStatus.RECONNECT)
+        LogFeed.objects.update(listener_gone_at="2026-11-12T00:00:00Z")
+        self.assertEqual(self._status(), LogStatus.LISTENER_GONE)
+
+    def test_a_gone_listener_still_opens_the_log(self):
+        # FAILS if the detail relays the listener's 404: a log with rows
+        # would read as no such log, and nothing could say why.
+        self.signals.listeners.clear()
+        opened = self.client.get(self.url)
+        self.assertEqual(opened.status_code, 200)
+        self.assertEqual((opened.json()["listener"], opened.json()["status"]), (None, LogStatus.LISTENER_GONE))
+        self.assertIsNotNone(LogFeed.objects.get(sheet_id=self.log_id).listener_gone_at)
+        self.signals.calls.clear()
+        again = self.client.get(self.url)
+        self.assertEqual(again.json()["status"], LogStatus.LISTENER_GONE)
+        self.assertEqual(self.signals.calls, [])
+
+    def test_a_log_known_to_be_gone_is_refused_without_asking_the_service(self):
+        LogFeed.objects.update(listener_gone_at="2026-11-12T00:00:00Z")
+        self.signals.calls.clear()
+        refused = self.client.patch(self.url, {"label": "Renamed"}, content_type="application/json")
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, SignalsErrorCode.LISTENER_GONE))
+        self.assertEqual(self.signals.calls, [])
+
+    def test_a_log_whose_listener_is_gone_cannot_be_edited(self):
+        self.signals.listeners.clear()
+        refused = self.client.patch(self.url, {"label": "Renamed"}, content_type="application/json")
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, SignalsErrorCode.LISTENER_GONE))
+        self.assertEqual(self._status(), LogStatus.LISTENER_GONE)
+        self.assertEqual(Sheet.objects.get(id=self.log_id).label, "Robotics raises")
+        deleted = self.client.delete(self.url)
+        self.assertEqual(deleted.status_code, 204)
+
+
+class ReconnectRouteTests(TestCase):
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.signals = FakeSignals()
+        self.identity = FakeIdentity()
+        install(self, self.signals, self.identity)
+        self.client.post(reverse("logs_index"), _CREATE, content_type="application/json")
+
+    def test_a_reconnect_brings_a_waiting_log_back(self):
+        # FAILS if reconnect does not replace the refused key: the account's
+        # logs would read reconnect forever.
+        SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
+        resp = self.client.post(reverse("logs_reconnect"))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json(), {"left_live_key_id": "", "left_live_user_id": ""})
+        key = SignalsSyncKey.objects.get()
+        self.assertEqual((key.token, key.rejected_at), ("obw_live_2", None))
+        revoked = [path for method, path, _body in self.identity.calls if method == "DELETE"]
+        self.assertEqual(len(revoked), 1)
+        page = self.client.get(reverse("logs_index")).json()
+        self.assertEqual(page["items"][0]["status"], LogStatus.ACTIVE)
+
+    def test_a_reconnect_makes_the_accounts_logs_due_at_once(self):
+        # FAILS if the logs stay parked: a person who reconnects would wait
+        # out the park before anything arrived.
+        SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
+        LogFeed.objects.update(next_poll_at=timezone.now() + datetime.timedelta(hours=1))
+        self.client.post(reverse("logs_reconnect"))
+        self.assertLessEqual(LogFeed.objects.get().next_poll_at, timezone.now())
+
+    def test_a_reconnect_at_the_key_limit_answers_in_the_apps_words(self):
+        SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
+        self.identity.next = [
+            httpx.Response(409, json={"error": ApiKeyRefusalCode.KEY_LIMIT_REACHED, "detail": "key limit reached"})
+        ]
+        resp = self.client.post(reverse("logs_reconnect"))
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json(), {"error": SignalsErrorCode.KEY_LIMIT_REACHED, "detail": KEY_LIMIT_DETAIL})
 
 
 class SignalsPassThroughTests(TestCase):

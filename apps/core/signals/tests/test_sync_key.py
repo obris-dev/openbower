@@ -136,6 +136,7 @@ class SyncKeyTests(TestCase):
 
     def test_reconnect_mints_swaps_then_revokes_its_own_old_key(self):
         first = self.keys.ensure(self.session)
+        self.keys.mark_rejected(first.key_id)
         replaced = self.keys.reconnect(self.session)
         self.assertEqual(replaced.key.id, first.id)
         self.assertEqual((replaced.key.token, replaced.left_live_key_id), ("obw_live_2", ""))
@@ -147,6 +148,7 @@ class SyncKeyTests(TestCase):
         # FAILS if the old key is revoked before the new one exists: a mint
         # refused here would leave the row on a key the service killed.
         first = self.keys.ensure(self.session)
+        self.keys.mark_rejected(first.key_id)
         self.hub.answers = [
             httpx.Response(409, json={"error": ApiKeyRefusalCode.KEY_LIMIT_REACHED, "detail": "key limit reached"})
         ]
@@ -173,7 +175,8 @@ class SyncKeyTests(TestCase):
         # The identity service revokes only an owner's keys, so a member's
         # reconnect cannot retire the minter's: it is reported, not counted
         # revoked (FAILS if the 404 a revoke would get passes as success).
-        self.keys.ensure(self.session)
+        first = self.keys.ensure(self.session)
+        self.keys.mark_rejected(first.key_id)
         member = _session(_MEMBER)
         replaced = self.keys.reconnect(member)
         self.assertEqual((replaced.key.user_id, replaced.key.token), (_MEMBER.id, "obw_live_2"))
@@ -187,7 +190,10 @@ class SyncKeyTests(TestCase):
         self.assertIsNone(stale)
         self.keys.ensure(self.session)
         stale = self.keys.client()
+        self.keys.mark_rejected(stale.key_id)
         self.keys.reconnect(self.session)
+        # A second refusal of the old key, from a call that was out when
+        # the reconnect landed.
         self.keys.mark_rejected(stale.key_id)
         serving = self.keys.client()
         self.assertIsNotNone(serving)
@@ -219,3 +225,13 @@ class SyncKeyTests(TestCase):
         with self.assertRaises(SyncKeyAccountMismatch):
             self.keys.reconnect(other)
         self.assertEqual(self._mints(), [])
+
+    def test_a_reconnect_leaves_a_working_key_alone(self):
+        # FAILS if reconnect replaces a key the service still honors: every
+        # press would mint, and another member's working key would be left
+        # live in their list.
+        key = self.keys.ensure(self.session)
+        member = _session(_MEMBER)
+        kept = self.keys.reconnect(member)
+        self.assertEqual((kept.key.key_id, kept.left_live_key_id), (key.key_id, ""))
+        self.assertEqual(len(self._mints()), 1)

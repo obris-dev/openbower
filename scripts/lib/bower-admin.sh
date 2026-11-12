@@ -21,7 +21,7 @@ export COMPOSE_PROJECT_NAME="$PROJECT"
 NETWORK=openbower-suite
 # The services built from the core image: every one reads
 # config/providers.toml at boot, so a setup edit restarts exactly these.
-CORE_SERVICES="core jobs fill-provisioner fill-consumer autofill-provisioner autofill-consumer preview-consumer ingest-worker cron"
+CORE_SERVICES="core jobs log-poller fill-provisioner fill-consumer autofill-provisioner autofill-consumer preview-consumer ingest-worker cron"
 # The SERIAL cold path on a first start: the setup one-shot syncs its
 # venv, then core and the workers sync theirs, then the web installs its
 # dependencies and compiles its first routes.
