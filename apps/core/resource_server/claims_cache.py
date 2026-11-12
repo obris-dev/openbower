@@ -78,7 +78,9 @@ def count_miss(ip: str) -> int:
     try:
         return _cache.incr(key)
     except ValueError:
-        # Two windows' life: the key outlives its minute only long enough
-        # for a request that read the clock at its end to count in it.
+        # The expiry only reclaims the row: the key, not its timeout,
+        # bounds the window (a timeout is relative to each write, so it
+        # slides). A backend whose incr re-sets the default timeout keeps
+        # the row a few minutes longer, unread and harmless.
         _cache.add(key, 1, timeout=2 * _MISS_WINDOW_SECONDS)
         return 1
