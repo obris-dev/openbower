@@ -155,6 +155,26 @@ class MachineTokenAuthTests(TestCase):
             ]
         self.assertEqual(statuses, [401, 401, 429, 429])
 
+    @override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=2)
+    def test_the_miss_budget_starts_over_each_minute(self):
+        # FAILS if the count lives on one key whose expiry is the only window:
+        # a backend whose incr re-sets the key's timeout (Django's generic
+        # incr, the database cache's) keeps it alive while misses arrive, and
+        # every caller stays locked out once the total passes the limit. The
+        # budget's clock moves here while the cache's does not.
+        minute = 1_800_000_000
+
+        def status(n: int, at: int) -> int:
+            with patch("resource_server.claims_cache.time.time", return_value=at):
+                resp = self.client.get(reverse("sheets_index"), HTTP_AUTHORIZATION=f"Bearer obw_flood{n}")
+            return resp.status_code
+
+        with patch("resource_server.idp.transport.httpx.get", return_value=FakeResponse(200, {"active": False})):
+            spent = [status(n, minute) for n in range(3)]
+            next_minute = status(3, minute + 60)
+        self.assertEqual(spent, [401, 401, 429])
+        self.assertEqual(next_minute, 401)
+
     def test_the_principal_is_built_from_authority(self):
         from auth_client.authentication import AppUser
 

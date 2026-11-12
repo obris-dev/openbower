@@ -10,6 +10,8 @@ login states, and one forget covers every replica.
 
 from __future__ import annotations
 
+import time
+
 from django.core.cache import caches
 
 from openbower_kernel.hashing import hash_token
@@ -63,10 +65,20 @@ def forget_machine_key(key_id: str) -> None:
 
 def count_miss(ip: str) -> int:
     """One more verify miss for `ip` inside the budget window; returns
-    the window's running count."""
-    key = f"{_MISS_PREFIX}{ip}"
+    the window's running count.
+
+    The window is IN THE KEY, not only in its expiry: Django's generic
+    incr (the database cache's) re-sets the key with the default timeout,
+    so an expiry alone lets a count outlive its minute while misses keep
+    coming, a running total that locks every caller out once it passes
+    the limit. A new minute is a new key whatever the backend does with
+    timeouts."""
+    window = int(time.time()) // _MISS_WINDOW_SECONDS
+    key = f"{_MISS_PREFIX}{ip}:{window}"
     try:
         return _cache.incr(key)
     except ValueError:
-        _cache.add(key, 1, timeout=_MISS_WINDOW_SECONDS)
+        # Two windows' life: the key outlives its minute only long enough
+        # for a request that read the clock at its end to count in it.
+        _cache.add(key, 1, timeout=2 * _MISS_WINDOW_SECONDS)
         return 1
