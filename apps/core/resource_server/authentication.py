@@ -39,7 +39,7 @@ from rest_framework.request import Request
 from auth_client.authentication import AppUser
 from auth_client.constants import AuthErrorCode
 
-from .claims_cache import count_miss, get_claims, remember_claims
+from .claims_cache import TokeninfoMissThrottle, get_claims, remember_claims
 from .idp import verify_token
 from .idp.transport import TokeninfoUnavailable
 
@@ -121,9 +121,9 @@ class MachineTokenAuthentication(BaseAuthentication):
         to a coarse global limiter rather than per-client; that is the safe
         direction to fail, and edge rate-limiting is the real per-client
         control."""
-        ip = request.META.get("REMOTE_ADDR", "") or "unknown"
-        if count_miss(ip) > settings.TOKENINFO_MISS_LIMIT_PER_MINUTE:
-            logger.warning("tokeninfo miss budget exceeded for %s", ip)
+        throttle = TokeninfoMissThrottle()
+        if not throttle.allow_request(request, view=None):
+            logger.warning("tokeninfo miss budget exceeded for %s", throttle.get_ident(request))
             raise Throttled(detail="too many unverified tokens")
 
     @staticmethod
