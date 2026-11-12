@@ -689,6 +689,44 @@
       "title": "ColumnPromptWire",
       "type": "object"
     },
+    "EventSource": {
+      "description": "The article an event was read from.",
+      "properties": {
+        "published": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "ISO time the publisher dated it.",
+          "title": "Published"
+        },
+        "summary": {
+          "description": "The feed's own summary of it, cut short when long.",
+          "title": "Summary",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "summary",
+        "url",
+        "published"
+      ],
+      "title": "EventSource",
+      "type": "object"
+    },
     "FillCounters": {
       "description": "Progress, DERIVED from the task rows and cell states at read time\n(never a stored counter): attempted is rows with a terminal outcome\nthis fill; blank counts diagnosed blanks; transient counts rows\ncurrently parked in retry.",
       "properties": {
@@ -931,6 +969,252 @@
       "title": "FoldersList",
       "type": "object"
     },
+    "FundingCompany": {
+      "description": "The company a raise is about, as its article states it.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it does, in a sentence.",
+          "title": "Description"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its site's domain, when the article names one.",
+          "title": "Domain"
+        },
+        "hq": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where it is headquartered, as the article words it.",
+          "title": "Hq"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "domain",
+        "hq",
+        "description"
+      ],
+      "title": "FundingCompany",
+      "type": "object"
+    },
+    "FundingEvent": {
+      "description": "One company's raise: the facts its article states, nothing inferred.",
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The full amount raised; null when the article states none.",
+          "title": "Amount"
+        },
+        "company": {
+          "$ref": "#/$defs/FundingCompany"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "ISO 4217 code of the amount.",
+          "title": "Currency"
+        },
+        "instruments": {
+          "items": {
+            "enum": [
+              "equity",
+              "convertible",
+              "debt",
+              "grant",
+              "token"
+            ],
+            "type": "string"
+          },
+          "title": "Instruments",
+          "type": "array"
+        },
+        "lead_investors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Lead Investors",
+          "type": "array"
+        },
+        "other_investors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Other Investors",
+          "type": "array"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "enum": [
+                "pre_seed",
+                "seed",
+                "series_a",
+                "series_b",
+                "series_c",
+                "series_d_plus",
+                "growth",
+                "bridge"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stage"
+        }
+      },
+      "required": [
+        "company",
+        "amount",
+        "currency",
+        "stage",
+        "instruments",
+        "lead_investors",
+        "other_investors"
+      ],
+      "title": "FundingEvent",
+      "type": "object"
+    },
+    "FundingEventWire": {
+      "description": "A funding event: its id is the same under every listener that matched\nit and in every preview that chose it.",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/FundingEvent"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "logged_at": {
+          "title": "Logged At",
+          "type": "string"
+        },
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        }
+      },
+      "required": [
+        "id",
+        "signal",
+        "data",
+        "logged_at",
+        "source"
+      ],
+      "title": "FundingEventWire",
+      "type": "object"
+    },
+    "FundingFilter": {
+      "description": "A funding setup's fixed checks, every one optional: the stages it\nkeeps, and an amount range in one currency (inclusive, never\nconverted). An empty filter keeps every raise.",
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "max_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Amount"
+        },
+        "min_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Amount"
+        },
+        "stages": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "pre_seed",
+                  "seed",
+                  "series_a",
+                  "series_b",
+                  "series_c",
+                  "series_d_plus",
+                  "growth",
+                  "bridge"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stages"
+        }
+      },
+      "title": "FundingFilter",
+      "type": "object"
+    },
     "ImportResult": {
       "description": "What a CSV upload produced.",
       "properties": {
@@ -1028,6 +1312,227 @@
         }
       },
       "title": "IngestSchema",
+      "type": "object"
+    },
+    "ListenerVersionWire": {
+      "description": "One saved setup. Versions are never changed: an edit saves a new one,\nso a listener's versions are its edit log.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/$defs/FundingFilter"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_confidence": {
+          "description": "How sure the judge must be for a yes to match.",
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "prompt": {
+          "description": "What the judge reads for; empty when the filter alone decides.",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Who saved it.",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "filter",
+        "prompt",
+        "min_confidence",
+        "user_id",
+        "created_at"
+      ],
+      "title": "ListenerVersionWire",
+      "type": "object"
+    },
+    "ListenerWire": {
+      "description": "A listener and its current setup.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchErrorWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it is retrying or held; null when active."
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "retrying",
+            "held"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Who created it.",
+          "title": "User Id",
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/$defs/ListenerVersionWire"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "signal",
+        "user_id",
+        "status",
+        "error",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ListenerWire",
+      "type": "object"
+    },
+    "LogDetail": {
+      "description": "One log with its listener as the signals service has it now.",
+      "properties": {
+        "autofill": {
+          "title": "Autofill",
+          "type": "boolean"
+        },
+        "listener": {
+          "$ref": "#/$defs/ListenerWire"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener",
+        "signal",
+        "autofill"
+      ],
+      "title": "LogDetail",
+      "type": "object"
+    },
+    "LogSummary": {
+      "description": "One log as the logs index shows it: no signals call behind it.",
+      "properties": {
+        "autofill": {
+          "description": "Whether arriving rows fill their AI columns.",
+          "title": "Autofill",
+          "type": "boolean"
+        },
+        "listener_id": {
+          "description": "The listener whose matches become the log's rows.",
+          "title": "Listener Id",
+          "type": "string"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener_id",
+        "signal",
+        "autofill"
+      ],
+      "title": "LogSummary",
+      "type": "object"
+    },
+    "LogsPage": {
+      "description": "`GET /v1/logs`: newest first.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/LogSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hand back as ?after= for the next page.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "LogsPage",
+      "type": "object"
+    },
+    "MatchErrorWire": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "provider_error",
+            "rejected",
+            "too_long",
+            "invalid_output",
+            "outdated_event",
+            "abandoned",
+            "unexpected",
+            "stale_article",
+            "stale_listener"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "MatchErrorWire",
       "type": "object"
     },
     "NodeRunWire": {
@@ -1129,6 +1634,182 @@
         "type"
       ],
       "title": "PlainColumn",
+      "type": "object"
+    },
+    "PreviewFailureWire": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "slow_down",
+            "unavailable",
+            "deadline",
+            "abandoned",
+            "unexpected"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PreviewFailureWire",
+      "type": "object"
+    },
+    "PreviewRowWire": {
+      "description": "What the setup made of one chosen event.",
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchErrorWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event": {
+          "$ref": "#/$defs/FundingEventWire"
+        },
+        "outcome": {
+          "enum": [
+            "waiting",
+            "passed",
+            "matched",
+            "unsure",
+            "unmatched",
+            "errored"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "confidence",
+        "reason",
+        "error",
+        "event"
+      ],
+      "title": "PreviewRowWire",
+      "type": "object"
+    },
+    "PreviewRunWire": {
+      "description": "A setup tried on chosen events. Complete at create when the filter\ndecides every event; otherwise poll it while its rows land.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewFailureWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it failed; null unless failed."
+        },
+        "filter": {
+          "$ref": "#/$defs/FundingFilter"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_confidence": {
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "retry_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "After a slow-down: when another preview may be tried.",
+          "title": "Retry At"
+        },
+        "rows": {
+          "description": "In the order its events were chosen.",
+          "items": {
+            "$ref": "#/$defs/PreviewRowWire"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "canceled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "user_id": {
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "signal",
+        "filter",
+        "prompt",
+        "min_confidence",
+        "user_id",
+        "status",
+        "error",
+        "retry_at",
+        "created_at",
+        "finished_at",
+        "rows"
+      ],
+      "title": "PreviewRunWire",
       "type": "object"
     },
     "RowsAdded": {
@@ -1504,6 +2185,120 @@
         "items"
       ],
       "title": "SheetsPage",
+      "type": "object"
+    },
+    "SignalEventsPage": {
+      "description": "`GET /v1/signals/{signal}/events`: newest first, to choose from.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/FundingEventWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "SignalEventsPage",
+      "type": "object"
+    },
+    "SignalKind": {
+      "description": "One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
+      "properties": {
+        "event": {
+          "additionalProperties": true,
+          "description": "JSON Schema of the signal's event data.",
+          "title": "Event",
+          "type": "object"
+        },
+        "filter": {
+          "additionalProperties": true,
+          "description": "JSON Schema of the signal's filter.",
+          "title": "Filter",
+          "type": "object"
+        },
+        "min_confidence_default": {
+          "description": "A new setup's judge threshold when it gives none.",
+          "title": "Min Confidence Default",
+          "type": "number"
+        },
+        "signal": {
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "filter",
+        "event",
+        "min_confidence_default"
+      ],
+      "title": "SignalKind",
+      "type": "object"
+    },
+    "SignalLimits": {
+      "properties": {
+        "label_max_length": {
+          "title": "Label Max Length",
+          "type": "integer"
+        },
+        "max_listeners": {
+          "description": "Listeners an account may have.",
+          "title": "Max Listeners",
+          "type": "integer"
+        },
+        "preview_max_events": {
+          "description": "Events one preview may be tried on.",
+          "title": "Preview Max Events",
+          "type": "integer"
+        },
+        "prompt_max_length": {
+          "title": "Prompt Max Length",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_listeners",
+        "label_max_length",
+        "prompt_max_length",
+        "preview_max_events"
+      ],
+      "title": "SignalLimits",
+      "type": "object"
+    },
+    "SignalsCatalog": {
+      "description": "`GET /v1/signals`: every signal, and the limits a setup is held to.",
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/SignalLimits"
+        },
+        "signals": {
+          "items": {
+            "$ref": "#/$defs/SignalKind"
+          },
+          "title": "Signals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signals",
+        "limits"
+      ],
+      "title": "SignalsCatalog",
       "type": "object"
     },
     "WebhookAttemptWire": {

@@ -25,6 +25,7 @@ from .fills import (
     FillRunPage,
     FillRunWire,
 )
+from .logs import LogDetail, LogsPage, LogSummary
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
@@ -121,6 +122,9 @@ __all__ = [
     "ListenerVersionsPage",
     "ListenerWire",
     "ListenersPage",
+    "LogDetail",
+    "LogSummary",
+    "LogsPage",
     "MatchWire",
     "MatchesPage",
     "NodeRunWire",

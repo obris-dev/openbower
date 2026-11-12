@@ -25,7 +25,7 @@ from sheets.models import NodeRun, Sheet
 from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from sheets.processors.base import queue_position
 from sheets.services.node_runs import NodeRunFlow
-from sheets.services.sheets import SheetService
+from sheets.services.sheets import SheetIsLog, SheetService
 from sheets.services.workflows import WorkflowService
 
 ACCOUNT = TEST_IDENTITY["account_id"]
@@ -126,6 +126,30 @@ def _log_with_an_ai_column() -> Sheet:
     ]
     log.save(update_fields=["columns", "updated_at"])
     return log
+
+
+class LogLifeTests(TestCase):
+    """A log's label and life are its listener's too: the sheet service
+    refuses to rename or delete one as a plain sheet, whoever asks."""
+
+    def setUp(self) -> None:
+        self.sheets = SheetService(account_id=TEST_IDENTITY["account_id"])
+        self.log = _log_with_an_ai_column()
+
+    def test_a_log_is_not_renamed_or_deleted_as_a_sheet(self):
+        # FAILS if the refusal lives only at the HTTP door: a job or a
+        # command deleting a log would leave its listener matching.
+        with self.assertRaises(SheetIsLog):
+            self.sheets.rename(self.log, label="x")
+        with self.assertRaises(SheetIsLog):
+            self.sheets.delete(self.log)
+        self.assertEqual(Sheet.objects.get(id=self.log.id).label, self.log.label)
+
+    def test_its_own_service_renames_and_deletes_it(self):
+        self.sheets.rename_log(self.log, label="Renamed")
+        self.assertEqual(Sheet.objects.get(id=self.log.id).label, "Renamed")
+        self.sheets.delete_log(self.log)
+        self.assertFalse(Sheet.objects.filter(id=self.log.id).exists())
 
 
 class LogAppendTests(TestCase):

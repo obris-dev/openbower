@@ -33,6 +33,9 @@ export type CellStateWire = z.infer<typeof CellStateWireSchema>;
 export const ColumnPromptWireSchema = z.object({ "model": z.string(), "prompt": z.string(), "source": z.string() }).describe("The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/sheets/{id}/columns/{key}/prompt). A fill reads its agent live, so\nan edit reaches a running fill's next row; surfaces peeking at\n\"what fills this column\" read HERE.");
 export type ColumnPromptWire = z.infer<typeof ColumnPromptWireSchema>;
 
+export const EventSourceSchema = z.object({ "published": z.union([z.string(), z.null()]).describe("ISO time the publisher dated it."), "summary": z.string().describe("The feed's own summary of it, cut short when long."), "title": z.string(), "url": z.string() }).describe("The article an event was read from.");
+export type EventSource = z.infer<typeof EventSourceSchema>;
+
 export const FillCountersSchema = z.object({ "attempted": z.number().int(), "blank": z.number().int(), "filled": z.number().int(), "transient": z.number().int() }).describe("Progress, DERIVED from the task rows and cell states at read time\n(never a stored counter): attempted is rows with a terminal outcome\nthis fill; blank counts diagnosed blanks; transient counts rows\ncurrently parked in retry.");
 export type FillCounters = z.infer<typeof FillCountersSchema>;
 
@@ -48,6 +51,18 @@ export type FolderSummary = z.infer<typeof FolderSummarySchema>;
 export const FoldersListSchema = z.object({ "items": z.array(z.lazy(() => FolderSummarySchema)) });
 export type FoldersList = z.infer<typeof FoldersListSchema>;
 
+export const FundingCompanySchema = z.object({ "description": z.union([z.string(), z.null()]).describe("What it does, in a sentence."), "domain": z.union([z.string(), z.null()]).describe("Its site's domain, when the article names one."), "hq": z.union([z.string(), z.null()]).describe("Where it is headquartered, as the article words it."), "name": z.string() }).describe("The company a raise is about, as its article states it.");
+export type FundingCompany = z.infer<typeof FundingCompanySchema>;
+
+export const FundingEventSchema = z.object({ "amount": z.union([z.number(), z.null()]).describe("The full amount raised; null when the article states none."), "company": z.lazy(() => FundingCompanySchema), "currency": z.union([z.string(), z.null()]).describe("ISO 4217 code of the amount."), "instruments": z.array(z.enum(["equity","convertible","debt","grant","token"])), "lead_investors": z.array(z.string()), "other_investors": z.array(z.string()), "stage": z.union([z.enum(["pre_seed","seed","series_a","series_b","series_c","series_d_plus","growth","bridge"]), z.null()]) }).describe("One company's raise: the facts its article states, nothing inferred.");
+export type FundingEvent = z.infer<typeof FundingEventSchema>;
+
+export const FundingEventWireSchema = z.object({ "data": z.lazy(() => FundingEventSchema), "id": z.string(), "logged_at": z.string(), "signal": z.literal("funding"), "source": z.lazy(() => EventSourceSchema) }).describe("A funding event: its id is the same under every listener that matched\nit and in every preview that chose it.");
+export type FundingEventWire = z.infer<typeof FundingEventWireSchema>;
+
+export const FundingFilterSchema = z.object({ "currency": z.union([z.string(), z.null()]).default(null), "max_amount": z.union([z.number(), z.null()]).default(null), "min_amount": z.union([z.number(), z.null()]).default(null), "stages": z.union([z.array(z.enum(["pre_seed","seed","series_a","series_b","series_c","series_d_plus","growth","bridge"])), z.null()]).default(null) }).describe("A funding setup's fixed checks, every one optional: the stages it\nkeeps, and an amount range in one currency (inclusive, never\nconverted). An empty filter keeps every raise.");
+export type FundingFilter = z.infer<typeof FundingFilterSchema>;
+
 export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "event_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.");
 export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
 
@@ -57,8 +72,23 @@ export type IngestColumn = z.infer<typeof IngestColumnSchema>;
 export const IngestSchemaSchema = z.object({ "columns": z.array(z.lazy(() => IngestColumnSchema)).describe("Columns of the push schema, in display order; the ones a producer owns.").default([]) }).describe("The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.");
 export type IngestSchema = z.infer<typeof IngestSchemaSchema>;
 
+export const ListenerVersionWireSchema = z.object({ "created_at": z.string(), "filter": z.lazy(() => FundingFilterSchema), "id": z.string(), "min_confidence": z.number().describe("How sure the judge must be for a yes to match."), "prompt": z.string().describe("What the judge reads for; empty when the filter alone decides."), "user_id": z.string().describe("Who saved it.") }).describe("One saved setup. Versions are never changed: an edit saves a new one,\nso a listener's versions are its edit log.");
+export type ListenerVersionWire = z.infer<typeof ListenerVersionWireSchema>;
+
+export const MatchErrorWireSchema = z.object({ "kind": z.enum(["provider_error","rejected","too_long","invalid_output","outdated_event","abandoned","unexpected","stale_article","stale_listener"]) });
+export type MatchErrorWire = z.infer<typeof MatchErrorWireSchema>;
+
 export const PlainColumnSchema = z.object({ "immutable": z.boolean().describe("Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.").default(false), "key": z.string().max(40).describe("Stable snake_case key; row data dicts key on it."), "kind": z.literal("plain").default("plain"), "label": z.string().max(80).describe("Display label, as the user (or the CSV header) wrote it."), "type": z.enum(["text","number","currency","date","url","email"]).describe("Sheet display type; drives rendering only.") }).describe("A column the user or an import fills by hand.");
 export type PlainColumn = z.infer<typeof PlainColumnSchema>;
+
+export const PreviewFailureWireSchema = z.object({ "kind": z.enum(["slow_down","unavailable","deadline","abandoned","unexpected"]) });
+export type PreviewFailureWire = z.infer<typeof PreviewFailureWireSchema>;
+
+export const PreviewRowWireSchema = z.object({ "confidence": z.union([z.number(), z.null()]), "error": z.union([z.lazy(() => MatchErrorWireSchema), z.null()]), "event": z.lazy(() => FundingEventWireSchema), "outcome": z.enum(["waiting","passed","matched","unsure","unmatched","errored"]), "reason": z.string() }).describe("What the setup made of one chosen event.");
+export type PreviewRowWire = z.infer<typeof PreviewRowWireSchema>;
+
+export const PreviewRunWireSchema = z.object({ "created_at": z.string(), "error": z.union([z.lazy(() => PreviewFailureWireSchema), z.null()]).describe("Why it failed; null unless failed."), "filter": z.lazy(() => FundingFilterSchema), "finished_at": z.union([z.string(), z.null()]), "id": z.string(), "min_confidence": z.number(), "prompt": z.string(), "retry_at": z.union([z.string(), z.null()]).describe("After a slow-down: when another preview may be tried."), "rows": z.array(z.lazy(() => PreviewRowWireSchema)).describe("In the order its events were chosen."), "signal": z.literal("funding"), "status": z.enum(["pending","running","complete","failed","canceled"]), "user_id": z.string() }).describe("A setup tried on chosen events. Complete at create when the filter\ndecides every event; otherwise poll it while its rows land.");
+export type PreviewRunWire = z.infer<typeof PreviewRunWireSchema>;
 
 export const RowsDeletedSchema = z.object({ "deleted": z.number().int(), "row_count": z.number().int() }).describe("The rows-delete receipt: how many went, and the sheet's count\nafter, so the caller's footer moves without a re-read.");
 export type RowsDeleted = z.infer<typeof RowsDeletedSchema>;
@@ -71,6 +101,18 @@ export type SheetRowWire = z.infer<typeof SheetRowWireSchema>;
 
 export const SheetRowsPageSchema = z.object({ "items": z.array(z.lazy(() => SheetRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("An opaque cursor for the next page when more rows exist: hand it back as ?after= verbatim (it carries what the server needs to continue; nothing about it is for the client to read).").default(null) });
 export type SheetRowsPage = z.infer<typeof SheetRowsPageSchema>;
+
+export const SignalEventsPageSchema = z.object({ "items": z.array(z.lazy(() => FundingEventWireSchema)), "next_cursor": z.union([z.string(), z.null()]) }).describe("`GET /v1/signals/{signal}/events`: newest first, to choose from.");
+export type SignalEventsPage = z.infer<typeof SignalEventsPageSchema>;
+
+export const SignalKindSchema = z.object({ "event": z.record(z.string(), z.any()).describe("JSON Schema of the signal's event data."), "filter": z.record(z.string(), z.any()).describe("JSON Schema of the signal's filter."), "min_confidence_default": z.number().describe("A new setup's judge threshold when it gives none."), "signal": z.string() }).describe("One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.");
+export type SignalKind = z.infer<typeof SignalKindSchema>;
+
+export const SignalLimitsSchema = z.object({ "label_max_length": z.number().int(), "max_listeners": z.number().int().describe("Listeners an account may have."), "preview_max_events": z.number().int().describe("Events one preview may be tried on."), "prompt_max_length": z.number().int() });
+export type SignalLimits = z.infer<typeof SignalLimitsSchema>;
+
+export const SignalsCatalogSchema = z.object({ "limits": z.lazy(() => SignalLimitsSchema), "signals": z.array(z.lazy(() => SignalKindSchema)) }).describe("`GET /v1/signals`: every signal, and the limits a setup is held to.");
+export type SignalsCatalog = z.infer<typeof SignalsCatalogSchema>;
 
 export const WebhookAttemptWireSchema = z.object({ "created_at": z.string(), "duration_ms": z.number().int().default(0), "error": z.string().describe("What went wrong, in the user's words; empty on ok.").default(""), "http_status": z.union([z.number().int(), z.null()]).describe("The receiver's status code; null when no answer came.").default(null), "id": z.string(), "response_excerpt": z.string().max(1024).describe("The head of the receiver's answer, kept only when it was not a 2xx.").default(""), "status": z.enum(["ok","transient","rejected","blocked"]), "test": z.boolean().default(false), "type": z.enum(["ping","digest"]) }).describe("One POST and what it got back, whether or not a log keeps it:\nthe add form's test of a URL before the destination exists answers\nwith this alone. `id` is the `webhook-id` header the request\ncarried; `type` and `test` are the envelope's own.");
 export type WebhookAttemptWire = z.infer<typeof WebhookAttemptWireSchema>;
@@ -126,6 +168,9 @@ export type ColumnFillSummary = z.infer<typeof ColumnFillSummarySchema>;
 export const FillRunPageSchema = z.object({ "columns": z.array(z.lazy(() => ColumnFillSummarySchema)).describe("One summary per AI column of the sheet this page belongs to.").default([]), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more runs exist.").default(null), "runs": z.array(z.lazy(() => FillRunWireSchema)).describe("LIVE runs only. Named for what it holds rather than the house `items`, because this page carries a second collection (`columns`) and `items` beside it would name neither.") }).describe("LIVE runs plus the per-column summaries. Terminal runs do not\nride the poll: a finished run's story (its status, its error) lands\non the column summary the moment it leaves this list, so the page\ncarries the in-flight work and the summaries carry everything a\ncolumn needs to say about its past.");
 export type FillRunPage = z.infer<typeof FillRunPageSchema>;
 
+export const ListenerWireSchema = z.object({ "created_at": z.string(), "error": z.union([z.lazy(() => MatchErrorWireSchema), z.null()]).describe("Why it is retrying or held; null when active."), "id": z.string(), "label": z.string(), "signal": z.literal("funding"), "status": z.enum(["active","retrying","held"]), "updated_at": z.string(), "user_id": z.string().describe("Who created it."), "version": z.lazy(() => ListenerVersionWireSchema) }).describe("A listener and its current setup.");
+export type ListenerWire = z.infer<typeof ListenerWireSchema>;
+
 export const NodeRunWireSchema = z.object({ "created_at": z.string(), "heartbeat_at": z.string().describe("The run's latest state change, which FREEZES for the whole of its execution; the client judges staleness against NODE_RUN_STALE_SECONDS off the wire, warning-role only (never presented as failure)."), "id": z.string(), "result": z.union([z.lazy(() => CellRunResultSchema), z.null()]).describe("The run's stored result, served once it FINISHED with one; None while the run is open, and for a run that ended without running (abandoned before a consumer claimed it, or its config could not run). A claimed run always lands: cancel reaches only an unclaimed one.").default(null), "status": z.enum(["ready","queued","processing","deferred","done","abandoned","row_missing","sheet_missing"]) }).describe("One run, read by id (GET /v1/runs/{id}), and the echo of the\npreview's POST and cancel.");
 export type NodeRunWire = z.infer<typeof NodeRunWireSchema>;
 
@@ -158,6 +203,15 @@ export type WebhookEnvelopeData = z.infer<typeof WebhookEnvelopeDataSchema>;
 
 export const ImportResultSchema = z.object({ "rows": z.number().int().describe("Rows imported."), "sheet": z.lazy(() => SheetSummarySchema), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
 export type ImportResult = z.infer<typeof ImportResultSchema>;
+
+export const LogDetailSchema = z.object({ "autofill": z.boolean(), "listener": z.lazy(() => ListenerWireSchema), "sheet": z.lazy(() => SheetSummarySchema), "signal": z.string().describe("The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).") }).describe("One log with its listener as the signals service has it now.");
+export type LogDetail = z.infer<typeof LogDetailSchema>;
+
+export const LogSummarySchema = z.object({ "autofill": z.boolean().describe("Whether arriving rows fill their AI columns."), "listener_id": z.string().describe("The listener whose matches become the log's rows."), "sheet": z.lazy(() => SheetSummarySchema), "signal": z.string().describe("The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).") }).describe("One log as the logs index shows it: no signals call behind it.");
+export type LogSummary = z.infer<typeof LogSummarySchema>;
+
+export const LogsPageSchema = z.object({ "items": z.array(z.lazy(() => LogSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("Hand back as ?after= for the next page.").default(null) }).describe("`GET /v1/logs`: newest first.");
+export type LogsPage = z.infer<typeof LogsPageSchema>;
 
 export const WebhookEnvelopeSchema = z.object({ "data": z.lazy(() => WebhookEnvelopeDataSchema), "id": z.string(), "test": z.boolean().default(false), "timestamp": z.string(), "type": z.enum(["ping","digest"]), "version": z.number().int().default(1) }).describe("What a receiver gets, as the request body. Every delivery is a\nPOST of this JSON with three headers: `webhook-id` (this `id`),\n`webhook-timestamp` (unix seconds), and `webhook-signature`\n(`v1,` then base64 of HMAC-SHA256 over `\"{id}.{timestamp}.{body}\"`,\nkeyed by the base64-decoded secret after its `whsec_` prefix), the\nStandard Webhooks scheme.\n\n`type` says what `data` is. `test` says the delivery came from a\nTest button (a ping, or a sample digest sent from a sheet) and must\nnot be acted on as live data; a digest the schedule sends carries\nfalse. The top-level keys are reserved; everything a user defines\nis nested under `data`. A retried delivery carries a NEW id; a\ndigest's items each carry their own `event_id`, which is what a\nreceiver of batches deduplicates on.");
 export type WebhookEnvelope = z.infer<typeof WebhookEnvelopeSchema>;

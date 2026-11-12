@@ -59,10 +59,15 @@ class SignalsClientRequestError(SignalsClientError):
     `{error, detail}` body and status so the caller can pass both through
     untouched."""
 
-    def __init__(self, status: int, body: Any) -> None:
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
         super().__init__(f"{status}: {body}")
         self.status = status
         self.body = body
+
+
+class SignalsNotFound(SignalsClientRequestError):
+    """404: the service has no such listener or preview for this account
+    (another account's reads the same)."""
 
 
 class SignalsLimitReached(SignalsClientRequestError):
@@ -74,6 +79,6 @@ class SignalsPreviewRunning(SignalsClientRequestError):
     """409: the account has a preview open. `running` names it: wait for it
     to finish, or cancel it, before creating another."""
 
-    def __init__(self, status: int, body: Any, *, running: PreviewRunningWire) -> None:
+    def __init__(self, status: int, body: dict[str, Any], *, running: PreviewRunningWire) -> None:
         super().__init__(status, body)
         self.running = running

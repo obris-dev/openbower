@@ -31,6 +31,7 @@ from ..constants import (
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
     CellErrorCode,
+    SheetErrorCode,
     SheetKind,
 )
 from ..models import Folder, NodeRun, Sheet, SheetRow
@@ -150,6 +151,18 @@ class CellWrittenTwice(Exception):
         super().__init__(f"row {row_id}: {names} written twice in one landing")
         self.row_id = row_id
         self.keys = list(keys)
+
+
+class SheetIsLog(Exception):
+    """A rename or delete of a log as a plain sheet: a log's label and life
+    are its listener's too, so its own service renames and deletes it
+    (`rename_log`, `delete_log`) with the listener beside."""
+
+    code = SheetErrorCode.LOG_ROUTE
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("a log is renamed and deleted from its own page")
+        self.sheet_id = sheet_id
 
 
 class LogRowsFixed(Exception):
@@ -402,6 +415,16 @@ class SheetService:
             raise SheetNotFound(sheet_id) from e
 
     def rename(self, target: Sheet, *, label: str) -> Sheet:
+        if target.kind == SheetKind.LOG:
+            raise SheetIsLog(str(target.id))
+        return self._rename(target, label=label)
+
+    def rename_log(self, target: Sheet, *, label: str) -> Sheet:
+        """A log's sheet renamed, for the log's own service alone (its
+        listener is renamed beside it)."""
+        return self._rename(target, label=label)
+
+    def _rename(self, target: Sheet, *, label: str) -> Sheet:
         target.label = label
         target.save(update_fields=["label", "updated_at"])
         return target
@@ -905,7 +928,20 @@ class SheetService:
         child cleanup; no
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
-        account's fill slots with nothing visible to cancel)."""
+        account's fill slots with nothing visible to cancel). A log is
+        refused (`SheetIsLog`): its feed (signals.LogFeed) is the signals
+        app's child, not this service's, so the log's own service deletes
+        its sheet (`delete_log`) and its feed together."""
+        if target.kind == SheetKind.LOG:
+            raise SheetIsLog(str(target.id))
+        self._delete(target)
+
+    def delete_log(self, target: Sheet) -> None:
+        """A log's sheet deleted, for the log's own service alone (its feed
+        and listener go beside it)."""
+        self._delete(target)
+
+    def _delete(self, target: Sheet) -> None:
         with transaction.atomic():
             # Locked, not exists(): add_rows holds the Sheet row while it
             # inserts, so the delete must wait for it or the row cleanup

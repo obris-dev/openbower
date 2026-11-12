@@ -29,6 +29,7 @@ from signals.services.signals_client import (
     SignalsClientService,
     SignalsKeyRejected,
     SignalsLimitReached,
+    SignalsNotFound,
     SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
@@ -229,6 +230,15 @@ class ClientCallsTests(_ClientTests):
         self.assertIsNone(result)
         self.assertEqual(sent["method"], "DELETE")
 
+    def test_delete_listener_counts_one_already_gone_as_deleted(self):
+        # FAILS if the 404 escapes: every caller would re-learn that a
+        # listener already gone is the outcome a delete asks for.
+        result, sent = self._call(
+            (404, {"error": "not_found", "detail": "no such listener"}), "delete_listener", listener_id=_LISTENER_ID
+        )
+        self.assertIsNone(result)
+        self.assertEqual(sent["method"], "DELETE")
+
     def test_listener_versions(self):
         page, sent = self._call(
             (200, {"items": [_VERSION], "next_cursor": None}), "listener_versions", listener_id=_LISTENER_ID
@@ -308,6 +318,10 @@ class ClientFailureTests(_ClientTests):
     def test_another_conflict_is_a_plain_refusal(self):
         error = self._raises((409, {"error": "conflict", "detail": "busy"}), SignalsClientRequestError)
         self.assertNotIsInstance(error, (SignalsLimitReached, SignalsPreviewRunning))
+
+    def test_a_missing_listener_is_not_found(self):
+        refused = self._raises((404, {"error": "not_found", "detail": "no such listener"}), SignalsNotFound)
+        self.assertEqual((refused.status, refused.body["error"]), (404, "not_found"))
 
     def test_a_missing_scope_is_access_denied(self):
         self._raises(

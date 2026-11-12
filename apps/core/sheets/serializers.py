@@ -242,7 +242,7 @@ class ColumnAddRequest(serializers.Serializer):
 def sheet_wire(target: Sheet) -> dict[str, Any]:
     """One sheet as the index and the other sheet-returning doors show it:
     no workflow read."""
-    return _sheet_summary(target).model_dump()
+    return sheet_summary(target).model_dump()
 
 
 def sheet_detail_wire(target: Sheet) -> dict[str, Any]:
@@ -250,13 +250,13 @@ def sheet_detail_wire(target: Sheet) -> dict[str, Any]:
     (where a fill may start), read for this sheet alone."""
     workflows = WorkflowService(account_id=target.account_id)
     actions = workflows.entry_action_ids(str(target.id))
-    summary = _sheet_summary(target)
+    summary = sheet_summary(target)
     fields = summary.model_dump()
     detail = WireSheetDetail(**fields, entry_action_ids=actions)
     return detail.model_dump()
 
 
-def _sheet_summary(target: Sheet) -> WireSheetSummary:
+def sheet_summary(target: Sheet) -> WireSheetSummary:
     return WireSheetSummary(
         id=str(target.id),
         label=target.label,

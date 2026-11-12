@@ -80,6 +80,24 @@ class RowDoorPins(SimpleTestCase):
                 callers.append(str(path.relative_to(core)))
         self.assertEqual(callers, ["sheets/operations/append_rows.py"])
 
+    def test_a_log_is_renamed_and_deleted_by_its_own_service(self):
+        # SheetService.rename_log / delete_log skip the refusal a log meets
+        # at rename / delete, because the log's own service renames and
+        # deletes its listener and feed beside them. FAILS if any other
+        # production module calls them.
+        import re
+        from pathlib import Path
+
+        core = Path(__file__).resolve().parents[2]
+        callers = []
+        for path in core.rglob("*.py"):
+            if "/tests/" in str(path) or path.name.startswith("test_"):
+                continue
+            text = path.read_text()
+            if re.search(r"\.(rename_log|delete_log)\(", text):
+                callers.append(str(path.relative_to(core)))
+        self.assertEqual(callers, ["signals/services/logs.py"])
+
     def test_a_persons_write_is_built_in_the_one_operation(self):
         # A TypedWrite is the one write that REPLACES a value, and the
         # landing's write-if-blank rests on nobody else building one:

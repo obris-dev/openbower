@@ -60,8 +60,17 @@ live in a separate private repo.
   each append BEFORE its first row, so its sheet order is arrival order,
   newest first, through the same one paging path; its rows never move
   (`move_row` refuses), and a time window on it is an id range (ids are
-  time) filtered on every page. Its RUNS wait in arrival order instead,
-  oldest first (`processors.base.queue_rank` stamps a log's run with
+  time) filtered on every page. A log has ONE listener on the signals
+  service (`signals.LogFeed` links them) and they live and die together
+  through `/v1/logs` (`signals.operations.logs`): create mints the
+  account's sync key first, then the listener, then the sheet and its
+  feed, undoing the listener if that write fails; delete removes the
+  listener first and keeps everything local if it cannot. So the sheet
+  service refuses a log's rename and delete (`SheetIsLog`, 409
+  `log_route` at the sheet doors), and only `signals.services.logs.LogService` reaches
+  its `rename_log` / `delete_log` (pinned); its base columns are
+  `signals.log_columns`, filled from each match. Its RUNS wait in arrival order instead,
+  oldest first (`processors.base.queue_position` stamps a log's run with
   its row's id, a standard sheet's with its rank), so a backlog drains
   FIFO.
 - No streaming or server-built file responses. Exports are built
