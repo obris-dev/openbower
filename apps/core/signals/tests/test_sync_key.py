@@ -16,6 +16,7 @@ import httpx
 from django.db import connection
 from django.test import TestCase
 
+from auth_client.constants import ApiKeyRefusalCode
 from auth_client.models import AppSession
 from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import TokenResponse
@@ -94,7 +95,7 @@ class SyncKeyTests(TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.keys = SyncKeyService.for_session(self.session)
+        self.keys = SyncKeyService(account_id=_USER.account_id)
 
     def _mints(self) -> list[dict]:
         return [body for method, _url, body in self.hub.calls if method == "POST"]
@@ -146,7 +147,9 @@ class SyncKeyTests(TestCase):
         # FAILS if the old key is revoked before the new one exists: a mint
         # refused here would leave the row on a key the service killed.
         first = self.keys.ensure(self.session)
-        self.hub.answers = [httpx.Response(409, json={"error": "key_limit_reached", "detail": "key limit reached"})]
+        self.hub.answers = [
+            httpx.Response(409, json={"error": ApiKeyRefusalCode.KEY_LIMIT_REACHED, "detail": "key limit reached"})
+        ]
         with self.assertRaises(ApiKeyRefused):
             self.keys.reconnect(self.session)
         self.assertEqual(self._revokes(), [])
@@ -157,7 +160,7 @@ class SyncKeyTests(TestCase):
         # would roll back to a refresh token the service already spent.
         self.hub.answers = [
             httpx.Response(401, json={"error": "invalid_token", "detail": "expired"}),
-            httpx.Response(409, json={"error": "key_limit_reached", "detail": "key limit reached"}),
+            httpx.Response(409, json={"error": ApiKeyRefusalCode.KEY_LIMIT_REACHED, "detail": "key limit reached"}),
         ]
         with (
             patch("auth_client.services.oauth.transport.httpx.post", return_value=_TokenEndpoint()),
@@ -172,7 +175,7 @@ class SyncKeyTests(TestCase):
         # revoked (FAILS if the 404 a revoke would get passes as success).
         self.keys.ensure(self.session)
         member = _session(_MEMBER)
-        replaced = SyncKeyService.for_session(member).reconnect(member)
+        replaced = self.keys.reconnect(member)
         self.assertEqual((replaced.key.user_id, replaced.key.token), (_MEMBER.id, "obw_live_2"))
         self.assertEqual((replaced.left_live_key_id, replaced.left_live_user_id), (_key_id(1), _USER.id))
         self.assertEqual(self._revokes(), [])
@@ -198,10 +201,21 @@ class SyncKeyTests(TestCase):
         self.assertEqual((replaced.token, replaced.rejected_at), ("obw_live_2", None))
         self.assertEqual(self._revokes(), [_key_id(1)])
 
+    def test_a_session_acts_for_its_own_account(self):
+        # FAILS if the key is filed under any account but the session's: one
+        # account's user key would become another's feed key.
+        self.keys.ensure(self.session)
+        other = _session(AuthUser(id="01JQ" + "O" * 22, email="o@example.com", account_id="01JQ" + "C" * 22))
+        theirs = SyncKeyService(account_id=other.account_id).ensure(other)
+        self.assertEqual((theirs.account_id, theirs.user_id), (other.account_id, other.user_id))
+        self.assertEqual(self.keys.client().key_id, _key_id(1))
+
     def test_a_session_from_another_account_is_refused(self):
-        # FAILS if the account is not checked: the other account's user key
-        # would become this account's feed key.
+        # FAILS if the account is not checked: one account's person would
+        # mint a key that this account's service files as its own.
         other = _session(AuthUser(id="01JQ" + "O" * 22, email="o@example.com", account_id="01JQ" + "C" * 22))
         with self.assertRaises(SyncKeyAccountMismatch):
             self.keys.ensure(other)
+        with self.assertRaises(SyncKeyAccountMismatch):
+            self.keys.reconnect(other)
         self.assertEqual(self._mints(), [])

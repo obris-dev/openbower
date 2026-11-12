@@ -1,9 +1,9 @@
 """Signals wire shapes: what the hosted signals service returns.
 
 The app's signals client validates every upstream body against these
-before anything downstream reads it. The web does not call signals yet,
-so none of these is a contract root (tools.schema_sync); the first proxy
-route that serves one lists it there.
+before anything downstream reads it. The ones the app's /v1/logs and
+/v1/signals routes answer with are in the contract (tools.schema_sync),
+as roots or nested in one; the rest only the client reads.
 
 The parts that differ by signal (an event's `data`, a setup's `filter`)
 are typed per signal. Funding is the only signal today: an event is

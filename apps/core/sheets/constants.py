@@ -236,6 +236,12 @@ class IngestErrorCode(StrEnum):
     NOT_APPENDABLE = "not_appendable"
 
 
+# The sheet doors' refusals of a log, all 409: a log's label and life are
+# its listener's too, so it is renamed and deleted through /v1/logs.
+class SheetErrorCode(StrEnum):
+    LOG_ROUTE = "log_route"
+
+
 # The Send webhook column's refusals, all 400: each names something in
 # the request the caller changes (a key, a row, a destination), never a
 # race worth waiting out. Body references answer with a code and copy

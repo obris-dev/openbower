@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from auth_client.models import AppSession
 from auth_client.services.api_keys import ApiKeyRefused, ApiKeyService
 from auth_client.services.oauth.errors import AuthUpstreamError
 from openbower_schema.auth import ApiKeyMinted
@@ -57,28 +58,25 @@ class SyncKeyService:
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
 
-    @classmethod
-    def for_session(cls, session) -> SyncKeyService:
-        """The session's own account's key (what a person's request acts on)."""
-        return cls(account_id=session.account_id)
-
-    def ensure(self, session) -> SignalsSyncKey:
-        """The account's working key, minting one through `session` when
-        there is none or the service has refused it."""
+    def ensure(self, session: AppSession) -> SignalsSyncKey:
+        """The account's working key, minting one through `session` (a
+        person of this account) when there is none or the service has
+        refused it."""
         self._require_own(session)
         current = SignalsSyncKey.objects.filter(account_id=self.account_id).first()
         if current is not None and current.rejected_at is None:
             return current
         return self._swap(session, expected=current).key
 
-    def reconnect(self, session) -> SyncKeyReplaced:
-        """A fresh key through `session` in place of the account's (or its
-        first, when it has none), the replaced key retired after."""
+    def reconnect(self, session: AppSession) -> SyncKeyReplaced:
+        """A fresh key through `session` (a person of this account) in place
+        of the account's (or its first, when it has none), the replaced key
+        retired after."""
         self._require_own(session)
         current = SignalsSyncKey.objects.filter(account_id=self.account_id).first()
         return self._swap(session, expected=current)
 
-    def _require_own(self, session) -> None:
+    def _require_own(self, session: AppSession) -> None:
         if session.account_id != self.account_id:
             raise SyncKeyAccountMismatch(f"a session of account {session.account_id} for {self.account_id}")
 

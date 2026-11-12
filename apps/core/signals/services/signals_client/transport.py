@@ -32,6 +32,7 @@ from .errors import (
     SignalsAccessDenied,
     SignalsClientRequestError,
     SignalsLimitReached,
+    SignalsNotFound,
     SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
@@ -117,7 +118,9 @@ def _outcome(response: httpx.Response, *, ok: int) -> dict[str, Any] | None:
         raise SignalsUpstreamError("signals service returned a non-object body")
     # The caller's request being wrong, not an upstream fault: the status
     # and the service's own {error, detail} body pass straight through.
-    if status in (400, 404):
+    if status == 404:
+        raise SignalsNotFound(status, body)
+    if status == 400:
         raise SignalsClientRequestError(status, body)
     if status == 409:
         raise _conflict(body)
@@ -173,7 +176,12 @@ def edit_listener(client: httpx.Client, *, listener_id: str, payload: dict[str, 
 
 
 def delete_listener(client: httpx.Client, *, listener_id: str) -> None:
-    _request(client, "DELETE", urls.listener_url(listener_id), ok=204)
+    """Idempotent: a listener already gone (deleted elsewhere, or by a
+    delete whose local half failed) is the outcome asked for."""
+    try:
+        _request(client, "DELETE", urls.listener_url(listener_id), ok=204)
+    except SignalsNotFound:
+        return
 
 
 def listener_versions(

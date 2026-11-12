@@ -97,6 +97,7 @@ from .services.sheets import (
     RowNotFound,
     RowSelection,
     SheetFull,
+    SheetIsLog,
     SheetNotFound,
     SheetService,
     SomeRows,
@@ -121,6 +122,12 @@ _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS
 _COLUMN_CONFLICT_CODES = frozenset(
     {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
 )
+
+
+def _log_route(e: SheetIsLog) -> Response:
+    """A log's label and life are its listener's too: renaming or deleting
+    one here would leave its listener behind, so its own route does both."""
+    return Response({"error": e.code, "detail": str(e)}, status=409)
 
 
 def _window_bound(request: Request, name: str) -> str:
@@ -240,19 +247,26 @@ class SheetDetailView(_ScopedView):
         data = serializer.validated_data
         target_sheet = self._sheet_or_404(id)
         # One PATCH, one outcome: a bad folder id must not leave a
-        # half-applied rename behind.
-        with transaction.atomic():
-            if "label" in data:
-                target_sheet = self.sheets.rename(target_sheet, label=data["label"])
-            if "folder_id" in data:
-                try:
-                    target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
-                except FolderNotFound:
-                    raise ValidationError("no folder with that id") from None
+        # half-applied rename behind, nor a refused rename a move.
+        try:
+            with transaction.atomic():
+                if "label" in data:
+                    target_sheet = self.sheets.rename(target_sheet, label=data["label"])
+                if "folder_id" in data:
+                    try:
+                        target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
+                    except FolderNotFound:
+                        raise ValidationError("no folder with that id") from None
+        except SheetIsLog as e:
+            return _log_route(e)
         return Response(sheet_detail_wire(target_sheet))
 
     def delete(self, request: Request, id: str) -> Response:
-        self.sheets.delete(self._sheet_or_404(id))
+        target_sheet = self._sheet_or_404(id)
+        try:
+            self.sheets.delete(target_sheet)
+        except SheetIsLog as e:
+            return _log_route(e)
         return Response(status=204)
 
 

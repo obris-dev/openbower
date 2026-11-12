@@ -36,6 +36,12 @@ class AuthErrorCode(StrEnum):
     IDENTITY_UNAVAILABLE = "identity_unavailable"
 
 
+# The identity service's API-key refusals the app branches on
+# (`ApiKeyRefused.error`); any other is relayed as the service said it.
+class ApiKeyRefusalCode(StrEnum):
+    KEY_LIMIT_REACHED = "key_limit_reached"
+
+
 # The longest same-origin path a login may carry back to the web app
 # (the kickoff's `next`); longer is refused and the login lands on "/".
 RETURN_PATH_MAX_LENGTH = 2048

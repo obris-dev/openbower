@@ -1,0 +1,236 @@
+"""/v1/logs and /v1/signals through real cookie auth, with the signals and
+identity services as fakes at their httpx seams: a log's create, read,
+edit and delete; the refusals each relays; the pass-throughs; and the
+sheet doors refusing what would split a log from its listener.
+
+Run: DJANGO_ENV=test uv run python manage.py test signals.tests.test_log_routes
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import httpx
+from django.test import TestCase
+from django.urls import reverse
+
+from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
+from common.testing import TEST_IDENTITY, login_session
+from sheets.constants import SheetErrorCode, SheetKind, SheetOrigin
+from sheets.models import Sheet
+from sheets.services.sheets import FolderService, SheetService
+from signals.constants import KEY_LIMIT_DETAIL, SignalsErrorCode
+
+from .fakes import FakeIdentity, FakeSignals, install
+from .test_client import _CATALOG, _EVENT, _EVENT_ID, _PREVIEW, _PREVIEW_ID
+
+_CREATE = {"label": "Robotics raises", "signal": "funding", "filter": {"stages": ["series_a"]}}
+
+
+class LogRouteTests(TestCase):
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.signals = FakeSignals()
+        self.identity = FakeIdentity()
+        install(self, self.signals, self.identity)
+
+    def _post(self, url: str, body: dict):
+        return self.client.post(url, body, content_type="application/json")
+
+    def _create(self, **over) -> dict:
+        resp = self._post(reverse("logs_index"), _CREATE | over)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        return resp.json()
+
+    def test_a_log_is_created_read_edited_and_deleted(self):
+        created = self._create()
+        log_id = created["sheet"]["id"]
+        self.assertEqual((created["sheet"]["kind"], created["signal"], created["autofill"]), ("log", "funding", True))
+        self.assertEqual(created["listener"]["label"], "Robotics raises")
+
+        read = self.client.get(reverse("logs_detail", kwargs={"id": log_id}))
+        self.assertEqual(read.json()["listener"]["id"], created["listener"]["id"])
+
+        edited = self.client.patch(
+            reverse("logs_detail", kwargs={"id": log_id}),
+            {"label": "Renamed", "autofill": False},
+            content_type="application/json",
+        )
+        self.assertEqual(edited.status_code, 200, edited.content)
+        self.assertEqual((edited.json()["sheet"]["label"], edited.json()["autofill"]), ("Renamed", False))
+
+        gone = self.client.delete(reverse("logs_detail", kwargs={"id": log_id}))
+        self.assertEqual(gone.status_code, 204)
+        self.assertEqual(self.client.get(reverse("logs_detail", kwargs={"id": log_id})).status_code, 404)
+
+    def test_the_index_lists_logs_only_newest_first(self):
+        first = self._create()["sheet"]["id"]
+        second = self._create(label="Biotech raises")["sheet"]["id"]
+        SheetService(account_id=TEST_IDENTITY["account_id"]).create(
+            owner_id=TEST_IDENTITY["id"], label="A sheet", columns=[], origin=SheetOrigin.MANUAL
+        )
+        page = self.client.get(reverse("logs_index"), {"limit": "1"}).json()
+        self.assertEqual([(item["sheet"]["id"], item["signal"]) for item in page["items"]], [(second, "funding")])
+        rest = self.client.get(reverse("logs_index"), {"limit": "1", "after": page["next_cursor"]}).json()
+        self.assertEqual([item["sheet"]["id"] for item in rest["items"]], [first])
+
+    def test_a_key_limit_answers_in_the_apps_words(self):
+        self.identity.next = [
+            httpx.Response(409, json={"error": ApiKeyRefusalCode.KEY_LIMIT_REACHED, "detail": "key limit reached"})
+        ]
+        resp = self._post(reverse("logs_index"), _CREATE)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json(), {"error": SignalsErrorCode.KEY_LIMIT_REACHED, "detail": KEY_LIMIT_DETAIL})
+
+    def test_the_services_refusal_passes_through(self):
+        refusal = {"error": "limit_reached", "detail": "this account has as many listeners as it may (100)"}
+        self.signals.next["POST"] = httpx.Response(409, json=refusal)
+        resp = self._post(reverse("logs_index"), _CREATE)
+        self.assertEqual((resp.status_code, resp.json()), (409, refusal))
+        self.assertFalse(Sheet.objects.filter(kind=SheetKind.LOG).exists())
+
+    def test_a_signal_with_no_log_columns_is_a_400(self):
+        resp = self._post(reverse("logs_index"), _CREATE | {"signal": "hiring"})
+        self.assertEqual((resp.status_code, resp.json()["error"]), (400, SignalsErrorCode.UNKNOWN_SIGNAL))
+
+    def test_an_outage_is_a_503(self):
+        log_id = self._create()["sheet"]["id"]
+        self.signals.next["GET"] = httpx.Response(503)
+        resp = self.client.get(reverse("logs_detail", kwargs={"id": log_id}))
+        self.assertEqual((resp.status_code, resp.json()["error"]), (503, SignalsErrorCode.SIGNALS_UNAVAILABLE))
+
+    def test_an_identity_outage_names_the_identity_service(self):
+        # FAILS if the sync key's mint failing reads as a signals outage:
+        # whoever is on call would look at the wrong service.
+        self.identity.next = [httpx.Response(503)]
+        resp = self._post(reverse("logs_index"), _CREATE)
+        self.assertEqual((resp.status_code, resp.json()["error"]), (503, AuthErrorCode.IDENTITY_UNAVAILABLE))
+        self.assertEqual(self.signals.calls, [])
+
+    def test_a_session_the_service_rejects_is_a_401(self):
+        # FAILS if the rejection is not mapped: the web reads a 401 as "sign
+        # in again", and anything else as a broken page.
+        self.signals.next["GET"] = httpx.Response(401, json={"error": "not_authenticated", "detail": "token inactive"})
+        with patch(
+            "auth_client.services.sessions.token_auth.AppSessionService.Global.force_refresh", return_value=None
+        ):
+            resp = self.client.get(reverse("signals_catalog"))
+        self.assertEqual((resp.status_code, resp.json()["error"]), (401, "not_authenticated"))
+
+    def test_a_missing_scope_is_a_403(self):
+        refusal = {"error": "forbidden", "detail": "token lacks the signals:write scope"}
+        self.signals.next["GET"] = httpx.Response(403, json=refusal)
+        resp = self.client.get(reverse("signals_catalog"))
+        self.assertEqual((resp.status_code, resp.json()["error"]), (403, "permission_denied"))
+
+    def test_a_setup_is_given_whole(self):
+        log_id = self._create()["sheet"]["id"]
+        resp = self.client.patch(
+            reverse("logs_detail", kwargs={"id": log_id}), {"prompt": "Robots"}, content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_the_sheet_doors_refuse_to_rename_or_delete_a_log(self):
+        # FAILS if a sheet door takes a log: its listener would be left
+        # matching for a log that is gone, or labelled apart from it.
+        log_id = self._create()["sheet"]["id"]
+        renamed = self.client.patch(
+            reverse("sheets_detail", kwargs={"id": log_id}), {"label": "x"}, content_type="application/json"
+        )
+        deleted = self.client.delete(reverse("sheets_detail", kwargs={"id": log_id}))
+        self.assertEqual((renamed.status_code, renamed.json()["error"]), (409, SheetErrorCode.LOG_ROUTE))
+        self.assertEqual((deleted.status_code, deleted.json()["error"]), (409, SheetErrorCode.LOG_ROUTE))
+        self.assertTrue(Sheet.objects.filter(id=log_id).exists())
+
+    def test_another_account_cannot_reach_a_log(self):
+        # FAILS if a log route reads past its account: another account's
+        # person could read, rename or delete a listener not theirs.
+        log_id = self._create()["sheet"]["id"]
+        login_session(self.client, {**TEST_IDENTITY, "id": "01JQ" + "O" * 22, "account_id": "01JQ" + "C" * 22})
+        self.signals.calls.clear()
+        url = reverse("logs_detail", kwargs={"id": log_id})
+        read = self.client.get(url)
+        edited = self.client.patch(url, {"label": "Mine now"}, content_type="application/json")
+        deleted = self.client.delete(url)
+        self.assertEqual([r.status_code for r in (read, edited, deleted)], [404, 404, 404])
+        self.assertEqual(self.signals.calls, [])
+        self.assertEqual(Sheet.objects.get(id=log_id).label, "Robotics raises")
+
+    def test_a_rename_and_a_move_together_are_refused_whole(self):
+        # FAILS if the refusal runs after the move: a log would land in the
+        # folder while the request answered 409.
+        log_id = self._create()["sheet"]["id"]
+        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"], kind=None).create(
+            label="Funding"
+        )
+        resp = self.client.patch(
+            reverse("sheets_detail", kwargs={"id": log_id}),
+            {"label": "x", "folder_id": str(folder.id)},
+            content_type="application/json",
+        )
+        self.assertEqual((resp.status_code, resp.json()["error"]), (409, SheetErrorCode.LOG_ROUTE))
+        self.assertEqual(Sheet.objects.get(id=log_id).folder_id, "")
+
+    def test_a_log_still_moves_into_a_folder(self):
+        log_id = self._create()["sheet"]["id"]
+        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"], kind=None).create(
+            label="Funding"
+        )
+        moved = self.client.patch(
+            reverse("sheets_detail", kwargs={"id": log_id}),
+            {"folder_id": str(folder.id)},
+            content_type="application/json",
+        )
+        self.assertEqual((moved.status_code, moved.json()["folder_id"]), (200, str(folder.id)))
+
+
+class SignalsPassThroughTests(TestCase):
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.signals = FakeSignals()
+        install(self, self.signals, FakeIdentity())
+
+    def test_the_catalog_events_and_previews_reach_their_upstream_routes(self):
+        self.signals.fixed = {
+            ("GET", "/v1/signals"): httpx.Response(200, json=_CATALOG),
+            ("GET", "/v1/signals/funding/events"): httpx.Response(200, json={"items": [_EVENT], "next_cursor": None}),
+            ("POST", "/v1/previews"): httpx.Response(202, json=_PREVIEW),
+            ("GET", f"/v1/previews/{_PREVIEW_ID}"): httpx.Response(200, json=_PREVIEW),
+            ("DELETE", f"/v1/previews/{_PREVIEW_ID}"): httpx.Response(200, json=_PREVIEW),
+        }
+        catalog = self.client.get(reverse("signals_catalog"))
+        events = self.client.get(reverse("signals_events", kwargs={"signal": "funding"}))
+        preview = self.client.post(
+            reverse("signals_previews"),
+            {"signal": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
+            content_type="application/json",
+        )
+        polled = self.client.get(reverse("signals_preview", kwargs={"id": _PREVIEW_ID}))
+        canceled = self.client.delete(reverse("signals_preview", kwargs={"id": _PREVIEW_ID}))
+        statuses = [r.status_code for r in (catalog, events, preview, polled, canceled)]
+        self.assertEqual(statuses, [200, 200, 202, 200, 200])
+        self.assertEqual(catalog.json()["signals"][0]["signal"], "funding")
+        self.assertEqual(events.json()["items"][0]["id"], _EVENT_ID)
+        sent = [(method, path) for method, path, _body in self.signals.calls]
+        self.assertEqual(
+            sent,
+            [
+                ("GET", "/v1/signals"),
+                ("GET", "/v1/signals/funding/events"),
+                ("POST", "/v1/previews"),
+                ("GET", f"/v1/previews/{_PREVIEW_ID}"),
+                ("DELETE", f"/v1/previews/{_PREVIEW_ID}"),
+            ],
+        )
+
+    def test_a_preview_sends_its_setup_as_a_log_does(self):
+        # FAILS if the preview passes its body through: a null threshold
+        # would reach the service, where a log create leaves it out.
+        self.signals.fixed = {("POST", "/v1/previews"): httpx.Response(202, json=_PREVIEW)}
+        self.client.post(
+            reverse("signals_previews"),
+            {"signal": "funding", "filter": {}, "min_confidence": None, "event_ids": [_EVENT_ID]},
+            content_type="application/json",
+        )
+        [(_method, _path, sent)] = self.signals.calls
+        self.assertEqual(sent, {"signal": "funding", "event_ids": [_EVENT_ID], "filter": {}})
