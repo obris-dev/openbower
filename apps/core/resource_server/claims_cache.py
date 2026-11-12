@@ -1,6 +1,6 @@
 """The claims cache: THE one module that names a key in the tokeninfo
 cache and reads or writes it, so the cached claims, the index that finds
-a token's claims by machine key, and the miss budget can never drift
+a token's claims by machine key, and the miss throttle can never drift
 apart.
 
 A dedicated cache alias (its own table, shared by every process of the
@@ -10,9 +10,10 @@ login states, and one forget covers every replica.
 
 from __future__ import annotations
 
-import time
-
+from django.conf import settings
 from django.core.cache import caches
+from rest_framework.request import Request
+from rest_framework.throttling import SimpleRateThrottle
 
 from openbower_kernel.hashing import hash_token
 
@@ -23,9 +24,6 @@ _CLAIMS_PREFIX = "tokeninfo:"
 # key id -> the claims' key, so a revoke can drop one machine key's
 # claims without knowing its token.
 _KEY_INDEX_PREFIX = "tokeninfo-key:"
-# Verify misses per caller address, for the pre-auth flood budget.
-_MISS_PREFIX = "tokeninfo-miss:"
-_MISS_WINDOW_SECONDS = 60
 
 
 def _claims_key(token: str) -> str:
@@ -63,24 +61,27 @@ def forget_machine_key(key_id: str) -> None:
     _cache.delete(index_key)
 
 
-def count_miss(ip: str) -> int:
-    """One more verify miss for `ip` inside the budget window; returns
-    the window's running count.
+class TokeninfoMissThrottle(SimpleRateThrottle):
+    """TOKENINFO_MISS_LIMIT_PER_MINUTE verify misses per address, DRF's own
+    throttle in this module's cache (its history prunes by timestamp, so no
+    cache's handling of a timeout can stretch the window). The authenticator
+    asks it before the upstream call, since DRF runs its throttles after
+    authentication."""
 
-    The window is IN THE KEY, not only in its expiry: Django's generic
-    incr (the database cache's) re-sets the key with the default timeout,
-    so an expiry alone lets a count outlive its minute while misses keep
-    coming, a running total that locks every caller out once it passes
-    the limit. A new minute is a new key whatever the backend does with
-    timeouts."""
-    window = int(time.time()) // _MISS_WINDOW_SECONDS
-    key = f"{_MISS_PREFIX}{ip}:{window}"
-    try:
-        return _cache.incr(key)
-    except ValueError:
-        # The expiry only reclaims the row: the key, not its timeout,
-        # bounds the window (a timeout is relative to each write, so it
-        # slides). A backend whose incr re-sets the default timeout keeps
-        # the row a few minutes longer, unread and harmless.
-        _cache.add(key, 1, timeout=2 * _MISS_WINDOW_SECONDS)
-        return 1
+    cache = _cache
+    scope = "tokeninfo_miss"
+
+    def get_rate(self) -> str:
+        # Read per check, not at import: a setting is the limit, and tests
+        # override it.
+        return f"{settings.TOKENINFO_MISS_LIMIT_PER_MINUTE}/min"
+
+    def get_ident(self, request: Request) -> str:
+        # REMOTE_ADDR, the un-spoofable floor, never DRF's X-Forwarded-For
+        # reading: with no NUM_PROXIES it keys on the whole header, which a
+        # flood rotates freely. Behind a proxy this is the proxy, a coarse
+        # global limiter, which is the safe direction to fail.
+        return request.META.get("REMOTE_ADDR", "") or "unknown"
+
+    def get_cache_key(self, request: Request, view) -> str:
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
