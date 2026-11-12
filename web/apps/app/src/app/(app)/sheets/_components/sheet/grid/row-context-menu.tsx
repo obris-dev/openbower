@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@bower/ui";
 import type { SheetColumn } from "@bower/api";
 
-import { acceptsPaste } from "./lib/cell-clipboard";
+import { acceptsPaste, holdsValue } from "./lib/cell-clipboard";
 import { shortcutLabel } from "./lib/shortcut-label";
 import type { CellActions } from "./cell-actions";
 
@@ -40,8 +40,8 @@ export function RowContextMenu({
 }) {
   const [target, setTarget] = useState<Target | null>(null);
   const column = target?.columnKey ? columns.find((entry) => entry.key === target.columnKey) : undefined;
-  const copyable = column !== undefined && acceptsPaste(column);
-  const pasteable = copyable;
+  const copyable = column !== undefined && holdsValue(column);
+  const pasteable = column !== undefined && acceptsPaste(column);
 
   function aim(pressed: EventTarget | null): boolean {
     const cell = (pressed as Element | null)?.closest<HTMLElement>("[data-row-id]");

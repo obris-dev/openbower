@@ -91,6 +91,7 @@ from .services.sheets import (
     CellRefused,
     ColumnNotWritable,
     FolderNotFound,
+    FolderService,
     FoldersFull,
     InvalidRowCursor,
     RowCursor,
@@ -101,7 +102,6 @@ from .services.sheets import (
     SheetNotFound,
     SheetService,
     SomeRows,
-    StandardFolderService,
 )
 from .services.webhook_columns import WebhookColumnRefused, WebhookColumnService
 from .services.workflows import NodeNotFound
@@ -149,6 +149,20 @@ def _window_bound(request: Request, name: str) -> str:
     return min_ulid_at(at)
 
 
+def _kind_filter(request: Request) -> SheetKind | None:
+    """`?kind=` narrows the sheets index to one kind, or None when absent.
+    A kind this server does not have is a 400, never an empty page: an
+    empty page would read as "no such sheets"."""
+    raw = request.query_params.get("kind", "")
+    if not raw:
+        return None
+    try:
+        return SheetKind(raw)
+    except ValueError:
+        choices = ", ".join(kind.value for kind in SheetKind)
+        raise ValidationError(f"?kind= must be one of: {choices}") from None
+
+
 def _fill_refusal_status(e: FillRefused) -> int:
     """One classifier for every fill refusal, so a code added to the
     conflict set reaches every endpoint that answers one."""
@@ -167,9 +181,8 @@ class _ScopedView(ScopedView):
         return SheetService(account_id=self.request.user.account_id)
 
     @cached_property
-    def folders(self) -> StandardFolderService:
-        # The sheets home's folders: /v1/sheets lists standard sheets.
-        return StandardFolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
+    def folders(self) -> FolderService:
+        return FolderService(account_id=self.request.user.account_id, user_id=self.request.user.id)
 
     @cached_property
     def columns(self) -> ColumnService:
@@ -206,8 +219,10 @@ class _ScopedView(ScopedView):
 
 class SheetsView(_ScopedView):
     # The sheets collection is where a machine producer both enumerates
-    # ("which sheets can I push to?") and creates a sheet to push into, so
-    # BOTH methods ride the machine lane; account/user scoping (no session
+    # and creates a sheet to push into, so BOTH methods ride the machine
+    # lane. The index is every kind, and only a standard sheet takes a push
+    # (a log's rows come from its signal), so `?kind=standard` is the
+    # producer's "which sheets can I push to?"; account/user scoping (no session
     # state) makes a machine token safe on either. Every other sheets
     # endpoint keeps the cookie-only default, which also proves the per-view
     # scoping. Cookie auth is listed FIRST so a browser's 401 (an expired
@@ -219,7 +234,8 @@ class SheetsView(_ScopedView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        rows = self.sheets.page(kind=SheetKind.STANDARD, after_id=after, limit=limit)
+        kind = _kind_filter(request)
+        rows = self.sheets.page(after_id=after, limit=limit, kind=kind)
         page = SheetsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
         return Response(page.model_dump())
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MoreHorizontal } from "lucide-react";
 import { Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 import type { FolderSummary } from "@bower/api";
@@ -21,9 +22,12 @@ export function RowMenu(props: {
   folders: FolderSummary[];
   currentFolderId?: string;
   containedCount?: number;
-  onRename: () => void;
+  // Each verb shows only when the row offers it: a verb the server refuses
+  // for this row is left out, not offered and refused.
+  settings?: { href: string; label: string };
+  onRename?: () => void;
   onMove?: (folderId: string) => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <Popover className="relative inline-block">
@@ -42,11 +46,13 @@ function MenuBody({
   folders,
   currentFolderId,
   containedCount = 0,
+  settings,
   onRename,
   onMove,
   onDelete,
   close,
 }: Parameters<typeof RowMenu>[0] & { close: () => void }) {
+  const router = useRouter();
   const [view, setView] = useState<View>("root");
   const tierRef = useRef<HTMLDivElement>(null);
   const lastView = useRef<View>("root");
@@ -72,14 +78,26 @@ function MenuBody({
     <div ref={tierRef} className={view === "delete" ? undefined : "w-48"}>
       {view === "root" && (
         <>
-          <PopoverItem
-            onClick={() => {
-              close();
-              onRename();
-            }}
-          >
-            Rename
-          </PopoverItem>
+          {settings && (
+            <PopoverItem
+              onClick={() => {
+                close();
+                router.push(settings.href);
+              }}
+            >
+              {settings.label}
+            </PopoverItem>
+          )}
+          {onRename && (
+            <PopoverItem
+              onClick={() => {
+                close();
+                onRename();
+              }}
+            >
+              Rename
+            </PopoverItem>
+          )}
           {/* Only when a destination exists: a tier with nothing focusable
               strands keyboard focus on body. */}
           {kind === "sheet" && onMove && (folders.length > 0 || Boolean(currentFolderId)) && (
@@ -87,22 +105,24 @@ function MenuBody({
               Move to…
             </PopoverItem>
           )}
-          <PopoverItem
-            className="text-danger"
-            onClick={() => {
-              // An EMPTY folder has nothing at stake; deleting it
-              // outright beats confirming a no-op.
-              if (kind === "folder" && containedCount === 0) {
-                close();
-                onDelete();
-                return;
-              }
-              setView("delete");
-            }}
-            data-opens="delete"
-          >
-            Delete
-          </PopoverItem>
+          {onDelete && (
+            <PopoverItem
+              className="text-danger"
+              onClick={() => {
+                // An EMPTY folder has nothing at stake; deleting it
+                // outright beats confirming a no-op.
+                if (kind === "folder" && containedCount === 0) {
+                  close();
+                  onDelete();
+                  return;
+                }
+                setView("delete");
+              }}
+              data-opens="delete"
+            >
+              Delete
+            </PopoverItem>
+          )}
         </>
       )}
       {view === "move" && onMove && (
@@ -123,7 +143,7 @@ function MenuBody({
                   onMove("");
                 }}
               >
-                Home
+                Sheets
               </PopoverItem>
               <div className="mx-4 my-1 border-t border-hairline" />
             </>
@@ -151,14 +171,14 @@ function MenuBody({
           consequence={
             kind === "folder"
               ? containedCount === 1
-                ? "Its sheet moves back to Home."
-                : `Its ${containedCount.toLocaleString("en-US")} sheets move back to Home.`
+                ? "Its sheet moves back to Sheets."
+                : `Its ${containedCount.toLocaleString("en-US")} sheets move back to Sheets.`
               : "This can't be undone."
           }
           onCancel={() => setView("root")}
           onDelete={() => {
             close();
-            onDelete();
+            onDelete?.();
           }}
         />
       )}

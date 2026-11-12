@@ -60,7 +60,10 @@ live in a separate private repo.
   each append BEFORE its first row, so its sheet order is arrival order,
   newest first, through the same one paging path; its rows never move
   (`move_row` refuses), and a time window on it is an id range (ids are
-  time) filtered on every page. A log has ONE listener on the signals
+  time) filtered on every page. A log is a sheet in the ONE sheets index
+  (home lists every sheet; folders hold and count every kind), and the
+  UI calls a listener and the log it fills a SIGNAL (the API keeps
+  `/v1/logs`). A log has ONE listener on the signals
   service (`signals.LogFeed` links them) and they live and die together
   through `/v1/logs` (`signals.operations.logs`): create mints the
   account's sync key first, then the listener, then the sheet and its
@@ -288,7 +291,8 @@ live in a separate private repo.
   graduate to a package when a second consumer exists. Route files stay
   thin compositions. UI primitives live in `@bower/ui` (drawers and
   inline editing; the one modal is the confirm dialog, for a
-  destructive act with no slot of its own to confirm in).
+  destructive act with no slot of its own to confirm in, or one that
+  waits on another service's answer).
   Navigation is two-tier: in-app transitions use Link / router.push;
   crossing the auth boundary or any origin (login, logout, the OAuth
   redirect dance) uses window.location, where the full document load is

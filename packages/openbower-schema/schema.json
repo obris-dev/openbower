@@ -2217,6 +2217,7 @@
       "type": "object"
     },
     "SheetsPage": {
+      "description": "A page of the sheets index, newest first: every kind, or one with\n`?kind=` (a push lands only in a `standard` sheet).",
       "properties": {
         "items": {
           "items": {

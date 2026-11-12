@@ -39,9 +39,12 @@ class Sheet(UserScopedModel):
     class Meta:
         verbose_name = _("sheet")
         verbose_name_plural = _("sheets")
-        # A listing reads one kind of an account newest first (the sheets
-        # index); account_id alone is this index's prefix.
-        indexes = [models.Index(fields=["account_id", "kind", "id"], name="sheet_account_kind_idx")]
+        # Both listings read an account newest first: the sheets index every
+        # kind, the logs index one kind.
+        indexes = [
+            models.Index(fields=["account_id", "id"], name="sheet_account_idx"),
+            models.Index(fields=["account_id", "kind", "id"], name="sheet_account_kind_idx"),
+        ]
 
     def __str__(self) -> str:
         return self.label

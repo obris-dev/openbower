@@ -21,6 +21,8 @@ export { ErrorMessage } from "./error-message";
 export { FieldError } from "./field-error";
 export { Input } from "./input";
 export { Label } from "./label";
+export { LocalTime } from "./local-time";
+export { formatMoment, TIME_FORMAT, type TimeFormat } from "./local-time-format";
 export { PageFooter } from "./page-footer";
 export { PasswordInput } from "./password-input";
 export { Select } from "./select";

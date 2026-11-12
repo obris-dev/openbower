@@ -65,8 +65,18 @@ export const apiRoutes = {
     // POST: abandon an unclaimed preview run; a running or terminal run no-ops.
     cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
+  // A signal is a listener on the signals service and the sheet it fills
+  // (the API calls it a log); the UI says Signal.
+  logs: {
+    // GET: keyset index (?after=), newest first. POST: create.
+    index: `/${API_VERSION}/logs`,
+    // GET / PATCH / DELETE: one, with its listener read live.
+    detail: (id: string) => `/${API_VERSION}/logs/${id}`,
+    // POST: a fresh sync key in place of a refused one; the signals resume.
+    reconnect: `/${API_VERSION}/logs/reconnect`,
+  },
   sheets: {
-    // GET: keyset index (?after=). POST: create.
+    // GET: keyset index (?after=), every kind. POST: create.
     index: `/${API_VERSION}/sheets`,
     // GET: the whole folder set. POST: create.
     folders: `/${API_VERSION}/sheets/folders`,
@@ -127,16 +137,21 @@ export const authRoutes = {
 } as const;
 
 const SHEET_PREFIX = "/sheets";
+const SIGNAL_PREFIX = "/signals";
 const SETTINGS_PREFIX = "/settings";
 
 // Next.js frontend paths the browser navigates to programmatically.
 export const webRoutes = {
-  // Home IS the sheets index (sheets are the unit of work).
+  // Home IS the sheets index: every sheet, a signal's among them.
   home: "/",
   sheets: "/",
   // The detail prefix: nav highlighting matches on it, sheet() builds on it.
   sheetPrefix: SHEET_PREFIX,
   sheet: (id: string) => `${SHEET_PREFIX}/${id}`,
+  // The signals a person set up; a signal's id is its sheet's.
+  signals: SIGNAL_PREFIX,
+  signalNew: `${SIGNAL_PREFIX}/new`,
+  signal: (id: string) => `${SIGNAL_PREFIX}/${id}`,
   agents: "/agents",
   agentNew: "/agents/new",
   agent: (id: string) => `/agents/${id}`,

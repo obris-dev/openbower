@@ -1,6 +1,6 @@
 """The log kind: a log's sheet order is newest first, fixed at append, so
 the one way rows page (the grid's keyset, a walk) reads it newest first;
-a time window bounds it by id; the index and folder counts leave logs out.
+a time window bounds it by id; the index and folder counts include a log.
 
 Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_log_kind
 """
@@ -19,14 +19,10 @@ from sheets.constants import RowSource, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.operations.append_rows import AppendRowsOperation
 from sheets.services.sheets import (
-    FOLDER_SERVICES,
     FolderService,
-    LogFolderService,
     LogRowsFixed,
     RowCursor,
     SheetService,
-    StandardFolderService,
-    folder_service_for,
 )
 
 ACCOUNT = TEST_IDENTITY["account_id"]
@@ -144,8 +140,10 @@ class LogKindTests(TestCase):
         stored = self.sheets.row(self.log, row["id"])
         self.assertEqual(row["created_at"], stored.created_at.isoformat())
 
-    def test_the_sheets_index_and_folder_counts_leave_logs_out(self):
-        folders = StandardFolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
+    def test_the_sheets_index_and_folder_counts_include_a_log(self):
+        # FAILS if the index leaves a log out: home is every sheet, a
+        # signal's log among them.
+        folders = FolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
         folder = folders.create(label="Folder")
         Sheet.objects.filter(id=self.log.id).update(folder_id=str(folder.id))
         sheet = self.sheets.create(
@@ -156,9 +154,28 @@ class LogKindTests(TestCase):
             folder_id=str(folder.id),
         )
         index = self.client.get(reverse("sheets_index")).json()
-        self.assertEqual([item["id"] for item in index["items"]], [str(sheet.id)])
-        self.assertEqual(index["items"][0]["kind"], "standard")
-        self.assertEqual(folders.sheet_counts([str(folder.id)]), {str(folder.id): 1})
+        self.assertEqual(
+            [(item["id"], item["kind"]) for item in index["items"]],
+            [(str(sheet.id), "standard"), (str(self.log.id), "log")],
+        )
+        self.assertEqual(folders.sheet_counts([str(folder.id)]), {str(folder.id): 2})
+
+    def test_the_index_narrows_to_one_kind(self):
+        # FAILS if ?kind= is ignored: a producer asking which sheets take a
+        # push would be handed a log, whose push answers 409.
+        sheet = self.sheets.create(
+            owner_id=TEST_IDENTITY["id"], label="Sheet", columns=COLUMNS, origin=SheetOrigin.MANUAL
+        )
+        url = reverse("sheets_index")
+        standard = self.client.get(url, {"kind": "standard"}).json()
+        self.assertEqual([item["id"] for item in standard["items"]], [str(sheet.id)])
+        logs = self.client.get(url, {"kind": "log"}).json()
+        self.assertEqual([item["id"] for item in logs["items"]], [str(self.log.id)])
+
+    def test_the_index_refuses_a_kind_it_does_not_have(self):
+        response = self.client.get(reverse("sheets_index"), {"kind": "digest"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("standard, log", str(response.json()))
 
     def test_the_detail_names_the_kind(self):
         detail = self.client.get(reverse("sheets_detail", kwargs={"id": str(self.log.id)})).json()
@@ -179,51 +196,30 @@ class LogKindTests(TestCase):
 
 
 class FolderKindTests(TestCase):
-    """Folders are shared across kinds (a folder is a place sheets point
-    at); each kind's FolderService counts its own kind's sheets in them,
-    and kind=None counts every kind."""
+    """Folders hold sheets of any kind (a folder is a place sheets point
+    at), and count them all."""
 
     def setUp(self) -> None:
         login_session(self.client)
         self.sheets = SheetService(account_id=ACCOUNT)
-        self.standard = StandardFolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
-        self.logs = LogFolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
-        self.from_sheets = self.standard.create(label="Made on the sheets home")
-        self.from_logs = self.logs.create(label="Made on the logs home")
+        self.folders = FolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
+        self.folder = self.folders.create(label="Funding")
 
     def _make(self, kind: SheetKind) -> Sheet:
         return self.sheets.create(
             owner_id=TEST_IDENTITY["id"], label=kind.value, columns=COLUMNS, origin=SheetOrigin.MANUAL, kind=kind
         )
 
-    def test_every_home_lists_the_same_folders(self):
-        ids = {str(self.from_sheets.id), str(self.from_logs.id)}
-        self.assertEqual({str(f.id) for f in self.standard.all()}, ids)
-        self.assertEqual({str(f.id) for f in self.logs.all()}, ids)
-        self.assertEqual({item["id"] for item in self.client.get(reverse("sheets_folders")).json()["items"]}, ids)
-
-    def test_a_folder_holds_either_kind_and_each_service_counts_its_own(self):
-        # FAILS if a service counts across kinds: each would see 2.
-        folder = str(self.from_sheets.id)
+    def test_a_folder_holds_and_counts_either_kind(self):
+        folder = str(self.folder.id)
         self.sheets.move(self._make(SheetKind.STANDARD), folder_id=folder)
         self.sheets.move(self._make(SheetKind.LOG), folder_id=folder)
-        self.assertEqual(self.standard.sheet_counts([folder]), {folder: 1})
-        self.assertEqual(self.logs.sheet_counts([folder]), {folder: 1})
-        everything = FolderService(account_id=ACCOUNT, user_id=TEST_IDENTITY["id"], kind=None)
-        self.assertEqual(everything.sheet_counts([folder]), {folder: 2})
+        self.assertEqual(self.folders.sheet_counts([folder]), {folder: 2})
 
     def test_deleting_a_folder_unfiles_every_kind(self):
-        folder = str(self.from_sheets.id)
+        folder = str(self.folder.id)
         sheet, log = self._make(SheetKind.STANDARD), self._make(SheetKind.LOG)
         self.sheets.move(sheet, folder_id=folder)
         self.sheets.move(log, folder_id=folder)
-        self.standard.delete(self.from_sheets)
+        self.folders.delete(self.folder)
         self.assertEqual(set(Sheet.objects.filter(id__in=[sheet.id, log.id]).values_list("folder_id", flat=True)), {""})
-
-    def test_every_kind_has_its_folder_service(self):
-        # FAILS when a kind is added without its service.
-        self.assertEqual(set(FOLDER_SERVICES), set(SheetKind))
-        for kind in SheetKind:
-            with self.subTest(kind=kind):
-                service = folder_service_for(kind, account_id=ACCOUNT, user_id=TEST_IDENTITY["id"])
-                self.assertEqual(service.kind, kind)

@@ -42,6 +42,13 @@ violation shipped once and got caught).
   `loading` slot IS a Suspense fallback, and it renders a SKELETON
   holding the real layout's shape (same grid, same heights, pulse with
   `motion-reduce:animate-none`), never a blank beat.
+- A moment on screen reads in the READER'S time zone: render it with
+  `LocalTime` (`@bower/ui`, `TIME_FORMAT.DAY` or `MINUTE`), never a
+  hand-pinned `toLocaleString`. The server cannot know the zone, so the
+  server render and its hydration read in UTC (a minute names it) and
+  the browser renders the local reading straight after. The webhook
+  delivery log keeps its own UTC-with-seconds format (`formatTime`):
+  it is matched against a receiver's log, which reads in UTC.
 - Every route group carries `error.tsx` (the house PageState + retry
   idiom, console.error keeping the digest) and `not-found.tsx`; a
   render crash must never reach Next's unstyled default.
@@ -177,13 +184,15 @@ violation shipped once and got caught).
   directory rows via their menu, the API keys row off its Revoke
   button); the inline form takes the destructive verb's own place in a
   bar (a page footer, the sheet toolbar's action slot) and the bar's
-  other actions stay where they are. Two acts open `ConfirmDialog`,
+  other actions stay where they are. Three acts open `ConfirmDialog`,
   the one modal, holding the same form: a row's delete, chosen from a
-  menu that is gone when the question is asked (no slot), and the
+  menu that is gone when the question is asked (no slot); the
   selection's delete, whose verb sits in the floating pill (a slot too
   small for the form, floating over the very rows it names, so the two
   deletes ask the same way rather than one of them growing under the
-  pointer). Polaris opens a modal for every such decision; the
+  pointer); and a signal's delete, which waits on the signals service
+  and can be refused there, so the question holds still until it
+  answers (a popover closes on an outside click mid-request). Polaris opens a modal for every such decision; the
   anchored panel keeps what the modal is for (one decision, nothing
   else moving) without the overlay.
 
@@ -205,7 +214,7 @@ per action across the product, so a person learns the vocabulary once.
   mode), so the verb rules do not reach it.
 - **Create** makes something from nothing that then has its own
   identity: Create API key, Create agent, Create sheet, Create folder,
-  Create account. **Add** brings in something that already exists, or
+  Create signal, Create account. **Add** brings in something that already exists, or
   attaches a part to a parent: Add destination (the receiver exists
   before we know it), Add column, Add rows, Add AI column. "New",
   "Mint", "Generate", "Build" and "Make" are never the action verb.

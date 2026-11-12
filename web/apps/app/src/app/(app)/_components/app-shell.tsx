@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, House } from "lucide-react";
+import { Bot, Radio, Table2 } from "lucide-react";
 import { Sidebar, ThemeToggle } from "@bower/ui";
 import { webRoutes } from "@bower/api";
 import { useUser } from "@bower/auth";
@@ -17,11 +17,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const navigation = [
     {
-      name: "Home",
-      href: webRoutes.home,
-      icon: House,
-      current: pathname === webRoutes.home || pathname.startsWith(webRoutes.sheetPrefix),
+      name: "Sheets",
+      href: webRoutes.sheets,
+      icon: Table2,
+      current: pathname === webRoutes.sheets || pathname.startsWith(webRoutes.sheetPrefix),
     },
+    { name: "Signals", href: webRoutes.signals, icon: Radio, current: pathname.startsWith(webRoutes.signals) },
     { name: "Agents", href: webRoutes.agents, icon: Bot, current: pathname.startsWith(webRoutes.agents) },
   ];
 

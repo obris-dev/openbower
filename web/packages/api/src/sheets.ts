@@ -94,11 +94,27 @@ export type UnknownColumn = Pick<PlainColumn, "key" | "label" | "type"> & { kind
  * row types widen after the parse and so need a second name. */
 export type SheetColumn = WireSheetColumn | UnknownColumn;
 export type ColumnKind = SheetColumn["kind"];
-export type SheetSummary = Omit<WireSheetSummary, "columns"> & { columns: SheetColumn[] };
+
+/** Whether a column's values arrive with the row and are never a
+ * person's to edit or delete (a signal's base columns). A kind this
+ * bundle does not know carries no flag, so it claims none. */
+export function isImmutable(column: SheetColumn): boolean {
+  if (column.kind === UNKNOWN_COLUMN_KIND) return false;
+  return column.immutable;
+}
+/** A sheet's kind, as the server names it: standard (a person's), or
+ * log (a signal fills it). */
+export const SHEET_KIND = { STANDARD: "standard", LOG: "log" } as const;
+// A kind this bundle has not heard of reads as this client-only member,
+// which offers no verb: every real kind decides which of a sheet's
+// actions the server takes, and a stale bundle cannot know that.
+export const UNKNOWN_SHEET_KIND = "unknown_kind" as const;
+export type SheetKind = (typeof SHEET_KIND)[keyof typeof SHEET_KIND] | typeof UNKNOWN_SHEET_KIND;
+export type SheetSummary = Omit<WireSheetSummary, "columns" | "kind"> & { columns: SheetColumn[]; kind: SheetKind };
 /** One list as its SHEET holds it: the summary plus its entry actions
  * (where a fill may start). The detail door (GET and PATCH) and every
  * write to the columns array answer with this. */
-export type SheetDetail = Omit<WireSheetDetail, "columns"> & { columns: SheetColumn[] };
+export type SheetDetail = Omit<WireSheetDetail, "columns" | "kind"> & { columns: SheetColumn[]; kind: SheetKind };
 export type SheetsPage = Omit<WireSheetsPage, "items"> & { items: SheetSummary[] };
 export type ImportResult = Omit<WireImportResult, "sheet"> & { sheet: SheetSummary };
 
@@ -124,12 +140,25 @@ const UnknownColumnSchema = z
   })
   .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
 const TolerantSheetColumnSchema = z.union([SheetColumnSchema, UnknownColumnSchema]);
-export const TolerantSheetSummarySchema = SheetSummarySchema.extend({ columns: z.array(TolerantSheetColumnSchema).default([]) });
+const KNOWN_SHEET_KINDS = new Set<string>(SheetSummarySchema.shape.kind.options);
+const TolerantSheetKindSchema = z.string().transform((kind): SheetKind => {
+  if (KNOWN_SHEET_KINDS.has(kind)) return kind as SheetKind;
+  // Loud in the console, quiet on the page: the sheet still opens.
+  console.error(`Unknown sheet kind "${kind}": this sheet offers no actions until the app is updated.`);
+  return UNKNOWN_SHEET_KIND;
+});
+export const TolerantSheetSummarySchema = SheetSummarySchema.extend({
+  kind: TolerantSheetKindSchema,
+  columns: z.array(TolerantSheetColumnSchema).default([]),
+});
 // `entry_action_ids` stays REQUIRED, against the default-new-fields
 // precedent below: this bundle's fill route and create semantics need
 // this server anyway, so an older server is not a case to tolerate, and
 // a defaulted [] would silently hide every Fill control instead.
-export const TolerantSheetDetailSchema = SheetDetailSchema.extend({ columns: z.array(TolerantSheetColumnSchema).default([]) });
+export const TolerantSheetDetailSchema = SheetDetailSchema.extend({
+  kind: TolerantSheetKindSchema,
+  columns: z.array(TolerantSheetColumnSchema).default([]),
+});
 export const TolerantSheetsPageSchema = SheetsPageSchema.extend({ items: z.array(TolerantSheetSummarySchema) });
 const TolerantImportResultSchema = ImportResultSchema.extend({ sheet: TolerantSheetSummarySchema });
 

@@ -1,8 +1,7 @@
 # A sheet's kind, with a database default so every sheet that exists, and
 # every insert from a process still on the code before this column, reads
-# "standard": additive, no stop. The account index gains the kind (every
-# listing reads one kind of an account); the new one is built before the
-# old one goes.
+# "standard": additive, no stop. A second account index carries the kind,
+# for the listing that reads one kind of an account.
 
 from django.db import migrations, models
 
@@ -22,9 +21,5 @@ class Migration(migrations.Migration):
         migrations.AddIndex(
             model_name='sheet',
             index=models.Index(fields=['account_id', 'kind', 'id'], name='sheet_account_kind_idx'),
-        ),
-        migrations.RemoveIndex(
-            model_name='sheet',
-            name='sheet_account_idx',
         ),
     ]
