@@ -1429,8 +1429,28 @@
           "title": "Autofill",
           "type": "boolean"
         },
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
+        },
         "listener": {
-          "$ref": "#/$defs/ListenerWire"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
@@ -1439,12 +1459,25 @@
           "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
           "title": "Signal",
           "type": "string"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
         }
       },
       "required": [
         "sheet",
         "listener",
         "signal",
+        "status",
+        "last_polled_at",
         "autofill"
       ],
       "title": "LogDetail",
@@ -1458,6 +1491,18 @@
           "title": "Autofill",
           "type": "boolean"
         },
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
+        },
         "listener_id": {
           "description": "The listener whose matches become the log's rows.",
           "title": "Listener Id",
@@ -1470,12 +1515,25 @@
           "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
           "title": "Signal",
           "type": "string"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
         }
       },
       "required": [
         "sheet",
         "listener_id",
         "signal",
+        "status",
+        "last_polled_at",
         "autofill"
       ],
       "title": "LogSummary",
@@ -2299,6 +2357,27 @@
         "limits"
       ],
       "title": "SignalsCatalog",
+      "type": "object"
+    },
+    "SyncKeyReconnected": {
+      "description": "`POST /v1/logs/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
+      "properties": {
+        "left_live_key_id": {
+          "description": "The replaced key while it is still live (another member minted it, or its revoke failed).",
+          "title": "Left Live Key Id",
+          "type": "string"
+        },
+        "left_live_user_id": {
+          "description": "Who minted the key left live; empty when none was.",
+          "title": "Left Live User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "left_live_key_id",
+        "left_live_user_id"
+      ],
+      "title": "SyncKeyReconnected",
       "type": "object"
     },
     "WebhookAttemptWire": {

@@ -21,15 +21,17 @@ from auth_client.downstream import DownstreamTokenRejected
 from auth_client.models import AppSession
 from openbower_schema import ListenerWire
 
+from ..constants import LogStatus
 from ..log_columns import LOG_SHAPES
 from ..services.logs import LocalLog, LogService
 from ..services.signals_client import (
     SessionSignalsClient,
     SignalsClientError,
     SignalsClientService,
+    SignalsNotFound,
     setup_payload,
 )
-from ..services.sync_key import SyncKeyService
+from ..services.sync_key import SyncKeyReplaced, SyncKeyService
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +44,22 @@ class UnknownSignal(Exception):
         self.signal = signal
 
 
+class ListenerGone(Exception):
+    """The log's listener no longer exists on the signals service: the log
+    can be read and deleted, not edited."""
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("this log's listener no longer exists; delete the log")
+        self.sheet_id = sheet_id
+
+
 @dataclass(frozen=True)
 class Log:
-    """A log whole: its sheet and feed, and its listener as the service has it."""
+    """A log whole: its sheet and feed, and its listener as the service has
+    it (None once the listener is gone)."""
 
-    local: LocalLog
-    listener: ListenerWire
+    local_log: LocalLog
+    listener: ListenerWire | None
 
 
 class _LogOperation:
@@ -98,7 +110,7 @@ class CreateLogOperation(_LogOperation):
         self.keys.ensure(session)
         listener = self.signals.create_listener(payload={"label": self.label, "signal": self.signal, **self.setup})
         try:
-            local = self.logs.create(
+            local_log = self.logs.create(
                 owner_id=session.user_id,
                 label=self.label,
                 signal=self.signal,
@@ -108,7 +120,41 @@ class CreateLogOperation(_LogOperation):
         except DatabaseError:
             _delete_listener(self.signals, listener.id, why="its log could not be created")
             raise
-        return Log(local=local, listener=listener)
+        return Log(local_log=local_log, listener=listener)
+
+
+class ReconnectLogsOperation(_LogOperation):
+    def __init__(self, session: AppSession) -> None:
+        self.session = session
+
+    def run(self) -> SyncKeyReplaced:
+        """A fresh sync key through this person in place of the account's
+        refused (or missing) one, then the account's logs due at once: they
+        were parked waiting for it, and resume from their cursors."""
+        replaced = self.keys.reconnect(self.session)
+        self.logs.wake()
+        return replaced
+
+
+class ReadLogOperation(_LogOperation):
+    def __init__(self, session: AppSession, sheet_id: str) -> None:
+        self.session = session
+        self.sheet_id = sheet_id
+
+    def run(self) -> Log:
+        """The log with its listener read live. A listener the service no
+        longer has is recorded as gone (the log stops polling) and answered
+        as None, so the log still opens to say so."""
+        local_log = self.logs.get(self.sheet_id)
+        if local_log.status == LogStatus.LISTENER_GONE:
+            return Log(local_log=local_log, listener=None)
+        feed = local_log.feed
+        try:
+            listener = self.signals.listener(listener_id=feed.listener_id)
+        except SignalsNotFound:
+            gone = self.logs.mark_listener_gone(local_log)
+            return Log(local_log=gone, listener=None)
+        return Log(local_log=local_log, listener=listener)
 
 
 class EditLogOperation(_LogOperation):
@@ -135,17 +181,25 @@ class EditLogOperation(_LogOperation):
         """The label and the setup go to the listener (the label to the sheet
         too); autofill is the feed's alone. The listener is written first, so
         a failed local write leaves its label ahead of the sheet's until the
-        edit is retried."""
-        local = self.logs.get(self.sheet_id)
+        edit is retried. Raises ListenerGone for a log whose listener the
+        service no longer has (recorded the first time it says so)."""
+        local_log = self.logs.get(self.sheet_id)
+        if local_log.status == LogStatus.LISTENER_GONE:
+            raise ListenerGone(self.sheet_id)
+        feed = local_log.feed
         payload: dict[str, Any] = {**(self.setup or {})}
         if self.label is not None:
             payload["label"] = self.label
-        if payload:
-            listener = self.signals.edit_listener(listener_id=local.feed.listener_id, payload=payload)
-        else:
-            listener = self.signals.listener(listener_id=local.feed.listener_id)
-        edited = self.logs.edit(local, label=self.label, autofill=self.autofill)
-        return Log(local=edited, listener=listener)
+        try:
+            if payload:
+                listener = self.signals.edit_listener(listener_id=feed.listener_id, payload=payload)
+            else:
+                listener = self.signals.listener(listener_id=feed.listener_id)
+        except SignalsNotFound:
+            self.logs.mark_listener_gone(local_log)
+            raise ListenerGone(self.sheet_id) from None
+        edited = self.logs.edit(local_log, label=self.label, autofill=self.autofill)
+        return Log(local_log=edited, listener=listener)
 
 
 class DeleteLogOperation(_LogOperation):
@@ -157,9 +211,10 @@ class DeleteLogOperation(_LogOperation):
         """The listener first (the client counts one already gone as
         deleted), then the sheet and its feed in one transaction. A signals failure
         deletes nothing here, so the person can try again."""
-        local = self.logs.get(self.sheet_id)
-        self.signals.delete_listener(listener_id=local.feed.listener_id)
-        self.logs.delete(local)
+        local_log = self.logs.get(self.sheet_id)
+        feed = local_log.feed
+        self.signals.delete_listener(listener_id=feed.listener_id)
+        self.logs.delete(local_log)
 
 
 def _delete_listener(client, listener_id: str, *, why: str) -> None:

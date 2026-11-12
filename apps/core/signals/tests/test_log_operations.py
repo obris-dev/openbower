@@ -58,7 +58,7 @@ class LogOperationTests(TestCase):
                 )
             ],
         )
-        sheet = Sheet.objects.get(id=log.local.sheet.id)
+        sheet = Sheet.objects.get(id=log.local_log.sheet.id)
         self.assertEqual((sheet.kind, sheet.label), (SheetKind.LOG, "Robotics raises"))
         self.assertEqual([column.key for column in sheet.columns], [column.key for column in FUNDING_COLUMNS])
         self.assertTrue(all(column.immutable for column in sheet.columns))
@@ -112,7 +112,7 @@ class LogOperationTests(TestCase):
 
     def test_edit_sends_the_label_to_both_and_the_setup_to_the_listener(self):
         log = self._create()
-        sheet_id = str(log.local.sheet.id)
+        sheet_id = str(log.local_log.sheet.id)
         EditLogOperation(self.session, sheet_id, label="Renamed").run()
         self.assertEqual(Sheet.objects.get(id=sheet_id).label, "Renamed")
         EditLogOperation(self.session, sheet_id, filter={"stages": ["seed"]}).run()
@@ -122,35 +122,35 @@ class LogOperationTests(TestCase):
 
     def test_autofill_is_the_feeds_alone(self):
         log = self._create()
-        edited = EditLogOperation(self.session, str(log.local.sheet.id), autofill=False).run()
-        self.assertFalse(LogFeed.objects.get(id=edited.local.feed.id).autofill)
+        edited = EditLogOperation(self.session, str(log.local_log.sheet.id), autofill=False).run()
+        self.assertFalse(LogFeed.objects.get(id=edited.local_log.feed.id).autofill)
         self.assertEqual(self._signals_calls("PATCH"), [])
 
     def test_delete_removes_the_listener_the_feed_and_the_sheet(self):
         log = self._create()
-        DeleteLogOperation(self.session, str(log.local.sheet.id)).run()
+        DeleteLogOperation(self.session, str(log.local_log.sheet.id)).run()
         self.assertEqual(self.signals.listeners, {})
         self.assertFalse(LogFeed.objects.exists())
-        self.assertFalse(Sheet.objects.filter(id=log.local.sheet.id).exists())
+        self.assertFalse(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_signals_outage_deletes_nothing(self):
         log = self._create()
         self.signals.next["DELETE"] = httpx.Response(503)
         with self.assertRaises(SignalsUpstreamUnavailable):
-            DeleteLogOperation(self.session, str(log.local.sheet.id)).run()
+            DeleteLogOperation(self.session, str(log.local_log.sheet.id)).run()
         self.assertTrue(LogFeed.objects.exists())
-        self.assertTrue(Sheet.objects.filter(id=log.local.sheet.id).exists())
+        self.assertTrue(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_listener_already_gone_still_deletes_the_log(self):
         log = self._create()
         self.signals.listeners.clear()
-        DeleteLogOperation(self.session, str(log.local.sheet.id)).run()
-        self.assertFalse(Sheet.objects.filter(id=log.local.sheet.id).exists())
+        DeleteLogOperation(self.session, str(log.local_log.sheet.id)).run()
+        self.assertFalse(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_log_without_its_feed_is_a_broken_invariant(self):
         # FAILS if the index drops a feedless log: the page comes back short
         # and paging stops before the older logs.
         log = self._create()
-        LogFeed.objects.filter(sheet_id=str(log.local.sheet.id)).delete()
+        LogFeed.objects.filter(sheet_id=str(log.local_log.sheet.id)).delete()
         with self.assertRaises(KeyError):
             LogService(account_id=USER.account_id).page(after_id="", limit=10)

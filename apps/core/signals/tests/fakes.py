@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from unittest.mock import patch
+from urllib.parse import parse_qs
 
 import httpx
 
@@ -45,6 +46,38 @@ def listener_body(listener_id: str, *, label: str, filter: dict, prompt: str = "
     }
 
 
+def match_body(n: int, *, company: str) -> dict:
+    """The nth match of a listener (its id sorts with n), a funding event
+    about `company`."""
+    return {
+        "id": f"01MAT{n:021d}",
+        "version_id": "01JQ" + "V" * 22,
+        "confidence": None,
+        "reason": "",
+        "judged_at": AT,
+        "event": {
+            "id": f"01EVT{n:021d}",
+            "signal": "funding",
+            "data": {
+                "company": {"name": company, "domain": f"{company.lower()}.example", "hq": None, "description": None},
+                "amount": 5_000_000.0,
+                "currency": "USD",
+                "stage": "seed",
+                "instruments": ["equity"],
+                "lead_investors": ["Example Ventures"],
+                "other_investors": [],
+            },
+            "logged_at": AT,
+            "source": {
+                "title": f"{company} raises",
+                "summary": "",
+                "url": "https://news.example.com/a",
+                "published": AT,
+            },
+        },
+    }
+
+
 class FakeSignals:
     """The signals service's listener routes over an in-memory store."""
 
@@ -55,6 +88,10 @@ class FakeSignals:
         # Fixed answers by (method, path), for the routes passed through as
         # they are (the catalog, events, previews).
         self.fixed: dict[tuple[str, str], httpx.Response] = {}
+        # Each listener's matches, oldest first, for its poll; `on_matches`
+        # runs once just before the next poll answers (a rival poller).
+        self.matches: dict[str, list[dict]] = {}
+        self.on_matches = None
         self._n = 0
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -78,6 +115,8 @@ class FakeSignals:
                 min_confidence=body.get("min_confidence") or 0.7,
             )
             return httpx.Response(201, json=self.listeners[listener_id])
+        if request.method == "GET" and path.endswith("/matches"):
+            return self._matches(path.rsplit("/", 2)[-2], parse_qs(request.url.query.decode()))
         listener_id = path.rstrip("/").rsplit("/", 1)[-1]
         if listener_id not in self.listeners:
             return httpx.Response(404, json={"error": "not_found", "detail": "no such listener"})
@@ -95,6 +134,26 @@ class FakeSignals:
             del self.listeners[listener_id]
             return httpx.Response(204)
         return httpx.Response(405)
+
+    def _matches(self, listener_id: str, query: dict[str, list[str]]) -> httpx.Response:
+        """The service's poll: after a match id, at most `limit`, and the
+        cursor given back when nothing is new."""
+        rival, self.on_matches = self.on_matches, None
+        if rival is not None:
+            rival()
+        if listener_id not in self.listeners:
+            return httpx.Response(404, json={"error": "not_found", "detail": "no such listener"})
+        held = self.matches.get(listener_id, [])
+        after = query.get("after", [None])[0]
+        limit = int(query.get("limit", ["50"])[0])
+        if after is not None:
+            ids = [match["id"] for match in held]
+            if after not in ids:
+                return httpx.Response(400, json={"error": "invalid_request", "detail": "unknown cursor"})
+            held = held[ids.index(after) + 1 :]
+        page = held[:limit]
+        next_cursor = page[-1]["id"] if page else after
+        return httpx.Response(200, json={"items": page, "next_cursor": next_cursor})
 
 
 class FakeIdentity:

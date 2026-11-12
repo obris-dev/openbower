@@ -25,7 +25,7 @@ from .fills import (
     FillRunPage,
     FillRunWire,
 )
-from .logs import LogDetail, LogsPage, LogSummary
+from .logs import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
@@ -144,6 +144,7 @@ __all__ = [
     "SignalKind",
     "SignalLimits",
     "SignalsCatalog",
+    "SyncKeyReconnected",
     "WebhookAttemptWire",
     "WebhookColumn",
     "WebhookColumnConfigWire",

@@ -72,7 +72,19 @@ live in a separate private repo.
   `signals.log_columns`, filled from each match. Its RUNS wait in arrival order instead,
   oldest first (`processors.base.queue_position` stamps a log's run with
   its row's id, a standard sheet's with its rank), so a backlog drains
-  FIFO.
+  FIFO. The LOG POLLER (the `log-poller` service,
+  `signals.operations.log_poller`) fills a log: each log is due at its
+  own `next_poll_at`, served longest waiting first, and held by one
+  poller through a compare-and-set lease that lapses if the poller dies,
+  so any number run and a busy log never starves a quiet one; one that
+  cannot fill (its key refused, or full) is parked, and a reconnect wakes
+  the account's. One claim is one page: the matches after the log's
+  cursor, read with the account's sync key, appended and the cursor moved
+  by compare-and-set (holding autofill too) in ONE transaction, sheet
+  first and feed second (the order a delete takes), so a page lands once.
+  A log's STATUS (active, reconnect, listener_gone, full) is derived on
+  every read from its feed, the account's key and its row count, never
+  stored.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -112,7 +124,13 @@ live in a separate private repo.
   command over an operation (the reclaim_node_runs command over
   NodeRunFlow.reclaim_stale_processing and abandon_orphans). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
-  never a lock.
+  never a lock. A queue that should drain as it fills is a SERVICE, not
+  a schedule (the `jobs` runner, the log poller): a loop with a
+  heartbeat its healthcheck reads, claims by compare-and-set so any
+  number can run, and `--once` for one pass. The kernel's `Daemon`
+  (`openbower_kernel.daemon`) is that loop, and a new worker runs on it:
+  the operation does ONE unit per `step()` and says whether it did work,
+  the command is plumbing (the log poller is the exemplar).
 - BACKGROUND work a request must not do (a sheet-sized walk, a file
   build) is a Job: a row in the `jobs` app's one table, a kind = a
   typed payload class (`JobKind[Progress]`, typed by its own cursor)

@@ -26,7 +26,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/common.mk $(DEPLOY_DIR)/make/app/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test-workers test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-poller restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-poller logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs poll-logs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test-workers test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -66,7 +66,7 @@ db-up: ## Start just the database (what host-run tests need)
 # Seeds the config files when absent (never overwrites), creates the
 # suite network, and runs `setup` once, until config/providers.toml
 # exists.
-up: ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + cron)
+up: ## Start the full local stack in Docker, detached (api :8002, app :3003, marketing :3004, fill services + jobs + log poller + cron)
 	@$(ADMIN) up
 
 # Do not interrupt: a Ctrl-C while the worker is being recreated leaves it
@@ -99,8 +99,11 @@ restart: ## Restart all services in place (compose-file edits need make up, whic
 restart-core: ## Restart just the api
 	$(COMPOSE) restart core
 
-restart-worker: ## Restart the fill + autofill provisioners and consumers and the jobs service (what a change to their shared code needs; no reloader)
-	$(COMPOSE) restart fill-provisioner fill-consumer autofill-provisioner autofill-consumer jobs
+restart-worker: ## Restart the fill + autofill provisioners and consumers, the jobs service and the log poller (what a change to their shared code needs; no reloader)
+	$(COMPOSE) restart fill-provisioner fill-consumer autofill-provisioner autofill-consumer jobs log-poller
+
+restart-poller: ## Restart the log poller (no reloader: a change to its code needs it)
+	$(COMPOSE) restart log-poller
 
 restart-cron: ## Restart the cron (a crontab schedule edit needs it; supercronic parses at startup)
 	$(COMPOSE) restart cron
@@ -146,6 +149,9 @@ logs-worker: ## Tail the fill provisioner + manual consumer logs
 logs-jobs: ## Tail the jobs service's logs (the walks that queue a fill's or a backfill's runs)
 	@$(ADMIN) logs jobs
 
+logs-poller: ## Tail the log poller's logs (matches read from the signals service into logs)
+	@$(ADMIN) logs log-poller
+
 logs-ingest: ## Tail the ingest worker's logs (row-push consume/dedupe/apply)
 	@$(ADMIN) logs ingest-worker
 
@@ -166,6 +172,8 @@ flush-deferred: ## Run the deferred flush once, in the cron container (sends eve
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_deferred
 run-jobs: ## Run one jobs tick by hand, in the jobs container (the service loops on its own)
 	$(COMPOSE) exec jobs uv run --frozen --package openbower-core python apps/core/manage.py run_jobs --once
+poll-logs: ## Poll every due log once by hand, in the poller container (the service loops on its own)
+	$(COMPOSE) exec log-poller uv run --frozen --package openbower-core python apps/core/manage.py poll_signal_logs --once
 
 # A debugging aid outside the stack: a plain container on the stack's
 # network, so it never rides `make up` or a deployment.

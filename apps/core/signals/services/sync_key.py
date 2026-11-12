@@ -70,10 +70,14 @@ class SyncKeyService:
 
     def reconnect(self, session: AppSession) -> SyncKeyReplaced:
         """A fresh key through `session` (a person of this account) in place
-        of the account's (or its first, when it has none), the replaced key
-        retired after."""
+        of the account's refused one (or its first, when it has none), the
+        replaced key retired after. A key the service has not refused stays:
+        replacing a working key would leave another member's live in their
+        keys list, holding one of their slots, for nothing."""
         self._require_own(session)
         current = SignalsSyncKey.objects.filter(account_id=self.account_id).first()
+        if current is not None and current.rejected_at is None:
+            return SyncKeyReplaced(key=current)
         return self._swap(session, expected=current)
 
     def _require_own(self, session: AppSession) -> None:
@@ -138,14 +142,25 @@ class SyncKeyService:
             return SyncKeyReplaced(key=key, left_live_key_id=replaced.key_id, left_live_user_id=replaced.user_id)
         return SyncKeyReplaced(key=key)
 
+    def current(self) -> SignalsSyncKey | None:
+        """The account's working key (one the service has not refused), or
+        None: what its logs need to keep filling. One read; a caller that
+        needs it twice keeps what it read."""
+        working = SignalsSyncKey.objects.filter(account_id=self.account_id, rejected_at__isnull=True)
+        return working.first()
+
     def client(self) -> KeySignalsClient | None:
-        """The feed's signals client off the account's key, or None when the
-        account has no key or the service refused it (its feeds wait for a
-        person). The client names its key, so a refusal marks that key."""
-        current = SignalsSyncKey.objects.filter(account_id=self.account_id, rejected_at__isnull=True).first()
-        if current is None:
+        """The feed's signals client off the account's working key, or None
+        when it has none (its feeds wait for a person)."""
+        return self.client_of(self.current())
+
+    @staticmethod
+    def client_of(key: SignalsSyncKey | None) -> KeySignalsClient | None:
+        """The signals client off a key already read, or None for none. The
+        client names its key, so a refusal marks that key."""
+        if key is None:
             return None
-        return SignalsClientService.for_key(token=current.token, key_id=current.key_id)
+        return SignalsClientService.for_key(token=key.token, key_id=key.key_id)
 
     def mark_rejected(self, key_id: str) -> None:
         """The service refused `key_id`: stop using it. A key a reconnect has

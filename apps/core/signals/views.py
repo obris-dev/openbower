@@ -5,6 +5,7 @@ every failure answers through one mapping so a refusal reads the same everywhere
 
 from __future__ import annotations
 
+import datetime
 import logging
 from functools import cached_property
 
@@ -18,12 +19,21 @@ from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
-from openbower_schema import LogDetail, LogsPage, LogSummary
+from openbower_schema import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
 from sheets.constants import DEFAULT_INDEX_PAGE, MAX_INDEX_PAGE
 from sheets.serializers import sheet_summary
 
 from .constants import KEY_LIMIT_DETAIL, SignalsErrorCode
-from .operations.logs import CreateLogOperation, DeleteLogOperation, EditLogOperation, Log, UnknownSignal
+from .operations.logs import (
+    CreateLogOperation,
+    DeleteLogOperation,
+    EditLogOperation,
+    ListenerGone,
+    Log,
+    ReadLogOperation,
+    ReconnectLogsOperation,
+    UnknownSignal,
+)
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
 from .services.logs import LocalLog, LogNotFound, LogService
 from .services.signals_client import (
@@ -58,6 +68,8 @@ def _as_api_error(exc: Exception) -> Exception:
     left as raised."""
     if isinstance(exc, LogNotFound):
         return NotFound("no log with that id")
+    if isinstance(exc, ListenerGone):
+        return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalsClientRequestError):
@@ -82,16 +94,34 @@ def _as_api_error(exc: Exception) -> Exception:
     return exc
 
 
-def _summary(local: LocalLog) -> LogSummary:
-    sheet = sheet_summary(local.sheet)
-    feed = local.feed
-    return LogSummary(sheet=sheet, listener_id=feed.listener_id, signal=feed.signal, autofill=feed.autofill)
+def _summary(local_log: LocalLog) -> LogSummary:
+    sheet = sheet_summary(local_log.sheet)
+    feed = local_log.feed
+    return LogSummary(
+        sheet=sheet,
+        listener_id=feed.listener_id,
+        signal=feed.signal,
+        status=local_log.status,
+        last_polled_at=_iso(feed.last_polled_at),
+        autofill=feed.autofill,
+    )
 
 
 def _detail(log: Log) -> LogDetail:
-    sheet = sheet_summary(log.local.sheet)
-    feed = log.local.feed
-    return LogDetail(sheet=sheet, listener=log.listener, signal=feed.signal, autofill=feed.autofill)
+    sheet = sheet_summary(log.local_log.sheet)
+    feed = log.local_log.feed
+    return LogDetail(
+        sheet=sheet,
+        listener=log.listener,
+        signal=feed.signal,
+        status=log.local_log.status,
+        last_polled_at=_iso(feed.last_polled_at),
+        autofill=feed.autofill,
+    )
+
+
+def _iso(at: datetime.datetime | None) -> str | None:
+    return None if at is None else at.isoformat()
 
 
 class _SignalsView(ScopedView):
@@ -115,7 +145,7 @@ class LogsView(_SignalsView):
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         logs = self.logs.page(after_id=request.query_params.get("after", ""), limit=limit)
         items = [_summary(log) for log in logs]
-        next_cursor = next_cursor_from(logs, limit=limit, cursor=lambda log: str(log.sheet.id))
+        next_cursor = next_cursor_from(logs, limit=limit, cursor=lambda log: log.sheet_id)
         page = LogsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
@@ -127,11 +157,19 @@ class LogsView(_SignalsView):
         return Response(detail.model_dump(), status=201)
 
 
+class LogsReconnectView(_SignalsView):
+    def post(self, request: Request) -> Response:
+        replaced = ReconnectLogsOperation(request.auth).run()
+        body = SyncKeyReconnected(
+            left_live_key_id=replaced.left_live_key_id, left_live_user_id=replaced.left_live_user_id
+        )
+        return Response(body.model_dump())
+
+
 class LogDetailView(_SignalsView):
     def get(self, request: Request, id: str) -> Response:
-        local = self.logs.get(id)
-        listener = self.signals.listener(listener_id=local.feed.listener_id)
-        detail = _detail(Log(local=local, listener=listener))
+        log = ReadLogOperation(request.auth, id).run()
+        detail = _detail(log)
         return Response(detail.model_dump())
 
     def patch(self, request: Request, id: str) -> Response:

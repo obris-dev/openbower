@@ -4,5 +4,6 @@
 # their session's IdP access token (signals:read and signals:write); an
 # account's feed, with no one present, with the account's sync key
 # (SignalsSyncKey, signals:read). It also keeps a log's feed (LogFeed: the
-# listener whose matches become a log's rows) and serves /v1/logs and
-# /v1/signals.
+# listener whose matches become a log's rows, and where the poller has read
+# to), runs the log poller that fills logs (the log-poller service), and
+# serves /v1/logs and /v1/signals.
