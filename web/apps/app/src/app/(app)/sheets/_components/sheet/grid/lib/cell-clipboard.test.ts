@@ -3,11 +3,12 @@ import { test } from "node:test";
 
 import { UNKNOWN_COLUMN_KIND, type SheetColumn } from "@bower/api";
 
-import { acceptsPaste, copiedValueFor } from "./cell-clipboard.ts";
+import { acceptsPaste, copiedValueFor, holdsValue } from "./cell-clipboard.ts";
 
 const plain: SheetColumn = { key: "name", label: "Name", type: "text", kind: "plain", immutable: false };
 const ai: SheetColumn = { key: "a", label: "A", type: "text", kind: "ai", immutable: false, node_id: "n", current_fill_id: "" };
 const webhook: SheetColumn = { key: "w", label: "W", type: "text", kind: "webhook", immutable: false, node_id: "n" };
+const base: SheetColumn = { key: "company", label: "Company", type: "text", kind: "plain", immutable: true };
 const unknown: SheetColumn = { key: "u", label: "U", type: "text", kind: UNKNOWN_COLUMN_KIND };
 
 test("a plain or AI cell copies its value as it reads, empty included", () => {
@@ -28,4 +29,10 @@ test("a kind this build does not know takes no paste and copies nothing", () => 
   // build cannot name.
   assert.equal(acceptsPaste(unknown), false);
   assert.equal(copiedValueFor(unknown, "x"), null);
+});
+
+test("an immutable column copies its value and takes no paste", () => {
+  assert.equal(copiedValueFor(base, "Acme"), "Acme");
+  assert.equal(holdsValue(base), true);
+  assert.equal(acceptsPaste(base), false);
 });

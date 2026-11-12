@@ -8,7 +8,7 @@ export default function AppNotFound() {
   return (
     <PageState title="Page not found" subtitle="It may have been deleted, or the link is wrong.">
       <LinkButton size="sm" href={webRoutes.home}>
-        Back to Home
+        Back to Sheets
       </LinkButton>
     </PageState>
   );

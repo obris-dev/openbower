@@ -17,6 +17,7 @@ import {
   type ApiKeysList,
   type FoldersList,
 } from "@bower/schema";
+import { TolerantLogsPageSchema, type LogsPage } from "./logs.ts";
 import { renderablePage, TolerantSheetRowsPageSchema, type RenderableSheetRowsPage, TolerantSheetsPageSchema, TolerantSheetDetailSchema, type SheetsPage, type SheetDetail } from "./sheets.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
@@ -100,6 +101,11 @@ export async function fetchWebhookWithCookie(
 /** Server-side lists index page. */
 export async function fetchSheetsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<SheetsPage>> {
   return fetchParsedWithCookie(apiRoutes.sheets.index, cookieHeader, TolerantSheetsPageSchema);
+}
+
+/** Server-side first page of the signals a person set up (the signals tab). */
+export async function fetchLogsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<LogsPage>> {
+  return fetchParsedWithCookie(apiRoutes.logs.index, cookieHeader, TolerantLogsPageSchema);
 }
 
 /** Server-side folder set for the home directory. */

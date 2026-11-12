@@ -2,19 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, EmptyState, useToast } from "@bower/ui";
+import { Card, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
 import { deleteAgent, fetchAgents, webRoutes, type AgentListItem } from "@bower/api";
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { LinkButton } from "../../../_components/link-button";
 import { AgentRowMenu } from "./row-menu";
 import { AGENT_TOOLS } from "../../_components/agent-config";
-
-function day(iso: string): string {
-  // Pinned locale + UTC: server-rendered AND hydrated; disagreement is
-  // a hydration error.
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
 
 /** The roster in the directory table idiom: name, model, tools,
  * created; row menus for the occasional verbs; the builder owns
@@ -92,7 +86,7 @@ export function Roster({ initialAgents }: { initialAgents: AgentListItem[] }) {
                       {tools.length > 0 ? tools.join(" | ") : "None"}
                     </td>
                     <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">
-                      {day(agent.created_at)}
+                      <LocalTime iso={agent.created_at} format={TIME_FORMAT.DAY} />
                     </td>
                     <td className="py-2.5 pl-2 pr-3 text-right">
                       <AgentRowMenu editHref={webRoutes.agent(agent.id)} onDelete={() => void remove(agent)} />

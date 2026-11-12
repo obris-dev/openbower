@@ -304,6 +304,9 @@ class SheetRowsPage(BaseModel):
 
 
 class SheetsPage(BaseModel):
+    """A page of the sheets index, newest first: every kind, or one with
+    `?kind=` (a push lands only in a `standard` sheet)."""
+
     items: list[SheetSummary]
     next_cursor: str | None = Field(default=None, description="The last id when more sheets exist.")
 

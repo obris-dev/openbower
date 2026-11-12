@@ -286,22 +286,18 @@ class RowsRemoved(NamedTuple):
 
 
 class FolderService:
-    """An account's folders, seen from ONE kind of sheet. Folders are
-    shared (a folder is a place sheets point at, whatever their kind);
-    the kind scopes the CONTENT this service reports, a folder's sheet
-    count. `kind=None` counts every kind."""
+    """An account's folders: places sheets point at, whatever their kind
+    (a signal's log sits in a folder like any sheet)."""
 
-    def __init__(self, *, account_id: str, user_id: str, kind: SheetKind | None) -> None:
+    def __init__(self, *, account_id: str, user_id: str) -> None:
         self.account_id = account_id
         self.user_id = user_id
-        self.kind = kind
 
     def _folders(self) -> QuerySet[Folder]:
         return Folder.objects.filter(account_id=self.account_id)
 
     def _sheets(self) -> QuerySet[Sheet]:
-        sheets = Sheet.objects.filter(account_id=self.account_id)
-        return sheets if self.kind is None else sheets.filter(kind=self.kind)
+        return Sheet.objects.filter(account_id=self.account_id)
 
     def create(self, *, label: str) -> Folder:
         # A cap, not paging: the folder GET deliberately ships the whole
@@ -342,33 +338,6 @@ class FolderService:
             self._folders().filter(id=folder.id).delete()
 
 
-class StandardFolderService(FolderService):
-    """The folders as the sheets home shows them (counting its sheets)."""
-
-    def __init__(self, *, account_id: str, user_id: str) -> None:
-        super().__init__(account_id=account_id, user_id=user_id, kind=SheetKind.STANDARD)
-
-
-class LogFolderService(FolderService):
-    """The folders as the logs home shows them (counting its logs)."""
-
-    def __init__(self, *, account_id: str, user_id: str) -> None:
-        super().__init__(account_id=account_id, user_id=user_id, kind=SheetKind.LOG)
-
-
-# Each kind's folder service; complete over SheetKind (pinned by a test).
-FOLDER_SERVICES: dict[SheetKind, type[StandardFolderService | LogFolderService]] = {
-    SheetKind.STANDARD: StandardFolderService,
-    SheetKind.LOG: LogFolderService,
-}
-
-
-def folder_service_for(kind: SheetKind, *, account_id: str, user_id: str) -> FolderService:
-    """The folder service that counts one kind of sheet."""
-    service_class = FOLDER_SERVICES[kind]
-    return service_class(account_id=account_id, user_id=user_id)
-
-
 class SheetService:
     """Account-scoped: every method here reads or writes within one
     account. The one owner-stamping op, create, takes the owner as an
@@ -400,10 +369,12 @@ class SheetService:
             folder_id=folder_id,
         )
 
-    def page(self, *, kind: SheetKind, after_id: str, limit: int) -> list[Sheet]:
-        """One kind's index, newest first (the sheets home lists the
-        standard ones; logs list apart)."""
-        qs = Sheet.objects.filter(account_id=self.account_id, kind=kind).order_by("-id")
+    def page(self, *, after_id: str, limit: int, kind: SheetKind | None = None) -> list[Sheet]:
+        """The index, newest first: every sheet (the home lists a log with
+        the rest), or one kind's (the signals list)."""
+        qs = Sheet.objects.filter(account_id=self.account_id).order_by("-id")
+        if kind is not None:
+            qs = qs.filter(kind=kind)
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])

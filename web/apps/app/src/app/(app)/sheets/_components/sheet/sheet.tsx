@@ -18,6 +18,7 @@ import {
   GENERIC_FAILURE,
   loginUrl, returnPath,
   postColumnFill,
+  sheetVerbs,
   type SheetColumn,
   type WebhookColumn,
   webRoutes,
@@ -28,6 +29,7 @@ import {
 } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
+import { EDIT_SIGNAL_ACTION } from "../../../signals/_components/copy";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
 import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
@@ -61,6 +63,9 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
   const toast = useToast();
   const columns = useColumns(initialDetail);
   const { detail } = columns;
+  const verbs = sheetVerbs(detail);
+  const { settingsHref } = verbs;
+  const offersSheetMenu = verbs.addRows || verbs.exportCsv || verbs.delete || settingsHref !== null;
   const {
     rows,
     hasMore,
@@ -412,7 +417,11 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-hairline px-4 py-2">
         <div className="min-w-0">
-          {titleDraft !== null ? (
+          {!verbs.rename ? (
+            <span title={detail.label} className="block truncate text-sm font-semibold text-foreground">
+              {detail.label}
+            </span>
+          ) : titleDraft !== null ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -464,33 +473,46 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
               {/* A MENU button: the kind is chosen at
                   the gesture, so the drawer opens already knowing
                   what it is; new column kinds land here later. */}
-              <Dropdown>
-                <DropdownButton as={Button} size="sm">
-                  Add column
-                  <ChevronDown aria-hidden className="ml-1.5 h-4 w-4" />
-                </DropdownButton>
-                <DropdownMenu anchor="bottom end">
-                  <AddColumnMenuItems onPick={openAddColumn} />
-                </DropdownMenu>
-              </Dropdown>
-              <Dropdown>
-                <DropdownButton
-                  aria-label="Sheet actions"
-                  className="rounded-md p-2 text-faint hover:bg-wash hover:text-foreground"
-                >
-                  <MoreHorizontal aria-hidden className="h-5 w-5" />
-                </DropdownButton>
-                <DropdownMenu anchor="bottom end">
-                  {/* Workflow verbs above management verbs. */}
-                  <DropdownItem onClick={() => setAddRowsOpen(true)}>Add rows via API</DropdownItem>
-                  <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
-                    {exporting ? "Exporting…" : "Export CSV"}
-                  </DropdownItem>
-                  <DropdownItem className="text-danger" onClick={() => setConfirmingDelete(true)}>
-                    Delete sheet
-                  </DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+              {verbs.addColumns && (
+                <Dropdown>
+                  <DropdownButton as={Button} size="sm">
+                    Add column
+                    <ChevronDown aria-hidden className="ml-1.5 h-4 w-4" />
+                  </DropdownButton>
+                  <DropdownMenu anchor="bottom end">
+                    <AddColumnMenuItems onPick={openAddColumn} />
+                  </DropdownMenu>
+                </Dropdown>
+              )}
+              {offersSheetMenu && (
+                <Dropdown>
+                  <DropdownButton
+                    aria-label="Sheet actions"
+                    className="rounded-md p-2 text-faint hover:bg-wash hover:text-foreground"
+                  >
+                    <MoreHorizontal aria-hidden className="h-5 w-5" />
+                  </DropdownButton>
+                  <DropdownMenu anchor="bottom end">
+                    {/* Workflow verbs above management verbs. */}
+                    {verbs.addRows && (
+                      <DropdownItem onClick={() => setAddRowsOpen(true)}>Add rows via API</DropdownItem>
+                    )}
+                    {verbs.exportCsv && (
+                      <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
+                        {exporting ? "Exporting…" : "Export CSV"}
+                      </DropdownItem>
+                    )}
+                    {settingsHref !== null && (
+                      <DropdownItem onClick={() => router.push(settingsHref)}>{EDIT_SIGNAL_ACTION}</DropdownItem>
+                    )}
+                    {verbs.delete && (
+                      <DropdownItem className="text-danger" onClick={() => setConfirmingDelete(true)}>
+                        Delete sheet
+                      </DropdownItem>
+                    )}
+                  </DropdownMenu>
+                </Dropdown>
+              )}
             </>
           )}
         </div>
@@ -558,7 +580,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
               onToggleAll: selection.toggleAll,
             }}
           />
-          {!hasMore && <AddRowsBar busy={addingRows} onAdd={addRows} />}
+          {!hasMore && verbs.addRows && <AddRowsBar busy={addingRows} onAdd={addRows} />}
           {hasMore && (
             <>
               <div ref={sentinelRef} aria-hidden />

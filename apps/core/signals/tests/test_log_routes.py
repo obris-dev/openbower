@@ -163,7 +163,7 @@ class LogRouteTests(TestCase):
         # FAILS if the refusal runs after the move: a log would land in the
         # folder while the request answered 409.
         log_id = self._create()["sheet"]["id"]
-        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"], kind=None).create(
+        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).create(
             label="Funding"
         )
         resp = self.client.patch(
@@ -176,7 +176,7 @@ class LogRouteTests(TestCase):
 
     def test_a_log_still_moves_into_a_folder(self):
         log_id = self._create()["sheet"]["id"]
-        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"], kind=None).create(
+        folder = FolderService(account_id=TEST_IDENTITY["account_id"], user_id=TEST_IDENTITY["id"]).create(
             label="Funding"
         )
         moved = self.client.patch(

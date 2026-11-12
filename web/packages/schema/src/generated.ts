@@ -189,7 +189,7 @@ export type SheetDetail = z.infer<typeof SheetDetailSchema>;
 export const SheetSummarySchema = z.object({ "columns": z.array(z.lazy(() => SheetColumnSchema)).describe("Display order.").default([]), "created_at": z.string(), "folder_id": z.string().describe("The containing folder; empty = loose at the root.").default(""), "id": z.string(), "kind": z.enum(["standard","log"]).describe("standard: rows sit where people put them. log: rows arrive over time, newest first."), "label": z.string(), "origin": z.enum(["csv","manual"]).describe("How the sheet came to exist."), "origin_ref": z.string().describe("A reference to what the sheet was made from, when its origin has one.").default(""), "row_count": z.number().int().describe("Total rows (the sheet may page far beyond one response)."), "updated_at": z.string() }).describe("One sheet as the index shows it (and the create response).");
 export type SheetSummary = z.infer<typeof SheetSummarySchema>;
 
-export const SheetsPageSchema = z.object({ "items": z.array(z.lazy(() => SheetSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more sheets exist.").default(null) });
+export const SheetsPageSchema = z.object({ "items": z.array(z.lazy(() => SheetSummarySchema)), "next_cursor": z.union([z.string(), z.null()]).describe("The last id when more sheets exist.").default(null) }).describe("A page of the sheets index, newest first: every kind, or one with\n`?kind=` (a push lands only in a `standard` sheet).");
 export type SheetsPage = z.infer<typeof SheetsPageSchema>;
 
 export const WebhookDeliveriesPageSchema = z.object({ "items": z.array(z.lazy(() => WebhookDeliveryWireSchema)), "next_cursor": z.union([z.string(), z.null()]).default(null) });
