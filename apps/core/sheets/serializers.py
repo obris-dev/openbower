@@ -14,7 +14,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.runs import NodeRunWire as WireNodeRun
-from openbower_schema.sheets import CellStateWire, IngestColumn, WorkflowColumn
+from openbower_schema.sheets import EXTERNAL_ID_MAX_LENGTH, CellStateWire, IngestColumn, WorkflowColumn
 from openbower_schema.sheets import FolderSummary as WireFolderSummary
 from openbower_schema.sheets import IngestSchema as WireIngestSchema
 from openbower_schema.sheets import SheetDetail as WireSheetDetail
@@ -135,11 +135,9 @@ class IngestRequest(serializers.Serializer):
     limit is a separate, durable-backend decision (see
     ingest.get_ingest_publisher)."""
 
-    rows = serializers.ListField(
-        child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),
-        min_length=1,
-        max_length=MAX_ROWS_PER_ADD,
-    )
+    # Each row is either a plain map of cells or an envelope,
+    # {external_id?, cells}; validate_ingest_rows reads which, per row.
+    rows = serializers.ListField(child=serializers.DictField(), min_length=1, max_length=MAX_ROWS_PER_ADD)
     # Taken VERBATIM (trim_whitespace=False): stripping would mutate a key
     # the caller dedupes on.
     event_id = serializers.CharField(
@@ -289,30 +287,87 @@ def ingest_schema_wire(target: Sheet) -> dict[str, Any]:
     return WireIngestSchema(columns=columns).model_dump()
 
 
-def validate_ingest_rows(target: Sheet, rows: list[dict[str, str]]) -> tuple[list[str], list[dict[str, str]]]:
+# A row is an envelope when its `cells` is an object: a plain row's
+# values are all strings, so a column keyed "cells" never reads as one.
+_ENVELOPE_CELLS = "cells"
+_ENVELOPE_ID = "external_id"
+_ENVELOPE_KEYS = frozenset({_ENVELOPE_CELLS, _ENVELOPE_ID})
+
+
+def _cell_text(value: object) -> str | None:
+    """A pushed cell as text, the way the plain row's string fields always
+    read it: a string as sent, a number as its digits; anything else (an
+    object, a list, a boolean, null) is not a cell."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    return value if isinstance(value, str) else str(value)
+
+
+def _unwrap_row(index: int, given: dict[str, Any]) -> tuple[list[str], dict[str, str], str]:
+    """One pushed row as (problems, cells, external_id): an envelope's
+    cells and id, or a plain row's cells with no id."""
+    problems: list[str] = []
+    envelope = isinstance(given.get(_ENVELOPE_CELLS), dict)
+    raw_cells: dict[str, Any] = given[_ENVELOPE_CELLS] if envelope else given
+    external_id = ""
+    if envelope:
+        problems.extend(
+            f"row {index}: unknown field {key!r} (a row is {{external_id, cells}})"
+            for key in given
+            if key not in _ENVELOPE_KEYS
+        )
+        if _ENVELOPE_ID in given:
+            value = given[_ENVELOPE_ID]
+            if not isinstance(value, str) or not value.strip():
+                problems.append(f"row {index}: external_id must be text; leave it out or name the row")
+            elif len(value) > EXTERNAL_ID_MAX_LENGTH:
+                problems.append(f"row {index}: external_id is longer than {EXTERNAL_ID_MAX_LENGTH} characters")
+            else:
+                external_id = value
+    cells: dict[str, str] = {}
+    for key, value in raw_cells.items():
+        text = _cell_text(value)
+        if text is None:
+            problems.append(f"row {index}: column {key!r} must be text or a number")
+        else:
+            cells[key] = text
+    return problems, cells, external_id
+
+
+def validate_ingest_rows(
+    target: Sheet, rows: list[dict[str, Any]]
+) -> tuple[list[str], list[dict[str, str]], list[str]]:
     """Validate a push against the sheet's columns BEFORE it is accepted,
     so a malformed push is refused up front (a 400 the producer can fix)
-    rather than stored as sent. Returns (problems, storable_rows): each
-    problem is one line (row index plus cause, an unknown key or a value
-    the column's type refuses), and when problems is EMPTY the storable
-    rows are what to publish. They run through the SAME cells_for_storage
-    the writers use (normalize to the type's canonical form, then clamp),
-    so the bus carries exactly what add_rows will store on append (a pushed
-    "1,234" is published and stored as "1234", a 70k-char cell clamped once
-    here, not at full size on the bus). This is the push's reaction to a
-    shape mismatch: an unknown key or a type mismatch both become a 400. A
-    blank value is 'not provided', kept as-is; a workflow column's key is
-    refused whatever its value, so a producer leaves one out entirely.
-    Capped at MAX_INGEST_PROBLEMS."""
+    rather than stored as sent. Returns (problems, storable_rows,
+    external_ids): each problem is one line (row index plus cause, an
+    unknown key or a value the column's type refuses), and when problems
+    is EMPTY the storable rows are what to publish, each beside its
+    sender's external_id ("" for a row sent without one). A row is a plain
+    map of cells, or an envelope {external_id?, cells}; an external_id is
+    non-blank, bounded, and names one row per push. Cells run through the
+    SAME cells_for_storage the writers use (normalize to the type's
+    canonical form, then clamp), so the bus carries exactly what add_rows
+    will store on append. A blank value is 'not provided', kept as-is; a
+    workflow column's key is refused whatever its value, so a producer
+    leaves one out entirely. Capped at MAX_INGEST_PROBLEMS."""
     from .services.sheets import cells_for_storage
 
     types = {column.key: column.type for column in target.columns if not isinstance(column, WorkflowColumn)}
     columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
-    for index, row in enumerate(rows):
+    external_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for index, given in enumerate(rows):
+        shape_problems, row, external_id = _unwrap_row(index, given)
+        problems.extend(shape_problems)
+        if external_id and external_id in seen_ids:
+            problems.append(f"row {index}: external_id {external_id!r} names an earlier row of this push")
+        seen_ids.add(external_id)
         storable, mismatches = cells_for_storage(types, row, where="ingest")
         storable_rows.append(storable)
+        external_ids.append(external_id)
         # A workflow column EXISTS, so it is refused in its own words
         # rather than as an unknown key: it is filled through its own
         # path and takes no pushed value.
@@ -326,8 +381,8 @@ def validate_ingest_rows(target: Sheet, rows: list[dict[str, str]]) -> tuple[lis
         )
         problems.extend(f"row {index}: {mismatch}" for mismatch in mismatches)
         if len(problems) >= MAX_INGEST_PROBLEMS:
-            return problems[:MAX_INGEST_PROBLEMS], storable_rows
-    return problems, storable_rows
+            return problems[:MAX_INGEST_PROBLEMS], storable_rows, external_ids
+    return problems, storable_rows, (external_ids if any(external_ids) else [])
 
 
 def folder_wire(folder: Folder, *, sheet_count: int) -> dict[str, Any]:

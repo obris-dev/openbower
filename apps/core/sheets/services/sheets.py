@@ -422,7 +422,9 @@ class SheetService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: Sheet, rows: list[dict[str, str]]) -> list[SheetRow]:
+    def add_rows(
+        self, target: Sheet, rows: list[dict[str, str]], *, external_ids: Sequence[str] = ()
+    ) -> list[SheetRow]:
         """Append rows (each a data dict keyed by column keys), ranked by
         `_append_ranks` (after the last row, or before the first on a
         log); the count ceiling AND the cell clamp
@@ -453,6 +455,8 @@ class SheetService:
             stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
             stored_rows.append(stored)
         rows = stored_rows
+        # The sender's id per row, "" where it sent none.
+        ids = list(external_ids) or [""] * len(rows)
         with transaction.atomic():
             # Ranks allocate off the sheet's last (or a log's first) row,
             # so concurrent appends must serialize on the sheet row or the
@@ -462,17 +466,42 @@ class SheetService:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
                 raise SheetNotFound(str(target.id)) from e
+            # Under the sheet lock, so two pushes carrying one id cannot both
+            # find it absent: the first lands, the second skips it.
+            kept = self._rows_not_held(str(locked.id), rows, ids)
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
-            if current + len(rows) > MAX_SHEET_ROWS:
+            if current + len(kept) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
+            if not kept:
+                return []
             created = [
-                SheetRow(sheet_id=str(locked.id), rank=rank, data=data)
-                for rank, data in zip(self._append_ranks(locked, len(rows)), rows, strict=True)
+                SheetRow(sheet_id=str(locked.id), rank=rank, data=data, external_id=external_id)
+                for rank, (data, external_id) in zip(self._append_ranks(locked, len(kept)), kept, strict=True)
             ]
             SheetRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
         return created
+
+    @staticmethod
+    def _rows_not_held(
+        sheet_id: str, rows: list[dict[str, str]], external_ids: list[str]
+    ) -> list[tuple[dict[str, str], str]]:
+        """The rows to write, each with its sender id: a row whose id the
+        sheet already holds, or one this batch already named, is skipped;
+        a row without an id always lands."""
+        named = [external_id for external_id in external_ids if external_id]
+        held = set(
+            SheetRow.objects.filter(sheet_id=sheet_id, external_id__in=named).values_list("external_id", flat=True)
+        )
+        kept: list[tuple[dict[str, str], str]] = []
+        for data, external_id in zip(rows, external_ids, strict=True):
+            if external_id:
+                if external_id in held:
+                    continue
+                held.add(external_id)
+            kept.append((data, external_id))
+        return kept
 
     def _append_ranks(self, locked: Sheet, n: int) -> list[str]:
         """The ranks of `n` rows about to be appended, in the batch's

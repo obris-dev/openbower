@@ -25,6 +25,18 @@ test("the typed samples are the ones the server's shape rules accept", () => {
   assert.equal(sampleValue({ key: "d", label: "D", type: "date" }), "2026-01-15");
 });
 
+test("the sample row is an envelope with its external_id when the server takes one", () => {
+  // FAILS if the envelope is dropped or guessed: a sender copying the
+  // command would push rows a retry doubles, or a shape an older server
+  // refuses.
+  const columns = [{ key: "title", label: "Title", type: "text" as const }];
+  const body = (command: string) => JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: unknown[] };
+  assert.deepEqual(body(curlFor(url, columns, true)).rows, [
+    { external_id: "your-id-for-this-row", cells: { title: "Acme" } },
+  ]);
+  assert.deepEqual(body(curlFor(url, columns)).rows, [{ title: "Acme" }]);
+});
+
 test("a quote in a column key cannot break out of the shell string", () => {
   const command = curlFor(url, [{ key: "it's", label: "It", type: "text" }]);
   assert.ok(command.includes("it'\\''s"));

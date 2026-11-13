@@ -1309,6 +1309,12 @@
           },
           "title": "Columns",
           "type": "array"
+        },
+        "external_id": {
+          "default": true,
+          "description": "Whether a pushed row may be an envelope, {external_id?, cells}: cells keyed by these columns, and the sender's own id for the row. A row whose external_id the sheet already holds is skipped, so a sender that retries never doubles a row. A plain map of cells is still a row, with no id.",
+          "title": "External Id",
+          "type": "boolean"
         }
       },
       "title": "IngestSchema",

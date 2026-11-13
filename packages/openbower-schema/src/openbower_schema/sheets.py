@@ -39,6 +39,11 @@ COLUMN_KEY_GRAMMAR = r"^[a-z0-9_]+$"
 COLUMN_LABEL_MAX_LENGTH = 80
 
 
+# A sender's id for one pushed row (a post's id, an event's key): opaque,
+# bounded so it can key a unique index cheaply.
+EXTERNAL_ID_MAX_LENGTH = 256
+
+
 def derive_column_key(label: str, *, key: str = "") -> str:
     """THE label-to-key derivation, for every path that puts a column
     on a sheet: a CSV header, a blank column add, an agent output a
@@ -167,6 +172,14 @@ class IngestSchema(BaseModel):
 
     columns: list[IngestColumn] = Field(
         default=[], description="Columns of the push schema, in display order; the ones a producer owns."
+    )
+    external_id: bool = Field(
+        default=True,
+        description=(
+            "Whether a pushed row may be an envelope, {external_id?, cells}: cells keyed by these columns, "
+            "and the sender's own id for the row. A row whose external_id the sheet already holds is skipped, "
+            "so a sender that retries never doubles a row. A plain map of cells is still a row, with no id."
+        ),
     )
 
 

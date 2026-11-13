@@ -69,7 +69,11 @@ def _append_rows(event: IngestEvent) -> AppendResult:
     try:
         target = sheets.get(event.sheet_id)
         report = AppendRowsOperation(
-            account_id=event.account_id, target_sheet=target, rows=event.rows, source=RowSource.PUSH
+            account_id=event.account_id,
+            target_sheet=target,
+            rows=event.rows,
+            source=RowSource.PUSH,
+            external_ids=event.external_ids,
         ).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,

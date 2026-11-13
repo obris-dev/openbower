@@ -8,7 +8,7 @@ SheetService.add_rows, so the wire contract stays single.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -25,6 +25,9 @@ class IngestEvent:
     user_id: str
     rows: list[dict[str, str]]
     received_at: datetime
+    # The sender's id for each row, beside it ("" for a row sent without
+    # one); empty when no row named one.
+    external_ids: list[str] = field(default_factory=list)
 
 
 def to_wire(event: IngestEvent) -> dict:
@@ -39,6 +42,7 @@ def to_wire(event: IngestEvent) -> dict:
         "user_id": event.user_id,
         "rows": event.rows,
         "received_at": event.received_at.isoformat(),
+        "external_ids": event.external_ids,
     }
 
 
@@ -51,4 +55,6 @@ def from_wire(data: dict) -> IngestEvent:
         user_id=data["user_id"],
         rows=data["rows"],
         received_at=datetime.fromisoformat(data["received_at"]),
+        # An event published before rows carried ids has none.
+        external_ids=data.get("external_ids", []),
     )

@@ -720,10 +720,15 @@ const TolerantIngestSchemaSchema = z.object({
       type: z.string().transform((type) => (KNOWN_INGEST_TYPES.has(type) ? type : "text") as ColumnType),
     }),
   ),
+  // A server from before external ids sends no flag: rows stay plain maps,
+  // so nothing promises a dedup it does not do.
+  external_id: z.boolean().default(false),
 });
+
+export type TolerantIngestSchema = z.output<typeof TolerantIngestSchemaSchema>;
 
 /** The push schema: the columns a machine push may set on this sheet,
  * with the keys its rows are keyed on. System-filled columns are absent. */
-export async function fetchIngestSchema(id: string): Promise<ApiResult<IngestSchema>> {
+export async function fetchIngestSchema(id: string): Promise<ApiResult<TolerantIngestSchema>> {
   return http.get(apiRoutes.sheets.ingest(id), TolerantIngestSchemaSchema);
 }
