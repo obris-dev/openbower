@@ -12,6 +12,9 @@ export type SheetVerbs = {
   /** Rows a person adds: by hand, a CSV, or a push through the API. */
   addRows: boolean;
   addColumns: boolean;
+  /** Whether arriving rows start the sheet's AI columns, switched on any
+   * kind the bundle knows. */
+  autofill: boolean;
   exportCsv: boolean;
   /** Where the sheet's own settings live, when something else owns it. */
   settingsHref: string | null;
@@ -23,6 +26,7 @@ const NO_VERBS: SheetVerbs = {
   move: false,
   addRows: false,
   addColumns: false,
+  autofill: false,
   exportCsv: false,
   settingsHref: null,
 };
@@ -36,6 +40,7 @@ export function sheetVerbs(sheet: { id: string; kind: SheetKind }): SheetVerbs {
         move: true,
         addRows: true,
         addColumns: true,
+        autofill: true,
         exportCsv: true,
         settingsHref: null,
       };
@@ -48,6 +53,7 @@ export function sheetVerbs(sheet: { id: string; kind: SheetKind }): SheetVerbs {
         move: true,
         addRows: false,
         addColumns: true,
+        autofill: true,
         exportCsv: true,
         settingsHref: webRoutes.signal(sheet.id),
       };

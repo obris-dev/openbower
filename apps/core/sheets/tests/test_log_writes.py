@@ -13,10 +13,8 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_kernel.fields import new_ulid
-from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import PlainColumn
 from sheets.constants import CellErrorCode, FillErrorCode, IngestErrorCode, RowSource, SheetKind, SheetOrigin
 from sheets.ingest.consumer import handle_ingest_event
@@ -26,7 +24,8 @@ from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendabl
 from sheets.processors.base import queue_position
 from sheets.services.node_runs import NodeRunFlow
 from sheets.services.sheets import SheetIsLog, SheetService
-from sheets.services.workflows import WorkflowService
+
+from .agent_columns import sheet_with_an_ai_column
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 
@@ -97,44 +96,13 @@ class ImmutableColumnTests(TestCase):
         )
 
 
-def _log_with_an_ai_column() -> Sheet:
-    """A log whose AI column is an entry action, so an arriving row that
-    holds something is offered to it."""
-    sheets = SheetService(account_id=ACCOUNT)
-    log = sheets.create(
-        owner_id=TEST_IDENTITY["id"],
-        label="Funding log",
-        columns=[PlainColumn(key="company", label="Company", type="text", immutable=True)],
-        origin=SheetOrigin.MANUAL,
-        kind=SheetKind.LOG,
-    )
-    config = AgentConfig(
-        prompt="Find the answer for {{company}}",
-        provider="openai_compatible",
-        source="ollama",
-        model="scripted",
-        tools=AgentTools(),
-        outputs=[AgentOutput(key="answer", label="Answer", type="text")],
-    )
-    agent = AgentService(account_id=ACCOUNT).create_ephemeral(
-        owner_id=TEST_IDENTITY["id"], label="Answer", config=config
-    )
-    node = WorkflowService(account_id=ACCOUNT).get_or_create_column_agent_node(log, agent_id=str(agent.id))
-    log.columns = [
-        *log.columns,
-        {"key": "answer", "label": "Answer", "type": "text", "kind": "ai", "node_id": str(node.id)},
-    ]
-    log.save(update_fields=["columns", "updated_at"])
-    return log
-
-
 class LogLifeTests(TestCase):
     """A log's label and life are its listener's too: the sheet service
     refuses to rename or delete one as a plain sheet, whoever asks."""
 
     def setUp(self) -> None:
         self.sheets = SheetService(account_id=TEST_IDENTITY["account_id"])
-        self.log = _log_with_an_ai_column()
+        self.log = sheet_with_an_ai_column(kind=SheetKind.LOG)
 
     def test_a_log_is_not_renamed_or_deleted_as_a_sheet(self):
         # FAILS if the refusal lives only at the HTTP door: a job or a
@@ -158,7 +126,7 @@ class LogAppendTests(TestCase):
 
     def setUp(self) -> None:
         login_session(self.client)
-        self.log = _log_with_an_ai_column()
+        self.log = sheet_with_an_ai_column(kind=SheetKind.LOG)
 
     def test_a_person_cannot_add_rows_to_a_log(self):
         # FAILS if the operation takes a log from any door.
@@ -201,13 +169,14 @@ class LogAppendTests(TestCase):
         self.assertEqual(NodeRun.objects.filter(sheet_id=str(self.log.id)).count(), 1)
 
     def test_autofill_off_lands_the_rows_with_no_work(self):
-        # FAILS if react is ignored: the row would queue a run.
+        # FAILS if the sheet's autofill is ignored, or read off the copy the
+        # caller holds: switched through a fresh read, so self.log still says
+        # on, as a poller's sheet does when a person switches it mid-read.
+        sheets = SheetService(account_id=ACCOUNT)
+        sheets.set_autofill(sheets.get(str(self.log.id)), on=False)
+        self.assertTrue(self.log.autofill)
         report = AppendRowsOperation(
-            account_id=ACCOUNT,
-            target_sheet=self.log,
-            rows=[{"company": "acme.example"}],
-            source=RowSource.FEED,
-            autofill=False,
+            account_id=ACCOUNT, target_sheet=self.log, rows=[{"company": "acme.example"}], source=RowSource.FEED
         ).run()
         self.assertEqual((report.added, report.queued), (1, 0))
         self.assertFalse(NodeRun.objects.filter(sheet_id=str(self.log.id)).exists())
@@ -239,7 +208,7 @@ class LogQueueOrderTests(TestCase):
     def test_a_logs_autofill_backlog_drains_oldest_first(self):
         # FAILS if a log's runs are stamped with the row's rank: on a log
         # that is newest first, so the newest batch would be claimed first.
-        log = _log_with_an_ai_column()
+        log = sheet_with_an_ai_column(kind=SheetKind.LOG)
         arrivals: list[str] = []
         for names in (["first.example"], ["second.example", "third.example"], ["fourth.example"]):
             report = AppendRowsOperation(
@@ -251,7 +220,7 @@ class LogQueueOrderTests(TestCase):
         self.assertEqual(claimed, arrivals)
 
     def test_the_queue_position_follows_the_kind(self):
-        log = _log_with_an_ai_column()
+        log = sheet_with_an_ai_column(kind=SheetKind.LOG)
         report = AppendRowsOperation(
             account_id=ACCOUNT, target_sheet=log, rows=[{"company": "acme.example"}], source=RowSource.FEED
         ).run()

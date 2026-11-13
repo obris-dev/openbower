@@ -43,8 +43,9 @@ const LEAVING: Extract<ColumnOutcome, { ok: false }> = { ok: false, error: "", d
 
 /** The sheet detail and every write to it. Column writes echo the
  * WHOLE detail back (columns, row count, label, entry actions), so one owner holds
- * it and every op replaces it from the response; the title rename is
- * the one non-column write and rides here for the same reason. What
+ * it and every op replaces it from the response; the title rename and
+ * the autofill switch are the non-column writes and ride here for the
+ * same reason. What
  * a write means for the rest of the sheet (rows to re-read, a fill to
  * re-attach, a drawer to close) is the sheet's composition, not this
  * hook's: each op reports its outcome and stops. */
@@ -60,6 +61,8 @@ export function useColumns(initialDetail: SheetDetail): {
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
   renameSheet: (label: string) => Promise<boolean>;
+  /** Whether rows arriving start the AI columns, switched optimistically. */
+  setAutofill: (on: boolean) => Promise<void>;
   /** Re-read the summary in place (a row removed elsewhere moved its
    * count); true when the page is leaving for login. */
   reread: () => Promise<boolean>;
@@ -254,6 +257,31 @@ export function useColumns(initialDetail: SheetDetail): {
     [detail.id, toast],
   );
 
+  // Optimistic like the rename: the switch moves at once, and a refusal
+  // puts back the value it showed before with the server's reason. Only
+  // the newest toggle's answer lands: two quick flips answered out of
+  // order would otherwise leave the switch opposite to what the server
+  // holds.
+  const autofillCallRef = useRef(0);
+  const setAutofill = useCallback(
+    async (on: boolean) => {
+      const call = autofillCallRef.current + 1;
+      autofillCallRef.current = call;
+      const previous = detail.autofill;
+      setDetail((current) => ({ ...current, autofill: on }));
+      const res = await updateSheet(detail.id, { autofill: on });
+      if (call !== autofillCallRef.current) return;
+      if (redirectIfUnauthenticated(res)) return;
+      if (res.status !== "ok") {
+        setDetail((current) => ({ ...current, autofill: previous }));
+        toast.error(res.message, "Autofill not changed");
+        return;
+      }
+      setDetail(res.data);
+    },
+    [detail.autofill, detail.id, toast],
+  );
+
   return {
     detail,
     pendingColumn,
@@ -266,6 +294,7 @@ export function useColumns(initialDetail: SheetDetail): {
     startPending,
     namePending,
     renameSheet,
+    setAutofill,
     reread,
     setRowCount,
   };

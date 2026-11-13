@@ -170,7 +170,6 @@ class PollLogOperation:
             target_sheet=sheet,
             rows=rows,
             source=RowSource.FEED,
-            autofill=feed.autofill,
         )
         try:
             with transaction.atomic():

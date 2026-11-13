@@ -171,38 +171,31 @@ class LogService:
                 columns=list(shape.columns),
                 origin=SheetOrigin.MANUAL,
                 kind=SheetKind.LOG,
+                autofill=autofill,
             )
             feed = LogFeed.objects.create(
                 account_id=self.account_id,
                 sheet_id=str(sheet.id),
                 listener_id=listener_id,
                 signal=signal,
-                autofill=autofill,
             )
         return self._local(sheet, feed)
 
-    def edit(self, local_log: LocalLog, *, label: str | None, autofill: bool | None) -> LocalLog:
-        """A new label on the sheet, a new autofill on the feed, or both."""
+    def edit(self, local_log: LocalLog, *, label: str | None) -> LocalLog:
+        """A new label on the sheet (its autofill is the sheet's own, set
+        through the sheet doors like any sheet's)."""
         sheet = local_log.sheet
-        feed = local_log.feed
-        with transaction.atomic():
-            if label is not None:
-                sheet = self.sheets.rename_log(sheet, label=label)
-            if autofill is not None and autofill != feed.autofill:
-                feed.autofill = autofill
-                feed.save(update_fields=["autofill", "updated_at"])
-        return self._local(sheet, feed)
+        if label is not None:
+            sheet = self.sheets.rename_log(sheet, label=label)
+        return self._local(sheet, local_log.feed)
 
     def advance(self, feed: LogFeed, *, to_cursor: str) -> bool:
         """Move the log's cursor past the matches just appended, from where
-        this read started and with the autofill it was appended under:
-        False when another read moved the cursor first (a page lands once)
-        or the person changed autofill meanwhile (the page lands again
-        under the new setting, never queueing runs they just turned off),
-        so the caller rolls back the rows it appended."""
-        moved = LogFeed.objects.filter(
-            id=feed.id, account_id=self.account_id, cursor=feed.cursor, autofill=feed.autofill
-        )
+        this read started: False when another read moved the cursor first
+        (a page lands once), so the caller rolls back the rows it appended.
+        Autofill needs no guard here: the append read it under the sheet's
+        lock."""
+        moved = LogFeed.objects.filter(id=feed.id, account_id=self.account_id, cursor=feed.cursor)
         return moved.update(cursor=to_cursor) == 1
 
     def wake(self) -> int:

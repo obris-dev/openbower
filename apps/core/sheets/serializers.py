@@ -60,10 +60,12 @@ class SheetCreateRequest(serializers.Serializer):
 
 
 class SheetPatchRequest(serializers.Serializer):
-    """Rename and/or move; at least one field must be present."""
+    """Rename, move and/or switch autofill; at least one field must be
+    present."""
 
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH, required=False)
     folder_id = serializers.CharField(max_length=26, required=False, allow_blank=True)
+    autofill = serializers.BooleanField(required=False)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if not attrs:
@@ -266,6 +268,7 @@ def sheet_summary(target: Sheet) -> WireSheetSummary:
         origin=target.origin,
         origin_ref=target.origin_ref,
         row_count=target.row_count,
+        autofill=target.autofill,
         created_at=target.created_at.isoformat(),
         updated_at=target.updated_at.isoformat(),
     )

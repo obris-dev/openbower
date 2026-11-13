@@ -83,8 +83,8 @@ live in a separate private repo.
   cannot fill (its key refused, or full) is parked, and a reconnect wakes
   the account's. One claim is one page: the matches after the log's
   cursor, read with the account's sync key, appended and the cursor moved
-  by compare-and-set (holding autofill too) in ONE transaction, sheet
-  first and feed second (the order a delete takes), so a page lands once.
+  by compare-and-set in ONE transaction, sheet first and feed second
+  (the order a delete takes), so a page lands once.
   A log's STATUS (active, reconnect, listener_gone, full) is derived on
   every read from its feed, the account's key and its row count, never
   stored.
@@ -171,9 +171,10 @@ live in a separate private repo.
   the rows it never reached, since those are the ones never attempted.
   An AI column autofills every row that arrives holding something from
   its create on, whether or not a fill ran or was refused (a row that
-  arrives blank waits for a fill). An agent's output set is
-  fixed while its columns are on a sheet (the agent save refuses a
-  change), so a fill never adds a column: the create makes them all.
+  arrives blank waits for a fill), while its sheet's `autofill` is on.
+  An agent's output set is fixed while its columns are on a sheet (the
+  agent save refuses a change), so a fill never adds a column: the
+  create makes them all.
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (sheets/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
@@ -196,8 +197,8 @@ live in a separate private repo.
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
   other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet
-  holding something (a row that arrives blank, the add-rows control's, is created and counted but not offered: an
-  entry agent has nothing to read, and a fill offers it once it does): rows
+  holding something while the sheet's `autofill` is on (a row that arrives blank, the add-rows control's, is
+  created and counted but not offered: an entry agent has nothing to read, and a fill offers it once it does): rows
   enter through one
   operation (sheets/operations/append_rows.py: the sheet service's
   primitive, then the trigger, one transaction), which every door (a
@@ -206,8 +207,19 @@ live in a separate private repo.
   where its rows come from (`source`, a `RowSource`): a LOG takes rows
   from its FEED only (a signal's matches today), a standard sheet from
   anything but a feed (`SheetNotAppendable` otherwise; the push checks
-  before the bus), and `autofill=False` lands rows without the trigger
-  (a log's autofill off).
+  before the bus). A sheet whose `autofill` is off (a flag on every kind,
+  switched through `PATCH /v1/sheets`) takes its rows without the
+  trigger, whichever door brought them; the operation reads the flag
+  under the sheet lock the append holds, so no door decides it. Off stops
+  ARRIVALS only: a person's fill still advances, and switching it back on
+  queues nothing for the rows that arrived meanwhile. The flag is not the
+  AUTOFILL occasion (a `FillScope`): that names how a run was started (rows
+  arrived, or a barrier ahead cleared), so a run downstream of a person's
+  fill still rides it on a sheet whose autofill is off. The sheet's switch
+  is the MASTER: a column-level auto-run, when one exists, only narrows it
+  (a column starts on arrival when the sheet AND the column say so), so the
+  sheet's read stays in the append and a column's joins the trigger's
+  per-entry judgement.
   The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
   starts with exactly one of them: `entry` (the path is fed by nothing,

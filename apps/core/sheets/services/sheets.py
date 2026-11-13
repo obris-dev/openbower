@@ -357,12 +357,14 @@ class SheetService:
         origin_ref: str = "",
         folder_id: str = "",
         kind: SheetKind = SheetKind.STANDARD,
+        autofill: bool = True,
     ) -> Sheet:
         return Sheet.objects.create(
             account_id=self.account_id,
             user_id=owner_id,
             label=label,
             kind=kind,
+            autofill=autofill,
             columns=columns,
             origin=origin,
             origin_ref=origin_ref,
@@ -398,6 +400,13 @@ class SheetService:
     def _rename(self, target: Sheet, *, label: str) -> Sheet:
         target.label = label
         target.save(update_fields=["label", "updated_at"])
+        return target
+
+    def set_autofill(self, target: Sheet, *, on: bool) -> Sheet:
+        """Whether rows arriving from here on start the entry actions, on
+        any kind: rows that arrived while it was off wait for a fill."""
+        target.autofill = on
+        target.save(update_fields=["autofill", "updated_at"])
         return target
 
     def move(self, target: Sheet, *, folder_id: str) -> Sheet:

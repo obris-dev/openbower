@@ -273,6 +273,8 @@ class SheetDetailView(_ScopedView):
                         target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
                     except FolderNotFound:
                         raise ValidationError("no folder with that id") from None
+                if "autofill" in data:
+                    target_sheet = self.sheets.set_autofill(target_sheet, on=data["autofill"])
         except SheetIsLog as e:
             return _log_route(e)
         return Response(sheet_detail_wire(target_sheet))

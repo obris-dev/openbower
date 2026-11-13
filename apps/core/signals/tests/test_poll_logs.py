@@ -117,15 +117,14 @@ class PollPageTests(_PollTests):
         rest = self._poll(feed)
         self.assertEqual(rest.rows, 1)
 
-    def test_arriving_rows_autofill_as_the_log_says(self):
+    def test_arriving_rows_autofill_as_the_sheet_says(self):
         for autofill in (True, False):
             with self.subTest(autofill=autofill):
                 feed = self._log(f"Log {autofill}", autofill=autofill)
                 self._matches(feed, ["Acme"])
-                with patch("signals.operations.poll_logs.AppendRowsOperation", autospec=True) as append:
-                    append.return_value.run.return_value = None
+                with patch("sheets.operations.append_rows.WorkflowReactions", autospec=True) as reactions:
                     self._poll(feed)
-                self.assertIs(append.call_args.kwargs["autofill"], autofill)
+                self.assertEqual(reactions.return_value.trigger.called, autofill)
 
     def test_a_page_lands_once(self):
         # FAILS if the cursor move is not a compare-and-set: a second poller
@@ -139,19 +138,17 @@ class PollPageTests(_PollTests):
         self.assertEqual((rival[0].result, lost.result), (PollResult.APPENDED, PollResult.LOST))
         self.assertEqual(self._companies(feed), ["Globex", "Acme"])
 
-    def test_autofill_turned_off_mid_read_lands_the_page_again_without_it(self):
-        # FAILS if the page lands under the autofill it was read with: a
-        # person who just turned autofill off would still pay for a page of
-        # runs.
+    def test_autofill_turned_off_mid_read_applies_to_that_page(self):
+        # FAILS if the page lands under the autofill read before the fetch:
+        # a person who just turned autofill off would still pay for a page
+        # of runs.
         feed = self._log()
         self._matches(feed, ["Acme"])
-        self.signals.on_matches = lambda: LogFeed.objects.filter(id=feed.id).update(autofill=False)
-        lost = self._poll(feed)
-        self.assertEqual((lost.result, lost.next_poll_at, self._companies(feed)), (PollResult.LOST, _NOW, []))
-        with patch("signals.operations.poll_logs.AppendRowsOperation", autospec=True) as append:
-            append.return_value.run.return_value = None
-            self._poll(feed)
-        self.assertIs(append.call_args.kwargs["autofill"], False)
+        self.signals.on_matches = lambda: Sheet.objects.filter(id=feed.sheet_id).update(autofill=False)
+        with patch("sheets.operations.append_rows.WorkflowReactions", autospec=True) as reactions:
+            landed = self._poll(feed)
+        self.assertEqual((landed.result, self._companies(feed)), (PollResult.APPENDED, ["Acme"]))
+        self.assertFalse(reactions.return_value.trigger.called)
 
     def test_a_log_near_its_cap_takes_what_fits(self):
         # FAILS if the page is appended whole: a sheet two rows from its cap

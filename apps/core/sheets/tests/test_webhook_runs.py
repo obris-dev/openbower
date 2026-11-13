@@ -647,6 +647,34 @@ class AdvanceTests(_SheetHarness):
         (run,) = list(NodeRun.objects.filter(kind=WEBHOOK))
         self.assertEqual((run.status, run.row_id, run.sheet_id), (NodeRunStatus.DEFERRED, str(row.id), str(sheet.id)))
 
+    def test_a_fill_advances_on_a_sheet_whose_autofill_is_off(self):
+        # FAILS if the sheet's autofill reaches past arrivals: a person's
+        # fill would land and stop, leaving the webhook behind it unsent.
+        sheet = self.sheets.create(
+            owner_id=USER,
+            label="Fresh",
+            columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
+            origin="manual",
+            autofill=False,
+        )
+        (row,) = self.sheets.add_rows(sheet, [{"company": "example.io"}])
+        with patch("sheets.services.runnable.model_for"):
+            _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
+        self._run_jobs()
+        WebhookColumnService(account_id=ACCOUNT, user_id=USER).add(
+            str(sheet.id),
+            label="CRM sync",
+            destination_id=str(self.destination.id),
+            wait_keys=["answer"],
+            payload_keys=["company"],
+            interval_seconds=INTERVAL,
+        )
+
+        settle(str(fill.id), str(row.id))
+
+        (run,) = list(NodeRun.objects.filter(kind=WEBHOOK))
+        self.assertEqual((run.status, run.row_id), (NodeRunStatus.DEFERRED, str(row.id)))
+
 
 class _BackfilledSheet(_SheetHarness):
     """Three rows with history: rows 1 and 2 complete for (country,

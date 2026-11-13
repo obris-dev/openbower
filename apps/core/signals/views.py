@@ -106,7 +106,6 @@ def _summary(local_log: LocalLog) -> LogSummary:
         signal=feed.signal,
         status=local_log.status,
         last_polled_at=_iso(feed.last_polled_at),
-        autofill=feed.autofill,
     )
 
 
@@ -119,7 +118,6 @@ def _detail(log: Log) -> LogDetail:
         signal=feed.signal,
         status=log.local_log.status,
         last_polled_at=_iso(feed.last_polled_at),
-        autofill=feed.autofill,
     )
 
 

@@ -23,13 +23,17 @@ class LogPatchRequest(serializers.Serializer):
     filter = serializers.DictField(required=False)
     prompt = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     min_confidence = serializers.FloatField(required=False, allow_null=True)
-    autofill = serializers.BooleanField(required=False)
 
     def validate(self, attrs: dict) -> dict:
+        # A key the serializer does not declare is dropped silently, so a
+        # caller still sending autofill here would get a 200 that changed
+        # nothing; it is refused by name instead.
+        if "autofill" in self.initial_data:
+            raise serializers.ValidationError("a log's autofill is its sheet's: PATCH /v1/sheets/{id}")
         if ("prompt" in attrs or "min_confidence" in attrs) and "filter" not in attrs:
             raise serializers.ValidationError("a setup is given whole: its filter, with its prompt and min_confidence")
         if not attrs:
-            raise serializers.ValidationError("give a label, a setup, autofill, or any of them")
+            raise serializers.ValidationError("give a label, a setup, or both")
         return attrs
 
 
