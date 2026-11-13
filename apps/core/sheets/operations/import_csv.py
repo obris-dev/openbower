@@ -23,6 +23,7 @@ from ..constants import (
     MAX_SHEET_COLUMNS,
     MAX_SHEET_ROWS,
     ColumnType,
+    RowSource,
     SheetOrigin,
 )
 from ..models import Sheet
@@ -171,7 +172,10 @@ class ImportCsvOperation:
         # new: it has no workflow, so the trigger judges nothing. An
         # import into an existing sheet must page its append within
         # MAX_JUDGED_ROWS.
-        added = AppendRowsOperation(account_id=self.account_id, target_sheet=target, rows=rows).run().added
+        appended = AppendRowsOperation(
+            account_id=self.account_id, target_sheet=target, rows=rows, source=RowSource.IMPORT
+        ).run()
+        added = appended.added
         target.refresh_from_db()
         logger.info("csv import: sheet=%s rows=%d skipped=%d", target.id, added, skipped)
         return ImportStats(target=target, rows=added, skipped=skipped)

@@ -14,6 +14,8 @@ import type { CellWidth, GridHeader } from "./use-grid-table";
  * placed at its own offset. A sheet with no rows says so in one line
  * across the grid; the header above still renders, since a column is
  * named there before it exists. */
+const NO_ROWS = "This sheet has no rows.";
+
 export function Body({
   bodyRef,
   rows,
@@ -25,6 +27,8 @@ export function Body({
   searchProvider,
   selection,
   pendingColumn,
+  logged,
+  emptyNote,
 }: {
   bodyRef: RefObject<HTMLDivElement | null>;
   rows: RenderableSheetRow[];
@@ -36,11 +40,15 @@ export function Body({
   searchProvider: SearchProviderChoice;
   selection?: RowSelectionControls;
   pendingColumn?: boolean;
+  logged?: boolean;
+  /** What an empty body says when the rows on screen are a window of the
+   * sheet's (a log's period), not the whole of it. */
+  emptyNote?: string;
 }) {
   if (rows.length === 0) {
     return (
       <div ref={bodyRef} className="sticky left-0 p-6 text-sm text-muted">
-        This sheet has no rows.
+        {emptyNote ?? NO_ROWS}
       </div>
     );
   }
@@ -60,6 +68,7 @@ export function Body({
             searchProvider={searchProvider}
             selection={selection}
             pendingColumn={pendingColumn}
+            logged={logged}
           />
         );
       })}

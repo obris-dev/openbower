@@ -1,7 +1,6 @@
 """Every signals-service URL this client calls.
 
-One module owns the upstream URL shapes, the same way
-discover.services.index_client.urls does for the data service. Every
+One module owns the upstream URL shapes. Every
 call is server-to-server, so the base is OPENBOWER_SIGNALS_INTERNAL_URL
 (the transport); OPENBOWER_SIGNALS_URL stays the service's identity, the
 audience the token names. The version prefix is the service's own

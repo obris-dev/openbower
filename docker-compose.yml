@@ -43,7 +43,6 @@ x-core-env: &core_env
   # disagree). Deliberately NOT in apps/core/.env: that file does not
   # reach the web container.
   OPENBOWER_AUTH_URL: ${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}
-  OPENBOWER_DATA_URL: ${OPENBOWER_DATA_URL:-https://data.openbower.ai}
   OPENBOWER_SIGNALS_URL: ${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}
   # By SERVICE NAME over the shared suite network, not through the host
   # gateway: a loopback-published port (which is how those services are
@@ -54,7 +53,6 @@ x-core-env: &core_env
   # services are sibling containers reached by service name, so that setup sets these
   # alongside the identity URLs (the root .env.example has the block).
   OPENBOWER_AUTH_INTERNAL_URL: ${OPENBOWER_AUTH_INTERNAL_URL:-${OPENBOWER_AUTH_URL:-https://auth.openbower.ai}}
-  OPENBOWER_DATA_INTERNAL_URL: ${OPENBOWER_DATA_INTERNAL_URL:-${OPENBOWER_DATA_URL:-https://data.openbower.ai}}
   OPENBOWER_SIGNALS_INTERNAL_URL: ${OPENBOWER_SIGNALS_INTERNAL_URL:-${OPENBOWER_SIGNALS_URL:-https://signals.openbower.ai}}
   # The ingest bus, by service name over this stack's default network. Set
   # here (not in local.py's localhost seeds) because only the containers
@@ -222,7 +220,7 @@ services:
     environment: *core_env
     extra_hosts: *host_gateway
     # Deliberately NOT on the suite network: nothing in the fill path
-    # calls the IdP or the data service.
+    # calls the IdP or the signals service.
     depends_on:
       core-setup:
         condition: service_completed_successfully
@@ -268,6 +266,41 @@ services:
       test:
         - CMD-SHELL
         - "test $(( $(date +%s) - $(stat -c %Y /tmp/run_jobs.heartbeat 2>/dev/null || echo 0) )) -lt 30"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # The log POLLER: fills every log from its listener's matches on the
+  # signals service, one page of one log per claim, the log waiting
+  # longest first. Scales by replicas (a claim is a lease on the log), so
+  # one is enough here. Needs the signals migration (core-setup). On the
+  # suite network like core: it dials the signals service, by service name
+  # when a locally run development copy is in use. No restart policy
+  # (crash-is-a-signal; one log's crash is backed off inside its step). No
+  # grace either: a stop lands between logs, and a kill inside one rolls
+  # its page back (the append and the cursor are one transaction), so the
+  # log is simply polled again once its lease lapses.
+  log-poller:
+    image: *core_image
+    pull_policy: never
+    command: uv run --frozen --package openbower-core python apps/core/manage.py poll_signal_logs
+    env_file: *core_env_file
+    environment: *core_env
+    extra_hosts: *host_gateway
+    networks: [default, suite]
+    depends_on:
+      core-setup:
+        condition: service_completed_successfully
+    volumes: *core_volumes
+    # Liveness: the daemon touches /tmp/log_poller.heartbeat before every
+    # step, so a marker older than 64s means it WEDGED. A step is the 4s
+    # idle or one log (two reads of the signals service at its HTTP timeout
+    # per phase, and an append); a test pins the window above that.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test $(( $(date +%s) - $(stat -c %Y /tmp/log_poller.heartbeat 2>/dev/null || echo 0) )) -lt 64"
       interval: 10s
       timeout: 5s
       retries: 3
@@ -592,7 +625,7 @@ services:
       retries: 12
       start_period: 600s
 
-# The cross-stack network: the identity provider and data service are a
+# The cross-stack network: the identity provider and signals service are a
 # SEPARATE stack (a private repo in dev, the hosted services otherwise),
 # and containers reach them by service name over this network. Declared
 # external so neither stack owns it; `make up` creates it. With those

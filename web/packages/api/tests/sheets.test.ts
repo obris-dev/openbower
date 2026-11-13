@@ -40,8 +40,8 @@ test("addSheetRows posts rows and parses the RowsAdded receipt", async (t) => {
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
     const rows = [
-      { id: "01BBBBBBBBBBBBBBBBBBBBBBBB", data: { a: "1" }, states: {} },
-      { id: "01CCCCCCCCCCCCCCCCCCCCCCCC", data: { a: "2" }, states: {} },
+      { id: "01BBBBBBBBBBBBBBBBBBBBBBBB", created_at: "2026-11-11T00:00:00+00:00", data: { a: "1" }, states: {} },
+      { id: "01CCCCCCCCCCCCCCCCCCCCCCCC", created_at: "2026-11-11T00:00:00+00:00", data: { a: "2" }, states: {} },
     ];
     return new Response(JSON.stringify({ added: 2, row_count: 7, rows }), {
       status: 201,
@@ -96,6 +96,7 @@ const AI_DETAIL = {
     { kind: "ai", key: "answer", label: "Answer", type: "text", node_id: "01NDAAAAAAAAAAAAAAAAAAAAAA", current_fill_id: "" },
   ],
   origin: "manual",
+  kind: "standard",
   row_count: 2,
   entry_action_ids: ["01NDAAAAAAAAAAAAAAAAAAAAAA"],
   created_at: "2026-01-01T00:00:00Z",
@@ -181,6 +182,26 @@ test("fetchSheetRows hands the cursor back verbatim", async (t) => {
 
   await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { after: "a0V.01ROWAAAAAAAAAAAAAAAAAAAA", limit: 2 });
   assert.ok(calls[0]!.endsWith("/rows?after=a0V.01ROWAAAAAAAAAAAAAAAAAAAA&limit=2"), calls[0]);
+});
+
+test("a log's period rides ?since= encoded, and a sheet without one sends none", async (t) => {
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ items: [], next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { limit: 2, since: "2026-11-06T15:30:00.000Z" });
+  await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { limit: 2 });
+  assert.ok(calls[0]!.endsWith("/rows?limit=2&since=2026-11-06T15%3A30%3A00.000Z"), calls[0]);
+  assert.ok(!calls[1]!.includes("since"), calls[1]);
 });
 
 test("the known cause vocabulary is read off the contract, not hand-typed", () => {
@@ -303,13 +324,14 @@ test("an unknown cell cause maps to a CLIENT member, not a server state", async 
     new Response(
       JSON.stringify({
         items: [
-          { id: "01R", data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
+          { id: "01R", created_at: "2026-11-11T00:00:00+00:00", data: {}, states: { answer: { state: "a_cause_from_the_future", tools: {} } } },
           {
             id: "01S",
+            created_at: "2026-11-11T00:00:00+00:00",
             data: { answer: "x" },
             states: { answer: { state: "filled", tools: { web_search: "rate_limited" } } },
           },
-          { id: "01T", data: {}, states: { answer: "no_evidence" } },
+          { id: "01T", created_at: "2026-11-11T00:00:00+00:00", data: {}, states: { answer: "no_evidence" } },
         ],
         next_cursor: null,
       }),
@@ -346,6 +368,7 @@ test("reorderColumns sends the WHOLE key order, and nothing about the columns", 
         row_count: 0,
         entry_action_ids: [],
         origin: "manual",
+        kind: "standard",
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       }),
@@ -411,6 +434,7 @@ const SUMMARY = {
   row_count: 0,
   entry_action_ids: [],
   origin: "manual",
+  kind: "standard",
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };

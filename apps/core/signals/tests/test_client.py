@@ -27,7 +27,9 @@ from signals.services.signals_client import (
     SignalsAccessDenied,
     SignalsClientRequestError,
     SignalsClientService,
+    SignalsKeyRejected,
     SignalsLimitReached,
+    SignalsNotFound,
     SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
@@ -228,6 +230,15 @@ class ClientCallsTests(_ClientTests):
         self.assertIsNone(result)
         self.assertEqual(sent["method"], "DELETE")
 
+    def test_delete_listener_counts_one_already_gone_as_deleted(self):
+        # FAILS if the 404 escapes: every caller would re-learn that a
+        # listener already gone is the outcome a delete asks for.
+        result, sent = self._call(
+            (404, {"error": "not_found", "detail": "no such listener"}), "delete_listener", listener_id=_LISTENER_ID
+        )
+        self.assertIsNone(result)
+        self.assertEqual(sent["method"], "DELETE")
+
     def test_listener_versions(self):
         page, sent = self._call(
             (200, {"items": [_VERSION], "next_cursor": None}), "listener_versions", listener_id=_LISTENER_ID
@@ -308,6 +319,10 @@ class ClientFailureTests(_ClientTests):
         error = self._raises((409, {"error": "conflict", "detail": "busy"}), SignalsClientRequestError)
         self.assertNotIsInstance(error, (SignalsLimitReached, SignalsPreviewRunning))
 
+    def test_a_missing_listener_is_not_found(self):
+        refused = self._raises((404, {"error": "not_found", "detail": "no such listener"}), SignalsNotFound)
+        self.assertEqual((refused.status, refused.body["error"]), (404, "not_found"))
+
     def test_a_missing_scope_is_access_denied(self):
         self._raises(
             (403, {"error": "forbidden", "detail": "token lacks the signals:write scope"}), SignalsAccessDenied
@@ -341,3 +356,41 @@ class ClientFailureTests(_ClientTests):
         for case, response in cases.items():
             with self.subTest(case=case):
                 self._raises(response, SignalsUpstreamError)
+
+
+class KeyClientTests(TestCase):
+    """The feed's client, acting with an API key: the key as the bearer on
+    every call, and a rejected key named as such (a key cannot refresh, so
+    a 401 is never the session's retryable rejection)."""
+
+    def setUp(self) -> None:
+        self.client_ = SignalsClientService.for_key(token="obw_live_feed", key_id="01KEY" + "F" * 21)
+
+    def test_the_key_is_the_bearer(self):
+        patcher, calls = _signals_transport((200, {"items": [_MATCH], "next_cursor": _MATCH["id"]}))
+        with patcher:
+            page = self.client_.listener_matches(listener_id=_LISTENER_ID, after=None)
+        self.assertEqual(page.next_cursor, _MATCH["id"])
+        self.assertEqual([call["authorization"] for call in calls], ["Bearer obw_live_feed"])
+
+    def test_a_rejected_key_is_named_and_not_retried(self):
+        # FAILS if a key's 401 reads as the session's DownstreamTokenRejected:
+        # the poller would wait on a refresh that a key never has. The error
+        # names the key, so the caller marks that key and not a successor.
+        for status in (401, 403):
+            with self.subTest(status=status):
+                patcher, _calls = _signals_transport((status, {"error": "invalid_token", "detail": "revoked"}))
+                with patcher, self.assertRaises(SignalsKeyRejected) as raised:
+                    self.client_.listener_matches(listener_id=_LISTENER_ID)
+                self.assertEqual((raised.exception.key_id, raised.exception.status), ("01KEY" + "F" * 21, status))
+
+    def test_an_outage_stays_an_outage(self):
+        patcher, _calls = _signals_transport((503, None))
+        with patcher, self.assertRaises(SignalsUpstreamUnavailable):
+            self.client_.listener(listener_id=_LISTENER_ID)
+
+    def test_a_missing_listener_stays_a_refused_request(self):
+        patcher, _calls = _signals_transport((404, {"error": "not_found", "detail": "no such listener"}))
+        with patcher, self.assertRaises(SignalsClientRequestError) as raised:
+            self.client_.listener(listener_id=_LISTENER_ID)
+        self.assertEqual(raised.exception.status, 404)

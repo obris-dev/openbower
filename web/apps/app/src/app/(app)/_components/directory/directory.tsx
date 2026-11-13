@@ -3,8 +3,20 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Folder as FolderIcon, Plus } from "lucide-react";
-import { Button, Card, Dropdown, DropdownButton, DropdownItem, DropdownMenu, EmptyState, Input, useToast } from "@bower/ui";
+import { ChevronDown, ChevronRight, Folder as FolderIcon, Plus, Radio } from "lucide-react";
+import {
+  Button,
+  Card,
+  Dropdown,
+  DropdownButton,
+  DropdownItem,
+  DropdownMenu,
+  EmptyState,
+  Input,
+  LocalTime,
+  TIME_FORMAT,
+  useToast,
+} from "@bower/ui";
 import {
   createFolder,
   createSheet,
@@ -13,7 +25,10 @@ import {
   fetchFolders,
   fetchSheetsPage,
   importSheetCsv,
+  offersAnyVerb,
   renameFolder,
+  SHEET_KIND,
+  sheetVerbs,
   updateSheet,
   webRoutes,
   type FolderSummary,
@@ -24,13 +39,8 @@ import {
 import { LinkButton } from "../../../_components/link-button";
 import { ensureOk } from "@/lib/ensure-ok";
 import { COLLAPSED_COOKIE } from "./constants";
+import { EDIT_SIGNAL_ACTION, SignalMarker } from "../signals";
 import { RowMenu } from "./row-menu";
-
-function day(iso: string): string {
-  // Pinned locale + UTC: this renders on the server AND hydrates in the
-  // browser, and any locale/timezone disagreement is a hydration error.
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
 
 type Renaming = { kind: "sheet" | "folder"; id: string } | null;
 
@@ -219,7 +229,9 @@ export function Directory({
       <Link
         href={webRoutes.sheet(id)}
         title={label}
-        className="block truncate font-medium text-foreground hover:text-signal"
+        // min-w-0: beside a signal's marker the name is a flex item, which
+        // would otherwise refuse to shrink below its text and never truncate.
+        className="block min-w-0 truncate font-medium text-foreground hover:text-signal"
       >
         {label}
       </Link>
@@ -227,27 +239,46 @@ export function Directory({
   }
 
   function sheetRow(sheet: SheetSummary, indent: boolean) {
+    const fromSignal = sheet.kind === SHEET_KIND.LOG;
+    const verbs = sheetVerbs(sheet);
+    const { settingsHref } = verbs;
     return (
       <tr key={sheet.id} className="align-middle">
         <td className={`w-full max-w-0 py-2.5 pr-4 ${indent ? "pl-10" : "pl-4"}`}>
-          {renameCell("sheet", sheet.id, sheet.label)}
+          {fromSignal ? (
+            <span className="flex min-w-0 items-center gap-2">
+              <SignalMarker className="text-faint" />
+              {renameCell("sheet", sheet.id, sheet.label)}
+            </span>
+          ) : (
+            renameCell("sheet", sheet.id, sheet.label)
+          )}
         </td>
         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-muted">
           {sheet.row_count.toLocaleString("en-US")}
         </td>
-        <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">{day(sheet.updated_at)}</td>
+        <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">
+          <LocalTime iso={sheet.updated_at} format={TIME_FORMAT.DAY} />
+        </td>
         <td className="py-2.5 pl-2 pr-3 text-right">
-          <RowMenu
-            kind="sheet"
-            folders={folders}
-            currentFolderId={sheet.folder_id || undefined}
-            onRename={() => {
-              setRenaming({ kind: "sheet", id: sheet.id });
-              setRenameValue(sheet.label);
-            }}
-            onMove={(folderId) => void move(sheet, folderId)}
-            onDelete={() => void removeSheet(sheet)}
-          />
+          {offersAnyVerb(verbs) && (
+            <RowMenu
+              kind="sheet"
+              folders={folders}
+              currentFolderId={sheet.folder_id || undefined}
+              settings={settingsHref !== null ? { href: settingsHref, label: EDIT_SIGNAL_ACTION } : undefined}
+              onRename={
+                verbs.rename
+                  ? () => {
+                      setRenaming({ kind: "sheet", id: sheet.id });
+                      setRenameValue(sheet.label);
+                    }
+                  : undefined
+              }
+              onMove={verbs.move ? (folderId) => void move(sheet, folderId) : undefined}
+              onDelete={verbs.delete ? () => void removeSheet(sheet) : undefined}
+            />
+          )}
         </td>
       </tr>
     );
@@ -260,7 +291,7 @@ export function Directory({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">All sheets</h1>
-          {empty && <p className="mt-1 text-sm text-muted">Sheets of anything: imported CSVs, saved Discover runs.</p>}
+          {empty && <p className="mt-1 text-sm text-muted">Sheets of anything, from a CSV or by hand.</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -311,14 +342,14 @@ export function Directory({
       ) : empty ? (
         <EmptyState
           title="No sheets yet"
-          subtitle="Import a CSV to start a sheet, or save a Discover search as a sheet from its results."
+          subtitle="Import a CSV to start a sheet, or create one and type into it."
         >
           <Button size="sm" loading={importing} onClick={() => fileInput.current?.click()}>
             Import CSV
           </Button>
-          <LinkButton size="sm" variant="ghost" href={webRoutes.discover}>
-            Open Discover
-          </LinkButton>
+          <Button size="sm" variant="ghost" onClick={() => void quickAdd("sheet")}>
+            Create sheet
+          </Button>
         </EmptyState>
       ) : (
         <Card className="p-0">

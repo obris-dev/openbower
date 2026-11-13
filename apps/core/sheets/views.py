@@ -1,6 +1,6 @@
 """`/v1/sheets`: the sheets CRUD + rows + CSV import.
 
-Session-authed like discover; every query scopes through the caller's
+Session-authed; every query scopes through the caller's
 account via the service (foreign ids read as not-found). No export
 endpoint on purpose: exports build client-side from the rows pages."""
 
@@ -11,6 +11,7 @@ from functools import cached_property
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -18,7 +19,7 @@ from rest_framework.response import Response
 from agents.services import AgentNotFound
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
-from openbower_kernel.fields import new_ulid
+from openbower_kernel.fields import min_ulid_at, new_ulid
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
@@ -46,11 +47,13 @@ from .constants import (
     MAX_ROWS_PAGE,
     FillErrorCode,
     IngestErrorCode,
+    RowSource,
+    SheetKind,
     SheetOrigin,
 )
 from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation
+from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
 from .serializers import (
@@ -95,6 +98,7 @@ from .services.sheets import (
     RowNotFound,
     RowSelection,
     SheetFull,
+    SheetIsLog,
     SheetNotFound,
     SheetService,
     SomeRows,
@@ -115,7 +119,48 @@ _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS
 # The same partition for the COLUMN vocabulary, kept separate because
 # the two sets are disjoint and neither endpoint should classify by
 # the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset({FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON})
+_COLUMN_CONFLICT_CODES = frozenset(
+    {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
+)
+
+
+def _log_route(e: SheetIsLog) -> Response:
+    """A log's label and life are its listener's too: renaming or deleting
+    one here would leave its listener behind, so its own route does both."""
+    return Response({"error": e.code, "detail": str(e)}, status=409)
+
+
+def _window_bound(request: Request, name: str) -> str:
+    """A time-window bound off `?<name>=`, as the id cutoff it means
+    (ids are time, `min_ulid_at`), or "" when absent. An instant with an
+    offset: the client computes its tabs in the user's own time zone.
+    Every unusable value is a 400: a well-formed but impossible date makes
+    the parser raise, and an instant before 1970 has no ULID."""
+    raw = request.query_params.get(name, "")
+    if not raw:
+        return ""
+    refusal = ValidationError(f"?{name}= must be an ISO 8601 instant with an offset, from 1970 on")
+    try:
+        at = parse_datetime(raw)
+    except ValueError:
+        raise refusal from None
+    if at is None or timezone.is_naive(at) or at.timestamp() < 0:
+        raise refusal
+    return min_ulid_at(at)
+
+
+def _kind_filter(request: Request) -> SheetKind | None:
+    """`?kind=` narrows the sheets index to one kind, or None when absent.
+    A kind this server does not have is a 400, never an empty page: an
+    empty page would read as "no such sheets"."""
+    raw = request.query_params.get("kind", "")
+    if not raw:
+        return None
+    try:
+        return SheetKind(raw)
+    except ValueError:
+        choices = ", ".join(kind.value for kind in SheetKind)
+        raise ValidationError(f"?kind= must be one of: {choices}") from None
 
 
 def _fill_refusal_status(e: FillRefused) -> int:
@@ -174,8 +219,10 @@ class _ScopedView(ScopedView):
 
 class SheetsView(_ScopedView):
     # The sheets collection is where a machine producer both enumerates
-    # ("which sheets can I push to?") and creates a sheet to push into, so
-    # BOTH methods ride the machine lane; account/user scoping (no session
+    # and creates a sheet to push into, so BOTH methods ride the machine
+    # lane. The index is every kind, and only a standard sheet takes a push
+    # (a log's rows come from its signal), so `?kind=standard` is the
+    # producer's "which sheets can I push to?"; account/user scoping (no session
     # state) makes a machine token safe on either. Every other sheets
     # endpoint keeps the cookie-only default, which also proves the per-view
     # scoping. Cookie auth is listed FIRST so a browser's 401 (an expired
@@ -187,7 +234,8 @@ class SheetsView(_ScopedView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         after = request.query_params.get("after", "")
-        rows = self.sheets.page(after_id=after, limit=limit)
+        kind = _kind_filter(request)
+        rows = self.sheets.page(after_id=after, limit=limit, kind=kind)
         page = SheetsPage(items=[sheet_wire(x) for x in rows], next_cursor=next_cursor_from(rows, limit=limit))
         return Response(page.model_dump())
 
@@ -215,19 +263,28 @@ class SheetDetailView(_ScopedView):
         data = serializer.validated_data
         target_sheet = self._sheet_or_404(id)
         # One PATCH, one outcome: a bad folder id must not leave a
-        # half-applied rename behind.
-        with transaction.atomic():
-            if "label" in data:
-                target_sheet = self.sheets.rename(target_sheet, label=data["label"])
-            if "folder_id" in data:
-                try:
-                    target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
-                except FolderNotFound:
-                    raise ValidationError("no folder with that id") from None
+        # half-applied rename behind, nor a refused rename a move.
+        try:
+            with transaction.atomic():
+                if "label" in data:
+                    target_sheet = self.sheets.rename(target_sheet, label=data["label"])
+                if "folder_id" in data:
+                    try:
+                        target_sheet = self.sheets.move(target_sheet, folder_id=data["folder_id"])
+                    except FolderNotFound:
+                        raise ValidationError("no folder with that id") from None
+                if "autofill" in data:
+                    target_sheet = self.sheets.set_autofill(target_sheet, on=data["autofill"])
+        except SheetIsLog as e:
+            return _log_route(e)
         return Response(sheet_detail_wire(target_sheet))
 
     def delete(self, request: Request, id: str) -> Response:
-        self.sheets.delete(self._sheet_or_404(id))
+        target_sheet = self._sheet_or_404(id)
+        try:
+            self.sheets.delete(target_sheet)
+        except SheetIsLog as e:
+            return _log_route(e)
         return Response(status=204)
 
 
@@ -240,7 +297,13 @@ class SheetRowsView(_ScopedView):
             cursor = RowCursor.parse(after) if after else None
         except InvalidRowCursor as e:
             raise ValidationError("?after= must be a cursor this sheet handed out") from e
-        rows = self.sheets.rows_page(target_sheet, after=cursor, limit=limit)
+        # ?since= is inclusive, ?until= exclusive (Yesterday is since
+        # yesterday's midnight until today's).
+        since_id = _window_bound(request, "since")
+        before_id = _window_bound(request, "until")
+        if (since_id or before_id) and target_sheet.kind != SheetKind.LOG:
+            raise ValidationError("a time window applies to a log")
+        rows = self.sheets.rows_page(target_sheet, after=cursor, limit=limit, since_id=since_id, before_id=before_id)
         states = self.fills.cell_states_for_rows(target_sheet, rows)
         next_cursor = next_cursor_from(rows, limit=limit, cursor=lambda row: RowCursor(str(row.id), row.rank).wire())
         items = [row_wire(r, states.get(str(r.id), {})) for r in rows]
@@ -256,7 +319,10 @@ class SheetRowsView(_ScopedView):
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
                 rows=serializer.validated_data["rows"],
+                source=RowSource.MANUAL,
             ).run()
+        except SheetNotAppendable as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         except (SheetFull, ColumnNotWritable) as e:
             raise ValidationError(str(e)) from e
         except SheetNotFound as e:
@@ -352,6 +418,12 @@ class SheetIngestView(_ScopedView):
         target_sheet = self._sheet_or_404(id)
         serializer = IngestRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # Refused BEFORE the bus: the append happens later, so the push is
+        # the only place a log can answer the producer with a 409.
+        try:
+            require_appendable(target_sheet, source=RowSource.PUSH)
+        except SheetNotAppendable as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         # Validate the push against the sheet's columns BEFORE accepting it:
         # the append is async (202), so the POST is the only place a
         # malformed value can reach the producer as a 400 it can fix, rather

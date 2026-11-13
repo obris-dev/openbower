@@ -20,7 +20,8 @@ import { type AiColumnBody,
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, type ScopeChoice } from "../fill";
-import { type Attempt, buildChecklist, configMissing, configReady, draftProvider, EMPTY_OUTPUT, EMPTY_TOOLS, firstGap, goToSection, isContentful, type Missing, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, type Provider, ReadinessChecklist, ToolToggles } from "../../../../_components/agent-config";
+import { type Attempt, buildChecklist, configMissing, configReady, draftProvider, EMPTY_OUTPUT, EMPTY_TOOLS, firstGap, isContentful, type Missing, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, type Provider, ToolToggles } from "../../../../_components/agent-config";
+import { goToSection, ReadinessChecklist } from "../../../../_components/readiness";
 import { AgentsTab } from "./agents-tab";
 import { collidingKeys } from "./landing-keys";
 

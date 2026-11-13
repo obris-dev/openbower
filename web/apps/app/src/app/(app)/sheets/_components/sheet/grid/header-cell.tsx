@@ -4,7 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Popover, PopoverButton, PopoverPanel } from "@bower/ui";
 import { useState, type MouseEventHandler } from "react";
-import type { SheetColumn, WebhookColumn } from "@bower/api";
+import { isImmutable, type SheetColumn, type WebhookColumn } from "@bower/api";
 
 import type { ColumnOutcome } from "../use-columns";
 import { ColumnIcon } from "./column-icon";
@@ -136,7 +136,9 @@ export function HeaderCell({
                     onMove={(direction) => nudge(direction)}
                     onRename={onRename && (() => setRenaming(true))}
                     onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
-                    onDelete={onDelete && (() => onDelete(column))}
+                    // A column whose values arrive with the row stays while
+                    // its source writes it: the server refuses its delete.
+                    onDelete={onDelete && !isImmutable(column) ? () => onDelete(column) : undefined}
                   />
                 )}
               </PopoverPanel>

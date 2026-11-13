@@ -57,7 +57,7 @@ class OAuthClientGlobal:
                 # carries the same set, so a session can only gain a scope
                 # through a fresh login (a session from before signals
                 # signs in again to read them).
-                "scope": "profile data:read data:write signals:read signals:write",
+                "scope": "profile signals:read signals:write",
                 # RFC 8707 resource indicators (repeated param): bind the
                 # token to exactly the resource servers it is used at, so
                 # it cannot be replayed elsewhere. Encoded with doseq in

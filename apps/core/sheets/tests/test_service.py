@@ -383,9 +383,9 @@ class RecordedColumnTests(TestCase):
 
     def test_a_key_matching_no_column_is_still_tolerated(self):
         # The refusal is scoped to RECORDED columns. A key the sheet has
-        # no column for keeps the writer's tolerance (the discover save
-        # writes its own keys into a sheet that need not have them), so
-        # widening the raise stays a separate decision. FAILS if the
+        # no column for keeps the writer's tolerance (a writer may carry
+        # keys a sheet need not have), so widening the raise stays a
+        # separate decision. FAILS if the
         # refusal swallows the tolerant path.
         service = _service()
         target = self._sheet()

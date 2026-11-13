@@ -3,9 +3,10 @@
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import type { ReactNode } from "react";
 
-/** The one modal: the confirm for the two destructive acts LAYOUT.md
- * rule 6 names (a row's delete from a menu that is gone when the
- * question is asked, and the selection pill's delete). It
+/** The one modal: the confirm for the four acts LAYOUT.md rule 6 names
+ * (a row's delete from a menu that is gone when the question is asked,
+ * the selection pill's delete, a signal's delete and a signal's
+ * Reconnect, both of which wait on another service). It
  * holds the shared confirm form and nothing else; Escape, the
  * backdrop, the focus trap and the focus return come from Headless
  * UI's Dialog, and focus lands where the form marks it

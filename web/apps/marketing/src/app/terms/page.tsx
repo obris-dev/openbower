@@ -71,8 +71,8 @@ export default function TermsPage() {
 
       <Section title="7. Our content">
         <p>
-          The hosted company universe behind look-alike discovery, and the Service&apos;s name and marks, are ours. You
-          may use the universe through the Service for your own prospecting and not to rebuild or redistribute it.
+          The hosted signals, and the Service&apos;s name and marks, are ours. You may use the signals through the
+          Service for your own prospecting and not to rebuild or redistribute them.
         </p>
       </Section>
 

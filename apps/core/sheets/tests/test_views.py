@@ -51,20 +51,23 @@ class SheetsViewsTests(TestCase):
         self.assertEqual(self.client.get(reverse("sheets_detail", kwargs={"id": sheet_id})).status_code, 404)
 
     def test_a_create_body_cannot_choose_a_column_kind(self):
-        """The create request declares key, label, and type; a kind a
-        client sends is not part of it and never lands (the view builds
-        plain columns), so a round-tripped AI column stays plain."""
+        """The create request declares key, label, and type; a kind or an
+        immutable flag a client sends is not part of it and never lands
+        (the view builds plain, mutable columns), so a round-tripped AI
+        column stays plain and editable."""
         resp = self.client.post(
             reverse("sheets_index"),
             {
                 "label": "Round trip",
-                "columns": [{"kind": "ai", "key": "a", "label": "A", "type": "text", "node_id": "x"}],
+                "columns": [
+                    {"kind": "ai", "key": "a", "label": "A", "type": "text", "node_id": "x", "immutable": True}
+                ],
             },
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 201, resp.content)
         [column] = resp.json()["columns"]
-        self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text"})
+        self.assertEqual(column, {"kind": "plain", "key": "a", "label": "A", "type": "text", "immutable": False})
 
     def test_ingest_get_omits_the_columns_a_producer_cannot_send(self):
         # The push is self-describing: GET returns the columns a producer

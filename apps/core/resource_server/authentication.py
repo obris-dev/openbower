@@ -8,8 +8,8 @@ token is the only credential). This is the machine lane (webhooks,
 CLI/MCP); the browser lane stays on the session cookie
 (AppSessionAuthentication). Both build the same AppUser and compose in a
 per-view authentication_classes list; this class is opt-in per view,
-never global. A view that does not attach it (discover, everything but
-the sheets collection) never runs the machine lane at all, so a Bearer
+never global. A view that does not attach it (everything but the sheets
+collection) never runs the machine lane at all, so a Bearer
 token there is simply unauthenticated under the cookie-only default, not
 audience-checked.
 

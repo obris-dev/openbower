@@ -86,13 +86,23 @@ NODE_KIND_MAX_LENGTH = 32
 NODE_IDENTITY_MAX_LENGTH = 64
 
 ORIGIN_MAX_LENGTH = 16
+KIND_MAX_LENGTH = 16
+
+
+class SheetKind(StrEnum):
+    """What a sheet is. A STANDARD sheet's rows sit where people put
+    them; a LOG's rows arrive over time and its sheet order is arrival
+    order, newest first, fixed at append and never moved, so every reader
+    that pages in sheet order reads a log newest first."""
+
+    STANDARD = "standard"
+    LOG = "log"
 
 
 class SheetOrigin(StrEnum):
     """How a sheet came to exist (an index-page chip, and the tell for
     which columns to expect)."""
 
-    DISCOVER = "discover"
     CSV = "csv"
     MANUAL = "manual"
 
@@ -170,6 +180,9 @@ class FillErrorCode(StrEnum):
     # A Send webhook column waits on this column's path; the user edits
     # or deletes those columns first (409).
     COLUMN_WAITED_ON = "column_waited_on"
+    # An immutable column: its source keeps writing that key, so it
+    # stays (409).
+    COLUMN_IMMUTABLE = "column_immutable"
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"
@@ -218,6 +231,15 @@ class PreviewErrorCode(StrEnum):
 class IngestErrorCode(StrEnum):
     INGEST_INVALID = "ingest_invalid"
     INGEST_UNAVAILABLE = "ingest_unavailable"
+    # A sheet whose rows arrive from its source only (a log) takes none
+    # from a push or a person (409).
+    NOT_APPENDABLE = "not_appendable"
+
+
+# The sheet doors' refusals of a log, all 409: a log's label and life are
+# its listener's too, so it is renamed and deleted through /v1/logs.
+class SheetErrorCode(StrEnum):
+    LOG_ROUTE = "log_route"
 
 
 # The Send webhook column's refusals, all 400: each names something in
@@ -380,6 +402,18 @@ FILL_POLL_SECONDS = JOB_LOOP_IDLE_SECONDS
 
 
 CELL_SOURCE_MAX_LENGTH = 8
+
+
+class RowSource(StrEnum):
+    """Where an append's rows come from, named at every call of the one
+    append (the row side of CellSource). A LOG takes rows from its FEED
+    only (what feeds it: a signal's matches today); a standard sheet
+    takes rows from anything but a feed."""
+
+    MANUAL = "manual"  # a person: POST rows, the add-rows bar (as CellSource.MANUAL)
+    PUSH = "push"  # the ingest consumer (an API key's push)
+    IMPORT = "import"  # a CSV import, into the sheet it creates
+    FEED = "feed"  # what feeds a log
 
 
 class CellSource(StrEnum):

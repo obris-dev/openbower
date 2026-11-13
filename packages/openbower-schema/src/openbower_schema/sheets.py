@@ -25,7 +25,8 @@ DEFAULT_COLUMN_TYPE: ColumnType = "text"
 # may rely on never receiving more.
 CELL_MAX_LENGTH = 65_536
 
-SheetOrigin = Literal["discover", "csv", "manual"]
+SheetOrigin = Literal["csv", "manual"]
+SheetKind = Literal["standard", "log"]
 
 # Wire bounds on the contract (binary). The agents domain DERIVES its
 # output bounds from these: an output becomes a column when a fill
@@ -68,6 +69,11 @@ class ColumnBase(BaseModel):
         max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label, as the user (or the CSV header) wrote it."
     )
     type: ColumnType = Field(description="Sheet display type; drives rendering only.")
+    immutable: bool = Field(
+        default=False,
+        description="Its values arrive with the row and are never edited by a person (a log's base columns). "
+        "Any kind may carry it: the kind says who fills a column, this says a person never does.",
+    )
 
 
 class PlainColumn(ColumnBase):
@@ -179,15 +185,24 @@ class FoldersList(BaseModel):
 
 
 class SheetSummary(BaseModel):
-    """One sheet as the index shows it (and the save-list response)."""
+    """One sheet as the index shows it (and the create response)."""
 
     id: str
     label: str
+    kind: SheetKind = Field(
+        description="standard: rows sit where people put them. log: rows arrive over time, newest first."
+    )
     folder_id: str = Field(default="", description="The containing folder; empty = loose at the root.")
     columns: list[SheetColumn] = Field(default=[], description="Display order.")
     origin: SheetOrigin = Field(description="How the sheet came to exist.")
-    origin_ref: str = Field(default="", description="e.g. the source run id for discover snapshots.")
+    origin_ref: str = Field(
+        default="", description="A reference to what the sheet was made from, when its origin has one."
+    )
     row_count: int = Field(description="Total rows (the sheet may page far beyond one response).")
+    autofill: bool = Field(
+        default=True,
+        description="Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+    )
     created_at: str
     updated_at: str
 
@@ -198,8 +213,8 @@ class SheetDetail(SheetSummary):
     and every write to the columns array (add, AI create, webhook
     create, rename, reorder, delete) answer with this; a column's own
     config doors (prompt, webhook config) answer their config, and the
-    index, sheet create, CSV import, and a saved discover run stay on
-    the summary and read no workflow."""
+    index, sheet create and CSV import stay on the summary and read no
+    workflow."""
 
     entry_action_ids: list[str] = Field(
         description="The sheet's entry actions: the workflow nodes an arriving row starts, each the "
@@ -270,6 +285,7 @@ class SheetRowWire(BaseModel):
     one row; a client never needs it)."""
 
     id: str
+    created_at: str = Field(description="When the row arrived (a log's Logged time).")
     data: dict[str, str] = Field(default={}, description="Cell values keyed by column key.")
     states: dict[str, CellStateWire] = Field(
         default={},
@@ -292,6 +308,9 @@ class SheetRowsPage(BaseModel):
 
 
 class SheetsPage(BaseModel):
+    """A page of the sheets index, newest first: every kind, or one with
+    `?kind=` (a push lands only in a `standard` sheet)."""
+
     items: list[SheetSummary]
     next_cursor: str | None = Field(default=None, description="The last id when more sheets exist.")
 

@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 
 from openbower_kernel.models import UserScopedModel
 
-from ..constants import LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH
+from ..constants import KIND_MAX_LENGTH, LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH, SheetKind
 from ..fields import SheetColumnsField
 
 
@@ -16,6 +16,15 @@ class Sheet(UserScopedModel):
     interpretation of a column (nothing here stores company
     references)."""
 
+    # db_default as well: an insert that names no kind (an older release
+    # during a rolling deploy) must land standard, not NULL.
+    kind = models.CharField(
+        _("kind"),
+        max_length=KIND_MAX_LENGTH,
+        default=SheetKind.STANDARD.value,
+        db_default=SheetKind.STANDARD.value,
+        help_text=_("SheetKind"),
+    )
     folder_id = models.CharField(_("folder id"), max_length=26, blank=True, default="")
     label = models.CharField(_("label"), max_length=LABEL_MAX_LENGTH)
     columns = SheetColumnsField(
@@ -26,11 +35,19 @@ class Sheet(UserScopedModel):
         _("origin ref"), max_length=64, blank=True, default="", help_text=_("e.g. the source run id")
     )
     row_count = models.IntegerField(_("row count"), default=0)
+    # Whether rows arriving start the sheet's entry actions; db_default for
+    # the same rolling deploy as kind.
+    autofill = models.BooleanField(_("autofill"), default=True, db_default=True)
 
     class Meta:
         verbose_name = _("sheet")
         verbose_name_plural = _("sheets")
-        indexes = [models.Index(fields=["account_id", "id"], name="sheet_account_idx")]
+        # Both listings read an account newest first: the sheets index every
+        # kind, the logs index one kind.
+        indexes = [
+            models.Index(fields=["account_id", "id"], name="sheet_account_idx"),
+            models.Index(fields=["account_id", "kind", "id"], name="sheet_account_kind_idx"),
+        ]
 
     def __str__(self) -> str:
         return self.label

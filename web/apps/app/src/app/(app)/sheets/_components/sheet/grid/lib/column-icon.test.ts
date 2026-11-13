@@ -8,14 +8,14 @@ import { COLUMN_ICONS, columnIconName } from "./column-icon.ts";
 
 test("every value type the contract names has an icon, the same one its Add column entry shows", () => {
   for (const type of COLUMN_TYPES) {
-    const column: SheetColumn = { key: type, label: type, type, kind: "plain" };
+    const column: SheetColumn = { key: type, label: type, type, kind: "plain", immutable: false };
     assert.equal(COLUMN_ICONS[columnIconName(column)], COLUMN_TYPE_META[type].icon, `the ${type} type`);
   }
 });
 
 test("a filled column's kind names its icon, whatever its value type", () => {
-  const ai: SheetColumn = { key: "a", label: "A", type: "number", kind: "ai", node_id: "n", current_fill_id: "" };
-  const webhook: SheetColumn = { key: "w", label: "W", type: "text", kind: "webhook", node_id: "n" };
+  const ai: SheetColumn = { key: "a", label: "A", type: "number", kind: "ai", immutable: false, node_id: "n", current_fill_id: "" };
+  const webhook: SheetColumn = { key: "w", label: "W", type: "text", kind: "webhook", immutable: false, node_id: "n" };
   assert.equal(columnIconName(ai), "ai");
   assert.equal(columnIconName(webhook), "webhook");
   assert.notEqual(COLUMN_ICONS.ai, COLUMN_ICONS.number);

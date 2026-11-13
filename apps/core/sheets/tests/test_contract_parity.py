@@ -14,6 +14,7 @@ from jobs.constants import JobStatus
 from openbower_schema.fills import FillStatusWire
 from openbower_schema.runs import OPEN_NODE_RUN_STATES, NodeRunStatusWire
 from openbower_schema.sheets import ColumnType as WireColumnType
+from openbower_schema.sheets import SheetKind as WireSheetKind
 from openbower_schema.sheets import SheetOrigin as WireSheetOrigin
 from openbower_schema.sheets import WireCellState
 from sheets import constants
@@ -26,6 +27,9 @@ class WireEnumParityTests(SimpleTestCase):
 
     def test_sheet_origin_parity(self):
         self.assertEqual(set(get_args(WireSheetOrigin)), {v.value for v in constants.SheetOrigin})
+
+    def test_sheet_kind_parity(self):
+        self.assertEqual(set(get_args(WireSheetKind)), {v.value for v in constants.SheetKind})
 
     def test_cell_state_parity(self):
         # The wire adds `pending` (derived, never stored) and otherwise
@@ -75,6 +79,24 @@ class RowDoorPins(SimpleTestCase):
             if re.search(r"\.add_rows\(", text) and not re.search(r"def add_rows\(", text):
                 callers.append(str(path.relative_to(core)))
         self.assertEqual(callers, ["sheets/operations/append_rows.py"])
+
+    def test_a_log_is_renamed_and_deleted_by_its_own_service(self):
+        # SheetService.rename_log / delete_log skip the refusal a log meets
+        # at rename / delete, because the log's own service renames and
+        # deletes its listener and feed beside them. FAILS if any other
+        # production module calls them.
+        import re
+        from pathlib import Path
+
+        core = Path(__file__).resolve().parents[2]
+        callers = []
+        for path in core.rglob("*.py"):
+            if "/tests/" in str(path) or path.name.startswith("test_"):
+                continue
+            text = path.read_text()
+            if re.search(r"\.(rename_log|delete_log)\(", text):
+                callers.append(str(path.relative_to(core)))
+        self.assertEqual(callers, ["signals/services/logs.py"])
 
     def test_a_persons_write_is_built_in_the_one_operation(self):
         # A TypedWrite is the one write that REPLACES a value, and the

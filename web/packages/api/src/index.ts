@@ -7,7 +7,6 @@
 // and the probe primitive, nothing else.
 export { fetchJson, GENERIC_FAILURE } from "./request.ts";
 export type { ApiResult } from "./request.ts";
-export * from "./domains.ts";
 export * from "./agents.ts";
 export * from "./runs.ts";
 // Explicit, not a star: buildApiFetchUrl carries the container-internal
@@ -24,7 +23,9 @@ export {
   withNext,
 } from "./routes.ts";
 export * from "./auth.ts";
-export * from "./discover.ts";
 export * from "./api-keys.ts";
 export * from "./sheets.ts";
+export * from "./sheet-verbs.ts";
+export * from "./logs.ts";
+export * from "./signals.ts";
 export * from "./webhooks.ts";

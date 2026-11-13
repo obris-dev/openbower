@@ -114,6 +114,9 @@
      tracks): text roles are translucent and compute against
      whatever sits behind them. */
   --color-control: var(--role-control);
+  /* track = the empty part of a slider: solid, so the fill and the
+     rest read apart on any card. */
+  --color-track: var(--role-track);
   --color-hairline: var(--role-hairline);
   --color-edge: var(--role-edge);
   /* Fills: wash = resting tint, wash-strong = hover/active tint */
@@ -139,6 +142,7 @@
   --role-foreground: var(--color-ink);
   --role-muted: color-mix(in oklab, var(--color-ink) 60%, transparent);
   --role-control: #6b7280;
+  --role-track: #ffffff;
   --role-faint: color-mix(in oklab, var(--color-ink) 40%, transparent);
   --role-canvas: var(--color-paper-soft);
   --role-surface: var(--color-paper);
@@ -176,6 +180,7 @@
   --role-foreground: var(--color-paper);
   --role-muted: color-mix(in oklab, var(--color-paper) 60%, transparent);
   --role-control: #8b929b;
+  --role-track: #3a3f47;
   --role-faint: color-mix(in oklab, var(--color-paper) 40%, transparent);
   --role-canvas: var(--color-ink);
   --role-surface: var(--color-ink-soft);

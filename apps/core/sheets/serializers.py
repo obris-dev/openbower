@@ -60,10 +60,12 @@ class SheetCreateRequest(serializers.Serializer):
 
 
 class SheetPatchRequest(serializers.Serializer):
-    """Rename and/or move; at least one field must be present."""
+    """Rename, move and/or switch autofill; at least one field must be
+    present."""
 
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH, required=False)
     folder_id = serializers.CharField(max_length=26, required=False, allow_blank=True)
+    autofill = serializers.BooleanField(required=False)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if not attrs:
@@ -242,7 +244,7 @@ class ColumnAddRequest(serializers.Serializer):
 def sheet_wire(target: Sheet) -> dict[str, Any]:
     """One sheet as the index and the other sheet-returning doors show it:
     no workflow read."""
-    return _sheet_summary(target).model_dump()
+    return sheet_summary(target).model_dump()
 
 
 def sheet_detail_wire(target: Sheet) -> dict[str, Any]:
@@ -250,21 +252,23 @@ def sheet_detail_wire(target: Sheet) -> dict[str, Any]:
     (where a fill may start), read for this sheet alone."""
     workflows = WorkflowService(account_id=target.account_id)
     actions = workflows.entry_action_ids(str(target.id))
-    summary = _sheet_summary(target)
+    summary = sheet_summary(target)
     fields = summary.model_dump()
     detail = WireSheetDetail(**fields, entry_action_ids=actions)
     return detail.model_dump()
 
 
-def _sheet_summary(target: Sheet) -> WireSheetSummary:
+def sheet_summary(target: Sheet) -> WireSheetSummary:
     return WireSheetSummary(
         id=str(target.id),
         label=target.label,
+        kind=target.kind,
         folder_id=target.folder_id,
         columns=target.columns,
         origin=target.origin,
         origin_ref=target.origin_ref,
         row_count=target.row_count,
+        autofill=target.autofill,
         created_at=target.created_at.isoformat(),
         updated_at=target.updated_at.isoformat(),
     )
@@ -355,7 +359,9 @@ def row_wire(row: SheetRow, states: dict[str, CellStateWire] | None = None) -> d
     """A sheet row with its cell states (every node column's) beside its
     values. ONE shape rather than paged reads walking in lockstep,
     which was a client-side join carried over the network."""
-    return WireSheetRow(id=str(row.id), data=row.data, states=states or {}).model_dump()
+    return WireSheetRow(
+        id=str(row.id), created_at=row.created_at.isoformat(), data=row.data, states=states or {}
+    ).model_dump()
 
 
 def _fill_run_wire(fill: Job, progress: FillReadout) -> dict[str, Any]:

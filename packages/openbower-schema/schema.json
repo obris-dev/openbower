@@ -274,6 +274,12 @@
           "title": "Current Fill Id",
           "type": "string"
         },
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,
@@ -374,6 +380,15 @@
           "default": null,
           "description": "When the key stopped working; null while it works.",
           "title": "Revoked At"
+        },
+        "scopes": {
+          "default": [],
+          "description": "What the key may do (profile, plus any it was minted with).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
         }
       },
       "required": [
@@ -674,68 +689,10 @@
       "title": "ColumnPromptWire",
       "type": "object"
     },
-    "Company": {
-      "description": "One company from the central universe (seeded from the free PDL\nCompany Dataset, CC BY 4.0). Char-pointer ULID id.",
+    "EventSource": {
+      "description": "The article an event was read from.",
       "properties": {
-        "country": {
-          "description": "Country; empty when unknown.",
-          "title": "Country",
-          "type": "string"
-        },
-        "domain": {
-          "description": "Canonical lowercased bare domain.",
-          "title": "Domain",
-          "type": "string"
-        },
-        "founded_year": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Founding year when known.",
-          "title": "Founded Year"
-        },
-        "id": {
-          "description": "The company's ULID in the universe.",
-          "title": "Id",
-          "type": "string"
-        },
-        "industry": {
-          "description": "Industry label; empty when unknown.",
-          "title": "Industry",
-          "type": "string"
-        },
-        "linkedin_url": {
-          "description": "LinkedIn company URL; empty when unknown.",
-          "title": "Linkedin Url",
-          "type": "string"
-        },
-        "locality": {
-          "description": "City/locality; empty when unknown.",
-          "title": "Locality",
-          "type": "string"
-        },
-        "name": {
-          "description": "Company display name.",
-          "title": "Name",
-          "type": "string"
-        },
-        "region": {
-          "description": "Region/state; empty when unknown.",
-          "title": "Region",
-          "type": "string"
-        },
-        "size_band": {
-          "description": "Coarse employee band, e.g. 1-10; empty when unknown.",
-          "title": "Size Band",
-          "type": "string"
-        },
-        "snapshot_date": {
+        "published": {
           "anyOf": [
             {
               "type": "string"
@@ -744,29 +701,30 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "ISO date the row's data was current.",
-          "title": "Snapshot Date"
+          "description": "ISO time the publisher dated it.",
+          "title": "Published"
         },
-        "source": {
-          "description": "Provenance of the row, e.g. pdl_free.",
-          "title": "Source",
+        "summary": {
+          "description": "The feed's own summary of it, cut short when long.",
+          "title": "Summary",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
           "type": "string"
         }
       },
       "required": [
-        "id",
-        "domain",
-        "name",
-        "industry",
-        "locality",
-        "region",
-        "country",
-        "linkedin_url",
-        "size_band",
-        "source"
+        "title",
+        "summary",
+        "url",
+        "published"
       ],
-      "title": "Company",
+      "title": "EventSource",
       "type": "object"
     },
     "FillCounters": {
@@ -1011,6 +969,252 @@
       "title": "FoldersList",
       "type": "object"
     },
+    "FundingCompany": {
+      "description": "The company a raise is about, as its article states it.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it does, in a sentence.",
+          "title": "Description"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its site's domain, when the article names one.",
+          "title": "Domain"
+        },
+        "hq": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where it is headquartered, as the article words it.",
+          "title": "Hq"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "domain",
+        "hq",
+        "description"
+      ],
+      "title": "FundingCompany",
+      "type": "object"
+    },
+    "FundingEvent": {
+      "description": "One company's raise: the facts its article states, nothing inferred.",
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The full amount raised; null when the article states none.",
+          "title": "Amount"
+        },
+        "company": {
+          "$ref": "#/$defs/FundingCompany"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "ISO 4217 code of the amount.",
+          "title": "Currency"
+        },
+        "instruments": {
+          "items": {
+            "enum": [
+              "equity",
+              "convertible",
+              "debt",
+              "grant",
+              "token"
+            ],
+            "type": "string"
+          },
+          "title": "Instruments",
+          "type": "array"
+        },
+        "lead_investors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Lead Investors",
+          "type": "array"
+        },
+        "other_investors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Other Investors",
+          "type": "array"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "enum": [
+                "pre_seed",
+                "seed",
+                "series_a",
+                "series_b",
+                "series_c",
+                "series_d_plus",
+                "growth",
+                "bridge"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stage"
+        }
+      },
+      "required": [
+        "company",
+        "amount",
+        "currency",
+        "stage",
+        "instruments",
+        "lead_investors",
+        "other_investors"
+      ],
+      "title": "FundingEvent",
+      "type": "object"
+    },
+    "FundingEventWire": {
+      "description": "A funding event: its id is the same under every listener that matched\nit and in every preview that chose it.",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/FundingEvent"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "logged_at": {
+          "title": "Logged At",
+          "type": "string"
+        },
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        }
+      },
+      "required": [
+        "id",
+        "signal",
+        "data",
+        "logged_at",
+        "source"
+      ],
+      "title": "FundingEventWire",
+      "type": "object"
+    },
+    "FundingFilter": {
+      "description": "A funding setup's fixed checks, every one optional: the stages it\nkeeps, and an amount range in one currency (inclusive, never\nconverted). An empty filter keeps every raise.",
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "max_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Amount"
+        },
+        "min_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Amount"
+        },
+        "stages": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "pre_seed",
+                  "seed",
+                  "series_a",
+                  "series_b",
+                  "series_c",
+                  "series_d_plus",
+                  "growth",
+                  "bridge"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stages"
+        }
+      },
+      "title": "FundingFilter",
+      "type": "object"
+    },
     "ImportResult": {
       "description": "What a CSV upload produced.",
       "properties": {
@@ -1110,87 +1314,118 @@
       "title": "IngestSchema",
       "type": "object"
     },
-    "LookalikeGroup": {
-      "description": "One seed group of a run: heterogeneous cohorts split into distinct\ngroups, each searched by its own centroid and labeled.",
+    "ListenerVersionWire": {
+      "description": "One saved setup. Versions are never changed: an edit saves a new one,\nso a listener's versions are its edit log.",
       "properties": {
-        "elbow_rank": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/$defs/FundingFilter"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_confidence": {
+          "description": "How sure the judge must be for a yes to match.",
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "prompt": {
+          "description": "What the judge reads for; empty when the filter alone decides.",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Who saved it.",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "filter",
+        "prompt",
+        "min_confidence",
+        "user_id",
+        "created_at"
+      ],
+      "title": "ListenerVersionWire",
+      "type": "object"
+    },
+    "ListenerWire": {
+      "description": "A listener and its current setup.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
           "anyOf": [
             {
-              "type": "integer"
+              "$ref": "#/$defs/MatchErrorWire"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "This group's own boundary: the knee of ITS score decay (null when too short/flat).",
-          "title": "Elbow Rank"
+          "description": "Why it is retrying or held; null when active."
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
         },
         "label": {
-          "default": "",
-          "description": "Human label; empty for the single homogeneous group.",
           "title": "Label",
           "type": "string"
         },
-        "seed_domains": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Seed Domains",
-          "type": "array"
-        },
-        "size": {
-          "default": 0,
-          "description": "Results this group contributed to the run.",
-          "title": "Size",
-          "type": "integer"
-        }
-      },
-      "title": "LookalikeGroup",
-      "type": "object"
-    },
-    "LookalikeItem": {
-      "description": "One ranked look-alike candidate.",
-      "properties": {
-        "company": {
-          "$ref": "#/$defs/Company"
-        },
-        "description": {
-          "default": "",
-          "description": "Site-derived blurb (homepage meta description or title); empty until the domain has a fetched snippet.",
-          "title": "Description",
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
           "type": "string"
         },
-        "group": {
-          "default": "",
-          "description": "Label of the seed group that surfaced this candidate; empty for single-group runs.",
-          "title": "Group",
+        "status": {
+          "enum": [
+            "active",
+            "retrying",
+            "held"
+          ],
+          "title": "Status",
           "type": "string"
         },
-        "rank": {
-          "description": "1-based rank in this result set.",
-          "title": "Rank",
-          "type": "integer"
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
         },
-        "score": {
-          "description": "Similarity score in [0, 1].",
-          "title": "Score",
-          "type": "number"
+        "user_id": {
+          "description": "Who created it.",
+          "title": "User Id",
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/$defs/ListenerVersionWire"
         }
       },
       "required": [
-        "company",
-        "score",
-        "rank"
+        "id",
+        "label",
+        "signal",
+        "user_id",
+        "status",
+        "error",
+        "version",
+        "created_at",
+        "updated_at"
       ],
-      "title": "LookalikeItem",
+      "title": "ListenerWire",
       "type": "object"
     },
-    "LookalikeListResponse": {
-      "description": "The look-alike envelope (data service and app proxy alike), for both\nthe query POST and the run-status poll.\n\n`status` drives the async lifecycle: \"complete\" carries the page in\n`items`; \"pending\"/\"running\" mean poll the run (HTTP 202, empty items);\n\"failed\" carries `detail`; \"canceled\" is terminal by request (a fresh\nquery revives the run). The engine computes in a worker, so a cold\ncohort answers pending first and is polled by `run_id`; a cached cohort\nanswers complete inline.",
+    "LogDetail": {
+      "description": "One log with its listener as the signals service has it now.",
       "properties": {
-        "detail": {
+        "last_polled_at": {
           "anyOf": [
             {
               "type": "string"
@@ -1199,27 +1434,106 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "Failure detail when status is failed.",
-          "title": "Detail"
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
         },
-        "engine": {
-          "description": "Which engine ranked these, e.g. embedding_v1.",
-          "title": "Engine",
+        "listener": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
           "type": "string"
         },
-        "groups": {
-          "default": [],
-          "description": "The run's seed-group breakdown; single unlabeled entry for homogeneous cohorts.",
-          "items": {
-            "$ref": "#/$defs/LookalikeGroup"
-          },
-          "title": "Groups",
-          "type": "array"
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener",
+        "signal",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "LogDetail",
+      "type": "object"
+    },
+    "LogSummary": {
+      "description": "One log as the logs index shows it: no signals call behind it.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
         },
+        "listener_id": {
+          "description": "The listener whose matches become the log's rows.",
+          "title": "Listener Id",
+          "type": "string"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener_id",
+        "signal",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "LogSummary",
+      "type": "object"
+    },
+    "LogsPage": {
+      "description": "`GET /v1/logs`: newest first.",
+      "properties": {
         "items": {
           "items": {
-            "$ref": "#/$defs/LookalikeItem"
+            "$ref": "#/$defs/LogSummary"
           },
           "title": "Items",
           "type": "array"
@@ -1234,72 +1548,38 @@
             }
           ],
           "default": null,
-          "description": "Opaque cursor for the next page.",
+          "description": "Hand back as ?after= for the next page.",
           "title": "Next Cursor"
-        },
-        "outlier_domains": {
-          "default": [],
-          "description": "Seeds set aside by clustering as misfits (excluded from generation, shown to the user).",
-          "items": {
-            "type": "string"
-          },
-          "title": "Outlier Domains",
-          "type": "array"
-        },
-        "result_count": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "TOTAL results in the completed run (the full lead-list size, independent of page size).",
-          "title": "Result Count"
-        },
-        "run_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The run to poll; null only when no run exists (e.g. an empty cohort).",
-          "title": "Run Id"
-        },
-        "status": {
-          "default": "complete",
-          "description": "Run lifecycle. Terminal: complete | failed | canceled; keep polling: pending | running.",
-          "enum": [
-            "pending",
-            "running",
-            "complete",
-            "failed",
-            "canceled"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "unresolved_domains": {
-          "default": [],
-          "description": "Inline seed domains that are not in the universe.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Unresolved Domains",
-          "type": "array"
         }
       },
       "required": [
-        "engine",
         "items"
       ],
-      "title": "LookalikeListResponse",
+      "title": "LogsPage",
+      "type": "object"
+    },
+    "MatchErrorWire": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "provider_error",
+            "rejected",
+            "too_long",
+            "invalid_output",
+            "outdated_event",
+            "abandoned",
+            "unexpected",
+            "stale_article",
+            "stale_listener"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "MatchErrorWire",
       "type": "object"
     },
     "NodeRunWire": {
@@ -1357,6 +1637,12 @@
     "PlainColumn": {
       "description": "A column the user or an import fills by hand.",
       "properties": {
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,
@@ -1395,6 +1681,184 @@
         "type"
       ],
       "title": "PlainColumn",
+      "type": "object"
+    },
+    "PreviewFailureWire": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "slow_down",
+            "unavailable",
+            "deadline",
+            "abandoned",
+            "unexpected"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PreviewFailureWire",
+      "type": "object"
+    },
+    "PreviewRowWire": {
+      "description": "What the setup made of one chosen event.",
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How sure the judge was of its own verdict, either way; null when the judge did not read it.",
+          "title": "Confidence"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchErrorWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event": {
+          "$ref": "#/$defs/FundingEventWire"
+        },
+        "outcome": {
+          "description": "passed: outside the filter. matched: the filter alone kept it, or the judge said yes with confidence at or above the run's min_confidence. unsure: the judge said yes below it. unmatched: the judge said no. errored: it could not be judged. waiting: not judged yet.",
+          "enum": [
+            "waiting",
+            "passed",
+            "matched",
+            "unsure",
+            "unmatched",
+            "errored"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "confidence",
+        "reason",
+        "error",
+        "event"
+      ],
+      "title": "PreviewRowWire",
+      "type": "object"
+    },
+    "PreviewRunWire": {
+      "description": "A setup tried on chosen events. Complete at create when the filter\ndecides every event; otherwise poll it while its rows land.",
+      "properties": {
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewFailureWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it failed; null unless failed."
+        },
+        "filter": {
+          "$ref": "#/$defs/FundingFilter"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_confidence": {
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "retry_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "After a slow-down: when another preview may be tried.",
+          "title": "Retry At"
+        },
+        "rows": {
+          "description": "In the order its events were chosen.",
+          "items": {
+            "$ref": "#/$defs/PreviewRowWire"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "signal": {
+          "const": "funding",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "canceled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "user_id": {
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "signal",
+        "filter",
+        "prompt",
+        "min_confidence",
+        "user_id",
+        "status",
+        "error",
+        "retry_at",
+        "created_at",
+        "finished_at",
+        "rows"
+      ],
+      "title": "PreviewRunWire",
       "type": "object"
     },
     "RowsAdded": {
@@ -1516,8 +1980,14 @@
       ]
     },
     "SheetDetail": {
-      "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create, CSV import, and a saved discover run stay on\nthe summary and read no workflow.",
+      "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create and CSV import stay on the summary and read no\nworkflow.",
       "properties": {
+        "autofill": {
+          "default": true,
+          "description": "Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+          "title": "Autofill",
+          "type": "boolean"
+        },
         "columns": {
           "default": [],
           "description": "Display order.",
@@ -1549,6 +2019,15 @@
           "title": "Id",
           "type": "string"
         },
+        "kind": {
+          "description": "standard: rows sit where people put them. log: rows arrive over time, newest first.",
+          "enum": [
+            "standard",
+            "log"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "label": {
           "title": "Label",
           "type": "string"
@@ -1556,7 +2035,6 @@
         "origin": {
           "description": "How the sheet came to exist.",
           "enum": [
-            "discover",
             "csv",
             "manual"
           ],
@@ -1565,7 +2043,7 @@
         },
         "origin_ref": {
           "default": "",
-          "description": "e.g. the source run id for discover snapshots.",
+          "description": "A reference to what the sheet was made from, when its origin has one.",
           "title": "Origin Ref",
           "type": "string"
         },
@@ -1582,6 +2060,7 @@
       "required": [
         "id",
         "label",
+        "kind",
         "origin",
         "row_count",
         "created_at",
@@ -1594,6 +2073,11 @@
     "SheetRowWire": {
       "description": "A row in SHEET ORDER: the page's array order is the order, and a\nrow number is whatever the renderer counts. Nothing about order\nrides the row itself (the server keeps a rank a move rewrites on\none row; a client never needs it).",
       "properties": {
+        "created_at": {
+          "description": "When the row arrived (a log's Logged time).",
+          "title": "Created At",
+          "type": "string"
+        },
         "data": {
           "additionalProperties": {
             "type": "string"
@@ -1618,7 +2102,8 @@
         }
       },
       "required": [
-        "id"
+        "id",
+        "created_at"
       ],
       "title": "SheetRowWire",
       "type": "object"
@@ -1653,8 +2138,14 @@
       "type": "object"
     },
     "SheetSummary": {
-      "description": "One sheet as the index shows it (and the save-list response).",
+      "description": "One sheet as the index shows it (and the create response).",
       "properties": {
+        "autofill": {
+          "default": true,
+          "description": "Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+          "title": "Autofill",
+          "type": "boolean"
+        },
         "columns": {
           "default": [],
           "description": "Display order.",
@@ -1678,6 +2169,15 @@
           "title": "Id",
           "type": "string"
         },
+        "kind": {
+          "description": "standard: rows sit where people put them. log: rows arrive over time, newest first.",
+          "enum": [
+            "standard",
+            "log"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "label": {
           "title": "Label",
           "type": "string"
@@ -1685,7 +2185,6 @@
         "origin": {
           "description": "How the sheet came to exist.",
           "enum": [
-            "discover",
             "csv",
             "manual"
           ],
@@ -1694,7 +2193,7 @@
         },
         "origin_ref": {
           "default": "",
-          "description": "e.g. the source run id for discover snapshots.",
+          "description": "A reference to what the sheet was made from, when its origin has one.",
           "title": "Origin Ref",
           "type": "string"
         },
@@ -1711,6 +2210,7 @@
       "required": [
         "id",
         "label",
+        "kind",
         "origin",
         "row_count",
         "created_at",
@@ -1720,6 +2220,7 @@
       "type": "object"
     },
     "SheetsPage": {
+      "description": "A page of the sheets index, newest first: every kind, or one with\n`?kind=` (a push lands only in a `standard` sheet).",
       "properties": {
         "items": {
           "items": {
@@ -1746,6 +2247,141 @@
         "items"
       ],
       "title": "SheetsPage",
+      "type": "object"
+    },
+    "SignalEventsPage": {
+      "description": "`GET /v1/signals/{signal}/events`: newest first, to choose from.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/FundingEventWire"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "SignalEventsPage",
+      "type": "object"
+    },
+    "SignalKind": {
+      "description": "One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
+      "properties": {
+        "event": {
+          "additionalProperties": true,
+          "description": "JSON Schema of the signal's event data.",
+          "title": "Event",
+          "type": "object"
+        },
+        "filter": {
+          "additionalProperties": true,
+          "description": "JSON Schema of the signal's filter.",
+          "title": "Filter",
+          "type": "object"
+        },
+        "min_confidence_default": {
+          "description": "A new setup's judge threshold when it gives none.",
+          "title": "Min Confidence Default",
+          "type": "number"
+        },
+        "signal": {
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "filter",
+        "event",
+        "min_confidence_default"
+      ],
+      "title": "SignalKind",
+      "type": "object"
+    },
+    "SignalLimits": {
+      "properties": {
+        "label_max_length": {
+          "title": "Label Max Length",
+          "type": "integer"
+        },
+        "max_listeners": {
+          "description": "Listeners an account may have.",
+          "title": "Max Listeners",
+          "type": "integer"
+        },
+        "preview_max_events": {
+          "description": "Events one preview may be tried on.",
+          "title": "Preview Max Events",
+          "type": "integer"
+        },
+        "prompt_max_length": {
+          "title": "Prompt Max Length",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_listeners",
+        "label_max_length",
+        "prompt_max_length",
+        "preview_max_events"
+      ],
+      "title": "SignalLimits",
+      "type": "object"
+    },
+    "SignalsCatalog": {
+      "description": "`GET /v1/signals`: every signal, and the limits a setup is held to.",
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/SignalLimits"
+        },
+        "signals": {
+          "items": {
+            "$ref": "#/$defs/SignalKind"
+          },
+          "title": "Signals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signals",
+        "limits"
+      ],
+      "title": "SignalsCatalog",
+      "type": "object"
+    },
+    "SyncKeyReconnected": {
+      "description": "`POST /v1/logs/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
+      "properties": {
+        "left_live_key_id": {
+          "description": "The replaced key while it is still live (another member minted it, or its revoke failed).",
+          "title": "Left Live Key Id",
+          "type": "string"
+        },
+        "left_live_user_id": {
+          "description": "Who minted the key left live; empty when none was.",
+          "title": "Left Live User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "left_live_key_id",
+        "left_live_user_id"
+      ],
+      "title": "SyncKeyReconnected",
       "type": "object"
     },
     "WebhookAttemptWire": {
@@ -1826,6 +2462,12 @@
     "WebhookColumn": {
       "description": "A Send webhook column. It IS the second node of its own path\n(the wait node before it names the paths it waits on); the\ncolumn holds no row data, its cells show delivery state.",
       "properties": {
+        "immutable": {
+          "default": false,
+          "description": "Its values arrive with the row and are never edited by a person (a log's base columns). Any kind may carry it: the kind says who fills a column, this says a person never does.",
+          "title": "Immutable",
+          "type": "boolean"
+        },
         "key": {
           "description": "Stable snake_case key; row data dicts key on it.",
           "maxLength": 40,

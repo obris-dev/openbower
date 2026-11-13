@@ -51,7 +51,7 @@ from typing import ClassVar
 from pydantic import BaseModel
 
 from ..cells import CellWrite
-from ..constants import MAX_JUDGED_ROWS
+from ..constants import MAX_JUDGED_ROWS, SheetKind
 from ..models import Node, NodeRun, Sheet, SheetRow
 from ..services.node_runs import NodeRunFlow
 
@@ -134,11 +134,23 @@ class FillScope(BaseModel):
     fill_run_id: str = ""
 
 
-# The SheetRow fields queuing ANY run reads: a run is stamped with its
-# row's rank so the pickers take runs in sheet order. The base's, not a
-# kind's to repeat or forget. The id is the primary key, which Django
-# never defers, so it is never missing.
+# The SheetRow fields queuing ANY run reads: a run's rank is stamped by
+# queue_position() so the pickers take runs in order. The
+# base's, not a kind's to repeat or forget. The id is the primary key,
+# which Django never defers, so it is never missing.
 _RUN_ROW_FIELDS: tuple[str, ...] = ("rank",)
+
+
+def queue_position(target_sheet: Sheet, row: SheetRow) -> str:
+    """Where a run for `row` waits in line, the value every picker orders
+    by. A standard sheet's runs go in SHEET order (its row's rank), so a
+    fill marches down the sheet the user is watching. A log's go in
+    ARRIVAL order (its row's id: a ULID, time-sortable under the C
+    collation), oldest first, because a log's sheet order is newest first
+    and a backlog must drain FIFO, not starve its oldest rows."""
+    if target_sheet.kind == SheetKind.LOG:
+        return str(row.id)
+    return row.rank
 
 
 class TooManyRowsToJudge(Exception):

@@ -2,11 +2,11 @@
 
 **What this is.** OpenBower is an open-source, self-hostable prospecting
 workspace: a spreadsheet for GTM work where AI research agents fill columns
-with evidence-grounded answers, plus an optional hosted company universe
-(lookalike discovery) behind an OAuth seam. The open app runs standalone
-(CSV import + local models + self-hosted search) at zero cost; the hosted
-data service is the paid layer. This repo is the PUBLIC one; the hosted
-auth, data and signals services live in a separate private repo.
+with evidence-grounded answers, plus optional hosted signals behind an
+OAuth seam. The open app runs standalone (CSV import + local models +
+self-hosted search) at zero cost; the hosted signals service is the paid
+layer. This repo is the PUBLIC one; the hosted auth and signals services
+live in a separate private repo.
 
 ## Conventions
 
@@ -56,7 +56,38 @@ auth, data and signals services live in a separate private repo.
   dropped by the fill's row key. A rank is only ever compared, never
   interpreted; when moves deepen one past RANK_REBALANCE_LENGTH the
   `rerank` job re-spaces the sheet. Rank columns carry the C collation
-  (byte order is the scheme's order).
+  (byte order is the scheme's order). A LOG (a sheet of kind `log`) ranks
+  each append BEFORE its first row, so its sheet order is arrival order,
+  newest first, through the same one paging path; its rows never move
+  (`move_row` refuses), and a time window on it is an id range (ids are
+  time) filtered on every page. A log is a sheet in the ONE sheets index
+  (home lists every sheet; folders hold and count every kind), and the
+  UI calls a listener and the log it fills a SIGNAL (the API keeps
+  `/v1/logs`). A log has ONE listener on the signals
+  service (`signals.LogFeed` links them) and they live and die together
+  through `/v1/logs` (`signals.operations.logs`): create mints the
+  account's sync key first, then the listener, then the sheet and its
+  feed, undoing the listener if that write fails; delete removes the
+  listener first and keeps everything local if it cannot. So the sheet
+  service refuses a log's rename and delete (`SheetIsLog`, 409
+  `log_route` at the sheet doors), and only `signals.services.logs.LogService` reaches
+  its `rename_log` / `delete_log` (pinned); its base columns are
+  `signals.log_columns`, filled from each match. Its RUNS wait in arrival order instead,
+  oldest first (`processors.base.queue_position` stamps a log's run with
+  its row's id, a standard sheet's with its rank), so a backlog drains
+  FIFO. The LOG POLLER (the `log-poller` service,
+  `signals.operations.log_poller`) fills a log: each log is due at its
+  own `next_poll_at`, served longest waiting first, and held by one
+  poller through a compare-and-set lease that lapses if the poller dies,
+  so any number run and a busy log never starves a quiet one; one that
+  cannot fill (its key refused, or full) is parked, and a reconnect wakes
+  the account's. One claim is one page: the matches after the log's
+  cursor, read with the account's sync key, appended and the cursor moved
+  by compare-and-set in ONE transaction, sheet first and feed second
+  (the order a delete takes), so a page lands once.
+  A log's STATUS (active, reconnect, listener_gone, full) is derived on
+  every read from its feed, the account's key and its row count, never
+  stored.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -96,7 +127,13 @@ auth, data and signals services live in a separate private repo.
   command over an operation (the reclaim_node_runs command over
   NodeRunFlow.reclaim_stale_processing and abandon_orphans). Jobs run independently, so every command there must be safe
   to MISS and safe to DOUBLE: a pure age or idempotent judgement,
-  never a lock.
+  never a lock. A queue that should drain as it fills is a SERVICE, not
+  a schedule (the `jobs` runner, the log poller): a loop with a
+  heartbeat its healthcheck reads, claims by compare-and-set so any
+  number can run, and `--once` for one pass. The kernel's `Daemon`
+  (`openbower_kernel.daemon`) is that loop, and a new worker runs on it:
+  the operation does ONE unit per `step()` and says whether it did work,
+  the command is plumbing (the log poller is the exemplar).
 - BACKGROUND work a request must not do (a sheet-sized walk, a file
   build) is a Job: a row in the `jobs` app's one table, a kind = a
   typed payload class (`JobKind[Progress]`, typed by its own cursor)
@@ -134,9 +171,10 @@ auth, data and signals services live in a separate private repo.
   the rows it never reached, since those are the ones never attempted.
   An AI column autofills every row that arrives holding something from
   its create on, whether or not a fill ran or was refused (a row that
-  arrives blank waits for a fill). An agent's output set is
-  fixed while its columns are on a sheet (the agent save refuses a
-  change), so a fill never adds a column: the create makes them all.
+  arrives blank waits for a fill), while its sheet's `autofill` is on.
+  An agent's output set is fixed while its columns are on a sheet (the
+  agent save refuses a change), so a fill never adds a column: the
+  create makes them all.
 - Which rows a node owes a run to, and how one of its runs EXECUTES,
   is the node kind's PROCESSOR (sheets/processors, handed out by
   `processor_for` on the node's kind): `NodeProcessor.enqueue_runs(
@@ -159,13 +197,29 @@ auth, data and signals services live in a separate private repo.
   DONE on a row (services/workflow_reactions.py: the workflow moves
   one step for that row), so no kind can forget it. The workflow's
   other reaction, TRIGGER (rows arrived: each entry action judges them), runs for EVERY row that enters a sheet
-  holding something (a row that arrives blank, the add-rows control's, is created and counted but not offered: an
-  entry agent has nothing to read, and a fill offers it once it does): rows
+  holding something while the sheet's `autofill` is on (a row that arrives blank, the add-rows control's, is
+  created and counted but not offered: an entry agent has nothing to read, and a fill offers it once it does): rows
   enter through one
   operation (sheets/operations/append_rows.py: the sheet service's
   primitive, then the trigger, one transaction), which every door (a
   push, a person, an import, a snapshot) calls, and a pin holds that
-  nothing else in production calls the primitive.
+  nothing else in production calls the primitive. Every caller names
+  where its rows come from (`source`, a `RowSource`): a LOG takes rows
+  from its FEED only (a signal's matches today), a standard sheet from
+  anything but a feed (`SheetNotAppendable` otherwise; the push checks
+  before the bus). A sheet whose `autofill` is off (a flag on every kind,
+  switched through `PATCH /v1/sheets`) takes its rows without the
+  trigger, whichever door brought them; the operation reads the flag
+  under the sheet lock the append holds, so no door decides it. Off stops
+  ARRIVALS only: a person's fill still advances, and switching it back on
+  queues nothing for the rows that arrived meanwhile. The flag is not the
+  AUTOFILL occasion (a `FillScope`): that names how a run was started (rows
+  arrived, or a barrier ahead cleared), so a run downstream of a person's
+  fill still rides it on a sheet whose autofill is off. The sheet's switch
+  is the MASTER: a column-level auto-run, when one exists, only narrows it
+  (a column starts on arrival when the sheet AND the column say so), so the
+  sheet's read stays in the append and a column's joins the trigger's
+  per-entry judgement.
   The node config classes in sheets/nodes stay what a node IS at rest.
   Two of those kinds are HEAD-OF-PATH MARKERS, and every workflow path
   starts with exactly one of them: `entry` (the path is fed by nothing,
@@ -189,7 +243,10 @@ auth, data and signals services live in a separate private repo.
   per column the node fills); a person's typed value is a `TypedWrite`
   (the row cells PATCH, through `sheets/operations/set_cells.py`: the
   ONE write that replaces a value already there, refused rather than
-  flagged when the type does not fit; it owes the workflow the
+  flagged when the type does not fit, and refused on an IMMUTABLE
+  column, whose values arrive with the row: `immutable` is a flag on
+  any column, beside its `type` (the data) and its `kind` (who fills
+  it); it owes the workflow the
   COMPLETE reaction, barriers only, never the next node, which runs
   when the person asks). Only a workflow column's cells are
   recorded (`WorkflowColumn`), so rows alone never carry one. Writes
@@ -201,11 +258,14 @@ auth, data and signals services live in a separate private repo.
   upsert, FILLED and TYPE_MISMATCH derived from what the row reported
   and every other state the write's own. Processors never touch a row
   or a cell record; the landing never branches on a node kind.
-- An additive NOT NULL column is a STOP-THE-WORLD deploy or a
-  three-step (add nullable, deploy the code that writes it, backfill
-  then set NOT NULL). Django drops the default after adding the
-  column, so any process still running the old code inserts NULL and
-  fails until it restarts.
+- An additive NOT NULL column is a STOP-THE-WORLD deploy, a three-step
+  (add nullable, deploy the code that writes it, backfill then set NOT
+  NULL), or a column with `db_default` beside `default` (the same
+  literal). A plain `default` is dropped after Django adds the column,
+  so any process still running the old code inserts NULL and fails
+  until it restarts; `db_default` keeps the default in the database, so
+  an insert that names no value still lands (`Sheet.kind` is the
+  precedent).
 - Unreleased migration chains are COLLAPSED, not accumulated: while
   nothing is released, an app ships one `0001_initial` expressing the end
   state (a chain that records the path, a model created then renamed then
@@ -243,7 +303,8 @@ auth, data and signals services live in a separate private repo.
   graduate to a package when a second consumer exists. Route files stay
   thin compositions. UI primitives live in `@bower/ui` (drawers and
   inline editing; the one modal is the confirm dialog, for a
-  destructive act with no slot of its own to confirm in).
+  destructive act with no slot of its own to confirm in, or one that
+  waits on another service's answer).
   Navigation is two-tier: in-app transitions use Link / router.push;
   crossing the auth boundary or any origin (login, logout, the OAuth
   redirect dance) uses window.location, where the full document load is
@@ -287,6 +348,21 @@ auth, data and signals services live in a separate private repo.
   store, never expose it to other users, never build a feature that
   depends on passing it along (paid providers' licenses forbid
   redistribution, and this rule is what keeps the product safe to
-  open-source). The hosted company universe is a separate thing entirely:
-  it is built from data licensed to its operator, never from anything a
-  user's key returned.
+  open-source). The hosted signals are a separate thing entirely: they
+  are built from sources licensed to their operator, never from anything
+  a user's key returned.
+- A background job never holds a person's session. A job that calls a
+  hosted service as an account holds that service's key for the account,
+  kept by the app that talks to the service; today that is the signals
+  feed's (`signals.SignalsSyncKey`): an API key with signals:read, minted
+  only through a person's session (`SyncKeyService.ensure`, `reconnect`),
+  encrypted at rest, one per account, read through `KeySignalsClient`.
+  No identity-service call runs inside a transaction (a call can spend
+  the session's refresh token): a replacement mints, swaps the row in one
+  compare-and-set, then revokes the old key, and only when that person
+  minted it (the service revokes an owner's keys alone; another member's
+  is reported as left live). A key the service refuses is
+  `SignalsKeyRejected`, naming the key; its caller marks THAT key
+  (`mark_rejected(key_id)`), never a retry, and the key serves again only
+  once a person's `reconnect`, or `ensure` on their next feed, replaces
+  it.

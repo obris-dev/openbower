@@ -16,12 +16,6 @@ from .agents import (
     CatalogModel,
 )
 from .auth import API_KEY_NAME_MAX_LENGTH, MAX_API_KEYS, ApiKeyMinted, ApiKeysList, ApiKeyWire, AuthUser
-from .discover import (
-    Company,
-    LookalikeGroup,
-    LookalikeItem,
-    LookalikeListResponse,
-)
 from .fills import (
     CellRunResult,
     ColumnFillSummary,
@@ -31,6 +25,7 @@ from .fills import (
     FillRunPage,
     FillRunWire,
 )
+from .logs import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
@@ -108,7 +103,6 @@ __all__ = [
     "CellRunResult",
     "ColumnFillSummary",
     "ColumnPromptWire",
-    "Company",
     "EventSource",
     "FillCounters",
     "FillError",
@@ -128,9 +122,9 @@ __all__ = [
     "ListenerVersionsPage",
     "ListenerWire",
     "ListenersPage",
-    "LookalikeGroup",
-    "LookalikeItem",
-    "LookalikeListResponse",
+    "LogDetail",
+    "LogSummary",
+    "LogsPage",
     "MatchWire",
     "MatchesPage",
     "NodeRunWire",
@@ -150,6 +144,7 @@ __all__ = [
     "SignalKind",
     "SignalLimits",
     "SignalsCatalog",
+    "SyncKeyReconnected",
     "WebhookAttemptWire",
     "WebhookColumn",
     "WebhookColumnConfigWire",

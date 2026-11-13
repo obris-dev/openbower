@@ -42,6 +42,13 @@ violation shipped once and got caught).
   `loading` slot IS a Suspense fallback, and it renders a SKELETON
   holding the real layout's shape (same grid, same heights, pulse with
   `motion-reduce:animate-none`), never a blank beat.
+- A moment on screen reads in the READER'S time zone: render it with
+  `LocalTime` (`@bower/ui`, `TIME_FORMAT.DAY` or `MINUTE`), never a
+  hand-pinned `toLocaleString`. The server cannot know the zone, so the
+  server render and its hydration read in UTC (a minute names it) and
+  the browser renders the local reading straight after. The webhook
+  delivery log keeps its own UTC-with-seconds format (`formatTime`):
+  it is matched against a receiver's log, which reads in UTC.
 - Every route group carries `error.tsx` (the house PageState + retry
   idiom, console.error keeping the digest) and `not-found.tsx`; a
   render crash must never reach Next's unstyled default.
@@ -56,18 +63,21 @@ violation shipped once and got caught).
   `.then` is `dynamic(() => import(...).then(...))`.
 - Poll loops carry a generation counter checked after EVERY await
   (including the first) and a hard, stated budget when the BROWSER is
-  the run's supervisor (discover's lookalike run); a DURABLE,
-  worker-supervised run (a fill, the preview's test run included) polls
-  open-ended against the worker's heartbeat instead,
-  each poll a short bounded request, staleness rendered as a warning
-  and never as failure; a superseded loop
+  the run's supervisor; a DURABLE,
+  worker-supervised run (a fill, the agent preview's test run, a signal's
+  Test) polls open-ended instead, each poll a short bounded request;
+  where the run carries a heartbeat, staleness is judged against it and
+  rendered as a warning, never as failure (a signal's Test carries none:
+  the signals service's own deadline ends it, so it renders no
+  staleness); a superseded loop
   returns silently. Such a loop NEVER stops on transport failures: the
   fill runs server-side whatever this page can reach, so repeated
   failures back off toward a ceiling and surface the trouble,
   BOUNDED: past MAX_POLL_ERRORS consecutive failures the loop either
   surfaces persistent trouble and keeps supervising (the sheet) or
-  releases its gesture with a toast (the preview, whose run a pruned id
-  can make permanently unreadable), and a loop that quit silently
+  releases its gesture (the agent preview with a toast, a signal's Test
+  with a notice in its results; a pruned id can make either permanently
+  unreadable), and a loop that quit silently
   while its copy promised updates would be the lie.
 - A read whose enum the SERVER owns is tolerant on the client: the
   deployed bundle predates the next contract, and a strict enum turns
@@ -92,16 +102,18 @@ violation shipped once and got caught).
   same entry on `<html>` as custom properties, and every cell's width
   is `var()` of its property with the model's width as fallback until
   the sync lands. The right-click
-  menu rides `ContextMenu` in @bower/ui (Radix, the one menu that
-  opens at the pointer; everything that opens from a button stays on
-  Headless UI), one menu over the body reading the pressed cell off
+  menu rides `ContextMenu` in @bower/ui (Radix, for a menu that opens
+  at the pointer; a button menu stays a Headless `Dropdown` unless it
+  nests a submenu, which is `ActionMenu`, Radix too), one menu over the body reading the pressed cell off
   its `data-row-id` / `data-column-key` marks. A cell's write goes
   through PATCH row cells: a person's paste replaces a value, a fill
   never does. Row selection is the SHEET's state (`use-row-selection`,
   over the pure `grid/lib/row-selection`): the gutter cell is the
   row's `Checkbox` (Headless UI, in @bower/ui; the number gives way to
   it on hover), the header's gutter is select all (every row of the
-  sheet, loaded or not: the server takes "all but these"), and the
+  sheet, loaded or not: the server takes "all but these"; on a log,
+  the rows loaded from its period, by id, so a delete never reaches
+  rows outside the period on screen), and the
   bar floating over the scroll region (`selection-bar`) holds the
   count, Deselect, Delete rows and the selection's confirm dialog.
   The right-click menu stays one row's. Typing is the second write
@@ -177,13 +189,20 @@ violation shipped once and got caught).
   directory rows via their menu, the API keys row off its Revoke
   button); the inline form takes the destructive verb's own place in a
   bar (a page footer, the sheet toolbar's action slot) and the bar's
-  other actions stay where they are. Two acts open `ConfirmDialog`,
+  other actions stay where they are. Four acts open `ConfirmDialog`,
   the one modal, holding the same form: a row's delete, chosen from a
-  menu that is gone when the question is asked (no slot), and the
+  menu that is gone when the question is asked (no slot); the
   selection's delete, whose verb sits in the floating pill (a slot too
   small for the form, floating over the very rows it names, so the two
   deletes ask the same way rather than one of them growing under the
-  pointer). Polaris opens a modal for every such decision; the
+  pointer); and a signal's delete, which waits on the signals service
+  and can be refused there, so the question holds still until it
+  answers (a popover closes on an outside click mid-request), and asks
+  the same way wherever it is offered (a signal's row menu, its
+  settings footer, what is left of a gone one) rather than inline in
+  one place and in a dialog in another; and a
+  signal's Reconnect, which waits on the identity service for a fresh
+  key, asked from its pill or banner. Polaris opens a modal for every such decision; the
   anchored panel keeps what the modal is for (one decision, nothing
   else moving) without the overlay.
 
@@ -205,7 +224,7 @@ per action across the product, so a person learns the vocabulary once.
   mode), so the verb rules do not reach it.
 - **Create** makes something from nothing that then has its own
   identity: Create API key, Create agent, Create sheet, Create folder,
-  Create account. **Add** brings in something that already exists, or
+  Create signal, Create account. **Add** brings in something that already exists, or
   attaches a part to a parent: Add destination (the receiver exists
   before we know it), Add column, Add rows, Add AI column. "New",
   "Mint", "Generate", "Build" and "Make" are never the action verb.

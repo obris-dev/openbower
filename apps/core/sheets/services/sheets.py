@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
 from agents.services import AgentService
@@ -31,6 +31,8 @@ from ..constants import (
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
     CellErrorCode,
+    SheetErrorCode,
+    SheetKind,
 )
 from ..models import Folder, NodeRun, Sheet, SheetRow
 from . import cell_truth, fill_progress, webhook_runs
@@ -100,6 +102,16 @@ class CellNotWritable(CellRefused):
         super().__init__(f"{column_label} holds its send state, not a value you can set.")
 
 
+class CellImmutable(CellRefused):
+    """The column is immutable: its values arrive with the row (a log's
+    base column), and no person edits them."""
+
+    code = CellErrorCode.COLUMN_NOT_WRITABLE
+
+    def __init__(self, *, column_label: str) -> None:
+        super().__init__(f"{column_label} comes with the row and cannot be edited.")
+
+
 class CellBlank(CellRefused):
     """The value is blank: nothing to write."""
 
@@ -139,6 +151,23 @@ class CellWrittenTwice(Exception):
         super().__init__(f"row {row_id}: {names} written twice in one landing")
         self.row_id = row_id
         self.keys = list(keys)
+
+
+class SheetIsLog(Exception):
+    """A rename or delete of a log as a plain sheet: a log's label and life
+    are its listener's too, so its own service renames and deletes it
+    (`rename_log`, `delete_log`) with the listener beside."""
+
+    code = SheetErrorCode.LOG_ROUTE
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("a log is renamed and deleted from its own page")
+        self.sheet_id = sheet_id
+
+
+class LogRowsFixed(Exception):
+    """A move on a log: its sheet order is arrival order, fixed at append
+    (newest first), and every reader of it relies on that."""
 
 
 class RowRankTooDeep(Exception):
@@ -257,33 +286,38 @@ class RowsRemoved(NamedTuple):
 
 
 class FolderService:
+    """An account's folders: places sheets point at, whatever their kind
+    (a signal's log sits in a folder like any sheet)."""
+
     def __init__(self, *, account_id: str, user_id: str) -> None:
         self.account_id = account_id
         self.user_id = user_id
 
+    def _folders(self) -> QuerySet[Folder]:
+        return Folder.objects.filter(account_id=self.account_id)
+
+    def _sheets(self) -> QuerySet[Sheet]:
+        return Sheet.objects.filter(account_id=self.account_id)
+
     def create(self, *, label: str) -> Folder:
         # A cap, not paging: the folder GET deliberately ships the whole
         # taxonomy, which is only sane while it is bounded.
-        if Folder.objects.filter(account_id=self.account_id).count() >= MAX_FOLDERS:
+        if self._folders().count() >= MAX_FOLDERS:
             raise FoldersFull(f"an account holds at most {MAX_FOLDERS} folders")
         return Folder.objects.create(account_id=self.account_id, user_id=self.user_id, label=label)
 
     def all(self) -> list[Folder]:
-        return list(Folder.objects.filter(account_id=self.account_id).order_by("-id"))
+        return list(self._folders().order_by("-id"))
 
     def get(self, folder_id: str) -> Folder:
         try:
-            return Folder.objects.get(id=folder_id, account_id=self.account_id)
+            return self._folders().get(id=folder_id)
         except Folder.DoesNotExist as e:
             raise FolderNotFound(folder_id) from e
 
     def sheet_counts(self, folder_ids: list[str]) -> dict[str, int]:
         """Sheets per folder, one aggregate query (the wire's sheet_count)."""
-        rows = (
-            Sheet.objects.filter(account_id=self.account_id, folder_id__in=folder_ids)
-            .values_list("folder_id")
-            .annotate(n=Count("id"))
-        )
+        rows = self._sheets().filter(folder_id__in=folder_ids).values_list("folder_id").annotate(n=Count("id"))
         return dict(rows)
 
     def rename(self, folder: Folder, *, label: str) -> Folder:
@@ -298,10 +332,10 @@ class FolderService:
             # The same folder-row lock move() takes, so a move committed
             # first is seen by the loose-ing update and one committed
             # after finds the folder gone.
-            if not Folder.objects.select_for_update().filter(id=folder.id, account_id=self.account_id):
+            if not self._folders().select_for_update().filter(id=folder.id):
                 return
             Sheet.objects.filter(account_id=self.account_id, folder_id=str(folder.id)).update(folder_id="")
-            Folder.objects.filter(id=folder.id, account_id=self.account_id).delete()
+            self._folders().filter(id=folder.id).delete()
 
 
 class SheetService:
@@ -322,19 +356,27 @@ class SheetService:
         origin: str,
         origin_ref: str = "",
         folder_id: str = "",
+        kind: SheetKind = SheetKind.STANDARD,
+        autofill: bool = True,
     ) -> Sheet:
         return Sheet.objects.create(
             account_id=self.account_id,
             user_id=owner_id,
             label=label,
+            kind=kind,
+            autofill=autofill,
             columns=columns,
             origin=origin,
             origin_ref=origin_ref,
             folder_id=folder_id,
         )
 
-    def page(self, *, after_id: str, limit: int) -> list[Sheet]:
+    def page(self, *, after_id: str, limit: int, kind: SheetKind | None = None) -> list[Sheet]:
+        """The index, newest first: every sheet (the home lists a log with
+        the rest), or one kind's (the signals list)."""
         qs = Sheet.objects.filter(account_id=self.account_id).order_by("-id")
+        if kind is not None:
+            qs = qs.filter(kind=kind)
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
@@ -346,8 +388,25 @@ class SheetService:
             raise SheetNotFound(sheet_id) from e
 
     def rename(self, target: Sheet, *, label: str) -> Sheet:
+        if target.kind == SheetKind.LOG:
+            raise SheetIsLog(str(target.id))
+        return self._rename(target, label=label)
+
+    def rename_log(self, target: Sheet, *, label: str) -> Sheet:
+        """A log's sheet renamed, for the log's own service alone (its
+        listener is renamed beside it)."""
+        return self._rename(target, label=label)
+
+    def _rename(self, target: Sheet, *, label: str) -> Sheet:
         target.label = label
         target.save(update_fields=["label", "updated_at"])
+        return target
+
+    def set_autofill(self, target: Sheet, *, on: bool) -> Sheet:
+        """Whether rows arriving from here on start the entry actions, on
+        any kind: rows that arrived while it was off wait for a fill."""
+        target.autofill = on
+        target.save(update_fields=["autofill", "updated_at"])
         return target
 
     def move(self, target: Sheet, *, folder_id: str) -> Sheet:
@@ -364,8 +423,9 @@ class SheetService:
         return target
 
     def add_rows(self, target: Sheet, rows: list[dict[str, str]]) -> list[SheetRow]:
-        """Append rows (each a data dict keyed by column keys), ranked
-        after the sheet's last row; the count ceiling AND the cell clamp
+        """Append rows (each a data dict keyed by column keys), ranked by
+        `_append_ranks` (after the last row, or before the first on a
+        log); the count ceiling AND the cell clamp
         live here so every entry path (import, snapshot, manual) hits one
         writer's rules (authored values clamp, never reject). Returns the
         created rows (WITH ids, a ULID assigned before insert). The
@@ -394,9 +454,10 @@ class SheetService:
             stored_rows.append(stored)
         rows = stored_rows
         with transaction.atomic():
-            # Ranks allocate after the sheet's last row, so concurrent
-            # appends must serialize on the sheet row or the second one
-            # collides with the (sheet_id, rank) unique constraint.
+            # Ranks allocate off the sheet's last (or a log's first) row,
+            # so concurrent appends must serialize on the sheet row or the
+            # second one collides with the (sheet_id, rank) unique
+            # constraint.
             try:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
@@ -404,20 +465,31 @@ class SheetService:
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
             if current + len(rows) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
-            last = (
-                SheetRow.objects.filter(sheet_id=str(locked.id))
-                .order_by("-rank", "-id")
-                .values_list("rank", flat=True)
-                .first()
-            )
             created = [
                 SheetRow(sheet_id=str(locked.id), rank=rank, data=data)
-                for rank, data in zip(keys_between(last, None, len(rows)), rows, strict=True)
+                for rank, data in zip(self._append_ranks(locked, len(rows)), rows, strict=True)
             ]
             SheetRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
         return created
+
+    def _append_ranks(self, locked: Sheet, n: int) -> list[str]:
+        """The ranks of `n` rows about to be appended, in the batch's
+        order (ids mint in that order too). A standard sheet ranks them
+        after its last row. A log ranks them BEFORE its first, the batch's
+        last row first, so its sheet order is arrival order, newest first,
+        for every reader that pages in sheet order (the grid, a fill's
+        walk, the export); move_row refuses a log so it stays that way.
+        Arrival is the lock order: ids track it, and two processes'
+        clocks can disagree by a millisecond. Called under the sheet
+        lock."""
+        rows = SheetRow.objects.filter(sheet_id=str(locked.id))
+        if locked.kind == SheetKind.LOG:
+            first = rows.order_by("rank", "id").values_list("rank", flat=True).first()
+            return list(reversed(keys_between(None, first, n)))
+        last = rows.order_by("-rank", "-id").values_list("rank", flat=True).first()
+        return keys_between(last, None, n)
 
     def row(self, target: Sheet, row_id: str) -> SheetRow:
         """One row of a sheet, as it reads now. Raises RowNotFound for a
@@ -645,7 +717,14 @@ class SheetService:
         return landed
 
     def rows_page(
-        self, target: Sheet, *, after: RowCursor | None = None, limit: int, until_id: str = ""
+        self,
+        target: Sheet,
+        *,
+        after: RowCursor | None = None,
+        limit: int,
+        until_id: str = "",
+        since_id: str = "",
+        before_id: str = "",
     ) -> list[SheetRow]:
         """A page of rows in SHEET ORDER after a cursor: ranks are unique
         per sheet, so the keyset is on the rank alone (the id rides the
@@ -659,10 +738,18 @@ class SheetService:
         overlapping page it could see. A row moved from below the cursor
         to above it between two pages is not walked, exactly like a row
         appended after the click; one moved the other way is offered
-        twice, and the open-run key drops the second."""
+        twice, and the open-run key drops the second. `since_id` and
+        `before_id` bound a log's time window by id (ids are time). The
+        bounds are filters on every page, so a window returns exactly its
+        rows in sheet order; on a log, where sheet order is arrival
+        order, they are one run of it."""
         rows = SheetRow.objects.filter(sheet_id=str(target.id))
         if until_id:
             rows = rows.filter(id__lte=until_id)
+        if since_id:
+            rows = rows.filter(id__gte=since_id)
+        if before_id:
+            rows = rows.filter(id__lt=before_id)
         if after is not None:
             rows = rows.filter(rank__gt=after.rank)
         return list(rows.order_by("rank", "id")[:limit])
@@ -675,11 +762,14 @@ class SheetService:
         deepens a key. Under the sheet lock, so two moves into the same
         gap cannot compute the same key. A key past RANK_REBALANCE_LENGTH
         means the gap has been split too many times: the sheet's ranks
-        are re-spaced by a job, after this write commits."""
+        are re-spaced by a job, after this write commits. A log's rows
+        never move (LogRowsFixed)."""
         with transaction.atomic():
             locked = Sheet.objects.select_for_update().filter(id=str(target.id), account_id=self.account_id).first()
             if locked is None:
                 raise SheetNotFound(str(target.id))
+            if locked.kind == SheetKind.LOG:
+                raise LogRowsFixed(str(locked.id))
             row = SheetRow.objects.filter(id=row_id, sheet_id=str(locked.id)).first()
             if row is None:
                 raise RowNotFound(row_id)
@@ -818,7 +908,20 @@ class SheetService:
         child cleanup; no
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
-        account's fill slots with nothing visible to cancel)."""
+        account's fill slots with nothing visible to cancel). A log is
+        refused (`SheetIsLog`): its feed (signals.LogFeed) is the signals
+        app's child, not this service's, so the log's own service deletes
+        its sheet (`delete_log`) and its feed together."""
+        if target.kind == SheetKind.LOG:
+            raise SheetIsLog(str(target.id))
+        self._delete(target)
+
+    def delete_log(self, target: Sheet) -> None:
+        """A log's sheet deleted, for the log's own service alone (its feed
+        and listener go beside it)."""
+        self._delete(target)
+
+    def _delete(self, target: Sheet) -> None:
         with transaction.atomic():
             # Locked, not exists(): add_rows holds the Sheet row while it
             # inserts, so the delete must wait for it or the row cleanup

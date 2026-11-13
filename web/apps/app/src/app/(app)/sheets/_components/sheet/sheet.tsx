@@ -1,26 +1,34 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ActionMenu,
+  ActionMenuContent,
+  ActionMenuItem,
+  ActionMenuSeparator,
+  ActionMenuSub,
+  ActionMenuSubContent,
+  ActionMenuSubTrigger,
+  ActionMenuTrigger,
   Button,
-  Dropdown,
-  DropdownButton,
-  DropdownItem,
-  DropdownMenu,
   Input,
   useToast,
 } from "@bower/ui";
-import { ChevronDown, MoreHorizontal, Pencil } from "lucide-react";
+import { MoreHorizontal, Pencil } from "lucide-react";
 import {
   deleteSheet,
   fetchAgentCatalog,
+  fetchLog,
   GENERIC_FAILURE,
   loginUrl, returnPath,
   postColumnFill,
+  sheetVerbs,
+  SHEET_KIND,
   type SheetColumn,
   type WebhookColumn,
   webRoutes,
+  type LogDetail,
   type RenderableSheetRowsPage,
   type SheetDetail,
   type WebhookColumnBody,
@@ -28,40 +36,68 @@ import {
 } from "@bower/api";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
+import { LinkButton } from "../../../../_components/link-button";
+import { EDIT_SIGNAL_ACTION, ReconnectDialog, SignalBanner, SignalMarker } from "../../../_components/signals";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { AddColumnMenuItems, type AddColumnKind } from "./add-column";
+import { ADD_COLUMN_LABEL, AddColumnActionItems, type AddColumnKind } from "./add-column";
 import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
 import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
-import { FindLookalikes } from "./find-lookalikes";
 import { AddRowsDrawer } from "./add-rows-drawer";
 import { downloadSheetCsv } from "./export";
 import { FillsGlance, needsSearchProvider, useFill, type SearchProviderChoice } from "./fill";
 import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib/pending-refresh";
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
+import { sinceFor, type Period } from "./lib/periods";
+import { emptyPeriodNote, SignalBar, useLive, useLiveRefresh } from "./signal-bar";
 import { useRowSelection } from "./use-row-selection";
 import { SelectionBar } from "./selection-bar";
 import { toBody } from "./lib/row-selection";
 import { AddRowsBar } from "./add-rows-bar";
+import { AutofillControl } from "./autofill-control";
 
-/** The sheet, full-bleed under the shell's chrome in three bands: one
- * slim toolbar (click-to-rename title left; the actions right, column
- * work primary per the directory doctrine, occasional verbs behind the
- * menu), the grid as the page's ONE scroll region (sticky header row,
+/** The sheet, full-bleed under the shell's chrome in three bands, five
+ * on a log: one slim toolbar (click-to-rename title left; the actions
+ * right: Autofill, a log's Edit signal, then the menu, whose Add column
+ * opens the column kinds), on a log its signal bar and banner, the grid as the
+ * page's ONE scroll region (sticky header row,
  * an IntersectionObserver sentinel driving the keyset loadMore with
  * the button kept as fallback), and a sticky status footer (row count
  * left, the fills glance right: a passive high-level read so filling
  * or failed columns cannot hide off a wide sheet's edge; per-column
  * progress belongs to the tracker row under the header).
  * Three hooks own the three kinds of state (the summary and its
- * columns, the rows on screen, the fill attachment); this component
- * composes their reactions to each other and renders. */
-export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDetail; initialRows: RenderableSheetRowsPage }) {
+ * columns, the rows on screen, the fill attachment), and on a log the
+ * signal it reads; this component composes their reactions to each
+ * other and renders. */
+export function Sheet({
+  initialDetail,
+  initialRows,
+  period,
+  initialLog,
+}: {
+  initialDetail: SheetDetail;
+  initialRows: RenderableSheetRowsPage;
+  /** A log's period; null on a standard sheet. */
+  period: Period | null;
+  /** A log's signal as the signals service had it at render; null on a
+   * standard sheet, or when that read failed. */
+  initialLog: LogDetail | null;
+}) {
   const router = useRouter();
   const toast = useToast();
   const columns = useColumns(initialDetail);
-  const { detail } = columns;
+  const { detail, reread: rereadDetail } = columns;
+  const verbs = sheetVerbs(detail);
+  const { settingsHref } = verbs;
+  const offersManagement = verbs.addRows || verbs.exportCsv || verbs.delete;
+  const offersSheetMenu = verbs.addColumns || offersManagement;
+  // What a log is comes off its kind; its period is only the window it
+  // reads.
+  const isLog = detail.kind === SHEET_KIND.LOG;
+  // A log's rows read its period back from now, asked on every request.
+  const sinceOf = useMemo(() => (period === null ? undefined : () => sinceFor(period, Date.now())), [period]);
   const {
     rows,
     hasMore,
@@ -74,10 +110,30 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
     addRows: appendRows,
     scrollRef,
     sentinelRef,
-  } = useRows(detail.id, initialRows);
+  } = useRows(detail.id, initialRows, sinceOf);
+  // A signal's own state, read again with its rows on a refresh or a Live
+  // turn (a reconnect or a gone listener changes what the bar says).
+  const [log, setLog] = useState(initialLog);
+  const [askingReconnect, setAskingReconnect] = useState(false);
+  const refreshButtonRef = useRef<HTMLButtonElement | null>(null);
+  const refreshSignal = useCallback(async (): Promise<boolean> => {
+    // The sheet's own detail too: its row count gates the footer, select
+    // all and Export CSV, and Live is how a signal's count moves.
+    const [rowsRead, logRead] = await Promise.all([refreshLoaded(), fetchLog(detail.id), rereadDetail()]);
+    if (redirectIfUnauthenticated(logRead)) return false;
+    if (logRead.status === "ok") setLog(logRead.data);
+    // Answers for the rows, what the page's trouble line and a Refresh's
+    // toast speak of; a signal the service did not answer keeps its last
+    // read status.
+    return rowsRead;
+  }, [refreshLoaded, detail.id, rereadDetail]);
   // The rows a person has ticked: the sheet's, since the bar and its
   // confirm are rendered here.
-  const selection = useRowSelection(rows, detail.row_count);
+  // On a log, a select all names the rows loaded from its period, so a
+  // delete never reaches rows outside the period on screen.
+  const selection = useRowSelection(rows, isLog ? rows.length : detail.row_count, {
+    loadedOnly: isLog,
+  });
   // The fill attachment polls the FILLS alone; cell states ride the
   // rows this component already holds.
   const fill = useFill(detail.id);
@@ -94,7 +150,6 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
   const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: SheetColumn | null } | null>(
     null,
   );
-  const [lookalikesOpen, setLookalikesOpen] = useState(false);
   const [addRowsOpen, setAddRowsOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
@@ -176,10 +231,14 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
       if (timer !== null) clearTimeout(timer);
     };
   }, [pending, anyLive, refreshLoaded, refreshFills]);
-  // The page's ONE trouble fact, whichever loop saw it. The re-read
-  // loop's trouble counts only while that loop runs (a pending cell,
-  // no live fill): its last word is stale the moment it stands down.
-  const pollTrouble = fill.pollTrouble || (pendingTrouble && Boolean(pending) && !anyLive);
+  // Live, on a log: the rows and the signal re-read on its own turns.
+  const [live, setLive] = useLive();
+  const { troubled: liveTrouble } = useLiveRefresh(isLog && live, refreshSignal);
+  // The page's ONE trouble fact, whichever loop saw it (a fill's poll,
+  // the pending re-read, Live). The re-read loop's trouble counts only
+  // while that loop runs (a pending cell, no live fill): its last word is
+  // stale the moment it stands down.
+  const pollTrouble = fill.pollTrouble || (pendingTrouble && Boolean(pending) && !anyLive) || liveTrouble;
 
   // The sheet OWNS the viewport (the grid band is the only
   // scroller), so body scroll locks while this route is mounted: the
@@ -193,7 +252,7 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
     };
   }, []);
 
-  // The drawer's invoker (the toolbar primary or the "+" header cell)
+  // The drawer's invoker (the sheet menu or the "+" header cell)
   // gets focus back on close: ref focus for an imperative gesture
   // outside a mount, per the house focus rules.
   const addColumnInvokerRef = useRef<HTMLElement | null>(null);
@@ -414,7 +473,12 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-hairline px-4 py-2">
         <div className="min-w-0">
-          {titleDraft !== null ? (
+          {!verbs.rename ? (
+            <span title={detail.label} className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
+              {isLog && <SignalMarker className="text-signal" />}
+              <span className="truncate">{detail.label}</span>
+            </span>
+          ) : titleDraft !== null ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -462,47 +526,56 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
             />
           ) : (
             <>
-              {/* Column work holds the primary slot now that fills
-                  exist; the discover seed lives in the menu and its
-                  disclosure opens here when summoned. */}
-              <FindLookalikes detail={detail} open={lookalikesOpen} onOpenChange={setLookalikesOpen} />
               <AddRowsDrawer sheetId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
-              {/* A MENU button: the kind is chosen at
-                  the gesture, so the drawer opens already knowing
-                  what it is; new column kinds land here later. */}
-              <Dropdown>
-                <DropdownButton as={Button} size="sm">
-                  Add column
-                  <ChevronDown aria-hidden className="ml-1.5 h-4 w-4" />
-                </DropdownButton>
-                <DropdownMenu anchor="bottom end">
-                  <AddColumnMenuItems onPick={openAddColumn} />
-                </DropdownMenu>
-              </Dropdown>
-              <Dropdown>
-                <DropdownButton
-                  aria-label="Sheet actions"
-                  className="rounded-md p-2 text-faint hover:bg-wash hover:text-foreground"
-                >
-                  <MoreHorizontal aria-hidden className="h-5 w-5" />
-                </DropdownButton>
-                <DropdownMenu anchor="bottom end">
-                  {/* Workflow verbs above management verbs. */}
-                  <DropdownItem
-                    disabled={detail.columns.length === 0 || detail.row_count === 0}
-                    onClick={() => setLookalikesOpen(true)}
-                  >
-                    Find lookalikes
-                  </DropdownItem>
-                  <DropdownItem onClick={() => setAddRowsOpen(true)}>Add rows via API</DropdownItem>
-                  <DropdownItem disabled={exporting || detail.row_count === 0} onClick={() => void exportCsv()}>
-                    {exporting ? "Exporting…" : "Export CSV"}
-                  </DropdownItem>
-                  <DropdownItem className="text-danger" onClick={() => setConfirmingDelete(true)}>
-                    Delete sheet
-                  </DropdownItem>
-                </DropdownMenu>
-              </Dropdown>
+              {verbs.autofill && (
+                <AutofillControl on={detail.autofill} onChange={(on) => void columns.setAutofill(on)} />
+              )}
+              {settingsHref !== null && (
+                <LinkButton size="sm" variant="outline" href={settingsHref}>
+                  {EDIT_SIGNAL_ACTION}
+                </LinkButton>
+              )}
+              {offersSheetMenu && (
+                <ActionMenu>
+                  <ActionMenuTrigger>
+                    <button
+                      type="button"
+                      aria-label="Sheet actions"
+                      className="cursor-pointer rounded-md p-2 text-faint hover:bg-wash hover:text-foreground"
+                    >
+                      <MoreHorizontal aria-hidden className="h-5 w-5" />
+                    </button>
+                  </ActionMenuTrigger>
+                  <ActionMenuContent>
+                    {/* Column kinds behind one item, above the sheet's own
+                        verbs. The kind is chosen at the gesture, so the
+                        drawer opens already knowing what it is; the grid's
+                        "+" cell offers the same choices. */}
+                    {verbs.addColumns && (
+                      <ActionMenuSub>
+                        <ActionMenuSubTrigger>{ADD_COLUMN_LABEL}</ActionMenuSubTrigger>
+                        <ActionMenuSubContent>
+                          <AddColumnActionItems onPick={openAddColumn} />
+                        </ActionMenuSubContent>
+                      </ActionMenuSub>
+                    )}
+                    {verbs.addColumns && offersManagement && <ActionMenuSeparator />}
+                    {verbs.addRows && (
+                      <ActionMenuItem onSelectAfterClose={() => setAddRowsOpen(true)}>Add rows via API</ActionMenuItem>
+                    )}
+                    {verbs.exportCsv && (
+                      <ActionMenuItem disabled={exporting || detail.row_count === 0} onSelect={() => void exportCsv()}>
+                        {exporting ? "Exporting…" : "Export CSV"}
+                      </ActionMenuItem>
+                    )}
+                    {verbs.delete && (
+                      <ActionMenuItem className="text-danger" onSelectAfterClose={() => setConfirmingDelete(true)}>
+                        Delete sheet
+                      </ActionMenuItem>
+                    )}
+                  </ActionMenuContent>
+                </ActionMenu>
+              )}
             </>
           )}
         </div>
@@ -531,12 +604,35 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
         sampleRows={rows.map((row) => ({ id: row.id, data: row.data }))}
       />
 
+      {period !== null && (
+        <>
+          <SignalBar
+            log={log}
+            period={period}
+            refresh={refreshSignal}
+            onReconnect={() => setAskingReconnect(true)}
+            refreshRef={refreshButtonRef}
+            live={live}
+            onLiveChange={setLive}
+          />
+          <SignalBanner inBand settingsHref={settingsHref} log={log} onReconnect={() => setAskingReconnect(true)} />
+          <ReconnectDialog
+            open={askingReconnect}
+            onClose={() => setAskingReconnect(false)}
+            refresh={refreshSignal}
+            onReconnected={() => refreshButtonRef.current?.focus()}
+          />
+        </>
+      )}
+
       {/* The scroll region's parent holds the selection bar over it:
           the bar floats at the region's bottom, not the sheet's. */}
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} className="h-full overflow-auto">
           <SheetGrid
             sheetId={detail.id}
+            logged={isLog}
+            emptyNote={period === null ? undefined : emptyPeriodNote(period)}
             scrollRef={scrollRef}
             columns={detail.columns}
             rows={rows}
@@ -565,18 +661,21 @@ export function Sheet({ initialDetail, initialRows }: { initialDetail: SheetDeta
               isSelected: selection.isSelected,
               selecting: !selection.empty,
               headerState: selection.headerState,
-              disabled: detail.row_count === 0,
+              disabled: isLog ? rows.length === 0 : detail.row_count === 0,
               onToggle: (rowId, range) => selection.toggle(rowId, { range }),
               onToggleAll: selection.toggleAll,
             }}
           />
-          {!hasMore && <AddRowsBar busy={addingRows} onAdd={addRows} />}
+          {!hasMore && verbs.addRows && <AddRowsBar busy={addingRows} onAdd={addRows} />}
           {hasMore && (
             <>
               <div ref={sentinelRef} aria-hidden />
               <div className="border-t border-hairline p-3 text-center">
                 <Button size="sm" variant="ghost" loading={loadingMore} onClick={() => void loadMore()}>
-                  Load more ({rows.length.toLocaleString("en-US")} of {detail.row_count.toLocaleString("en-US")})
+                  {/* A log's period holds an unknown share of its rows. */}
+                  {!isLog
+                    ? `Load more (${rows.length.toLocaleString("en-US")} of ${detail.row_count.toLocaleString("en-US")})`
+                    : "Load more"}
                 </Button>
               </div>
             </>
