@@ -23,6 +23,8 @@ export const ROW_HEIGHT = 35;
 export const HEADER_HEIGHT = 36;
 /** The sticky leading gutter (the row number). */
 export const GUTTER_WIDTH = 56;
+/** A log's Logged time, beside the gutter: room for "Nov 13, 10:07 AM". */
+export const LOGGED_WIDTH = 160;
 /** The trailing cell: the "Add column" button in the header, an empty
  * bordered cell in every row beneath it, so the grid's right edge is
  * one straight line. */

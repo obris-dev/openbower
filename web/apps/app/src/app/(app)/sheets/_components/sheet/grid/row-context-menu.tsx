@@ -9,7 +9,8 @@ import { shortcutLabel } from "./lib/shortcut-label";
 import type { CellActions } from "./cell-actions";
 
 /** Where a press landed: the row, and the column when it landed on a
- * cell (the gutter and the trailing cell are a row's and no column's). */
+ * cell (the gutter, a log's Logged and the trailing cell are a row's
+ * and no column's). */
 type Target = { rowId: string; columnKey: string | null };
 
 // Where the keyboard's menu opens inside the focused cell: in from

@@ -13,6 +13,7 @@
   "dependencies": {
     "@headlessui/react": "^2.2.0",
     "@radix-ui/react-context-menu": "2.2.16",
+    "@radix-ui/react-dropdown-menu": "2.1.16",
     "@radix-ui/react-toast": "^1.2.23",
     "clsx": "^2.1.1",
     "lucide-react": "^1.28.0",

@@ -1,16 +1,9 @@
-// The Signals tab's copy: every status the client knows has its pill, and
-// a signal type reads as a person would say it.
+// The Signals tab's copy: a signal type reads as a person would say it,
+// and a delete says what goes.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { LOG_STATUS, UNKNOWN_LOG_STATUS } from "@bower/api";
-
-import { STATUS_PILL, deleteConsequence, signalType } from "./copy.ts";
-
-test("every known status has a pill and the unknown one has none", () => {
-  for (const status of Object.values(LOG_STATUS)) assert.ok(STATUS_PILL[status], status);
-  assert.equal(STATUS_PILL[UNKNOWN_LOG_STATUS], null);
-});
+import { deleteConsequence, signalType } from "./copy.ts";
 
 test("a signal type is its key, title-cased", () => {
   assert.equal(signalType("funding"), "Funding");

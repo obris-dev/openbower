@@ -75,7 +75,7 @@ export function Drawer({
         <DialogPanel
           transition
           className={cn(
-            "fixed inset-y-0 right-0 flex w-full flex-col bg-canvas shadow-xl ring-1 ring-hairline",
+            "fixed inset-y-0 right-0 flex w-full flex-col bg-surface shadow-xl ring-1 ring-hairline",
             "transition duration-300 ease-out data-closed:translate-x-full",
             "data-leave:duration-200 data-leave:ease-in motion-reduce:transition-none",
             WIDTHS[width],

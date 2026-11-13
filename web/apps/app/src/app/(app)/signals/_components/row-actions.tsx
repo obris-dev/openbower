@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { MoreHorizontal, Pencil } from "lucide-react";
 import { Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 
-import { EDIT_ACTION, EDIT_SIGNAL_ACTION, VIEW_ACTION } from "./copy";
+import { EDIT_SIGNAL_ACTION } from "../../_components/signals";
+import { EDIT_ACTION, VIEW_ACTION } from "./copy";
 
 const ICON_BUTTON = "rounded p-1 text-faint hover:bg-wash hover:text-foreground";
 

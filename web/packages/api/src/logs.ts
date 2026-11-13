@@ -2,12 +2,26 @@
 // the API calls a log. The client names outcomes as a result union; the
 // caller decides what each means for the UI.
 
-import { LogDetailSchema, LogSummarySchema, LogsPageSchema, type LogSummary as WireLogSummary } from "@bower/schema";
+import {
+  ListenerVersionWireSchema,
+  ListenerWireSchema,
+  LogDetailSchema,
+  LogSummarySchema,
+  LogsPageSchema,
+  SyncKeyReconnectedSchema,
+  type LogSummary as WireLogSummary,
+  type SyncKeyReconnected,
+} from "@bower/schema";
 import { z } from "zod";
 
 import { http, type ApiResult } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
-import type { KnownSignal, SignalSetup } from "./signals.ts";
+import {
+  TolerantFundingFilterSchema,
+  TolerantMatchErrorSchema,
+  type KnownSignal,
+  type SignalSetup,
+} from "./signals.ts";
 import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 
 /** Where a signal stands, as the server names it: active (it fills),
@@ -40,6 +54,36 @@ export const TolerantLogSummarySchema = LogSummarySchema.extend({
 });
 export const TolerantLogsPageSchema = LogsPageSchema.extend({ items: z.array(TolerantLogSummarySchema) });
 
+/** Where the listener stands on the signals service: active, retrying (an
+ * event failed and is tried again after a wait) or held (its saved setup
+ * no longer fits the service: held until edited). An unknown one reads as
+ * a client-only member, which claims nothing. */
+export const LISTENER_STATUS = { ACTIVE: "active", RETRYING: "retrying", HELD: "held" } as const;
+export const UNKNOWN_LISTENER_STATUS = "unknown_status" as const;
+export type ListenerStatus = (typeof LISTENER_STATUS)[keyof typeof LISTENER_STATUS] | typeof UNKNOWN_LISTENER_STATUS;
+const KNOWN_LISTENER_STATUSES = new Set<string>(ListenerWireSchema.shape.status.options);
+
+const TolerantListenerSchema = ListenerWireSchema.extend({
+  // The signal it follows, as the catalog names it: any, as on the log.
+  signal: z.string(),
+  status: z
+    .string()
+    .transform((status): ListenerStatus =>
+      KNOWN_LISTENER_STATUSES.has(status) ? (status as ListenerStatus) : UNKNOWN_LISTENER_STATUS,
+    ),
+  error: TolerantMatchErrorSchema.nullable(),
+  version: ListenerVersionWireSchema.extend({ filter: TolerantFundingFilterSchema }),
+});
+export const TolerantLogDetailSchema = LogDetailSchema.extend({
+  sheet: TolerantSheetSummarySchema,
+  status: TolerantLogStatusSchema,
+  listener: TolerantListenerSchema.nullable(),
+});
+/** One signal with its listener as the signals service has it now (null
+ * once the listener is gone). */
+export type LogDetail = z.output<typeof TolerantLogDetailSchema>;
+export type { SyncKeyReconnected };
+
 /** What a create's caller reads: the new signal's sheet. The rest of the
  * 201 (the listener, with its own server-owned enums) is left unread, so
  * a value the signals service adds can never fail a create that landed,
@@ -61,6 +105,18 @@ export async function createLog(
   body: { label: string; signal: KnownSignal } & SignalSetup,
 ): Promise<ApiResult<CreatedLog>> {
   return http.post(apiRoutes.logs.index, CreatedLogSchema, body);
+}
+
+/** One signal, its listener read live from the signals service. */
+export async function fetchLog(id: string): Promise<ApiResult<LogDetail>> {
+  return http.get(apiRoutes.logs.detail(id), TolerantLogDetailSchema);
+}
+
+/** A fresh sync key through this person, so the account's signals fill
+ * again from where they stopped. The replaced key is named when it is
+ * still live (another member minted it, or its revoke failed). */
+export async function reconnectLogs(): Promise<ApiResult<SyncKeyReconnected>> {
+  return http.post(apiRoutes.logs.reconnect, SyncKeyReconnectedSchema);
 }
 
 /** Delete a signal: its listener stops, then its sheet and rows go (204).

@@ -184,6 +184,26 @@ test("fetchSheetRows hands the cursor back verbatim", async (t) => {
   assert.ok(calls[0]!.endsWith("/rows?after=a0V.01ROWAAAAAAAAAAAAAAAAAAAA&limit=2"), calls[0]);
 });
 
+test("a log's period rides ?since= encoded, and a sheet without one sends none", async (t) => {
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ items: [], next_cursor: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { limit: 2, since: "2026-11-06T15:30:00.000Z" });
+  await fetchSheetRows("01AAAAAAAAAAAAAAAAAAAAAAAA", { limit: 2 });
+  assert.ok(calls[0]!.endsWith("/rows?limit=2&since=2026-11-06T15%3A30%3A00.000Z"), calls[0]);
+  assert.ok(!calls[1]!.includes("since"), calls[1]);
+});
+
 test("the known cause vocabulary is read off the contract, not hand-typed", () => {
   // CELL_STATES recovers the enum's members through zod's documented
   // accessor. If that introspection ever returns nothing, the tolerant

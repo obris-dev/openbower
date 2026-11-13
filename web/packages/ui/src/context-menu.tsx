@@ -6,9 +6,9 @@ import { cn } from "./cn";
 
 /** The menu that opens AT THE POINTER (a right click, a long press,
  * Shift+F10 on a focused element) rather than from a button: Radix
- * ContextMenu, the one Radix menu here, because the Headless UI
- * primitives every button-opened menu rides anchor only to their own
- * button. The chrome is the Dropdown's, so the two read as one family;
+ * ContextMenu, because Headless UI's menus anchor only to their own
+ * button (ActionMenu is the other Radix menu, for a button menu that
+ * nests). The chrome is the Dropdown's, so the menus read as one family;
  * arrow keys, type-ahead, Escape, outside-click and focus return come
  * from the primitive. The trigger is `asChild`: the element handed to
  * it IS the surface, so a whole region can open one menu and read

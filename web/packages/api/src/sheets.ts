@@ -356,13 +356,17 @@ export const TolerantSheetRowsPageSchema = SheetRowsPageSchema.extend({
 type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
 type TolerantSheetRow = z.infer<typeof TolerantSheetRowSchema>;
 
+/** One page of a sheet's rows in sheet order. `since` (an ISO instant)
+ * bounds a log's rows to those logged at or after it; a standard sheet
+ * takes none. */
 export async function fetchSheetRows(
   id: string,
-  opts: { after?: string; limit?: number } = {},
+  opts: { after?: string; limit?: number; since?: string } = {},
 ): Promise<ApiResult<RenderableSheetRowsPage>> {
   const params = new URLSearchParams();
   if (opts.after) params.set("after", opts.after);
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.since) params.set("since", opts.since);
   const qs = params.toString();
   const res = await http.get(`${apiRoutes.sheets.rows(id)}${qs ? `?${qs}` : ""}`, TolerantSheetRowsPageSchema);
   if (res.status !== "ok") return res;

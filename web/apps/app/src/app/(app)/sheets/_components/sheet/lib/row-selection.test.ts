@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   NONE,
   count,
+  everyLoaded,
   everything,
   headerState,
   isEmpty,
@@ -75,4 +76,12 @@ test("pruning drops ids the page no longer holds, and keeps the object when noth
   all = toggled(all, "gone");
   all = toggled(all, "a");
   assert.deepEqual(toBody(pruned(all, live)), { all: true, keep: ["a"] });
+});
+
+test("a select all of what is loaded names those rows, never the whole sheet", () => {
+  // FAILS if it reaches for "all": a log's delete would take rows outside
+  // the period on screen.
+  const picked = everyLoaded(["r1", "r2"]);
+  assert.deepEqual(toBody(picked), { row_ids: ["r1", "r2"] });
+  assert.equal(headerState(picked, 2), "all");
 });
