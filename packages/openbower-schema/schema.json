@@ -1309,6 +1309,12 @@
           },
           "title": "Columns",
           "type": "array"
+        },
+        "row_id_key": {
+          "default": "_id",
+          "description": "The key a row's own id rides under, optional on every row. A row whose id the sheet already holds is skipped, so a sender that retries never doubles a row.",
+          "title": "Row Id Key",
+          "type": "string"
         }
       },
       "title": "IngestSchema",

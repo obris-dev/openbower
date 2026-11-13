@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button, CopyButton, Drawer, ErrorMessage, Skeleton } from "@bower/ui";
-import { apiRoutes, buildApiUrl, fetchIngestSchema, webRoutes, type IngestSchema } from "@bower/api";
+import { apiRoutes, buildApiUrl, fetchIngestSchema, webRoutes, type TolerantIngestSchema } from "@bower/api";
 
 import { columnTypeLabel } from "../../../_components/column-type-meta";
 import { curlFor } from "./add-rows-command";
@@ -19,6 +19,9 @@ const KEY_LINK = "Create one in Settings";
 const SAMPLE_NOTE = "The sample row is real: it lands in the sheet and starts its AI columns, so put your own values in first.";
 const EVENT_ID_NOTE =
   "Add an event_id to a request to make a retry safe: the same id lands once. Answers 202 with the id once the rows are accepted.";
+function rowIdNote(key: string): string {
+  return `Give each row your own ${key} too: a row whose ${key} the sheet already holds is skipped, so resending one never doubles it.`;
+}
 const COLUMNS_TITLE = "Row keys";
 const COLUMNS_NOTE = "Each row is an object keyed on these. Columns the sheet fills itself are not here, and a request naming one is refused.";
 const NO_COLUMNS =
@@ -55,7 +58,7 @@ function DrawerContent({
   afterLeave: () => void;
   onClose: () => void;
 }) {
-  const [schema, setSchema] = useState<IngestSchema | null>(null);
+  const [schema, setSchema] = useState<TolerantIngestSchema | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const url = buildApiUrl(apiRoutes.sheets.ingest(sheetId));
 
@@ -74,7 +77,7 @@ function DrawerContent({
     };
   }, [sheetId]);
 
-  const command = schema && schema.columns.length > 0 ? curlFor(url, schema.columns) : null;
+  const command = schema && schema.columns.length > 0 ? curlFor(url, schema.columns, schema.row_id_key) : null;
 
   return (
     <Drawer
@@ -110,6 +113,7 @@ function DrawerContent({
             </p>
             <p className="mt-1 text-xs text-muted">{SAMPLE_NOTE}</p>
             <p className="mt-1 text-xs text-muted">{EVENT_ID_NOTE}</p>
+            {schema?.row_id_key && <p className="mt-1 text-xs text-muted">{rowIdNote(schema.row_id_key)}</p>}
           </div>
         )}
         {schema && schema.columns.length > 0 && (

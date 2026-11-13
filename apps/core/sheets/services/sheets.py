@@ -20,7 +20,7 @@ from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
-from openbower_schema.sheets import SheetColumn, WorkflowColumn
+from openbower_schema.sheets import ROW_ID_KEY, SheetColumn, WorkflowColumn
 
 from ..cells import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
@@ -449,9 +449,13 @@ class SheetService:
                 raise ColumnNotWritable(f"row {index}: {names} cannot arrive with a row; automation fills it")
         types = {column.key: column.type for column in target.columns}
         stored_rows = []
+        external_ids = []
         for data in rows:
-            stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
+            # A row's sender id rides under ROW_ID_KEY, never a column's key.
+            cells = {key: value for key, value in data.items() if key != ROW_ID_KEY}
+            stored, _ = cells_for_storage(types, cells, where="add_rows")  # mismatches ignored (tolerate)
             stored_rows.append(stored)
+            external_ids.append(data.get(ROW_ID_KEY, ""))
         rows = stored_rows
         with transaction.atomic():
             # Ranks allocate off the sheet's last (or a log's first) row,
@@ -462,17 +466,42 @@ class SheetService:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
                 raise SheetNotFound(str(target.id)) from e
+            # Under the sheet lock, so two pushes carrying one id cannot both
+            # find it absent: the first lands, the second skips it.
+            kept = self._rows_not_held(str(locked.id), rows, external_ids)
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
-            if current + len(rows) > MAX_SHEET_ROWS:
+            if current + len(kept) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
+            if not kept:
+                return []
             created = [
-                SheetRow(sheet_id=str(locked.id), rank=rank, data=data)
-                for rank, data in zip(self._append_ranks(locked, len(rows)), rows, strict=True)
+                SheetRow(sheet_id=str(locked.id), rank=rank, data=data, external_id=external_id)
+                for rank, (data, external_id) in zip(self._append_ranks(locked, len(kept)), kept, strict=True)
             ]
             SheetRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
         return created
+
+    @staticmethod
+    def _rows_not_held(
+        sheet_id: str, rows: list[dict[str, str]], external_ids: list[str]
+    ) -> list[tuple[dict[str, str], str]]:
+        """The rows to write, each with its sender id: a row whose id the
+        sheet already holds, or one this batch already named, is skipped;
+        a row without an id always lands."""
+        named = [external_id for external_id in external_ids if external_id]
+        held = set(
+            SheetRow.objects.filter(sheet_id=sheet_id, external_id__in=named).values_list("external_id", flat=True)
+        )
+        kept: list[tuple[dict[str, str], str]] = []
+        for data, external_id in zip(rows, external_ids, strict=True):
+            if external_id:
+                if external_id in held:
+                    continue
+                held.add(external_id)
+            kept.append((data, external_id))
+        return kept
 
     def _append_ranks(self, locked: Sheet, n: int) -> list[str]:
         """The ranks of `n` rows about to be appended, in the batch's

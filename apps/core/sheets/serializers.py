@@ -14,7 +14,7 @@ from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.runs import NodeRunWire as WireNodeRun
-from openbower_schema.sheets import CellStateWire, IngestColumn, WorkflowColumn
+from openbower_schema.sheets import ROW_ID_KEY, ROW_ID_MAX_LENGTH, CellStateWire, IngestColumn, WorkflowColumn
 from openbower_schema.sheets import FolderSummary as WireFolderSummary
 from openbower_schema.sheets import IngestSchema as WireIngestSchema
 from openbower_schema.sheets import SheetDetail as WireSheetDetail
@@ -302,16 +302,32 @@ def validate_ingest_rows(target: Sheet, rows: list[dict[str, str]]) -> tuple[lis
     here, not at full size on the bus). This is the push's reaction to a
     shape mismatch: an unknown key or a type mismatch both become a 400. A
     blank value is 'not provided', kept as-is; a workflow column's key is
-    refused whatever its value, so a producer leaves one out entirely.
-    Capped at MAX_INGEST_PROBLEMS."""
+    refused whatever its value, so a producer leaves one out entirely. A
+    row's own id (ROW_ID_KEY) is optional, must be non-blank and bounded,
+    and may name a row once per push; it rides through to the append, which
+    skips a row whose id the sheet already holds. Capped at
+    MAX_INGEST_PROBLEMS."""
     from .services.sheets import cells_for_storage
 
     types = {column.key: column.type for column in target.columns if not isinstance(column, WorkflowColumn)}
     columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
     problems: list[str] = []
     storable_rows: list[dict[str, str]] = []
-    for index, row in enumerate(rows):
+    seen_ids: set[str] = set()
+    for index, given in enumerate(rows):
+        row = {key: value for key, value in given.items() if key != ROW_ID_KEY}
         storable, mismatches = cells_for_storage(types, row, where="ingest")
+        if ROW_ID_KEY in given:
+            row_id = given[ROW_ID_KEY]
+            if not row_id.strip():
+                problems.append(f"row {index}: {ROW_ID_KEY!r} is blank; leave it out or name the row")
+            elif len(row_id) > ROW_ID_MAX_LENGTH:
+                problems.append(f"row {index}: {ROW_ID_KEY!r} is longer than {ROW_ID_MAX_LENGTH} characters")
+            elif row_id in seen_ids:
+                problems.append(f"row {index}: {ROW_ID_KEY!r} {row_id!r} names an earlier row of this push")
+            else:
+                seen_ids.add(row_id)
+                storable = {**storable, ROW_ID_KEY: row_id}
         storable_rows.append(storable)
         # A workflow column EXISTS, so it is refused in its own words
         # rather than as an unknown key: it is filled through its own
