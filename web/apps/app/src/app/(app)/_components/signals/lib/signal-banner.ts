@@ -1,5 +1,5 @@
-// What a signal's sheet says when the signal needs a person: at most one
-// banner, the one that stops new rounds first.
+// What a signal's sheet and its settings say when the signal needs a
+// person: at most one banner, the one that stops new rounds first.
 import { LISTENER_STATUS, LOG_STATUS, type LogDetail } from "@bower/api";
 
 import { BANNER_FULL, BANNER_HELD, BANNER_LISTENER_GONE, BANNER_RECONNECT } from "../copy.ts";

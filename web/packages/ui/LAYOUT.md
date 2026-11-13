@@ -33,7 +33,8 @@ reports; review against this list before adding a component.
    under the pointer at the moment of the decision is worse than an
    overlay; and a signal's delete, which waits on another service and
    can be refused there, so the question must hold still until it
-   answers; and a signal's Reconnect, which waits on the identity
+   answers, asked the same way from a signal's row menu and from its
+   settings page (a footer slot included); and a signal's Reconnect, which waits on the identity
    service and can be refused there too, asked from a status pill or a
    banner with no room for the question. Every other confirm swaps in
    where its verb was.

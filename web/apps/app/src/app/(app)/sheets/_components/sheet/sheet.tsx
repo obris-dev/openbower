@@ -37,7 +37,7 @@ import {
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { LinkButton } from "../../../../_components/link-button";
-import { EDIT_SIGNAL_ACTION, SignalMarker } from "../../../_components/signals";
+import { EDIT_SIGNAL_ACTION, ReconnectDialog, SignalBanner, SignalMarker } from "../../../_components/signals";
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ADD_COLUMN_LABEL, AddColumnActionItems, type AddColumnKind } from "./add-column";
 import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
@@ -50,7 +50,7 @@ import { pendingRefreshDelayMs, pendingSignature, readsAreTroubled } from "./lib
 import { useColumns, type ColumnOutcome } from "./use-columns";
 import { useRows } from "./use-rows";
 import { sinceFor, type Period } from "./lib/periods";
-import { emptyPeriodNote, ReconnectDialog, SignalBanner, SignalBar, useLive, useLiveRefresh } from "./signal-bar";
+import { emptyPeriodNote, SignalBar, useLive, useLiveRefresh } from "./signal-bar";
 import { useRowSelection } from "./use-row-selection";
 import { SelectionBar } from "./selection-bar";
 import { toBody } from "./lib/row-selection";
@@ -615,7 +615,7 @@ export function Sheet({
             live={live}
             onLiveChange={setLive}
           />
-          <SignalBanner settingsHref={settingsHref} log={log} onReconnect={() => setAskingReconnect(true)} />
+          <SignalBanner inBand settingsHref={settingsHref} log={log} onReconnect={() => setAskingReconnect(true)} />
           <ReconnectDialog
             open={askingReconnect}
             onClose={() => setAskingReconnect(false)}

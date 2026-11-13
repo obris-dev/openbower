@@ -12,6 +12,7 @@ import {
   UNKNOWN_LISTENER_STATUS,
   UNKNOWN_LOG_STATUS,
   deleteLog,
+  editLog,
   fetchLog,
   fetchLogsPage,
   reconnectLogs,
@@ -100,6 +101,18 @@ test("deleting a signal sends DELETE to its log", async (t) => {
   assert.equal(res.status, "ok");
   assert.equal(calls[0]?.init.method, "DELETE");
   assert.ok(calls[0]?.url.endsWith(`/v1/logs/${SHEET.id}`));
+});
+
+test("an edit PATCHes the signal with the body given, unknown stages and all", async (t) => {
+  // FAILS if the client reshapes the body: a stage this bundle does not
+  // know would be dropped on its way back, narrowing the saved setup.
+  const calls = stubFetch(t, detail("active", listener("active")));
+  const body = { label: "Seed raises", filter: { stages: ["seed", "series_z"] }, prompt: "", min_confidence: 0.75 };
+  const res = await editLog(SHEET.id, body);
+  assert.equal(res.status, "ok");
+  assert.equal(calls[0]?.init.method, "PATCH");
+  assert.ok(calls[0]?.url.endsWith(`/v1/logs/${SHEET.id}`));
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), body);
 });
 
 function detail(logStatus: string, listener: Record<string, unknown> | null) {

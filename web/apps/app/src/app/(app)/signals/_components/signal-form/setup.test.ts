@@ -1,14 +1,18 @@
-// The setup a Test tries and Create saves: the filter the form says, the
-// judge only with a prompt, and the gaps each attempt diagnoses.
+// The setup a Test tries, Create saves and an edit sends: the filter the
+// form says, the judge only with a prompt, what a saved setup carries, and
+// the gaps each attempt diagnoses.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { PREVIEW_OUTCOME, type FundingStage, type PreviewRow } from "@bower/api";
+import { PREVIEW_OUTCOME, type FundingStage, type LogDetail, type PreviewRow } from "@bower/api";
 
 import { AMOUNT_INVALID_GAP, AMOUNT_LABEL, matchesTitle, AMOUNT_REVERSED_GAP, STALE_FILTER, TEST_STALE } from "./copy.ts";
 import {
   ATTEMPT,
+  NOTHING_CARRIED,
   attemptVerdict,
+  changesFrom,
+  formFromSaved,
   checklistFor,
   fundingFilterFrom,
   gapsOf,
@@ -21,6 +25,7 @@ import {
   setupKey,
   staleNote,
   thresholdFrom,
+  thresholdMin,
   type SignalFormState,
 } from "./setup.ts";
 
@@ -32,7 +37,31 @@ const EMPTY: SignalFormState = {
   maxAmount: "",
   prompt: "",
   minConfidence: 0.8,
+  carried: NOTHING_CARRIED,
 };
+
+type Listener = NonNullable<LogDetail["listener"]>;
+
+function saved(filter: Partial<Listener["version"]["filter"]>, prompt = "", minConfidence = 0.8): Listener {
+  return {
+    id: "l1",
+    label: "Seed raises",
+    signal: "funding",
+    user_id: "u1",
+    status: "active",
+    error: null,
+    created_at: "2026-11-12T12:00:00+00:00",
+    updated_at: "2026-11-12T12:00:00+00:00",
+    version: {
+      id: "v1",
+      user_id: "u1",
+      created_at: "2026-11-12T12:00:00+00:00",
+      prompt,
+      min_confidence: minConfidence,
+      filter: { stages: null, unknown_stages: [], min_amount: null, max_amount: null, currency: null, ...filter },
+    },
+  } as Listener;
+}
 
 test("an empty form keeps every raise", () => {
   assert.deepEqual(fundingFilterFrom(EMPTY), {});
@@ -177,4 +206,57 @@ test("no matches is claimed only once every round was decided, of the rounds tri
   assert.equal(matchesTitle(0, 12, 0), "No matches in the 12 newest rounds");
   assert.equal(matchesTitle(0, 12, 3), "Matches (0)");
   assert.equal(matchesTitle(4, 12, 0), "Matches (4)");
+});
+
+test("a saved setup goes back as it was, what the form cannot show included", () => {
+  // FAILS if a save narrows what the form cannot show: a stage this bundle
+  // does not know, or a range in another currency, would be dropped or
+  // rewritten by a save that never touched them.
+  const listener = saved({
+    stages: ["seed"],
+    unknown_stages: ["series_z"],
+    min_amount: 5_000_000,
+    max_amount: null,
+    currency: "EUR",
+  });
+  const form = formFromSaved("Seed raises", listener);
+  assert.deepEqual(fundingFilterFrom(form), {
+    stages: ["seed", "series_z"],
+    min_amount: 5_000_000,
+    currency: "EUR",
+  });
+  // Edit the amount and the range is the form's own again, in its currency.
+  assert.equal(fundingFilterFrom({ ...form, minAmount: "6000000" }).currency, "USD");
+});
+
+test("a save sends what changed: the name alone, the setup whole, or nothing", () => {
+  // FAILS if a rename sends the setup: every save of a setup is a new
+  // version on the service, so a name change would mint one.
+  const before = formFromSaved("Seed raises", saved({ stages: ["seed"] }, "B2B software", 0.8));
+  assert.equal(changesFrom(before, before), null);
+  assert.deepEqual(changesFrom(before, { ...before, label: "Seed rounds" }), { label: "Seed rounds" });
+  const stricter = changesFrom(before, { ...before, minConfidence: 0.9 });
+  assert.deepEqual(stricter, { filter: { stages: ["seed"] }, prompt: "B2B software", min_confidence: 0.9 });
+  const both = changesFrom(before, { ...before, label: "Seed rounds", stages: new Set<FundingStage>(["seed", "series_a"]) });
+  assert.deepEqual(both, {
+    label: "Seed rounds",
+    filter: { stages: ["seed", "series_a"] },
+    prompt: "B2B software",
+    min_confidence: 0.8,
+  });
+});
+
+test("the slider reaches a saved threshold below its floor", () => {
+  // FAILS if the slider stops at its floor: a saved 30% would sit where no
+  // position can say it, and the first touch would raise it.
+  assert.equal(thresholdMin(0.8), 0.5);
+  assert.equal(thresholdMin(0.8, 0.3), 0.3);
+});
+
+test("a save checks the name and the amount, as a create does", () => {
+  const gaps = { label: true, amount: null };
+  assert.deepEqual(
+    checklistFor(ATTEMPT.SAVE, gaps).map((item) => item.key),
+    checklistFor(ATTEMPT.CREATE, gaps).map((item) => item.key),
+  );
 });

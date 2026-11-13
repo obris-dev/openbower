@@ -6,10 +6,9 @@ import { RefreshCw } from "lucide-react";
 import { Label, LocalTime, Select, Switch, TIME_FORMAT, cn, useToast } from "@bower/ui";
 import { LOG_STATUS, type LogDetail } from "@bower/api";
 
-import { SignalStatus } from "../../../../_components/signals";
+import { RECONNECT_ACTION, SignalStatus, isHeld } from "../../../../_components/signals";
 import { PERIODS, type Period } from "../lib/periods";
-import { isHeld } from "./lib/signal-banner";
-import { LAST_READ, LIVE_LABEL, REFRESH_FAILED, NOT_YET_READ, PERIOD_NAMES, PERIOD_PICKER_LABEL, RECONNECT_ACTION, REFRESH_ACTION } from "./copy";
+import { LAST_READ, LIVE_LABEL, REFRESH_FAILED, NOT_YET_READ, PERIOD_NAMES, PERIOD_PICKER_LABEL, REFRESH_ACTION } from "./copy";
 
 const PERIOD_ID = "signal-period";
 const LIVE_ID = "signal-live";

@@ -119,6 +119,21 @@ export async function reconnectLogs(): Promise<ApiResult<SyncKeyReconnected>> {
   return http.post(apiRoutes.logs.reconnect, SyncKeyReconnectedSchema);
 }
 
+/** The refusal of an edit to a signal whose listener the signals service
+ * no longer has (409): the server has marked the signal gone, so a fresh
+ * read shows what is left of it. */
+export const LISTENER_GONE_CODE = "listener_gone";
+
+/** What an edit changes: the name alone, or the setup whole (the service
+ * saves a setup as a new version, so a rename never sends one). */
+export type LogEdit = { label: string } | ({ label?: string } & SignalSetup);
+
+/** Edit a signal: its name (on its listener and its sheet), its setup, or
+ * both; answers the signal as it now stands. */
+export async function editLog(id: string, body: LogEdit): Promise<ApiResult<LogDetail>> {
+  return http.patch(apiRoutes.logs.detail(id), TolerantLogDetailSchema, body);
+}
+
 /** Delete a signal: its listener stops, then its sheet and rows go (204).
  * The signals service unreachable deletes nothing, so it can be retried. */
 export async function deleteLog(id: string): Promise<ApiResult<null>> {

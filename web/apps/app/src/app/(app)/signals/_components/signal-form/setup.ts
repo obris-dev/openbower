@@ -1,16 +1,17 @@
 // The form's state as the wire takes it, and what an attempt still needs.
-// Pure, so the setup a Test tries and the one Create saves are one
-// derivation, tested here.
+// Pure, so the setup a Test tries, the one Create saves and the one an edit
+// sends are one derivation, tested here.
 import {
   FUNDING_STAGES,
   PREVIEW_OUTCOME,
-  type FundingFilter,
   type FundingStage,
+  type LogEdit,
+  type LogDetail,
   type PreviewRow,
   type SignalSetup,
 } from "@bower/api";
 
-import type { ChecklistItem } from "../../../../_components/readiness/section";
+import type { ChecklistItem } from "../../../_components/readiness/section";
 import {
   AMOUNT_CHECK,
   AMOUNT_INVALID_GAP,
@@ -31,14 +32,27 @@ export type SignalFormState = {
   maxAmount: string;
   prompt: string;
   minConfidence: number;
+  /** What a saved setup holds that the form cannot show, sent back as it
+   * was: stages this bundle does not know, and a range's currency other
+   * than the form's while the amounts are still the saved ones. */
+  carried: Carried;
 };
+
+export type Carried = {
+  unknownStages: readonly string[];
+  currency: { code: string; minAmount: string; maxAmount: string } | null;
+};
+
+export const NOTHING_CARRIED: Carried = { unknownStages: [], currency: null };
+
+type Listener = NonNullable<LogDetail["listener"]>;
 
 /** The amount range's currency. Amounts compare only within a currency
  * (the service converts nothing), so a range is in US dollars and keeps
  * only rounds reported in them. */
 export const AMOUNT_CURRENCY = "USD";
 
-export const ATTEMPT = { TEST: "test", CREATE: "create" } as const;
+export const ATTEMPT = { TEST: "test", CREATE: "create", SAVE: "save" } as const;
 export type Attempt = (typeof ATTEMPT)[keyof typeof ATTEMPT];
 
 // The anchors a gap jumps to.
@@ -65,19 +79,62 @@ function amountGap(state: SignalFormState): AmountGap | null {
   return null;
 }
 
-/** The funding filter the form says. Stages in the contract's order;
- * a range carries the currency and no range sends none, so the service's
- * "a range and its currency go together" holds by construction. */
-export function fundingFilterFrom(state: SignalFormState): Partial<FundingFilter> {
-  const filter: Partial<FundingFilter> = {};
-  const stages = FUNDING_STAGES.filter((stage) => state.stages.has(stage));
+/** The funding filter the form says. Stages in the contract's order,
+ * then any the form carries unseen; a range carries the currency and no
+ * range sends none, so the service's "a range and its currency go
+ * together" holds by construction. A saved range in another currency keeps
+ * it until its amounts are edited. */
+export function fundingFilterFrom(state: SignalFormState): SignalSetup["filter"] {
+  const filter: SignalSetup["filter"] = {};
+  const stages = [...FUNDING_STAGES.filter((stage) => state.stages.has(stage)), ...state.carried.unknownStages];
   if (stages.length > 0) filter.stages = stages;
   const min = parseAmount(state.minAmount);
   const max = parseAmount(state.maxAmount);
   if (min !== null) filter.min_amount = min;
   if (max !== null) filter.max_amount = max;
-  if (min !== null || max !== null) filter.currency = AMOUNT_CURRENCY;
+  if (min !== null || max !== null) filter.currency = currencyOf(state);
   return filter;
+}
+
+function currencyOf(state: SignalFormState): string {
+  const saved = state.carried.currency;
+  if (saved && saved.minAmount === state.minAmount && saved.maxAmount === state.maxAmount) return saved.code;
+  return AMOUNT_CURRENCY;
+}
+
+/** A saved signal as the form edits it: its name the person's own, its
+ * stages and amounts as typed, its description and threshold, and what the
+ * form cannot show carried. */
+export function formFromSaved(label: string, listener: Listener): SignalFormState {
+  const { filter, prompt, min_confidence: minConfidence } = listener.version;
+  const minAmount = filter.min_amount === null ? "" : String(filter.min_amount);
+  const maxAmount = filter.max_amount === null ? "" : String(filter.max_amount);
+  const otherCurrency = filter.currency !== null && filter.currency !== AMOUNT_CURRENCY;
+  return {
+    label,
+    labelEdited: true,
+    stages: new Set(filter.stages ?? []),
+    minAmount,
+    maxAmount,
+    prompt,
+    minConfidence,
+    carried: {
+      unknownStages: filter.unknown_stages,
+      currency: otherCurrency ? { code: filter.currency as string, minAmount, maxAmount } : null,
+    },
+  };
+}
+
+/** What Save sends, or null when nothing changed: the name alone when only
+ * it changed (the service saves a setup as a new version, so a rename must
+ * not mint one), the setup whole when it or its threshold did. */
+export function changesFrom(saved: SignalFormState, form: SignalFormState): LogEdit | null {
+  const label = nameOf(form);
+  const renamed = label !== nameOf(saved);
+  const setup = setupFrom(form);
+  const resetup = JSON.stringify(setup) !== JSON.stringify(setupFrom(saved));
+  if (resetup) return renamed ? { label, ...setup } : setup;
+  return renamed ? { label } : null;
 }
 
 /** Why the results on screen are not the setup's, or null when there is
@@ -163,13 +220,14 @@ export function setupKey(setup: SignalSetup): string {
   return JSON.stringify({ filter: setup.filter, prompt: setup.prompt ?? "" });
 }
 
-/** The judge's threshold: a slider in 5% steps, down to half sure or the
- * catalog's default when that is lower. */
+/** The judge's threshold: a slider in 5% steps, down to half sure, or the
+ * catalog's default or a saved value when either is lower (a saved setup
+ * must sit where the slider can reach). */
 export const THRESHOLD_MAX = 1;
 export const THRESHOLD_STEP = 0.05;
 const THRESHOLD_FLOOR = 0.5;
-export function thresholdMin(defaultValue: number): number {
-  return Math.min(THRESHOLD_FLOOR, defaultValue);
+export function thresholdMin(defaultValue: number, saved: number = THRESHOLD_MAX): number {
+  return Math.min(THRESHOLD_FLOOR, defaultValue, saved);
 }
 
 /** A slider position as a threshold: whole percents, so a step's float
@@ -201,7 +259,6 @@ export function gapsOf(state: SignalFormState): Gaps {
   };
 }
 
-/** The attempt's checklist: Test needs no name, Create does. */
 /** An attempt's verdict: the gap to take the person to, and the attempt
  * the form keeps diagnosing. Only a blocked attempt is kept; one that goes
  * through clears it, so a later slip is not flagged before it is tried. */
@@ -214,6 +271,7 @@ export function attemptVerdict(attempt: Attempt, gaps: Gaps): { attempted: Attem
 /** The sections an attempt here can need. */
 export type SignalChecklistItem = ChecklistItem<"label" | "amount">;
 
+/** The attempt's checklist: Test needs no name, Create and Save do. */
 export function checklistFor(attempt: Attempt, gaps: Gaps): SignalChecklistItem[] {
   const amount: SignalChecklistItem = { key: "amount", anchor: AMOUNT_ID, label: AMOUNT_CHECK, missing: gaps.amount !== null };
   if (attempt === ATTEMPT.TEST) return [amount];

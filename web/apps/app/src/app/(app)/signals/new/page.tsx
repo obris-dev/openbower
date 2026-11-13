@@ -4,7 +4,7 @@ import { EmptyState } from "@bower/ui";
 
 import { loginUrl, webRoutes } from "@bower/api";
 
-import { SignalForm } from "./_components/signal-form";
+import { SignalForm } from "../_components/signal-form";
 
 const NONE_OFFERED_TITLE = "No signals to follow";
 const NONE_OFFERED_SUBTITLE = "This version of the app knows none of the signals the service offers. Update it to create one.";
