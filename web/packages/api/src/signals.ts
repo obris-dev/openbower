@@ -33,6 +33,11 @@ export const SIGNAL = { FUNDING: "funding" } as const;
 export type KnownSignal = (typeof SIGNAL)[keyof typeof SIGNAL];
 const KNOWN_SIGNALS = new Set<string>(Object.values(SIGNAL));
 
+/** Whether this bundle has a form for a signal the server names. */
+export function isKnownSignal(signal: string): signal is KnownSignal {
+  return KNOWN_SIGNALS.has(signal);
+}
+
 const STAGE_SCHEMA = FundingEventSchema.shape.stage;
 const STAGE_ENUM = STAGE_SCHEMA.options[0];
 /** A funding round's stages, earliest first, as the contract names them. */
@@ -176,9 +181,12 @@ export function isPreviewOpen(run: PreviewRun): boolean {
 export const PREVIEW_SLOW_DOWN_KIND = FAILURE_KIND.enum.slow_down;
 
 /** A setup as the signals service takes it: the filter, with the judge's
- * prompt and threshold when there is a prompt. */
+ * prompt and threshold when there is a prompt. Stages are strings: a saved
+ * setup can hold stages this bundle does not know (read back as
+ * unknown_stages), which still filter on the service and go back as they
+ * were. */
 export type SignalSetup = {
-  filter: Partial<FundingFilter>;
+  filter: Omit<Partial<FundingFilter>, "stages"> & { stages?: string[] };
   prompt?: string;
   min_confidence?: number;
 };

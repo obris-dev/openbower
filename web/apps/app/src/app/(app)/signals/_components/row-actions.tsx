@@ -6,7 +6,7 @@ import { MoreHorizontal, Pencil } from "lucide-react";
 import { Popover, PopoverButton, PopoverItem, PopoverPanel } from "@bower/ui";
 
 import { EDIT_SIGNAL_ACTION } from "../../_components/signals";
-import { EDIT_ACTION, VIEW_ACTION } from "./copy";
+import { EDIT_ACTION, VIEW_SHEET_ACTION } from "./copy";
 
 const ICON_BUTTON = "rounded p-1 text-faint hover:bg-wash hover:text-foreground";
 
@@ -66,7 +66,7 @@ function MenuBody({
           router.push(viewHref);
         }}
       >
-        {VIEW_ACTION}
+        {VIEW_SHEET_ACTION}
       </PopoverItem>
       <PopoverItem
         onClick={() => {

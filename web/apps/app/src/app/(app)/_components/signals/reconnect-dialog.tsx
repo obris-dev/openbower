@@ -6,7 +6,7 @@ import { reconnectLogs } from "@bower/api";
 import { useUser } from "@bower/auth";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { ConfirmDelete } from "../../../../_components/confirm-delete";
+import { ConfirmDelete } from "../confirm-delete";
 import { leftLiveNote, RECONNECTED_TOAST, RECONNECT_ACTION, RECONNECT_CONSEQUENCE, RECONNECT_QUESTION } from "./copy";
 
 /** Reconnect, asked in the confirm dialog: it waits on the identity

@@ -18,6 +18,7 @@ import {
   fetchSignalEvents,
   fetchSignalsCatalog,
   fetchSignalPreview,
+  isKnownSignal,
   isPreviewOpen,
 } from "../src/index.ts";
 
@@ -244,4 +245,9 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
     signal: "funding",
     filter: {},
   });
+});
+
+test("a signal is known only when this bundle has its form", () => {
+  assert.equal(isKnownSignal(SIGNAL.FUNDING), true);
+  assert.equal(isKnownSignal("hiring"), false);
 });

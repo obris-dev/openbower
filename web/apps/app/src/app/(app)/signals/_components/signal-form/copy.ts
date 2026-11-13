@@ -1,4 +1,4 @@
-// The Create signal page's copy, one place.
+// The signal form's copy, one place: Create signal and a signal's settings.
 import {
   PREVIEW_OUTCOME,
   UNKNOWN_PREVIEW_OUTCOME,
@@ -13,6 +13,10 @@ export const INTRO = "Get new funding rounds that match who you sell to.";
 export const CREATE_ACTION = "Create signal";
 export const TEST_ACTION = "Test";
 export const CREATED_TOAST = "Signal created.";
+// Editing a saved signal: the same form, its own verbs.
+export const SAVE_ACTION = "Save";
+export const SAVED_TOAST = "Signal saved.";
+export const UNSAVED = "Unsaved changes | Save keeps them.";
 
 // The sections, as the signal works: the fixed checks, the optional
 // judgment, then its name.
@@ -36,6 +40,7 @@ export const NAME_TITLE = "Name";
 export const NAME_HINT = "Suggested from your setup below. Change it if you like.";
 
 export const NAME_GAP = "Name the signal to create it.";
+export const NAME_SAVE_GAP = "Name the signal to save it.";
 export const AMOUNT_INVALID_GAP = "Enter an amount as a number above zero, like 5000000.";
 export const AMOUNT_REVERSED_GAP = "The lower amount is above the upper one.";
 export const NAME_CHECK = "Name";

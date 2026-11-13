@@ -197,7 +197,10 @@ violation shipped once and got caught).
   deletes ask the same way rather than one of them growing under the
   pointer); and a signal's delete, which waits on the signals service
   and can be refused there, so the question holds still until it
-  answers (a popover closes on an outside click mid-request); and a
+  answers (a popover closes on an outside click mid-request), and asks
+  the same way wherever it is offered (a signal's row menu, its
+  settings footer, what is left of a gone one) rather than inline in
+  one place and in a dialog in another; and a
   signal's Reconnect, which waits on the identity service for a fresh
   key, asked from its pill or banner. Polaris opens a modal for every such decision; the
   anchored panel keeps what the modal is for (one decision, nothing

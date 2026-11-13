@@ -21,8 +21,8 @@ import {
   testSummary,
   unsureTitle,
 } from "./copy";
-import { cellHref } from "../../../../_components/cell-link";
-import { ReadinessChecklist } from "../../../../_components/readiness";
+import { cellHref } from "../../../_components/cell-link";
+import { ReadinessChecklist } from "../../../_components/readiness";
 import { compactAmount } from "./format";
 import { groupRows, rowAt, type SignalChecklistItem } from "./setup";
 import type { TestNotice } from "./use-signal-test";
