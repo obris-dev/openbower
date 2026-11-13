@@ -87,11 +87,15 @@ class AppendRowsOperation:
         target_sheet: Sheet,
         rows: Sequence[dict[str, str]],
         source: RowSource,
+        external_ids: Sequence[str] = (),
     ) -> None:
         self.account_id = account_id
         self.target_sheet = target_sheet
         self.rows = list(rows)
         self.source = source
+        # The sender's id for each row, beside it; a row whose id the sheet
+        # already holds is skipped.
+        self.external_ids = list(external_ids)
 
     def run(self) -> AppendReport:
         """Raises SheetNotAppendable when the source does not fit the sheet
@@ -99,7 +103,9 @@ class AppendRowsOperation:
         SheetFull as they are: each door answers them in its own voice."""
         require_appendable(self.target_sheet, source=self.source)
         with transaction.atomic():
-            created = SheetService(account_id=self.account_id).add_rows(self.target_sheet, self.rows)
+            created = SheetService(account_id=self.account_id).add_rows(
+                self.target_sheet, self.rows, external_ids=self.external_ids
+            )
             arrived = [row for row in created if _holds_something(row)]
             if not arrived:
                 return AppendReport(created=created, queued=0)

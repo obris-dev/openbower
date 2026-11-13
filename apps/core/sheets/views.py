@@ -431,7 +431,7 @@ class SheetIngestView(_ScopedView):
         # returned rows are run through the shared cells_for_storage (the
         # writers' transform), so the bus carries exactly what add_rows will
         # store (canonical form, clamped), not the raw push.
-        problems, rows = validate_ingest_rows(target_sheet, serializer.validated_data["rows"])
+        problems, rows, external_ids = validate_ingest_rows(target_sheet, serializer.validated_data["rows"])
         if problems:
             return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
         # The caller's idempotency key if they sent one, else a fresh ULID.
@@ -444,6 +444,7 @@ class SheetIngestView(_ScopedView):
             user_id=self.request.user.id,
             rows=rows,
             received_at=timezone.now(),
+            external_ids=external_ids,
         )
         try:
             get_ingest_publisher().publish(event)

@@ -2,7 +2,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from openbower_kernel.models import BaseModel
-from openbower_schema.sheets import ROW_ID_MAX_LENGTH
+from openbower_schema.sheets import EXTERNAL_ID_MAX_LENGTH
 
 from ..constants import RANK_MAX_LENGTH
 
@@ -28,7 +28,7 @@ class SheetRow(BaseModel):
     # names an id the sheet already holds skips that row. db_default as
     # well, for a rolling deploy.
     external_id = models.CharField(
-        _("external id"), max_length=ROW_ID_MAX_LENGTH, blank=True, default="", db_default=""
+        _("external id"), max_length=EXTERNAL_ID_MAX_LENGTH, blank=True, default="", db_default=""
     )
 
     class Meta:

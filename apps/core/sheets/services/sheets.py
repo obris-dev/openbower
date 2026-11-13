@@ -20,7 +20,7 @@ from openbower_kernel.fields import is_valid_ulid
 from openbower_kernel.ranks import RankError, key_between, keys_between, respace_keys
 from openbower_kernel.ranks import validate as validate_rank
 from openbower_schema.cell_types import CellTypeMismatch, normalize_row
-from openbower_schema.sheets import ROW_ID_KEY, SheetColumn, WorkflowColumn
+from openbower_schema.sheets import SheetColumn, WorkflowColumn
 
 from ..cells import CellMismatch, CellWrite, Landed, LandingContext, RowLanding, RowVerdict
 from ..constants import (
@@ -422,7 +422,9 @@ class SheetService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: Sheet, rows: list[dict[str, str]]) -> list[SheetRow]:
+    def add_rows(
+        self, target: Sheet, rows: list[dict[str, str]], *, external_ids: Sequence[str] = ()
+    ) -> list[SheetRow]:
         """Append rows (each a data dict keyed by column keys), ranked by
         `_append_ranks` (after the last row, or before the first on a
         log); the count ceiling AND the cell clamp
@@ -449,14 +451,12 @@ class SheetService:
                 raise ColumnNotWritable(f"row {index}: {names} cannot arrive with a row; automation fills it")
         types = {column.key: column.type for column in target.columns}
         stored_rows = []
-        external_ids = []
         for data in rows:
-            # A row's sender id rides under ROW_ID_KEY, never a column's key.
-            cells = {key: value for key, value in data.items() if key != ROW_ID_KEY}
-            stored, _ = cells_for_storage(types, cells, where="add_rows")  # mismatches ignored (tolerate)
+            stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
             stored_rows.append(stored)
-            external_ids.append(data.get(ROW_ID_KEY, ""))
         rows = stored_rows
+        # The sender's id per row, "" where it sent none.
+        ids = list(external_ids) or [""] * len(rows)
         with transaction.atomic():
             # Ranks allocate off the sheet's last (or a log's first) row,
             # so concurrent appends must serialize on the sheet row or the
@@ -468,7 +468,7 @@ class SheetService:
                 raise SheetNotFound(str(target.id)) from e
             # Under the sheet lock, so two pushes carrying one id cannot both
             # find it absent: the first lands, the second skips it.
-            kept = self._rows_not_held(str(locked.id), rows, external_ids)
+            kept = self._rows_not_held(str(locked.id), rows, ids)
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
             if current + len(kept) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")

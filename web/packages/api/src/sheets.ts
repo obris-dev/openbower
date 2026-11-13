@@ -720,8 +720,9 @@ const TolerantIngestSchemaSchema = z.object({
       type: z.string().transform((type) => (KNOWN_INGEST_TYPES.has(type) ? type : "text") as ColumnType),
     }),
   ),
-  // A server from before row ids sends none: no key, so nothing names one.
-  row_id_key: z.string().nullable().default(null),
+  // A server from before external ids sends no flag: rows stay plain maps,
+  // so nothing promises a dedup it does not do.
+  external_id: z.boolean().default(false),
 });
 
 export type TolerantIngestSchema = z.output<typeof TolerantIngestSchemaSchema>;

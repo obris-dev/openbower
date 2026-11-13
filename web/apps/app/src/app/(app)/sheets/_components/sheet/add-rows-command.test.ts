@@ -25,14 +25,16 @@ test("the typed samples are the ones the server's shape rules accept", () => {
   assert.equal(sampleValue({ key: "d", label: "D", type: "date" }), "2026-01-15");
 });
 
-test("the sample row names its own id first when the server takes one", () => {
-  // FAILS if the key is dropped or guessed: a sender copying the command
-  // would push rows a retry doubles.
-  const command = curlFor(url, [{ key: "title", label: "Title", type: "text" }], "_id");
-  const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: Record<string, string>[] };
-  assert.deepEqual(Object.keys(body.rows[0]!), ["_id", "title"]);
-  const without = curlFor(url, [{ key: "title", label: "Title", type: "text" }]);
-  assert.ok(!without.includes("_id"));
+test("the sample row is an envelope with its external_id when the server takes one", () => {
+  // FAILS if the envelope is dropped or guessed: a sender copying the
+  // command would push rows a retry doubles, or a shape an older server
+  // refuses.
+  const columns = [{ key: "title", label: "Title", type: "text" as const }];
+  const body = (command: string) => JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: unknown[] };
+  assert.deepEqual(body(curlFor(url, columns, true)).rows, [
+    { external_id: "your-id-for-this-row", cells: { title: "Acme" } },
+  ]);
+  assert.deepEqual(body(curlFor(url, columns)).rows, [{ title: "Acme" }]);
 });
 
 test("a quote in a column key cannot break out of the shell string", () => {

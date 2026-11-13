@@ -19,9 +19,8 @@ const KEY_LINK = "Create one in Settings";
 const SAMPLE_NOTE = "The sample row is real: it lands in the sheet and starts its AI columns, so put your own values in first.";
 const EVENT_ID_NOTE =
   "Add an event_id to a request to make a retry safe: the same id lands once. Answers 202 with the id once the rows are accepted.";
-function rowIdNote(key: string): string {
-  return `Give each row your own ${key} too: a row whose ${key} the sheet already holds is skipped, so resending one never doubles it.`;
-}
+const EXTERNAL_ID_NOTE =
+  "Each row carries your own external_id for it: a row whose external_id the sheet already holds is skipped, so resending one never doubles it. A row can also be a plain map of cells, with no id.";
 const COLUMNS_TITLE = "Row keys";
 const COLUMNS_NOTE = "Each row is an object keyed on these. Columns the sheet fills itself are not here, and a request naming one is refused.";
 const NO_COLUMNS =
@@ -77,7 +76,7 @@ function DrawerContent({
     };
   }, [sheetId]);
 
-  const command = schema && schema.columns.length > 0 ? curlFor(url, schema.columns, schema.row_id_key) : null;
+  const command = schema && schema.columns.length > 0 ? curlFor(url, schema.columns, schema.external_id) : null;
 
   return (
     <Drawer
@@ -113,7 +112,7 @@ function DrawerContent({
             </p>
             <p className="mt-1 text-xs text-muted">{SAMPLE_NOTE}</p>
             <p className="mt-1 text-xs text-muted">{EVENT_ID_NOTE}</p>
-            {schema?.row_id_key && <p className="mt-1 text-xs text-muted">{rowIdNote(schema.row_id_key)}</p>}
+            {schema?.external_id && <p className="mt-1 text-xs text-muted">{EXTERNAL_ID_NOTE}</p>}
           </div>
         )}
         {schema && schema.columns.length > 0 && (
