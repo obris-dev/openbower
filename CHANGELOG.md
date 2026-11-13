@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.0.11](https://github.com/obris-dev/openbower/compare/v0.0.10...v0.0.11) (2026-11-13)
+
+
+### Features
+
+* **sheets:** a log's write rules, immutable columns and FIFO runs ([#141](https://github.com/obris-dev/openbower/issues/141)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **sheets:** a signal's sheet reads like a log ([#148](https://github.com/obris-dev/openbower/issues/148)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **sheets:** autofill is the sheet's, with an Autofill button on every sheet ([#149](https://github.com/obris-dev/openbower/issues/149)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **sheets:** the log kind, newest first, with a time window ([#140](https://github.com/obris-dev/openbower/issues/140)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** a log's lifecycle, its listener and the Create-log routes ([#143](https://github.com/obris-dev/openbower/issues/143)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** a signal's settings page ([#151](https://github.com/obris-dev/openbower/issues/151)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** Create signal, with a live preview of recent rounds ([#147](https://github.com/obris-dev/openbower/issues/147)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** logs fill themselves from their listener's matches ([#144](https://github.com/obris-dev/openbower/issues/144)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** the account's sync key and a client that acts with it ([#142](https://github.com/obris-dev/openbower/issues/142)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **signals:** the Signals tab, and home lists every sheet ([#146](https://github.com/obris-dev/openbower/issues/146)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+
+
+### Bug fixes
+
+* **resource_server:** the tokeninfo miss budget is a DRF throttle that starts over each minute ([#145](https://github.com/obris-dev/openbower/issues/145)) ([63b4d3d](https://github.com/obris-dev/openbower/commit/63b4d3d5a97717b9352db359eb9852b40d74c0d1))
+* **ui:** a popover menu's rows show focus as the wash, not the browser's outline ([#152](https://github.com/obris-dev/openbower/issues/152)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **web:** not-found pages offer Back to home ([#150](https://github.com/obris-dev/openbower/issues/150)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+
+
+### Refactoring
+
+* Discover is removed, and sign-in asks for the profile and signals scopes only ([#139](https://github.com/obris-dev/openbower/issues/139)) ([c69ce06](https://github.com/obris-dev/openbower/commit/c69ce0615937a08e56c5bbb16bbbc94e2d3683b7))
+* **web:** sheets at /sheets, with /lists redirected ([#137](https://github.com/obris-dev/openbower/issues/137)) ([e892310](https://github.com/obris-dev/openbower/commit/e892310e5fc977b78891d1974d68b26512fa0cec))
+
 ## [0.0.10](https://github.com/obris-dev/openbower/compare/v0.0.9...v0.0.10) (2026-11-11)
 
 
