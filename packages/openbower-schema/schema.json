@@ -1425,10 +1425,6 @@
     "LogDetail": {
       "description": "One log with its listener as the signals service has it now.",
       "properties": {
-        "autofill": {
-          "title": "Autofill",
-          "type": "boolean"
-        },
         "last_polled_at": {
           "anyOf": [
             {
@@ -1477,8 +1473,7 @@
         "listener",
         "signal",
         "status",
-        "last_polled_at",
-        "autofill"
+        "last_polled_at"
       ],
       "title": "LogDetail",
       "type": "object"
@@ -1486,11 +1481,6 @@
     "LogSummary": {
       "description": "One log as the logs index shows it: no signals call behind it.",
       "properties": {
-        "autofill": {
-          "description": "Whether arriving rows fill their AI columns.",
-          "title": "Autofill",
-          "type": "boolean"
-        },
         "last_polled_at": {
           "anyOf": [
             {
@@ -1533,8 +1523,7 @@
         "listener_id",
         "signal",
         "status",
-        "last_polled_at",
-        "autofill"
+        "last_polled_at"
       ],
       "title": "LogSummary",
       "type": "object"
@@ -1993,6 +1982,12 @@
     "SheetDetail": {
       "description": "One sheet as it opens: the summary plus what only the\nopen sheet needs from its workflow. The detail door (GET and PATCH)\nand every write to the columns array (add, AI create, webhook\ncreate, rename, reorder, delete) answer with this; a column's own\nconfig doors (prompt, webhook config) answer their config, and the\nindex, sheet create and CSV import stay on the summary and read no\nworkflow.",
       "properties": {
+        "autofill": {
+          "default": true,
+          "description": "Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+          "title": "Autofill",
+          "type": "boolean"
+        },
         "columns": {
           "default": [],
           "description": "Display order.",
@@ -2145,6 +2140,12 @@
     "SheetSummary": {
       "description": "One sheet as the index shows it (and the create response).",
       "properties": {
+        "autofill": {
+          "default": true,
+          "description": "Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+          "title": "Autofill",
+          "type": "boolean"
+        },
         "columns": {
           "default": [],
           "description": "Display order.",

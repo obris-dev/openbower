@@ -10,8 +10,9 @@ fills already has a record for the row. A row that arrived blank is
 not offered (the append's rule: nothing has arrived to read). A node standing behind a WAIT is
 not started by an arrival; its barrier is what starts it, through the
 advance. Called by every door rows enter through
-(operations/append_rows.py); a sheet with no workflow starts nothing,
-and none is minted here.
+(operations/append_rows.py), while the sheet's autofill is on (the append
+decides; off, rows arrive with nothing offered); a sheet with no workflow
+starts nothing, and none is minted here.
 
 ADVANCE: a node landed on rows, so the workflow moves one step for
 them. Two rules, and nothing else:

@@ -167,7 +167,6 @@ class EditLogOperation(_LogOperation):
         filter: dict[str, Any] | None = None,
         prompt: str | None = None,
         min_confidence: float | None = None,
-        autofill: bool | None = None,
     ) -> None:
         self.session = session
         self.sheet_id = sheet_id
@@ -175,11 +174,10 @@ class EditLogOperation(_LogOperation):
         self.setup = (
             None if filter is None else setup_payload(filter=filter, prompt=prompt, min_confidence=min_confidence)
         )
-        self.autofill = autofill
 
     def run(self) -> Log:
         """The label and the setup go to the listener (the label to the sheet
-        too); autofill is the feed's alone. The listener is written first, so
+        too). The listener is written first, so
         a failed local write leaves its label ahead of the sheet's until the
         edit is retried. Raises ListenerGone for a log whose listener the
         service no longer has (recorded the first time it says so)."""
@@ -198,7 +196,7 @@ class EditLogOperation(_LogOperation):
         except SignalsNotFound:
             self.logs.mark_listener_gone(local_log)
             raise ListenerGone(self.sheet_id) from None
-        edited = self.logs.edit(local_log, label=self.label, autofill=self.autofill)
+        edited = self.logs.edit(local_log, label=self.label)
         return Log(local_log=edited, listener=listener)
 
 

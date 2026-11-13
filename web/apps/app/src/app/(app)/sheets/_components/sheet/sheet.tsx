@@ -55,11 +55,12 @@ import { useRowSelection } from "./use-row-selection";
 import { SelectionBar } from "./selection-bar";
 import { toBody } from "./lib/row-selection";
 import { AddRowsBar } from "./add-rows-bar";
+import { AutofillControl } from "./autofill-control";
 
 /** The sheet, full-bleed under the shell's chrome in three bands, five
  * on a log: one slim toolbar (click-to-rename title left; the actions
- * right: a log's Edit signal, then the menu, whose Add column opens the
- * column kinds), on a log its signal bar and banner, the grid as the
+ * right: Autofill, a log's Edit signal, then the menu, whose Add column
+ * opens the column kinds), on a log its signal bar and banner, the grid as the
  * page's ONE scroll region (sticky header row,
  * an IntersectionObserver sentinel driving the keyset loadMore with
  * the button kept as fallback), and a sticky status footer (row count
@@ -526,6 +527,9 @@ export function Sheet({
           ) : (
             <>
               <AddRowsDrawer sheetId={detail.id} open={addRowsOpen} onClose={() => setAddRowsOpen(false)} />
+              {verbs.autofill && (
+                <AutofillControl on={detail.autofill} onChange={(on) => void columns.setAutofill(on)} />
+              )}
               {settingsHref !== null && (
                 <LinkButton size="sm" variant="outline" href={settingsHref}>
                   {EDIT_SIGNAL_ACTION}

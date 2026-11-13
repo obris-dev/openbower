@@ -48,7 +48,9 @@ class LogRouteTests(TestCase):
     def test_a_log_is_created_read_edited_and_deleted(self):
         created = self._create()
         log_id = created["sheet"]["id"]
-        self.assertEqual((created["sheet"]["kind"], created["signal"], created["autofill"]), ("log", "funding", True))
+        self.assertEqual(
+            (created["sheet"]["kind"], created["signal"], created["sheet"]["autofill"]), ("log", "funding", True)
+        )
         self.assertEqual(created["listener"]["label"], "Robotics raises")
 
         read = self.client.get(reverse("logs_detail", kwargs={"id": log_id}))
@@ -56,11 +58,28 @@ class LogRouteTests(TestCase):
 
         edited = self.client.patch(
             reverse("logs_detail", kwargs={"id": log_id}),
-            {"label": "Renamed", "autofill": False},
+            {"label": "Renamed"},
             content_type="application/json",
         )
         self.assertEqual(edited.status_code, 200, edited.content)
-        self.assertEqual((edited.json()["sheet"]["label"], edited.json()["autofill"]), ("Renamed", False))
+        self.assertEqual(edited.json()["sheet"]["label"], "Renamed")
+
+        # Autofill is the sheet's, through the sheet doors like any sheet's.
+        switched = self.client.patch(
+            reverse("sheets_detail", kwargs={"id": log_id}), {"autofill": False}, content_type="application/json"
+        )
+        self.assertEqual(switched.status_code, 200, switched.content)
+        self.assertFalse(switched.json()["autofill"])
+        # FAILS if autofill is dropped quietly beside another field: the
+        # label would change and the caller's autofill would not, under a 200.
+        stale = self.client.patch(
+            reverse("logs_detail", kwargs={"id": log_id}),
+            {"label": "Renamed again", "autofill": True},
+            content_type="application/json",
+        )
+        self.assertEqual(stale.status_code, 400, stale.content)
+        self.assertIn("PATCH /v1/sheets", str(stale.json()))
+        self.assertEqual(Sheet.objects.get(id=log_id).label, "Renamed")
 
         gone = self.client.delete(reverse("logs_detail", kwargs={"id": log_id}))
         self.assertEqual(gone.status_code, 204)

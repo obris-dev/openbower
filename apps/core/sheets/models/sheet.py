@@ -35,6 +35,9 @@ class Sheet(UserScopedModel):
         _("origin ref"), max_length=64, blank=True, default="", help_text=_("e.g. the source run id")
     )
     row_count = models.IntegerField(_("row count"), default=0)
+    # Whether rows arriving start the sheet's entry actions; db_default for
+    # the same rolling deploy as kind.
+    autofill = models.BooleanField(_("autofill"), default=True, db_default=True)
 
     class Meta:
         verbose_name = _("sheet")

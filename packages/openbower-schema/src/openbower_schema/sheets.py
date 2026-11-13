@@ -199,6 +199,10 @@ class SheetSummary(BaseModel):
         default="", description="A reference to what the sheet was made from, when its origin has one."
     )
     row_count: int = Field(description="Total rows (the sheet may page far beyond one response).")
+    autofill: bool = Field(
+        default=True,
+        description="Whether rows arriving start the sheet's entry actions; off, they land blank until a fill.",
+    )
     created_at: str
     updated_at: str
 

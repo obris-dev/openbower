@@ -32,7 +32,6 @@ class LogSummary(BaseModel):
     signal: str = Field(description=_SIGNAL)
     status: LogStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
-    autofill: bool = Field(description="Whether arriving rows fill their AI columns.")
 
 
 class LogsPage(BaseModel):
@@ -52,7 +51,6 @@ class LogDetail(BaseModel):
     signal: str = Field(description=_SIGNAL)
     status: LogStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
-    autofill: bool
 
 
 class SyncKeyReconnected(BaseModel):

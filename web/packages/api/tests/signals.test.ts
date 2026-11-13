@@ -209,6 +209,7 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
     origin_ref: "",
     folder_id: "",
     row_count: 0,
+    autofill: true,
     columns: [],
     created_at: "2026-11-12T12:00:00+00:00",
     updated_at: "2026-11-12T12:00:00+00:00",
@@ -233,7 +234,7 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
     created_at: "2026-11-12T12:00:00+00:00",
     updated_at: "2026-11-12T12:00:00+00:00",
   };
-  const detail = { sheet, listener, signal: "funding", status: "active", last_polled_at: null, autofill: true };
+  const detail = { sheet, listener, signal: "funding", status: "active", last_polled_at: null };
   const calls = stubFetch(t, detail, 201);
   const res = await createLog({ label: "Seed rounds", signal: SIGNAL.FUNDING, filter: {} });
   assert.equal(res.status === "ok" && res.data.sheet.id, sheet.id);

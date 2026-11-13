@@ -1,7 +1,7 @@
 """A log's lifecycle against the two services it talks to (fakes at their
 httpx seams): create makes the account's key (once), the listener, then the
 sheet and its feed, and undoes the listener when the local write fails;
-edit splits the label, the setup and autofill to their owners; delete
+edit splits the label and the setup to their owners; delete
 removes the listener first and keeps everything local if it cannot.
 
 Run: DJANGO_ENV=test uv run python manage.py test signals.tests.test_log_operations
@@ -63,7 +63,7 @@ class LogOperationTests(TestCase):
         self.assertEqual([column.key for column in sheet.columns], [column.key for column in FUNDING_COLUMNS])
         self.assertTrue(all(column.immutable for column in sheet.columns))
         feed = LogFeed.objects.get(sheet_id=str(sheet.id))
-        self.assertEqual((feed.listener_id, feed.signal, feed.autofill), (log.listener.id, "funding", True))
+        self.assertEqual((feed.listener_id, feed.signal, sheet.autofill), (log.listener.id, "funding", True))
         self.assertEqual(SignalsSyncKey.objects.get().token, "obw_live_1")
 
     def test_a_second_log_reuses_the_accounts_key(self):
@@ -120,11 +120,11 @@ class LogOperationTests(TestCase):
         patches = [body for path, body in self._signals_calls("PATCH")]
         self.assertEqual(patches, [{"label": "Renamed"}, {"filter": {"stages": ["seed"]}}])
 
-    def test_autofill_is_the_feeds_alone(self):
-        log = self._create()
-        edited = EditLogOperation(self.session, str(log.local_log.sheet.id), autofill=False).run()
-        self.assertFalse(LogFeed.objects.get(id=edited.local_log.feed.id).autofill)
-        self.assertEqual(self._signals_calls("PATCH"), [])
+    def test_a_create_sets_the_sheets_autofill(self):
+        # FAILS if create keeps the choice anywhere but the sheet: the append
+        # reads it there, so the log would autofill whatever was asked.
+        log = self._create(autofill=False)
+        self.assertFalse(Sheet.objects.get(id=log.local_log.sheet.id).autofill)
 
     def test_delete_removes_the_listener_the_feed_and_the_sheet(self):
         log = self._create()

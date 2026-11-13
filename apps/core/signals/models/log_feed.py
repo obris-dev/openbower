@@ -7,7 +7,7 @@ from openbower_kernel.models import AccountScopedModel
 
 class LogFeed(AccountScopedModel):
     """What feeds a log (a sheet of kind log): the one listener whose
-    matches become its rows, and whether arriving rows autofill. One per
+    matches become its rows. One per
     log, removed with it by the log's delete (no cascades), and the sheet
     doors refuse a log so nothing else can delete it from under its feed."""
 
@@ -16,7 +16,6 @@ class LogFeed(AccountScopedModel):
     # The signal it logs, as the catalog names it: what chose the sheet's
     # base columns, and what reads each match into a row. Set at create.
     signal = models.CharField(_("signal"), max_length=32)
-    autofill = models.BooleanField(_("autofill"), default=True)
     # The last match appended (the signals service's poll cursor), blank
     # before the first: where the next read starts.
     cursor = models.CharField(_("cursor"), max_length=26, blank=True, default="")

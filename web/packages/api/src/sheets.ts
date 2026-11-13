@@ -431,7 +431,7 @@ export async function deleteSheetRows(id: string, body: RowSelectionBody): Promi
 
 export async function updateSheet(
   id: string,
-  patch: { label?: string; folder_id?: string },
+  patch: { label?: string; folder_id?: string; autofill?: boolean },
 ): Promise<ApiResult<SheetDetail>> {
   return http.patch(apiRoutes.sheets.detail(id), TolerantSheetDetailSchema, patch);
 }

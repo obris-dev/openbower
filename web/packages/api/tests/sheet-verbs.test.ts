@@ -24,6 +24,7 @@ const SHEET = {
   origin_ref: "",
   folder_id: "",
   row_count: 3,
+  autofill: true,
   columns: [],
   created_at: "2026-11-12T12:00:00+00:00",
   updated_at: "2026-11-12T12:00:00+00:00",
@@ -82,12 +83,13 @@ test("a standard sheet offers every verb, with no settings of its own elsewhere"
     move: true,
     addRows: true,
     addColumns: true,
+    autofill: true,
     exportCsv: true,
     settingsHref: null,
   });
 });
 
-test("a signal's sheet moves, gains columns and exports; its signal owns the rest", () => {
+test("a signal's sheet moves, gains columns, switches autofill and exports; its signal owns the rest", () => {
   const verbs = sheetVerbs({ id: SHEET.id, kind: SHEET_KIND.LOG });
   assert.deepEqual(verbs, {
     rename: false,
@@ -95,6 +97,7 @@ test("a signal's sheet moves, gains columns and exports; its signal owns the res
     move: true,
     addRows: false,
     addColumns: true,
+    autofill: true,
     exportCsv: true,
     settingsHref: webRoutes.signal(SHEET.id),
   });

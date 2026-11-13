@@ -21,9 +21,11 @@ rule.
 
 Every caller names where its rows come from (`source`, a RowSource): a
 LOG takes rows from its FEED only, and a standard sheet from anything but
-a feed (SheetNotAppendable otherwise). `autofill=False` lands the rows
-without the trigger (a log whose autofill is off): nothing is queued for
-them, and a person fills them."""
+a feed (SheetNotAppendable otherwise). A sheet whose `autofill` is off
+lands the rows without the trigger, whichever door brought them: nothing
+is queued for them, and a person fills them. The flag is read under the
+lock the primitive takes, so a switch flipped mid-append decides the
+whole batch one way."""
 
 from __future__ import annotations
 
@@ -85,13 +87,11 @@ class AppendRowsOperation:
         target_sheet: Sheet,
         rows: Sequence[dict[str, str]],
         source: RowSource,
-        autofill: bool = True,
     ) -> None:
         self.account_id = account_id
         self.target_sheet = target_sheet
         self.rows = list(rows)
         self.source = source
-        self.autofill = autofill
 
     def run(self) -> AppendReport:
         """Raises SheetNotAppendable when the source does not fit the sheet
@@ -100,9 +100,16 @@ class AppendRowsOperation:
         require_appendable(self.target_sheet, source=self.source)
         with transaction.atomic():
             created = SheetService(account_id=self.account_id).add_rows(self.target_sheet, self.rows)
-            if not self.autofill:
-                return AppendReport(created=created, queued=0)
             arrived = [row for row in created if _holds_something(row)]
+            if not arrived:
+                return AppendReport(created=created, queued=0)
+            # Locked here (the primitive's lock, taken again in the same
+            # transaction), so a switch flipped mid-append decides the whole
+            # batch one way.
+            locked = Sheet.objects.select_for_update().filter(id=str(self.target_sheet.id), account_id=self.account_id)
+            autofill = locked.values_list("autofill", flat=True).get()
+            if not autofill:
+                return AppendReport(created=created, queued=0)
             queued = WorkflowReactions(account_id=self.account_id).trigger(self.target_sheet, arrived)
         return AppendReport(created=created, queued=queued)
 

@@ -25,6 +25,7 @@ const SHEET = {
   origin_ref: "",
   folder_id: "",
   row_count: 3,
+  autofill: true,
   columns: [],
   created_at: "2026-11-12T12:00:00+00:00",
   updated_at: "2026-11-12T12:00:00+00:00",
@@ -37,7 +38,6 @@ function log(status: string) {
     signal: "funding",
     status,
     last_polled_at: "2026-11-12T12:01:00+00:00",
-    autofill: true,
   };
 }
 
@@ -103,7 +103,7 @@ test("deleting a signal sends DELETE to its log", async (t) => {
 });
 
 function detail(logStatus: string, listener: Record<string, unknown> | null) {
-  return { sheet: SHEET, listener, signal: "funding", status: logStatus, last_polled_at: null, autofill: true };
+  return { sheet: SHEET, listener, signal: "funding", status: logStatus, last_polled_at: null };
 }
 
 function listener(status: string) {

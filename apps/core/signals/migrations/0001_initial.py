@@ -24,7 +24,6 @@ class Migration(migrations.Migration):
                 ('sheet_id', models.CharField(max_length=26, verbose_name='sheet id')),
                 ('listener_id', models.CharField(max_length=26, verbose_name='listener id')),
                 ('signal', models.CharField(max_length=32, verbose_name='signal')),
-                ('autofill', models.BooleanField(default=True, verbose_name='autofill')),
                 ('cursor', models.CharField(blank=True, default='', max_length=26, verbose_name='cursor')),
                 ('listener_gone_at', models.DateTimeField(blank=True, null=True, verbose_name='listener gone at')),
                 ('next_poll_at', models.DateTimeField(default=django.utils.timezone.now, verbose_name='next poll at')),
