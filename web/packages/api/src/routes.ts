@@ -75,6 +75,17 @@ export const apiRoutes = {
     // POST: a fresh sync key in place of a refused one; the signals resume.
     reconnect: `/${API_VERSION}/logs/reconnect`,
   },
+  // What creating a signal reads, passed through to the signals service.
+  signals: {
+    // GET: every signal, and the limits a setup is held to.
+    catalog: `/${API_VERSION}/signals`,
+    // GET: a signal's recent events, newest first (?limit=).
+    events: (signal: string) => `/${API_VERSION}/signals/${encodeURIComponent(signal)}/events`,
+    // POST: a setup tried on chosen events; 202 + a preview to poll.
+    previews: `/${API_VERSION}/signals/previews`,
+    // GET: one preview. DELETE: cancel it (a finished one is left as it is).
+    preview: (id: string) => `/${API_VERSION}/signals/previews/${id}`,
+  },
   sheets: {
     // GET: keyset index (?after=), every kind. POST: create.
     index: `/${API_VERSION}/sheets`,

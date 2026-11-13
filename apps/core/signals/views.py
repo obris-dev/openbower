@@ -20,10 +20,10 @@ from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailabl
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
-from sheets.constants import DEFAULT_INDEX_PAGE, MAX_INDEX_PAGE
+from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
 from sheets.serializers import sheet_summary
 
-from .constants import KEY_LIMIT_DETAIL, SignalsErrorCode
+from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
 from .operations.logs import (
     CreateLogOperation,
     DeleteLogOperation,
@@ -40,6 +40,7 @@ from .services.signals_client import (
     SignalsAccessDenied,
     SignalsClientRequestError,
     SignalsClientService,
+    SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
     setup_payload,
@@ -72,6 +73,8 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, SignalsPreviewRunning):
+        return _Relayed({**exc.body, "detail": PREVIEW_RUNNING_DETAIL}, status=exc.status)
     if isinstance(exc, SignalsClientRequestError):
         return _Relayed(exc.body, status=exc.status)
     if isinstance(exc, ApiKeyRefused):
@@ -187,6 +190,10 @@ class LogDetailView(_SignalsView):
 class SignalsCatalogView(_SignalsView):
     def get(self, request: Request) -> Response:
         catalog = self.signals.catalog()
+        # A signal's name is its sheet's label too, so the limit a form
+        # holds it to is the tighter of the two.
+        limits = catalog.limits
+        limits.label_max_length = min(limits.label_max_length, LABEL_MAX_LENGTH)
         return Response(catalog.model_dump())
 
 

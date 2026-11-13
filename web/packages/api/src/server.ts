@@ -18,6 +18,7 @@ import {
   type FoldersList,
 } from "@bower/schema";
 import { TolerantLogsPageSchema, type LogsPage } from "./logs.ts";
+import { TolerantSignalsCatalogSchema, type SignalsCatalog } from "./signals.ts";
 import { renderablePage, TolerantSheetRowsPageSchema, type RenderableSheetRowsPage, TolerantSheetsPageSchema, TolerantSheetDetailSchema, type SheetsPage, type SheetDetail } from "./sheets.ts";
 import { fetchJson } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
@@ -106,6 +107,11 @@ export async function fetchSheetsPageWithCookie(cookieHeader: string): Promise<S
 /** Server-side first page of the signals a person set up (the signals tab). */
 export async function fetchLogsPageWithCookie(cookieHeader: string): Promise<ServerFetchResult<LogsPage>> {
   return fetchParsedWithCookie(apiRoutes.logs.index, cookieHeader, TolerantLogsPageSchema);
+}
+
+/** Server-side signals catalog (the Create signal page's first paint). */
+export async function fetchSignalsCatalogWithCookie(cookieHeader: string): Promise<ServerFetchResult<SignalsCatalog>> {
+  return fetchParsedWithCookie(apiRoutes.signals.catalog, cookieHeader, TolerantSignalsCatalogSchema);
 }
 
 /** Server-side folder set for the home directory. */

@@ -2,12 +2,11 @@
 
 import { Check, X } from "lucide-react";
 
-import { goToSection, type ChecklistItem } from "./lib/readiness";
+import { goToSection, type ChecklistItem } from "./section";
 
-/** What a blocked action still needs, each item a jump to its section.
- * Shared by the agent builder's footer and the sheet's AI drawer:
- * both keep their action ENABLED and diagnose on the attempt, so both
- * need the same signpost row at the action. */
+/** What a blocked action still needs, each item a jump to its section:
+ * a form that keeps its action ENABLED and diagnoses on the attempt
+ * shows this signpost row at the action. */
 export function ReadinessChecklist({ items }: { items: ChecklistItem[] }) {
   return (
     // Full-width and CENTERED on mobile (its own composed row above

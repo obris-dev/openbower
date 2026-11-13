@@ -9,7 +9,6 @@
 export { ModelPicker } from "./model-picker";
 export { EMPTY_OUTPUT, OutputsEditor } from "./outputs-editor";
 export { PromptEditor } from "./prompt-editor";
-export { ReadinessChecklist } from "./readiness-checklist";
 export { ToolToggles } from "./tool-toggles";
 export { AGENT_TOOLS, EMPTY_TOOLS } from "./tools-meta";
 export { draftEquals, draftProvider, saveShape, useAgentDraft, type Draft, type Provider } from "./lib/draft";
@@ -20,9 +19,8 @@ export {
   configMissing,
   configReady,
   firstGap,
-  goToSection,
   type Attempt,
-  type ChecklistItem,
+  type AgentChecklistItem,
   type Missing,
   type SectionKey,
 } from "./lib/readiness";

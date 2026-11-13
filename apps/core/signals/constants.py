@@ -70,6 +70,10 @@ LOG_POLL_PARKED_SECONDS = 1024
 
 # The copy a key-limit refusal answers with: the person's next step, in the
 # app's words (the identity service's detail speaks of keys in general).
+# The signals service names the open preview by id; a person reads why
+# their Test waits and what ends the wait.
+PREVIEW_RUNNING_DETAIL = "A test is already running on this account; try again when it finishes."
+
 KEY_LIMIT_DETAIL = (
     "This account holds as many API keys as it may. Revoke one under Settings, API keys, to connect a log."
 )

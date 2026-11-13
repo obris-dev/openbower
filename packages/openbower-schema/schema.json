@@ -1726,6 +1726,7 @@
               "type": "null"
             }
           ],
+          "description": "How sure the judge was of its own verdict, either way; null when the judge did not read it.",
           "title": "Confidence"
         },
         "error": {
@@ -1742,6 +1743,7 @@
           "$ref": "#/$defs/FundingEventWire"
         },
         "outcome": {
+          "description": "passed: outside the filter. matched: the filter alone kept it, or the judge said yes with confidence at or above the run's min_confidence. unsure: the judge said yes below it. unmatched: the judge said no. errored: it could not be judged. waiting: not judged yet.",
           "enum": [
             "waiting",
             "passed",
