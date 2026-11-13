@@ -38,7 +38,9 @@ export function PopoverPanel({
 }
 
 /** The panel's standard row, matching DropdownItem's chrome so the two
- * menu primitives read as one family. */
+ * menu primitives read as one family: focus shows as the wash a pointer's
+ * hover does, never the browser's outline, which draws outside the row and
+ * which the panel's clipped corners would cut. */
 export function PopoverItem({ className, ...props }: ComponentPropsWithoutRef<"button">) {
   return (
     <button
@@ -47,7 +49,8 @@ export function PopoverItem({ className, ...props }: ComponentPropsWithoutRef<"b
       className={cn(
         // disabled:, where DropdownItem uses data-disabled: (Headless
         // UI stamps that attribute; this is a plain button).
-        "block w-full px-4 py-2.5 text-left text-sm font-medium text-foreground hover:bg-wash focus-visible:bg-wash disabled:opacity-40",
+        "block w-full cursor-pointer px-4 py-2.5 text-left text-sm font-medium text-foreground outline-none",
+        "hover:bg-wash focus-visible:bg-wash disabled:cursor-default disabled:opacity-40",
         className,
       )}
     />
