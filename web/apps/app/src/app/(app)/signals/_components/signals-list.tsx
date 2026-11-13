@@ -22,7 +22,7 @@ import {
   signalType,
 } from "./copy";
 import { SignalRowActions } from "./row-actions";
-import { SignalStatus } from "./status";
+import { SignalStatus } from "../../_components/signals";
 
 /** The delete being asked about: which signal, whether it is in flight,
  * and the server's refusal when it answered one (rendered in the dialog,

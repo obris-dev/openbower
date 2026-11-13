@@ -39,7 +39,7 @@ import {
 import { LinkButton } from "../../../_components/link-button";
 import { ensureOk } from "@/lib/ensure-ok";
 import { COLLAPSED_COOKIE } from "./constants";
-import { EDIT_SIGNAL_ACTION } from "../../signals/_components/copy";
+import { EDIT_SIGNAL_ACTION, SignalMarker } from "../signals";
 import { RowMenu } from "./row-menu";
 
 type Renaming = { kind: "sheet" | "folder"; id: string } | null;
@@ -247,9 +247,7 @@ export function Directory({
         <td className={`w-full max-w-0 py-2.5 pr-4 ${indent ? "pl-10" : "pl-4"}`}>
           {fromSignal ? (
             <span className="flex min-w-0 items-center gap-2">
-              <span title="Fills from a signal" className="shrink-0 text-faint">
-                <Radio aria-label="Fills from a signal" className="h-4 w-4" />
-              </span>
+              <SignalMarker className="text-faint" />
               {renameCell("sheet", sheet.id, sheet.label)}
             </span>
           ) : (

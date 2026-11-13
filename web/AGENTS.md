@@ -102,16 +102,18 @@ violation shipped once and got caught).
   same entry on `<html>` as custom properties, and every cell's width
   is `var()` of its property with the model's width as fallback until
   the sync lands. The right-click
-  menu rides `ContextMenu` in @bower/ui (Radix, the one menu that
-  opens at the pointer; everything that opens from a button stays on
-  Headless UI), one menu over the body reading the pressed cell off
+  menu rides `ContextMenu` in @bower/ui (Radix, for a menu that opens
+  at the pointer; a button menu stays a Headless `Dropdown` unless it
+  nests a submenu, which is `ActionMenu`, Radix too), one menu over the body reading the pressed cell off
   its `data-row-id` / `data-column-key` marks. A cell's write goes
   through PATCH row cells: a person's paste replaces a value, a fill
   never does. Row selection is the SHEET's state (`use-row-selection`,
   over the pure `grid/lib/row-selection`): the gutter cell is the
   row's `Checkbox` (Headless UI, in @bower/ui; the number gives way to
   it on hover), the header's gutter is select all (every row of the
-  sheet, loaded or not: the server takes "all but these"), and the
+  sheet, loaded or not: the server takes "all but these"; on a log,
+  the rows loaded from its period, by id, so a delete never reaches
+  rows outside the period on screen), and the
   bar floating over the scroll region (`selection-bar`) holds the
   count, Deselect, Delete rows and the selection's confirm dialog.
   The right-click menu stays one row's. Typing is the second write
@@ -187,7 +189,7 @@ violation shipped once and got caught).
   directory rows via their menu, the API keys row off its Revoke
   button); the inline form takes the destructive verb's own place in a
   bar (a page footer, the sheet toolbar's action slot) and the bar's
-  other actions stay where they are. Three acts open `ConfirmDialog`,
+  other actions stay where they are. Four acts open `ConfirmDialog`,
   the one modal, holding the same form: a row's delete, chosen from a
   menu that is gone when the question is asked (no slot); the
   selection's delete, whose verb sits in the floating pill (a slot too
@@ -195,7 +197,9 @@ violation shipped once and got caught).
   deletes ask the same way rather than one of them growing under the
   pointer); and a signal's delete, which waits on the signals service
   and can be refused there, so the question holds still until it
-  answers (a popover closes on an outside click mid-request). Polaris opens a modal for every such decision; the
+  answers (a popover closes on an outside click mid-request); and a
+  signal's Reconnect, which waits on the identity service for a fresh
+  key, asked from its pill or banner. Polaris opens a modal for every such decision; the
   anchored panel keeps what the modal is for (one decision, nothing
   else moving) without the overlay.
 

@@ -16,6 +16,7 @@ import {
 } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
+import { createPageLandings } from "./lib/page-landings";
 
 // How far below the viewport the scroll sentinel arms (binary): far
 // enough that the next page usually lands before the user reaches the
@@ -29,10 +30,13 @@ const SCROLL_PREFETCH_MARGIN = "256px";
  * carries their states with them, so a value and its state can never
  * come from different requests. `scrollRef` and `sentinelRef` are the
  * CALLER's to attach (the scroll region and the sentinel inside it);
- * the observer never arms while either is loose. */
+ * the observer never arms while either is loose. `sinceOf`, on a log,
+ * names its period's start, asked again on every request so a rolling
+ * period keeps rolling. */
 export function useRows(
   sheetId: string,
   initialRows: RenderableSheetRowsPage,
+  sinceOf?: () => string,
 ): {
   rows: RenderableSheetRow[];
   hasMore: boolean;
@@ -70,17 +74,21 @@ export function useRows(
   // write.
   const refreshBusyRef = useRef(false);
   const writeGenerationRef = useRef(0);
+  // A re-read and a next page each land only if the other did not land
+  // while it was out (lib/page-landings.ts).
+  const [landings] = useState(createPageLandings);
   const refreshLoaded = useCallback(async (): Promise<boolean> => {
     if (refreshBusyRef.current) return true;
     refreshBusyRef.current = true;
     try {
       const generation = writeGenerationRef.current;
+      const token = landings.start();
       const target = Math.max(rowsRef.current.length, 1);
       const items: RenderableSheetRow[] = [];
       let after: string | undefined;
       let cursor: string | null = null;
       for (;;) {
-        const res = await fetchSheetRows(sheetId, { after, limit: ROWS_PAGE_LIMIT });
+        const res = await fetchSheetRows(sheetId, { after, limit: ROWS_PAGE_LIMIT, since: sinceOf?.() });
         if (redirectIfUnauthenticated(res)) return true;
         if (res.status !== "ok") return false;
         items.push(...res.data.items);
@@ -89,23 +97,28 @@ export function useRows(
         after = cursor;
       }
       if (generation !== writeGenerationRef.current) return true;
+      if (!landings.land(token)) return true;
       setRows(items);
       setNextCursor(cursor);
       return true;
     } finally {
       refreshBusyRef.current = false;
     }
-  }, [sheetId]);
+  }, [sheetId, sinceOf, landings]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    const res = await fetchSheetRows(sheetId, { after: nextCursor, limit: ROWS_PAGE_LIMIT });
+    const token = landings.start();
+    const res = await fetchSheetRows(sheetId, { after: nextCursor, limit: ROWS_PAGE_LIMIT, since: sinceOf?.() });
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
+    // A re-read landed meanwhile: its rows and cursor stand, and the
+    // sentinel asks for the next page from there.
+    if (!landings.land(token)) return;
     setRows((prev) => [...prev, ...res.data.items]);
     setNextCursor(res.data.next_cursor);
-  }, [sheetId, nextCursor, loadingMore, toast]);
+  }, [sheetId, nextCursor, loadingMore, toast, sinceOf, landings]);
 
   // A person's write on one row: the server answers with the row as it
   // now reads, states included, so it is swapped in whole and nothing

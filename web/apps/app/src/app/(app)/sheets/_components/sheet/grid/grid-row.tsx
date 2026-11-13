@@ -6,13 +6,15 @@ import type { RenderableSheetRow } from "@bower/api";
 import type { SearchProviderChoice } from "../fill";
 import { GridCell } from "./grid-cell";
 import { GutterCell, RowGutterCell } from "./gutter-cell";
+import { LoggedCell } from "./logged-cell";
 import { DEFAULT_COLUMN_WIDTH, ROW_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
 import type { RowSelectionControls } from "./row-selection-controls";
 import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** One row of the body, positioned by the virtualizer: the number in
  * the gutter (counted by the caller, since the page's array IS the
- * sheet order and nothing about order rides the row), one cell per
+ * sheet order and nothing about order rides the row), a log's Logged
+ * time (the row's own fact, so a press on it is the row's), one cell per
  * column at that column's width, the empty cell of a column being
  * named in the header (so the name field sits over a column and not
  * past the rows' edge), and the empty trailing cell under the header's
@@ -28,6 +30,7 @@ export function GridRow({
   searchProvider,
   selection,
   pendingColumn = false,
+  logged = false,
 }: {
   row: RenderableSheetRow;
   index: number;
@@ -41,6 +44,8 @@ export function GridRow({
   /** Whether the header holds a column being named, whose cells are
    * empty at the default width until it exists. */
   pendingColumn?: boolean;
+  /** A log's row: its Logged time leads the columns. */
+  logged?: boolean;
 }) {
   return (
     <div
@@ -65,6 +70,7 @@ export function GridRow({
           {index + 1}
         </GutterCell>
       )}
+      {logged && <LoggedCell rowId={row.id} at={row.created_at} />}
       {headers.map((header) => (
         <GridCell
           key={header.id}

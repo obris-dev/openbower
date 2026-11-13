@@ -17,7 +17,7 @@ import {
   type ApiKeysList,
   type FoldersList,
 } from "@bower/schema";
-import { TolerantLogsPageSchema, type LogsPage } from "./logs.ts";
+import { TolerantLogDetailSchema, TolerantLogsPageSchema, type LogDetail, type LogsPage } from "./logs.ts";
 import { TolerantSignalsCatalogSchema, type SignalsCatalog } from "./signals.ts";
 import { renderablePage, TolerantSheetRowsPageSchema, type RenderableSheetRowsPage, TolerantSheetsPageSchema, TolerantSheetDetailSchema, type SheetsPage, type SheetDetail } from "./sheets.ts";
 import { fetchJson } from "./request.ts";
@@ -109,6 +109,12 @@ export async function fetchLogsPageWithCookie(cookieHeader: string): Promise<Ser
   return fetchParsedWithCookie(apiRoutes.logs.index, cookieHeader, TolerantLogsPageSchema);
 }
 
+/** Server-side one signal, its listener read live (the signal's sheet's
+ * first paint: its status and banner). */
+export async function fetchLogWithCookie(cookieHeader: string, id: string): Promise<ServerFetchResult<LogDetail>> {
+  return fetchParsedWithCookie(apiRoutes.logs.detail(id), cookieHeader, TolerantLogDetailSchema);
+}
+
 /** Server-side signals catalog (the Create signal page's first paint). */
 export async function fetchSignalsCatalogWithCookie(cookieHeader: string): Promise<ServerFetchResult<SignalsCatalog>> {
   return fetchParsedWithCookie(apiRoutes.signals.catalog, cookieHeader, TolerantSignalsCatalogSchema);
@@ -124,18 +130,22 @@ export async function fetchSheetWithCookie(cookieHeader: string, id: string): Pr
   return fetchParsedWithCookie(apiRoutes.sheets.detail(id), cookieHeader, TolerantSheetDetailSchema);
 }
 
-/** Server-side first rows page, so the sheet paints with data. */
+/** Server-side first rows page, so the sheet paints with data; `since`
+ * bounds a log's rows to its period. */
 export async function fetchSheetRowsWithCookie(
   cookieHeader: string,
   id: string,
   limit: number,
+  opts: { since?: string } = {},
 ): Promise<ServerFetchResult<RenderableSheetRowsPage>> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (opts.since) params.set("since", opts.since);
   // TOLERANT here too, and for a sharper reason than on the client: a
   // strict enum on the server render fails the whole PAGE, not one
   // poll, so a cause added server-side would blank the sheet for
   // every deploy still serving the old bundle.
   const res = await fetchParsedWithCookie(
-    `${apiRoutes.sheets.rows(id)}?limit=${limit}`,
+    `${apiRoutes.sheets.rows(id)}?${params.toString()}`,
     cookieHeader,
     TolerantSheetRowsPageSchema,
   );

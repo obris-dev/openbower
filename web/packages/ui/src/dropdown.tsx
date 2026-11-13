@@ -4,10 +4,11 @@ import { Menu, MenuButton, MenuItem, MenuItems, type MenuItemsProps, type MenuPr
 import { cn } from "./cn";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
-/** The action menu, on Headless UI's Menu (adapted from the paid kit's
+/** The flat button menu, on Headless UI's Menu (adapted from the paid kit's
  * shape, restyled to bower tokens): keyboard navigation, focus return,
  * outside-click, and viewport-aware anchoring replace the hand-rolled
- * backdrop-button pattern. */
+ * backdrop-button pattern. A menu that nests a submenu is ActionMenu;
+ * Headless UI's has none. */
 export function Dropdown(props: MenuProps) {
   return <Menu {...props} />;
 }

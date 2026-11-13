@@ -9,6 +9,7 @@ import type { ColumnOutcome } from "../use-columns";
 import { AddColumnCell } from "./add-column-cell";
 import { ColumnNameField } from "./column-name-field";
 import { GutterCell } from "./gutter-cell";
+import { LoggedHeader } from "./logged-cell";
 import { HeaderCell } from "./header-cell";
 import { DEFAULT_COLUMN_WIDTH, HEADER_HEIGHT } from "./lib/column-sizing";
 import type { RowSelectionControls } from "./row-selection-controls";
@@ -16,7 +17,8 @@ import type { CellWidth, GridHeader } from "./use-grid-table";
 
 /** The header band, stuck to the top of the scroll region: the gutter
  * mark (the select-all box on a sheet that can be selected: every
- * row of the sheet, loaded or not; a mark for a part), one cell per column (sortable, so a drag displaces the
+ * row of the sheet, loaded or not, or on a log the rows loaded from its
+ * period; a mark for a part), a log's Logged, one cell per column (sortable, so a drag displaces the
  * others as it crosses them), the cell a new column is named in, and
  * the trailing Add column. It renders whatever the row count: a
  * column is named here before it exists, so a sheet with no rows yet
@@ -34,6 +36,7 @@ export function HeaderRow({
   pendingColumn,
   onNamePending,
   onAddColumn,
+  logged = false,
   selection,
 }: {
   headers: GridHeader[];
@@ -47,6 +50,8 @@ export function HeaderRow({
   pendingColumn?: { type: ColumnType } | null;
   onNamePending?: (label: string) => void;
   onAddColumn?: (kind: AddColumnKind) => void;
+  /** A log's header: Logged leads the columns. */
+  logged?: boolean;
 }) {
   return (
     <div
@@ -68,6 +73,7 @@ export function HeaderRow({
           "#"
         )}
       </GutterCell>
+      {logged && <LoggedHeader />}
       <SortableContext items={columns.map((column) => column.key)} strategy={horizontalListSortingStrategy}>
         {headers.map((header) => (
           <HeaderCell

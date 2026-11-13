@@ -5,6 +5,7 @@
 import {
   FundingEventSchema,
   FundingEventWireSchema,
+  FundingFilterSchema,
   MatchErrorWireSchema,
   PreviewFailureWireSchema,
   PreviewRowWireSchema,
@@ -55,6 +56,20 @@ const TolerantFundingEventSchema = FundingEventSchema.extend({
     .transform((instruments) => instruments.filter((each): each is FundingInstrument => KNOWN_INSTRUMENTS.has(each))),
 });
 const TolerantSignalEventSchema = FundingEventWireSchema.extend({ data: TolerantFundingEventSchema });
+/** A saved filter as this bundle can read it: its stages split into the
+ * ones it knows and the ones the service added since. The added ones still
+ * filter on the service, so they are carried, never dropped: a summary or
+ * an edit that showed only the known ones would claim a different setup
+ * than the listener runs. */
+export const TolerantFundingFilterSchema = FundingFilterSchema.extend({
+  stages: z.array(z.string()).nullable().default(null),
+}).transform((filter) => {
+  const stages = filter.stages;
+  if (stages === null) return { ...filter, stages: null, unknown_stages: [] as string[] };
+  const known = stages.filter((each): each is FundingStage => KNOWN_STAGES.has(each));
+  const unknown = stages.filter((each) => !KNOWN_STAGES.has(each));
+  return { ...filter, stages: known, unknown_stages: unknown };
+});
 const TolerantSignalEventsPageSchema = SignalEventsPageSchema.extend({ items: z.array(TolerantSignalEventSchema) });
 
 export type OfferedSignal = Omit<SignalKind, "signal"> & { signal: KnownSignal };
@@ -123,7 +138,7 @@ const TolerantPreviewFailureSchema = PreviewFailureWireSchema.extend({
 const MATCH_ERROR_KIND = MatchErrorWireSchema.shape.kind;
 type MatchErrorKind = (typeof MATCH_ERROR_KIND.options)[number];
 const KNOWN_MATCH_ERROR_KINDS = new Set<string>(MATCH_ERROR_KIND.options);
-const TolerantMatchErrorSchema = MatchErrorWireSchema.extend({
+export const TolerantMatchErrorSchema = MatchErrorWireSchema.extend({
   kind: z
     .string()
     .transform((kind): MatchErrorKind =>

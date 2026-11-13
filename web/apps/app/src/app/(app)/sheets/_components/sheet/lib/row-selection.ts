@@ -16,6 +16,13 @@ export function everything(): RowSelection {
   return { mode: "all", keep: new Set() };
 }
 
+/** Every row the page holds, by id: a select all that never reaches past
+ * what is on screen (a log's period, whose rows outside it a delete must
+ * not touch). */
+export function everyLoaded(ids: Iterable<string>): RowSelection {
+  return { mode: "some", ids: new Set(ids) };
+}
+
 export function isSelected(selection: RowSelection, id: string): boolean {
   return selection.mode === "some" ? selection.ids.has(id) : !selection.keep.has(id);
 }

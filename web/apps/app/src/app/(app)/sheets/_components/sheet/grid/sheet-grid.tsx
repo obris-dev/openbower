@@ -59,8 +59,14 @@ export function SheetGrid({
   onRemoveRow,
   selection,
   searchProvider = null,
+  logged = false,
+  emptyNote,
 }: {
   sheetId: string;
+  /** A log's grid: each row's Logged time leads the columns. */
+  logged?: boolean;
+  /** An empty body's line when the rows are a window of the sheet's. */
+  emptyNote?: string;
   /** A person's values on one row (a paste); resolves with the outcome
    * so a refusal can be shown in the server's words. Its presence,
    * with `onRemoveRow`, is what arms the right-click menu and the
@@ -144,7 +150,7 @@ export function SheetGrid({
 
   // The grid is the bound, so a column cannot be carried off the
   // sheet and left somewhere it has no meaning. The grid's rect
-  // spans the gutter and the trailing cell as well, so a header
+  // spans the gutter, a log's Logged and the trailing cell as well, so a header
   // still travels over both; what this stops is the unbounded case,
   // not travel within the sheet. Auto scroll keeps working, since
   // that rect covers the whole grid and not just its visible part.
@@ -273,6 +279,8 @@ export function SheetGrid({
       searchProvider={searchProvider}
       selection={selection}
       pendingColumn={pendingColumn != null}
+      logged={logged}
+      emptyNote={emptyNote}
     />
   );
 
@@ -298,8 +306,17 @@ export function SheetGrid({
           onNamePending={onNamePending}
           onAddColumn={onAddColumn}
           selection={selection}
+          logged={logged}
         />
-        {tracker && <TrackerRow headers={headers} widthOf={widthOf} fills={tracker} pendingColumn={pendingColumn != null} />}
+        {tracker && (
+          <TrackerRow
+            headers={headers}
+            widthOf={widthOf}
+            fills={tracker}
+            pendingColumn={pendingColumn != null}
+            logged={logged}
+          />
+        )}
         {/* The menu wraps the body whatever it holds: a press on the
             empty sheet's one line finds no row and opens nothing, and
             the body keeps one parent across the zero-rows edge instead

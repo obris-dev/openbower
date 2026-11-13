@@ -4,6 +4,7 @@ import type { ColumnFillSummary, SheetColumn } from "@bower/api";
 
 import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
+import { LoggedTrackerCell } from "./logged-cell";
 import { DEFAULT_COLUMN_WIDTH, HEADER_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
 import type { CellWidth, GridHeader } from "./use-grid-table";
 
@@ -39,6 +40,7 @@ export function TrackerRow({
   widthOf,
   fills,
   pendingColumn = false,
+  logged = false,
 }: {
   headers: GridHeader[];
   widthOf: (header: GridHeader) => CellWidth;
@@ -46,6 +48,7 @@ export function TrackerRow({
   /** Whether the header holds a column being named: its cell here is
    * empty at the default width, like the rows' below. */
   pendingColumn?: boolean;
+  logged?: boolean;
 }) {
   return (
     <div
@@ -56,6 +59,7 @@ export function TrackerRow({
       style={{ top: HEADER_HEIGHT }}
     >
       <GutterCell className="z-30 border-b" />
+      {logged && <LoggedTrackerCell />}
       {headers.map((header) => {
         const column: SheetColumn = header.column.columnDef.meta!.column;
         return (

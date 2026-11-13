@@ -13,13 +13,15 @@ export type ConfirmLayout = "panel" | "inline" | "dialog";
  * with three button orders. A refusal the server answered (a 409, in
  * the server's words) renders IN the tier, which stays open: the user
  * reads why where they asked. `verb` names a non-delete destructive
- * act (rotating a secret) in the same ritual. */
+ * act (rotating a secret) in the same ritual, and `variant` a verb that
+ * restores rather than destroys (Reconnect), which reads primary. */
 export function ConfirmDelete({
   question,
   consequence,
   busy,
   layout = "panel",
   verb = "Delete",
+  variant = "danger",
   refusal = null,
   onCancel,
   onDelete,
@@ -38,6 +40,7 @@ export function ConfirmDelete({
    * the way a dialog's answers read. */
   layout?: ConfirmLayout;
   verb?: string;
+  variant?: "danger" | "primary";
   refusal?: string | null;
   onCancel: () => void;
   onDelete: () => void;
@@ -55,7 +58,7 @@ export function ConfirmDelete({
       >
         Cancel
       </Button>
-      <Button size={layout === "dialog" ? "md" : "sm"} variant="danger" onClick={onDelete} loading={busy}>
+      <Button size={layout === "dialog" ? "md" : "sm"} variant={variant} onClick={onDelete} loading={busy}>
         {verb}
       </Button>
     </>

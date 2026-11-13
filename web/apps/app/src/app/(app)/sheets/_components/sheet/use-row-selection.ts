@@ -6,6 +6,7 @@ import type { RenderableSheetRow } from "@bower/api";
 import {
   NONE,
   count,
+  everyLoaded,
   everything,
   headerState,
   isEmpty,
@@ -20,12 +21,14 @@ import {
  * confirm are the sheet's, and state lives with the component that
  * owns the ritual). `toggle` flips one row, or with `range` adds the
  * run of loaded rows from the last row toggled alone to this one;
- * `toggleAll` picks every row of the sheet, loaded or not, and clears
- * once every row is picked. The selection is pruned as the rows under
+ * `toggleAll` picks every row of the sheet, loaded or not (or, with
+ * `loadedOnly`, every row the page holds), and clears once every row is
+ * picked. The selection is pruned as the rows under
  * it change, so a row gone on a re-read never keeps counting. */
 export function useRowSelection(
   rows: RenderableSheetRow[],
   rowCount: number,
+  { loadedOnly = false }: { loadedOnly?: boolean } = {},
 ): {
   selection: RowSelection;
   count: number;
@@ -86,9 +89,10 @@ export function useRowSelection(
     setPicked((prev) => {
       const live = new Set(rowsRef.current.map((row) => row.id));
       const shown = settled(prev, live, rowCount);
-      return headerState(shown, rowCount) === "all" ? NONE : everything();
+      if (headerState(shown, rowCount) === "all") return NONE;
+      return loadedOnly ? everyLoaded(live) : everything();
     });
-  }, [rowCount]);
+  }, [rowCount, loadedOnly]);
 
   const clear = useCallback(() => {
     anchorRef.current = null;

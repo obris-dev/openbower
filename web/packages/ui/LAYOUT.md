@@ -24,8 +24,8 @@ reports; review against this list before adding a component.
    appears inside short non-wrapping segments.
 6. **Drawers and inline editing, not modals.** Pinned header/footer,
    scrollable body; footer buttons submit body forms via the `form`
-   attribute. The one modal is `ConfirmDialog`, for three destructive
-   acts and no other: a row's delete, chosen from a menu that is gone
+   attribute. The one modal is `ConfirmDialog`, for four acts and no
+   other: a row's delete, chosen from a menu that is gone
    when the question is asked, so it has no slot to confirm in; the
    selection's delete, whose verb sits in the floating selection
    pill, a slot too small to hold a question, a consequence and two
@@ -33,7 +33,10 @@ reports; review against this list before adding a component.
    under the pointer at the moment of the decision is worse than an
    overlay; and a signal's delete, which waits on another service and
    can be refused there, so the question must hold still until it
-   answers. Every other confirm swaps in where its verb was.
+   answers; and a signal's Reconnect, which waits on the identity
+   service and can be refused there too, asked from a status pill or a
+   banner with no room for the question. Every other confirm swaps in
+   where its verb was.
 7. **Pre-paint state via blocking scripts.** Anything the server can't
    know (theme, collapsed chrome) is stamped on `<html>` by a blocking
    inline script first in `<body>` and rendered from CSS keyed on that
@@ -48,8 +51,10 @@ reports; review against this list before adding a component.
    covers client renders.
 8. **Behavioral components ride Headless UI** (menus, dialogs, switches,
    comboboxes); hand-rolled focus/keyboard handling is a bug factory.
-   The one exception is `ContextMenu`, which rides Radix: Headless UI
-   has no menu that opens at the pointer rather than from a button.
+   Two menus ride Radix, each for what Headless UI's Menu cannot do:
+   `ContextMenu`, which opens at the pointer rather than from a button,
+   and `ActionMenu`, a button menu that nests a submenu. A flat button
+   menu stays a `Dropdown`.
 9. **Errors have three tiers; pick by attachment, not preference.**
    (a) Field-level validation lives at its field (a mismatch hint, an
    invalid email), often live: `FieldError`, id-linked to the input's
