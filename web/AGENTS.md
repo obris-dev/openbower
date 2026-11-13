@@ -64,17 +64,20 @@ violation shipped once and got caught).
 - Poll loops carry a generation counter checked after EVERY await
   (including the first) and a hard, stated budget when the BROWSER is
   the run's supervisor; a DURABLE,
-  worker-supervised run (a fill, the preview's test run included) polls
-  open-ended against the worker's heartbeat instead,
-  each poll a short bounded request, staleness rendered as a warning
-  and never as failure; a superseded loop
+  worker-supervised run (a fill, the agent preview's test run, a signal's
+  Test) polls open-ended instead, each poll a short bounded request;
+  where the run carries a heartbeat, staleness is judged against it and
+  rendered as a warning, never as failure (a signal's Test carries none:
+  the signals service's own deadline ends it, so it renders no
+  staleness); a superseded loop
   returns silently. Such a loop NEVER stops on transport failures: the
   fill runs server-side whatever this page can reach, so repeated
   failures back off toward a ceiling and surface the trouble,
   BOUNDED: past MAX_POLL_ERRORS consecutive failures the loop either
   surfaces persistent trouble and keeps supervising (the sheet) or
-  releases its gesture with a toast (the preview, whose run a pruned id
-  can make permanently unreadable), and a loop that quit silently
+  releases its gesture (the agent preview with a toast, a signal's Test
+  with a notice in its results; a pruned id can make either permanently
+  unreadable), and a loop that quit silently
   while its copy promised updates would be the lie.
 - A read whose enum the SERVER owns is tolerant on the client: the
   deployed bundle predates the next contract, and a strict enum turns

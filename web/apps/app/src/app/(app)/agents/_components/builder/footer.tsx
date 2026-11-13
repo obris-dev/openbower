@@ -6,7 +6,8 @@ import { Button, PageFooter } from "@bower/ui";
 
 import { ConfirmDelete } from "../../../_components/confirm-delete";
 import { DELETE_AGENT_CONSEQUENCE, DELETE_AGENT_QUESTION } from "../copy";
-import { type ChecklistItem, ReadinessChecklist } from "../../../_components/agent-config";
+import type { AgentChecklistItem } from "../../../_components/agent-config";
+import { ReadinessChecklist } from "../../../_components/readiness";
 
 /** The builder's pinned actions: the readiness checklist (its own
  * centered row on mobile), the delete confirm tier (owned here), and
@@ -23,7 +24,7 @@ export function BuilderFooter({
   onSave,
   saveLabel,
 }: {
-  checklist: ChecklistItem[] | null;
+  checklist: AgentChecklistItem[] | null;
   showDelete: boolean;
   busy: boolean;
   testBusy: boolean;

@@ -18,10 +18,10 @@ from django.utils import timezone
 
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import MAX_SHEET_ROWS, SheetErrorCode, SheetKind, SheetOrigin
+from sheets.constants import LABEL_MAX_LENGTH, MAX_SHEET_ROWS, SheetErrorCode, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.services.sheets import FolderService, SheetService
-from signals.constants import KEY_LIMIT_DETAIL, LogStatus, SignalsErrorCode
+from signals.constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, LogStatus, SignalsConflictCode, SignalsErrorCode
 from signals.models import LogFeed, SignalsSyncKey
 
 from .fakes import FakeIdentity, FakeSignals, install
@@ -302,6 +302,32 @@ class SignalsPassThroughTests(TestCase):
         login_session(self.client)
         self.signals = FakeSignals()
         install(self, self.signals, FakeIdentity())
+
+    def test_an_open_preview_answers_in_the_apps_words(self):
+        # FAILS if the service's own detail passes through: it names the
+        # open preview by id, which a person can do nothing with.
+        running = {
+            "error": "already_running",
+            "detail": f"preview {_PREVIEW_ID} is still pending: wait for it, or cancel it",
+            "running": {"id": _PREVIEW_ID, "status": "pending", "since": "2026-11-12T12:00:00+00:00"},
+        }
+        self.signals.fixed = {("POST", "/v1/previews"): httpx.Response(409, json=running)}
+        resp = self.client.post(
+            reverse("signals_previews"),
+            {"signal": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"], SignalsConflictCode.ALREADY_RUNNING)
+        self.assertEqual(resp.json()["detail"], PREVIEW_RUNNING_DETAIL)
+
+    def test_the_catalog_holds_a_name_to_the_sheet_label_limit(self):
+        # FAILS if the service's wider limit reaches the form: a name past
+        # the sheet's label limit would pass the field and be refused on create.
+        self.signals.fixed = {("GET", "/v1/signals"): httpx.Response(200, json=_CATALOG)}
+        resp = self.client.get(reverse("signals_catalog"))
+        self.assertGreater(_CATALOG["limits"]["label_max_length"], LABEL_MAX_LENGTH)
+        self.assertEqual(resp.json()["limits"]["label_max_length"], LABEL_MAX_LENGTH)
 
     def test_the_catalog_events_and_previews_reach_their_upstream_routes(self):
         self.signals.fixed = {

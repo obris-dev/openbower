@@ -2,11 +2,12 @@
 // the API calls a log. The client names outcomes as a result union; the
 // caller decides what each means for the UI.
 
-import { LogSummarySchema, LogsPageSchema, type LogSummary as WireLogSummary } from "@bower/schema";
+import { LogDetailSchema, LogSummarySchema, LogsPageSchema, type LogSummary as WireLogSummary } from "@bower/schema";
 import { z } from "zod";
 
 import { http, type ApiResult } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
+import type { KnownSignal, SignalSetup } from "./signals.ts";
 import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 
 /** Where a signal stands, as the server names it: active (it fills),
@@ -39,11 +40,27 @@ export const TolerantLogSummarySchema = LogSummarySchema.extend({
 });
 export const TolerantLogsPageSchema = LogsPageSchema.extend({ items: z.array(TolerantLogSummarySchema) });
 
+/** What a create's caller reads: the new signal's sheet. The rest of the
+ * 201 (the listener, with its own server-owned enums) is left unread, so
+ * a value the signals service adds can never fail a create that landed,
+ * which a person would retry into a second signal. */
+export type CreatedLog = { sheet: SheetSummary };
+const CreatedLogSchema = LogDetailSchema.pick({ sheet: true }).extend({ sheet: TolerantSheetSummarySchema });
+
 /** One page of the signals a person set up, newest first (?after= the
  * previous page's next_cursor). */
 export async function fetchLogsPage(after?: string) {
   const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
   return http.get(`${apiRoutes.logs.index}${suffix}`, TolerantLogsPageSchema);
+}
+
+/** Create a signal: its listener on the signals service, and the sheet
+ * it fills (201), whose arriving rows fill its AI columns. The account's
+ * first signal mints its sync key. */
+export async function createLog(
+  body: { label: string; signal: KnownSignal } & SignalSetup,
+): Promise<ApiResult<CreatedLog>> {
+  return http.post(apiRoutes.logs.index, CreatedLogSchema, body);
 }
 
 /** Delete a signal: its listener stops, then its sheet and rows go (204).

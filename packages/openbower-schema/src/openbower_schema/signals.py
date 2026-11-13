@@ -206,8 +206,16 @@ class MatchesPage(BaseModel):
 class PreviewRowWire(BaseModel):
     """What the setup made of one chosen event."""
 
-    outcome: PreviewOutcome
-    confidence: float | None
+    outcome: PreviewOutcome = Field(
+        description=(
+            "passed: outside the filter. matched: the filter alone kept it, or the judge said yes with confidence "
+            "at or above the run's min_confidence. unsure: the judge said yes below it. unmatched: the judge said "
+            "no. errored: it could not be judged. waiting: not judged yet."
+        )
+    )
+    confidence: float | None = Field(
+        description="How sure the judge was of its own verdict, either way; null when the judge did not read it."
+    )
     reason: str
     error: MatchErrorWire | None
     event: SignalEventWire

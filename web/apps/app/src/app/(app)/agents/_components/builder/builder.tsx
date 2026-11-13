@@ -24,7 +24,8 @@ import { AGENT_LABEL_MAX_LENGTH, TEST_KEY_MAX_LENGTH, TEST_ROW_MAX_KEYS, TEST_VA
 import { ensureOk } from "@/lib/ensure-ok";
 import { Breadcrumbs } from "../../../_components/breadcrumbs";
 import { configMissing, EMPTY_TOOLS, sheetsTruncatedNote } from "../../../_components/agent-config";
-import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, goToSection, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
+import { type Attempt, buildChecklist, type Draft, draftEquals, draftProvider, EMPTY_OUTPUT, firstGap, isContentful, ModelPicker, OutputsEditor, outputsProblem, PromptEditor, promptVariables, type Provider, saveShape, stripVariable, ToolToggles, useAgentDraft } from "../../../_components/agent-config";
+import { goToSection } from "../../../_components/readiness";
 import { BuilderFooter } from "./footer";
 import { TestPreview } from "./test-preview";
 import { usePreviewRun } from "./use-preview-run";
