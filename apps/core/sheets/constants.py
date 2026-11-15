@@ -57,6 +57,9 @@ RERANK_WAIT_SECONDS = 60
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
 MAX_INGEST_EVENT_ID_LENGTH = 255
+# A sender's own id for one pushed row, compared exactly. Opaque to us,
+# bounded the same way so it keys a unique index cheaply.
+EXTERNAL_ID_MAX_LENGTH = 255
 # The ingest inbox (ProcessedIngestEvent) keeps a push's event_id this long
 # (2^21 s, about 24 days). It must outlast the ingest topic's retention: an
 # event redelivered after its inbox row is pruned would append twice.

@@ -48,6 +48,7 @@ from sheets.processors import (
     processor_for,
 )
 from sheets.processors.column_agent import AIColumnProcessor
+from sheets.rows import rows_without_external_ids
 from sheets.services import cell_truth, fill_progress
 from sheets.services.fills import FillService
 from sheets.services.node_runs import NodeRunFlow
@@ -110,7 +111,15 @@ class _Harness(TestCase):
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.rows = self.sheets.add_rows(
             self.sheet,
-            [{"company": "acme.com"}, {"company": "example.io"}, {"company": "acme.org"}, {}, {"company": "last.co"}],
+            rows_without_external_ids(
+                [
+                    {"company": "acme.com"},
+                    {"company": "example.io"},
+                    {"company": "acme.org"},
+                    {},
+                    {"company": "last.co"},
+                ]
+            ),
         )
 
     def _prompt(self, prompt: str) -> None:
@@ -334,7 +343,9 @@ class ManualRuleTests(_Harness):
 
 class PushedRuleTests(_Harness):
     def test_a_row_the_node_already_attempted_gets_no_run_and_the_rank_is_stamped(self):
-        pushed = self.sheets.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io"}])
+        pushed = self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "new.io"}, {"company": "done.io"}])
+        )
         self._settle(pushed[1], StoredCellState.FILLED)
         processor = self._processor(FillScope(mode=FillMode.AUTOFILL))
         self.assertEqual(processor.enqueue_runs(self.sheet, pushed, now=NOW), 1)
@@ -383,7 +394,9 @@ class PushedRuleTests(_Harness):
         # stamped by per-row lazy loads, so the count grows with the
         # page), or if any required field is left to Django.
         def enqueue_thin(size: int) -> tuple[int, dict[str, str]]:
-            rows = self.sheets.add_rows(self.sheet, [{"company": f"thin{size}-{n}.io"} for n in range(size)])
+            rows = self.sheets.add_rows(
+                self.sheet, rows_without_external_ids([{"company": f"thin{size}-{n}.io"} for n in range(size)])
+            )
             ids = [str(row.id) for row in rows]
             thin = list(SheetRow.objects.filter(id__in=ids).only("id").order_by("rank", "id"))
             processor = self._processor(FillScope(mode=FillMode.AUTOFILL))
@@ -409,7 +422,8 @@ class PushedRuleTests(_Harness):
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         pushed = self.sheets.add_rows(
-            self.sheet, [{"company": "done.io"}, {"company": "open.io"}, {"company": "half.io"}]
+            self.sheet,
+            rows_without_external_ids([{"company": "done.io"}, {"company": "open.io"}, {"company": "half.io"}]),
         )
         cell_truth.write(
             account_id=ACCOUNT,
@@ -449,7 +463,10 @@ class PushedRuleTests(_Harness):
         self.sheet.refresh_from_db()
         before = NodeRun.objects.count()
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "new.io"}], source=RowSource.MANUAL
+            account_id=ACCOUNT,
+            target_sheet=self.sheet,
+            rows=rows_without_external_ids([{"company": "new.io"}]),
+            source=RowSource.MANUAL,
         ).run()
         self.assertEqual(report.added, 1)
         self.assertEqual(NodeRun.objects.count(), before)
@@ -468,7 +485,7 @@ class PushedRuleTests(_Harness):
         report = AppendRowsOperation(
             account_id=ACCOUNT,
             target_sheet=self.sheet,
-            rows=[{}, {"company": "   "}, {"company": "new.io"}, {}],
+            rows=rows_without_external_ids([{}, {"company": "   "}, {"company": "new.io"}, {}]),
             source=RowSource.MANUAL,
         ).run()
         self.assertEqual(report.added, 4)
@@ -508,7 +525,7 @@ class PushedRuleTests(_Harness):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        arrived = self.sheets.add_rows(plain, [{"company": "new.io"}])
+        arrived = self.sheets.add_rows(plain, rows_without_external_ids([{"company": "new.io"}]))
         self.assertEqual(WorkflowReactions(account_id=ACCOUNT).trigger(plain, arrived), 0)
         self.assertFalse(Workflow.objects.filter(sheet_id=str(plain.id)).exists())
 
@@ -519,7 +536,9 @@ class PushedRuleTests(_Harness):
         # real entry point. FAILS if a node judges on columns not its own.
         from sheets.services.workflow_reactions import WorkflowReactions
 
-        pushed = self.sheets.add_rows(self.sheet, [{"company": "new.io"}, {"company": "done.io"}])
+        pushed = self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "new.io"}, {"company": "done.io"}])
+        )
         self._settle(pushed[1], StoredCellState.FILLED)
         self.assertEqual(WorkflowReactions(account_id=ACCOUNT).trigger(self.sheet, pushed), 1)
         (run,) = list(self._runs())
@@ -558,7 +577,7 @@ class FillJobWalkTests(_Harness):
         # order serves it first. Only the id bound keeps it out: FAILS
         # if the walk stops filtering by until_id.
         fill = self._fill(targeted=False, until_id=self._until(), target_row_count=6)
-        (late,) = self.sheets.add_rows(self.sheet, [{"company": "late.io"}])
+        (late,) = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "late.io"}]))
         self.sheets.move_row(self.sheet, str(late.id), after_id=None)
         with patch("sheets.jobs.fill.FILL_SCAN_CHUNK", 2):
             self._walk(fill)

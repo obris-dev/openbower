@@ -207,7 +207,11 @@ live in a separate private repo.
   where its rows come from (`source`, a `RowSource`): a LOG takes rows
   from its FEED only (a signal's matches today), a standard sheet from
   anything but a feed (`SheetNotAppendable` otherwise; the push checks
-  before the bus). A sheet whose `autofill` is off (a flag on every kind,
+  before the bus). A row naming an `external_id` the sheet already
+  holds (a sender's own id for it, pushed in an envelope) is skipped
+  under the sheet lock the append holds, and not counted; the partial
+  unique `sheet_row_external_id_uniq` backstops it. A sheet whose
+  `autofill` is off (a flag on every kind,
   switched through `PATCH /v1/sheets`) takes its rows without the
   trigger, whichever door brought them; the operation reads the flag
   under the sheet lock the append holds, so no door decides it. Off stops

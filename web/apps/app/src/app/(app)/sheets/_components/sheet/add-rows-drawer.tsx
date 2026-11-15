@@ -16,11 +16,13 @@ const LEDE =
 const COMMAND_TITLE = "Command";
 const KEY_LEAD = "Set OPENBOWER_API_KEY to a key first. ";
 const KEY_LINK = "Create one in Settings";
-const SAMPLE_NOTE = "The sample row is real: it lands in the sheet and starts its AI columns, so put your own values in first.";
+const SAMPLE_NOTE = "The sample row is real: it lands in the sheet and starts its AI columns, so put your own values and external_id in first.";
 const EVENT_ID_NOTE =
   "Add an event_id to a request to make a retry safe: the same id lands once. Answers 202 with the id once the rows are accepted.";
+const EXTERNAL_ID_NOTE =
+  "Give a row your own external_id and a resend of it never doubles it: the sheet skips an id it already holds. A row can also be a plain map of cells, with no id.";
 const COLUMNS_TITLE = "Row keys";
-const COLUMNS_NOTE = "Each row is an object keyed on these. Columns the sheet fills itself are not here, and a request naming one is refused.";
+const COLUMNS_NOTE = "Each row's cells are keyed on these. Columns the sheet fills itself are not here, and a request naming one is refused.";
 const NO_COLUMNS =
   "This sheet has no columns a request can set yet, so there is nothing to send. Add one from Add column with a type such as Text or URL, and its key appears here with the command.";
 
@@ -110,6 +112,7 @@ function DrawerContent({
             </p>
             <p className="mt-1 text-xs text-muted">{SAMPLE_NOTE}</p>
             <p className="mt-1 text-xs text-muted">{EVENT_ID_NOTE}</p>
+            <p className="mt-1 text-xs text-muted">{EXTERNAL_ID_NOTE}</p>
           </div>
         )}
         {schema && schema.columns.length > 0 && (

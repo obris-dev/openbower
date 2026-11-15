@@ -18,6 +18,7 @@ from sheets.constants import SheetErrorCode, SheetKind
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import SheetService
 
 from .agent_columns import sheet_with_an_ai_column
@@ -48,7 +49,7 @@ class SheetAutofillTests(TestCase):
             sheet_id=str(self.sheet.id),
             account_id=ACCOUNT,
             user_id=TEST_IDENTITY["id"],
-            rows=rows,
+            rows=rows_without_external_ids(rows),
             received_at=timezone.now(),
         )
         return handle_ingest_event(event)

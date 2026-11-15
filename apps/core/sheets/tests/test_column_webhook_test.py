@@ -17,6 +17,7 @@ from django.urls import reverse
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.webhooks import WebhookDeliveryWire, WebhookDigestData, WebhookEnvelope
 from sheets.constants import CELL_MAX_LENGTH, CellSource, StoredCellState, WebhookColumnErrorCode
+from sheets.rows import rows_without_external_ids
 from sheets.services import cell_truth
 from sheets.services.digest_payload import event_id_of
 from sheets.services.sheets import SheetService
@@ -50,7 +51,9 @@ class ColumnWebhookTestTests(TestCase):
         self.sheet = self.sheets.create(
             owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual"
         )
-        self.rows = self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.rows = self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         destinations = WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
 
@@ -208,7 +211,7 @@ class ColumnWebhookTestTests(TestCase):
 
     def test_a_row_of_another_sheet_reads_as_unknown(self):
         other = self.sheets.create(owner_id=TEST_IDENTITY["id"], label="Other", columns=COLUMNS, origin="manual")
-        [foreign] = self.sheets.add_rows(other, [{"company": "else.example"}])
+        [foreign] = self.sheets.add_rows(other, rows_without_external_ids([{"company": "else.example"}]))
         resp, _ = self._post(row_id=str(foreign.id))
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"], WebhookColumnErrorCode.ROW_UNKNOWN)
@@ -246,7 +249,7 @@ class ColumnWebhookTestOutsideTransactionTests(TransactionTestCase):
         self.sheet = self.sheets.create(
             owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual"
         )
-        self.rows = self.sheets.add_rows(self.sheet, [{"company": "acme.com"}])
+        self.rows = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "acme.com"}]))
         destinations = WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
 

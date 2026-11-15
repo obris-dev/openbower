@@ -1299,7 +1299,7 @@
       "type": "object"
     },
     "IngestSchema": {
-      "description": "The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
+      "description": "The pushable row shape for POST /v1/sheets/{id}/ingest: a row's\ncells are keyed by these columns' keys, each value validated against\nthe column's type on append. A row is an envelope,\n{external_id?, cells}, or a plain map of cells; a row whose\nexternal_id the sheet already holds is skipped. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
       "properties": {
         "columns": {
           "default": [],

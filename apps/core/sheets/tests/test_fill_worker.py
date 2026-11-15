@@ -36,6 +36,7 @@ from jobs.models import Job
 from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import AiColumn
+from sheets.rows import rows_without_external_ids
 
 from ..constants import (
     AGENT_MISSING_MESSAGE,
@@ -151,7 +152,9 @@ class ManualFillTestCase(TransactionTestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         with patch("sheets.services.runnable.model_for"):
             _, self.fill = start_fill(str(self.sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
@@ -273,7 +276,7 @@ class ManualFillTestCase(TransactionTestCase):
                 columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
                 origin="manual",
             )
-            self.sheets.add_rows(solo, [{"company": "acme.com"}])
+            self.sheets.add_rows(solo, rows_without_external_ids([{"company": "acme.com"}]))
             _, fill = start_fill(str(solo.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
         self.run_fill(throttling_model(), fill=fill, passes=NODE_RUN_ATTEMPTS + 1)
@@ -426,7 +429,10 @@ class ManualFillTestCase(TransactionTestCase):
         self.sheet.save(update_fields=["columns", "updated_at"])
         # The live lane: an arriving row, run through the consumer.
         report = AppendRowsOperation(
-            account_id=ACCOUNT, target_sheet=self.sheet, rows=[{"company": "late.io"}], source=RowSource.MANUAL
+            account_id=ACCOUNT,
+            target_sheet=self.sheet,
+            rows=rows_without_external_ids([{"company": "late.io"}]),
+            source=RowSource.MANUAL,
         ).run()
         (arrived,) = report.created
         (run,) = list(NodeRun.objects.filter(row_id=str(arrived.id), fill_run_id=None))

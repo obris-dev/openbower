@@ -25,6 +25,7 @@ from sheets.jobs.column_backfill import ColumnBackfillJob
 from sheets.models import Node, NodePath
 from sheets.nodes.wait_until import WaitUntil
 from sheets.nodes.webhook import Webhook
+from sheets.rows import rows_without_external_ids
 from sheets.serializers import WebhookColumnAddRequest, WebhookColumnPatchRequest
 from sheets.services import cell_truth
 from sheets.services.digest_payload import event_id_of
@@ -71,7 +72,7 @@ class WebhookColumnTests(TestCase):
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.first_path, self.second_path = first.path_id, second.path_id
-        self.rows = self.sheets.add_rows(self.sheet, [{"company": "acme.com"}])
+        self.rows = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "acme.com"}]))
         destinations = WebhookDestinationService(account_id=self.account_id, user_id=TEST_IDENTITY["id"])
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
         self.baseline = (Node.objects.count(), NodePath.objects.count())
