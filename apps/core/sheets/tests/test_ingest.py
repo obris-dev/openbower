@@ -106,7 +106,7 @@ class IngestMachineTests(TestCase):
         event = captured[0]
         self.assertEqual(event.sheet_id, self.sheet_id)
         self.assertEqual(event.account_id, _ACCT)
-        self.assertEqual([r["domain"] for r in event.rows], ["acme.com", "example.io"])
+        self.assertEqual([r.cells["domain"] for r in event.rows], ["acme.com", "example.io"])
         self.assertEqual(event.event_id, body["event_id"])
 
     def test_the_old_path_still_takes_a_key_push(self):
@@ -307,7 +307,7 @@ class IngestValidationTests(TestCase):
         captured: list = []
         resp = self._push([{"score": "1,234"}], captured)
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(captured[0].rows[0]["score"], "1234")  # not the raw "1,234"
+        self.assertEqual(captured[0].rows[0].cells["score"], "1234")  # not the raw "1,234"
 
     def test_an_oversized_cell_is_clamped_onto_the_bus_not_published_raw(self):
         # The POST runs cells_for_storage, which clamps to CELL_MAX_LENGTH
@@ -318,7 +318,7 @@ class IngestValidationTests(TestCase):
         captured: list = []
         resp = self._push([{"domain": "x" * (CELL_MAX_LENGTH + 50)}], captured)
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(len(captured[0].rows[0]["domain"]), CELL_MAX_LENGTH)  # clamped on the bus
+        self.assertEqual(len(captured[0].rows[0].cells["domain"]), CELL_MAX_LENGTH)  # clamped on the bus
 
     def test_the_problem_list_is_capped(self):
         # A wholly-malformed push cannot return a 400 as large as itself:

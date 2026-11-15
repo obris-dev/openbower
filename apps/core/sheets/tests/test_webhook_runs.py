@@ -34,6 +34,7 @@ from sheets.nodes.registry import COLUMN_AGENT, WEBHOOK
 from sheets.processors import FillMode, FillScope, UnknownProcessor, processor_for
 from sheets.processors.column_agent import AIColumnProcessor
 from sheets.processors.webhook import WebhookProcessor, next_window
+from sheets.rows import rows_without_external_ids
 from sheets.services import cell_truth
 from sheets.services.columns import ColumnService
 from sheets.services.fills import FillService
@@ -95,7 +96,7 @@ class _SheetHarness(TestCase):
             {"key": "country", "label": "Country", "type": "text", "kind": "ai", "node_id": str(self.second.id)},
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        (self.row,) = self.sheets.add_rows(self.sheet, [{"company": "acme.com"}])
+        (self.row,) = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "acme.com"}]))
         destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})
 
@@ -277,7 +278,9 @@ class ProcessorTests(_SheetHarness):
             self.assertEqual(processor.enqueue_runs(self.sheet, [self.row], scope=scope, now=NOW), 0)
         # And every mode QUEUES on a fresh completion, one row each, so
         # a rule returning nothing under any one mode goes red.
-        fresh = self.sheets.add_rows(self.sheet, [{"company": f"m{n}.io"} for n in range(len(modes))])
+        fresh = self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": f"m{n}.io"} for n in range(len(modes))])
+        )
         for row, scope in zip(fresh, modes, strict=True):
             self._settle(row, {"country": StoredCellState.FILLED})
             with self.subTest(mode=scope.mode):
@@ -356,7 +359,7 @@ class AdvanceTests(_SheetHarness):
             {"key": "chained", "label": "Chained", "type": "text", "kind": "ai", "node_id": str(chained.id)},
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
-        arrived = self.sheets.add_rows(self.sheet, [{"company": "new.io"}])
+        arrived = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "new.io"}]))
         offered: list[tuple[str, str]] = []
 
         def spy(*, account_id, node):
@@ -415,7 +418,7 @@ class AdvanceTests(_SheetHarness):
         entries = list(self.workflows.iter_entry_nodes(first.workflow_id))
         head = next(entry for entry in entries if entry.path_id == first.path_id)
         self._marker_behind(head, first)
-        arrived = self.sheets.add_rows(self.sheet, [{"company": "new.io"}])
+        arrived = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "new.io"}]))
         offered: list[str] = []
 
         def spy(*, account_id, node):
@@ -499,7 +502,9 @@ class AdvanceTests(_SheetHarness):
         self.sheet.save(update_fields=["columns", "updated_at"])
 
         def advance_over(size: int) -> int:
-            rows = self.sheets.add_rows(self.sheet, [{"company": f"row{size}-{n}.io"} for n in range(size)])
+            rows = self.sheets.add_rows(
+                self.sheet, rows_without_external_ids([{"company": f"row{size}-{n}.io"} for n in range(size)])
+            )
             for row in rows:
                 cell_truth.write(
                     account_id=ACCOUNT,
@@ -524,7 +529,7 @@ class AdvanceTests(_SheetHarness):
         # as ONE enqueue_runs call carrying both rows, in sheet order,
         # and both get a run. FAILS if the advance loops per row.
         self._add_webhook_column(["country"])
-        (second_row,) = self.sheets.add_rows(self.sheet, [{"company": "example.io"}])
+        (second_row,) = self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "example.io"}]))
         for row in (self.row, second_row):
             cell_truth.write(
                 account_id=ACCOUNT,
@@ -629,7 +634,7 @@ class AdvanceTests(_SheetHarness):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        (row,) = self.sheets.add_rows(sheet, [{"company": "example.io"}])
+        (row,) = self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "example.io"}]))
         with patch("sheets.services.runnable.model_for"):
             _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         self._run_jobs()
@@ -657,7 +662,7 @@ class AdvanceTests(_SheetHarness):
             origin="manual",
             autofill=False,
         )
-        (row,) = self.sheets.add_rows(sheet, [{"company": "example.io"}])
+        (row,) = self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "example.io"}]))
         with patch("sheets.services.runnable.model_for"):
             _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         self._run_jobs()
@@ -683,7 +688,7 @@ class _BackfilledSheet(_SheetHarness):
     def setUp(self) -> None:
         super().setUp()
         self.second_row, self.third_row = self.sheets.add_rows(
-            self.sheet, [{"company": "example.io"}, {"company": "acme.org"}]
+            self.sheet, rows_without_external_ids([{"company": "example.io"}, {"company": "acme.org"}])
         )
         # Rows 1 and 2 complete for (country, answer); row 3 only for answer.
         for row in (self.row, self.second_row, self.third_row):

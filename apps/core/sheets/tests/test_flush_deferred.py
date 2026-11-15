@@ -27,6 +27,7 @@ from sheets.models import Node, NodeRun, SheetCellState, SheetRow
 from sheets.nodes.registry import COLUMN_AGENT, WEBHOOK
 from sheets.operations.flush_deferred import FlushDeferredOperation
 from sheets.processors.webhook import COLUMN_REMOVED, DESTINATION_REMOVED, SEND_UNPREPARABLE, next_window
+from sheets.rows import rows_without_external_ids
 from sheets.services import cell_truth
 from sheets.services.digest_payload import event_id_of
 from sheets.services.node_runs import NodeRunFlow
@@ -91,7 +92,8 @@ class FlushDeferredTests(TransactionTestCase):
         ]
         self.sheet.save(update_fields=["columns", "updated_at"])
         self.rows = self.sheets.add_rows(
-            self.sheet, [{"company": "acme.com"}, {"company": "example.io"}, {"company": "acme.org"}]
+            self.sheet,
+            rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}, {"company": "acme.org"}]),
         )
         destinations = WebhookDestinationService(account_id=ACCOUNT, user_id=USER)
         self.destination, _ = destinations.create(label="CRM", url="https://hooks.example.com/in", headers={})

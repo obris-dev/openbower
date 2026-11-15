@@ -18,6 +18,7 @@ from openbower_kernel.fields import new_ulid
 from sheets.constants import SheetOrigin
 from sheets.jobs.rerank import RerankJob
 from sheets.models import Sheet, SheetRow
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import (
     ColumnNotWritable,
     FolderNotFound,
@@ -55,7 +56,7 @@ class SheetServiceTests(TestCase):
         self.assertEqual([x.id for x in older], [a.id])
         service.rename(a, label="Renamed")
         self.assertEqual(service.get(str(a.id)).label, "Renamed")
-        service.add_rows(a, [{"domain": "acme.com", "name": "Acme"}])
+        service.add_rows(a, rows_without_external_ids([{"domain": "acme.com", "name": "Acme"}]))
         service.delete(a)
         self.assertEqual(Sheet.objects.filter(id=a.id).count(), 0)
         self.assertEqual(SheetRow.objects.filter(sheet_id=str(a.id)).count(), 0)  # child cleanup
@@ -70,8 +71,10 @@ class SheetServiceTests(TestCase):
     def test_rows_are_ranked_in_order_and_page_by_a_row_cursor(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(5)])
-        service.add_rows(target, [{"domain": "later.com", "name": "later"}])  # appends continue the order
+        service.add_rows(target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(5)]))
+        service.add_rows(
+            target, rows_without_external_ids([{"domain": "later.com", "name": "later"}])
+        )  # appends continue the order
         rows = service.rows_page(target, limit=10)
         self.assertEqual([r.data["name"] for r in rows], ["0", "1", "2", "3", "4", "later"])
         self.assertEqual([r.rank for r in rows], sorted(r.rank for r in rows))
@@ -98,7 +101,9 @@ class SheetServiceTests(TestCase):
     def test_the_consent_set_is_bounded_by_id_and_walked_in_sheet_order(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        )
         # Moved to the top: the sheet order changes, and a walk follows
         # it; the set "existed at the click" is still an id bound.
         service.move_row(target, str(rows[3].id), after_id=None)
@@ -113,7 +118,9 @@ class SheetServiceTests(TestCase):
     def test_a_move_writes_one_row_and_a_deep_gap_queues_a_rerank(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(4)])
+        )
         before = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
         moved = service.move_row(target, str(rows[0].id), after_id=str(rows[2].id))
         after = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
@@ -145,7 +152,7 @@ class SheetServiceTests(TestCase):
         # Scoped like every write: a foreign account reads the sheet as
         # missing, and a row or a neighbour from another sheet as missing.
         other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        (stranger,) = service.add_rows(other, [{"domain": "z.com", "name": "z"}])
+        (stranger,) = service.add_rows(other, rows_without_external_ids([{"domain": "z.com", "name": "z"}]))
         with self.assertRaises(SheetNotFound):
             _service(account="01AC" + "Z" * 22).move_row(target, str(rows[0].id), after_id=None)
         with self.assertRaises(RowNotFound):
@@ -160,7 +167,9 @@ class SheetServiceTests(TestCase):
         # shown to settle around a0 rather than climb.
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        )
         service.move_row(target, str(rows[2].id), after_id=None)
         jobs = JobService(account_id="01AC" + "A" * 22)
         for _round in range(2):
@@ -176,7 +185,9 @@ class SheetServiceTests(TestCase):
     def test_a_rerank_waits_for_the_sheets_open_fills(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        )
         service.move_row(target, str(rows[2].id), after_id=None)
         before = [r.rank for r in service.rows_page(target, limit=10)]
         # A fill mid-walk, held by another worker so this tick cannot close it.
@@ -211,7 +222,9 @@ class SheetServiceTests(TestCase):
         # (the bound is patched to 0 so any write would queue one).
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        )
         before = {str(r.id): r.rank for r in service.rows_page(target, limit=10)}
         with patch("sheets.services.sheets.RANK_REBALANCE_LENGTH", 0):
             service.move_row(target, str(rows[1].id), after_id=str(rows[1].id))
@@ -223,7 +236,9 @@ class SheetServiceTests(TestCase):
     def test_a_move_refuses_a_rank_past_the_column_bound(self):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        rows = service.add_rows(target, [{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        rows = service.add_rows(
+            target, rows_without_external_ids([{"domain": f"a{i}.com", "name": str(i)} for i in range(3)])
+        )
         # The re-space queued past the rebalance length has not run yet
         # (nothing ticks it here); the bound is met by a few more moves.
         with (
@@ -249,10 +264,10 @@ class SheetServiceTests(TestCase):
         # A patched cap, not 50k real inserts: the policy under test is
         # the arithmetic, not bulk_create's throughput.
         with patch("sheets.services.sheets.MAX_SHEET_ROWS", 5):
-            service.add_rows(target, [{"a": str(i)} for i in range(4)])
+            service.add_rows(target, rows_without_external_ids([{"a": str(i)} for i in range(4)]))
             with self.assertRaises(SheetFull):
-                service.add_rows(target, [{"a": "x"}, {"a": "y"}])
-            service.add_rows(target, [{"a": "fits"}])
+                service.add_rows(target, rows_without_external_ids([{"a": "x"}, {"a": "y"}]))
+            service.add_rows(target, rows_without_external_ids([{"a": "fits"}]))
         target.refresh_from_db()
         self.assertEqual(target.row_count, 5)
 
@@ -261,11 +276,13 @@ class SheetServiceTests(TestCase):
         target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
         service.add_rows(
             target,
-            [
-                {"domain": "https://b.example/x", "name": "B"},
-                {"domain": "", "name": "blank"},
-                {"domain": "a.example", "name": "A"},
-            ],
+            rows_without_external_ids(
+                [
+                    {"domain": "https://b.example/x", "name": "B"},
+                    {"domain": "", "name": "blank"},
+                    {"domain": "a.example", "name": "A"},
+                ]
+            ),
         )
         self.assertEqual(
             service.column_values(target, key="domain", limit=10),
@@ -291,12 +308,12 @@ class CellClampTests(TestCase):
         # And the clamp is LOGGED: a cut value is data the sheet no
         # longer holds in full, so silence would hide it.
         with self.assertLogs("sheets.services.sheets", level="WARNING") as logs:
-            service.add_rows(target, [{"a": "x" * (CELL_MAX_LENGTH + 8)}])
+            service.add_rows(target, rows_without_external_ids([{"a": "x" * (CELL_MAX_LENGTH + 8)}]))
         row = service.rows_page(target, limit=1)[0]
         self.assertEqual(len(row.data["a"]), CELL_MAX_LENGTH)
         self.assertIn(f"clamped from {CELL_MAX_LENGTH + 8} to {CELL_MAX_LENGTH}", logs.output[0])
         with self.assertNoLogs("sheets.services.sheets"):
-            service.add_rows(target, [{"a": "x" * CELL_MAX_LENGTH}])
+            service.add_rows(target, rows_without_external_ids([{"a": "x" * CELL_MAX_LENGTH}]))
 
 
 class CellNormalizeTests(TestCase):
@@ -317,7 +334,7 @@ class CellNormalizeTests(TestCase):
             ],
             origin=SheetOrigin.MANUAL,
         )
-        service.add_rows(target, [{"score": "1,234", "when": "2026/3/4"}])
+        service.add_rows(target, rows_without_external_ids([{"score": "1,234", "when": "2026/3/4"}]))
         row = service.rows_page(target, limit=1)[0]
         self.assertEqual(row.data["score"], "1234")  # commas stripped
         self.assertEqual(row.data["when"], "2026-03-04")  # date canonicalized
@@ -333,7 +350,7 @@ class CellNormalizeTests(TestCase):
             columns=[{"kind": "plain", "key": "score", "label": "Score", "type": "number"}],
             origin=SheetOrigin.CSV,
         )
-        service.add_rows(target, [{"score": "banana"}])
+        service.add_rows(target, rows_without_external_ids([{"score": "banana"}]))
         row = service.rows_page(target, limit=1)[0]
         self.assertEqual(row.data["score"], "banana")  # tolerated, not rejected
 
@@ -366,7 +383,7 @@ class RecordedColumnTests(TestCase):
         target = self._sheet()
         for cells in ({"company": "acme.com", "answer": "pinned"}, {"company": "acme.com", "crm": "sent"}):
             with self.subTest(cells=cells), self.assertRaises(ColumnNotWritable):
-                service.add_rows(target, [{"company": "fine.io"}, cells])
+                service.add_rows(target, rows_without_external_ids([{"company": "fine.io"}, cells]))
         self.assertEqual(SheetRow.objects.filter(sheet_id=str(target.id)).count(), 0)
 
     def test_the_refusal_names_the_row_and_the_columns_in_the_caller_s_terms(self):
@@ -379,7 +396,9 @@ class RecordedColumnTests(TestCase):
         with self.assertRaisesMessage(
             ColumnNotWritable, "row 1: 'answer', 'crm' cannot arrive with a row; automation fills it"
         ):
-            service.add_rows(target, [{"company": "fine.io"}, {"answer": "pinned", "crm": "sent"}])
+            service.add_rows(
+                target, rows_without_external_ids([{"company": "fine.io"}, {"answer": "pinned", "crm": "sent"}])
+            )
 
     def test_a_key_matching_no_column_is_still_tolerated(self):
         # The refusal is scoped to RECORDED columns. A key the sheet has
@@ -389,7 +408,7 @@ class RecordedColumnTests(TestCase):
         # refusal swallows the tolerant path.
         service = _service()
         target = self._sheet()
-        (row,) = service.add_rows(target, [{"company": "acme.com", "stray": "kept"}])
+        (row,) = service.add_rows(target, rows_without_external_ids([{"company": "acme.com", "stray": "kept"}]))
         self.assertEqual(row.data["stray"], "kept")
 
 
@@ -439,7 +458,7 @@ def _sheet_with_footprint(service: SheetService, n: int) -> tuple[Sheet, list[Sh
     from sheets.nodes.registry import WEBHOOK
 
     target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=SheetOrigin.CSV)
-    rows = service.add_rows(target, [{"name": f"row {i}"} for i in range(n)])
+    rows = service.add_rows(target, rows_without_external_ids([{"name": f"row {i}"} for i in range(n)]))
     for row in rows:
         SheetCellState.objects.create(
             account_id=target.account_id,
@@ -469,7 +488,7 @@ class RowDeleteTests(TestCase):
 
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        first, second = service.add_rows(target, [{"name": "Acme"}, {"name": "Example"}])
+        first, second = service.add_rows(target, rows_without_external_ids([{"name": "Acme"}, {"name": "Example"}]))
         account = target.account_id
         for row in (first, second):
             SheetCellState.objects.create(
@@ -607,7 +626,7 @@ class RowDeleteTests(TestCase):
         service = _service()
         target = service.create(owner_id="01US" + "A" * 22, label="Rows", columns=_COLUMNS, origin=SheetOrigin.CSV)
         other = service.create(owner_id="01US" + "A" * 22, label="Other", columns=_COLUMNS, origin=SheetOrigin.CSV)
-        (row,) = service.add_rows(other, [{"name": "Elsewhere"}])
+        (row,) = service.add_rows(other, rows_without_external_ids([{"name": "Elsewhere"}]))
         with self.assertRaises(RowNotFound):
             service.delete_row(target, str(row.id))  # another sheet's row
         with self.assertRaises(RowNotFound):

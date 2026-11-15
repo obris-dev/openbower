@@ -69,7 +69,10 @@ def _append_rows(event: IngestEvent) -> AppendResult:
     try:
         target = sheets.get(event.sheet_id)
         report = AppendRowsOperation(
-            account_id=event.account_id, target_sheet=target, rows=event.rows, source=RowSource.PUSH
+            account_id=event.account_id,
+            target_sheet=target,
+            rows=event.rows,
+            source=RowSource.PUSH,
         ).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,
@@ -102,12 +105,16 @@ def handle_ingest_event(event: IngestEvent) -> str:
         if not result.applied:
             logger.warning("ingest dropped event=%s sheet=%s: %s", event.event_id, event.sheet_id, result.reason)
             return "dropped"
+        # A row whose external_id the sheet already holds is skipped, so a
+        # push that landed nothing says why.
+        skipped = len(event.rows) - result.added
         logger.info(
-            "ingest applied event=%s sheet=%s account=%s rows=%d",
+            "ingest applied event=%s sheet=%s account=%s rows=%d skipped=%d",
             event.event_id,
             event.sheet_id,
             event.account_id,
             result.added,
+            skipped,
         )
         return "applied"
 

@@ -22,6 +22,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.services import JobRunner
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import FillRunWire
+from sheets.rows import rows_without_external_ids
 from webhooks.services import WebhookDestinationService
 
 from ..constants import StoredCellState
@@ -76,7 +77,9 @@ class ColumnFillTestCase(TestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         patcher = patch("sheets.services.runnable.model_for")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -116,7 +119,9 @@ class FillTargetTests(ColumnFillTestCase):
         # the user typed into another. Both are EXCLUDED: an answered
         # cell is never re-run and never re-billed, and running a
         # user-entered cell would spend on a write-if-blank skip.
-        self.sheets.add_rows(self.sheet, [{"company": "initech.com"}, {"company": "umbrella.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "initech.com"}, {"company": "umbrella.io"}])
+        )
         fill = self.add_and_fill()
         rows = self.sheets.rows_page(self.sheet, limit=10)
         settle(fill["id"], str(rows[0].id), None)
@@ -141,7 +146,7 @@ class FillTargetTests(ColumnFillTestCase):
         # appended after the stopped fill fall inside its target set.
         fill = self.add_and_fill()
         self.cancel(fill["id"])
-        self.sheets.add_rows(self.sheet, [{"company": "initech.com"}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "initech.com"}]))
 
         resp = self.fill()
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -192,7 +197,7 @@ class StoppedFillTests(ColumnFillTestCase):
         # walk short of (never queued at all) is reached the same way.
         # FAILS if the new fill re-runs an attempted row or misses one
         # the stop left untouched.
-        self.sheets.add_rows(self.sheet, [{"company": "initech.com"}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "initech.com"}]))
         (key,) = self.add_column()
         resp = self.post_fill(key=key)
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -281,7 +286,9 @@ class ScopedFillTests(ColumnFillTestCase):
         # the NEXT eligible unanswered row only, lands its cutoff on
         # that row's number, and leaves row 4 not-attempted (no
         # outcome row at all).
-        self.sheets.add_rows(self.sheet, [{"company": "initech.com"}, {"company": "umbrella.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "initech.com"}, {"company": "umbrella.io"}])
+        )
         fill = self.add_and_fill(max_row_count=2)
         first = FillRunWire(**fill)
         self.assertEqual(first.target_row_count, 2)
@@ -303,7 +310,7 @@ class ScopedFillTests(ColumnFillTestCase):
         fill = self.add_and_fill()
         settle_all(fill["id"], None)
         self.cancel(fill["id"])
-        self.sheets.add_rows(self.sheet, [{"company": ""}, {"company": "initech.com"}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": ""}, {"company": "initech.com"}]))
 
         resp = self.fill(max_row_count=1)
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -318,7 +325,7 @@ class ScopedFillTests(ColumnFillTestCase):
         fill = self.add_and_fill()
         settle_all(fill["id"], None)
         self.cancel(fill["id"])
-        self.sheets.add_rows(self.sheet, [{"company": ""}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": ""}]))
 
         resp = self.fill()
         self.assertEqual(resp.status_code, 400)
@@ -336,7 +343,7 @@ class FillNotFoundTests(ColumnFillTestCase):
         foreign_sheet = foreign_sheets.create(
             owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
-        foreign_sheets.add_rows(foreign_sheet, [{"company": "acme.com"}])
+        foreign_sheets.add_rows(foreign_sheet, rows_without_external_ids([{"company": "acme.com"}]))
         start_fill(
             str(foreign_sheet.id),
             account_id=foreign_account,

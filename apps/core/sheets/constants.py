@@ -57,6 +57,9 @@ RERANK_WAIT_SECONDS = 60
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
 MAX_INGEST_EVENT_ID_LENGTH = 255
+# A sender's own id for one pushed row, compared exactly. Opaque to us,
+# bounded the same way so it keys a unique index cheaply.
+EXTERNAL_ID_MAX_LENGTH = 255
 # How many push problems one ingest 400 lists before truncating: enough
 # to fix a batch in one round, bounded so a wholly-malformed push cannot
 # return a response as large as itself.

@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from jobs.services import JobRunner
 from openbower_schema.sheets import AiColumn
+from sheets.rows import rows_without_external_ids
 
 from ..constants import CellSource, NodeRunStatus, StoredCellState
 from ..ingest.consumer import handle_ingest_event
@@ -66,7 +67,7 @@ class AutofillHarness(TransactionTestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(sheet, [{"company": f"seed{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(sheet, rows_without_external_ids([{"company": f"seed{n}.com"} for n in range(rows)]))
         with patch("sheets.services.runnable.model_for"):
             _, fill = start_fill(str(sheet.id), account_id=ACCOUNT, user_id=USER, config=quick_config())
         JobRunner(worker_id="test:1").tick()
@@ -88,7 +89,7 @@ class AutofillHarness(TransactionTestCase):
             sheet_id=sheet_id or str(sheet.id),
             account_id=account_id,
             user_id=USER,
-            rows=rows,
+            rows=rows_without_external_ids(rows),
             received_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
         )
         return handle_ingest_event(event)
@@ -167,7 +168,7 @@ class EnqueueTests(AutofillHarness):
         ]
         sheet.save(update_fields=["columns", "updated_at"])
         both, one, neither = self.sheets.add_rows(
-            sheet, [{"company": "both.co"}, {"company": "one.co"}, {"company": "neither.co"}]
+            sheet, rows_without_external_ids([{"company": "both.co"}, {"company": "one.co"}, {"company": "neither.co"}])
         )
         attempted = (
             (both, {"a": StoredCellState.FILLED, "b": StoredCellState.NO_ANSWER}, CellSource.NODE),
@@ -220,7 +221,7 @@ class EnqueueTests(AutofillHarness):
 
     def test_re_enqueue_of_the_same_row_and_node_is_a_no_op(self) -> None:
         sheet, _, _ = self._ai_sheet()
-        created = self.sheets.add_rows(sheet, [{"company": "dupe.com"}])
+        created = self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "dupe.com"}]))
         sheet.refresh_from_db()
 
         first = WorkflowReactions(account_id=ACCOUNT).trigger(sheet, created)

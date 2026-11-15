@@ -56,6 +56,7 @@ from .models import Folder, Sheet
 from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
+from .rows import rows_without_external_ids
 from .serializers import (
     AiColumnRequest,
     ColumnAddRequest,
@@ -318,7 +319,7 @@ class SheetRowsView(_ScopedView):
             report = AppendRowsOperation(
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
-                rows=serializer.validated_data["rows"],
+                rows=rows_without_external_ids(serializer.validated_data["rows"]),
                 source=RowSource.MANUAL,
             ).run()
         except SheetNotAppendable as e:
@@ -397,8 +398,9 @@ class SheetIngestView(_ScopedView):
     the target sheet (account-scoped, so a key only reaches its owner's
     sheets), publish the batch to the ingest bus, and return 202 once the
     broker acked it. The rows are NOT in the sheet on return: the ingest
-    worker appends them off the bus, deduped on `event_id`, and the append
-    starts the sheet's workflow for them. A deployment with no bus
+    worker appends them off the bus, deduped on `event_id`, skipping a row
+    whose `external_id` the sheet already holds, and the append starts the
+    sheet's workflow for them. A deployment with no bus
     configured logs and drops the batch (sheets.ingest.publisher). Same
     auth pair and order as the sheets collection.
     """

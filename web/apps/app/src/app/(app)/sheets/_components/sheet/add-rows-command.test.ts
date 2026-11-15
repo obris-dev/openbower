@@ -13,8 +13,8 @@ test("the command carries one sample row keyed on every settable column", () => 
   ]);
   assert.ok(command.startsWith(`curl -X POST ${url} \\`));
   assert.ok(command.includes('-H "Authorization: Bearer $OPENBOWER_API_KEY"'));
-  const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: Record<string, string>[] };
-  assert.deepEqual(body, { rows: [{ domain: "https://acme.com", arr: "1200", founded: "2026-01-15" }] });
+  const body = JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: { cells: Record<string, string> }[] };
+  assert.deepEqual(body.rows.map((row) => row.cells), [{ domain: "https://acme.com", arr: "1200", founded: "2026-01-15" }]);
 });
 
 // Completeness over the type enum is held by the sample map's Record
@@ -23,6 +23,16 @@ test("the typed samples are the ones the server's shape rules accept", () => {
   assert.equal(sampleValue({ key: "n", label: "N", type: "number" }), "42");
   assert.equal(sampleValue({ key: "c", label: "C", type: "currency" }), "1200");
   assert.equal(sampleValue({ key: "d", label: "D", type: "date" }), "2026-01-15");
+});
+
+test("the sample row is an envelope carrying its external_id", () => {
+  // FAILS if the envelope is dropped: a sender copying the command would
+  // push rows a retry doubles.
+  const columns = [{ key: "title", label: "Title", type: "text" as const }];
+  const body = (command: string) => JSON.parse(command.slice(command.indexOf("-d '") + 4, -1)) as { rows: unknown[] };
+  assert.deepEqual(body(curlFor(url, columns)).rows, [
+    { external_id: "your-id-for-this-row", cells: { title: "Acme" } },
+  ]);
 });
 
 test("a quote in a column key cannot break out of the shell string", () => {
