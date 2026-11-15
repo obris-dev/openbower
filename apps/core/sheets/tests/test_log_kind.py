@@ -18,6 +18,7 @@ from common.testing import TEST_IDENTITY, login_session
 from sheets.constants import RowSource, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.operations.append_rows import AppendRowsOperation
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import (
     FolderService,
     LogRowsFixed,
@@ -33,7 +34,7 @@ def _batch(target: Sheet, *names: str) -> list[str]:
     report = AppendRowsOperation(
         account_id=ACCOUNT,
         target_sheet=target,
-        rows=[{"company": n} for n in names],
+        rows=rows_without_external_ids([{"company": n} for n in names]),
         source=RowSource.FEED if target.kind == SheetKind.LOG else RowSource.MANUAL,
     ).run()
     # The next batch mints its ids in a later millisecond, so a window

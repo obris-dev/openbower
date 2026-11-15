@@ -157,9 +157,11 @@ class IngestColumn(BaseModel):
 
 
 class IngestSchema(BaseModel):
-    """The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the
-    push is a dict keyed by these columns' keys, each value validated
-    against the column's type on append. These are the columns a
+    """The pushable row shape for POST /v1/sheets/{id}/ingest: a row's
+    cells are keyed by these columns' keys, each value validated against
+    the column's type on append. A row is an envelope,
+    {external_id?, cells}, or a plain map of cells; a row whose
+    external_id the sheet already holds is skipped. These are the columns a
     producer owns; the ones the system fills are not here and are
     refused if sent, because their values arrive with the record of
     what filled them. A client builds a push off this without guessing

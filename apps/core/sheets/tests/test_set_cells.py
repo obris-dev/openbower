@@ -15,6 +15,7 @@ from agents.services import AgentService
 from openbower_kernel.fields import new_ulid
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import AiColumn
+from sheets.rows import rows_without_external_ids
 from webhooks.services import WebhookDestinationService
 
 from ..constants import CellSource, StoredCellState
@@ -56,7 +57,8 @@ class SetCellsTests(TestCase):
             origin="manual",
         )
         self.row, self.other = self.sheets.add_rows(
-            self.sheet, [{"company": "acme.com", "employees": "10"}, {"company": "example.io"}]
+            self.sheet,
+            rows_without_external_ids([{"company": "acme.com", "employees": "10"}, {"company": "example.io"}]),
         )
         patcher = patch("sheets.services.runnable.model_for")
         patcher.start()

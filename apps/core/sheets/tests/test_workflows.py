@@ -16,6 +16,7 @@ from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
 from openbower_schema.agents import AgentOutput
+from sheets.rows import rows_without_external_ids
 from webhooks.services import WebhookDestinationService
 
 from ..models import Node, NodePath, NodeRun, Workflow
@@ -161,7 +162,7 @@ class AdmissionNodeTests(AdmissionTestCase):
         fill = self.add_and_fill()
         settle_all(str(fill.id))
         self.fills.cancel(str(fill.id))
-        self.sheets.add_rows(self.sheet, [{"company": "third.io"}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "third.io"}]))
         again = self.admission.fill_column(sheet_id=str(self.sheet.id), column_key="answer")
         tick_jobs()
         self.assertEqual((Node.objects.count(), NodePath.objects.count()), (2, 1))
@@ -188,7 +189,7 @@ class AdmissionNodeTests(AdmissionTestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(other, [{"company": "b.com"}])
+        self.sheets.add_rows(other, rows_without_external_ids([{"company": "b.com"}]))
         self.add_and_fill(config=None, agent_id=str(agent.id))
         self.add_and_fill(config=None, agent_id=str(agent.id), sheet_id=str(other.id))
         self.assertEqual(Workflow.objects.count(), 2)

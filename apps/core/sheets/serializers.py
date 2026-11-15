@@ -4,6 +4,7 @@ the schema package's models one-to-one (the web types against those)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from rest_framework import serializers
@@ -26,6 +27,7 @@ from .constants import (
     COLUMN_KEY_MAX_LENGTH,
     COLUMN_LABEL_MAX_LENGTH,
     DEFAULT_WEBHOOK_CADENCE_SECONDS,
+    EXTERNAL_ID_MAX_LENGTH,
     LABEL_MAX_LENGTH,
     MAX_INGEST_EVENT_ID_LENGTH,
     MAX_INGEST_PROBLEMS,
@@ -36,6 +38,7 @@ from .constants import (
     ColumnType,
 )
 from .models import Folder, NodeRun, Sheet, SheetRow
+from .rows import ENVELOPE_CELLS, ENVELOPE_EXTERNAL_ID, ENVELOPE_KEYS, IncomingRow, is_envelope
 from .services.workflows import WorkflowService
 
 if TYPE_CHECKING:
@@ -134,11 +137,9 @@ class IngestRequest(serializers.Serializer):
     again on append. The whole message is bounded by the bus message
     limit when it is encoded (sheets.ingest.events.encode_event)."""
 
-    rows = serializers.ListField(
-        child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),
-        min_length=1,
-        max_length=MAX_ROWS_PER_ADD,
-    )
+    # Each row is either a plain map of cells or an envelope,
+    # {external_id?, cells}; validate_ingest_rows reads which, per row.
+    rows = serializers.ListField(child=serializers.DictField(), min_length=1, max_length=MAX_ROWS_PER_ADD)
     # Taken VERBATIM (trim_whitespace=False): stripping would mutate a key
     # the caller dedupes on.
     event_id = serializers.CharField(
@@ -288,40 +289,95 @@ def ingest_schema_wire(target: Sheet) -> dict[str, Any]:
     return WireIngestSchema(columns=columns).model_dump()
 
 
-def validate_ingest_rows(target: Sheet, rows: list[dict[str, str]]) -> tuple[list[str], list[dict[str, str]]]:
+# The person's add reads a cell through this same field (RowsAddRequest's
+# child), so a pushed cell meets the same rules: text, or a number read as
+# its digits, and never a NUL or a lone surrogate, which the database refuses
+# only after the push was accepted.
+_CELL_FIELD = serializers.CharField(allow_blank=True, trim_whitespace=False)
+# Compared verbatim, like event_id.
+_EXTERNAL_ID_FIELD = serializers.CharField(max_length=EXTERNAL_ID_MAX_LENGTH, trim_whitespace=False)
+
+
+def _field_value(field: serializers.CharField, value: object) -> tuple[str, str]:
+    """(value, refusal) through a DRF field: the refusal is blank when the
+    value passes."""
+    try:
+        return field.run_validation(value), ""
+    except serializers.ValidationError as e:
+        return "", " ".join(str(message) for message in e.detail)
+
+
+def _unwrap_row(index: int, given: dict[str, Any]) -> tuple[list[str], IncomingRow]:
+    """One pushed row as (problems, row): an envelope's cells and id, or a
+    plain row's cells with no id."""
+    problems: list[str] = []
+    envelope = is_envelope(given)
+    raw_cells: dict[str, Any] = given[ENVELOPE_CELLS] if envelope else given
+    external_id = ""
+    if envelope:
+        problems.extend(
+            f"row {index}: unknown field {key!r} (a row is {{external_id?, cells}})"
+            for key in given
+            if key not in ENVELOPE_KEYS
+        )
+        # A null id is a sender writing an optional field it has no value
+        # for: the row has no id, as if the key were left out.
+        if given.get(ENVELOPE_EXTERNAL_ID) is not None:
+            value, refusal = _field_value(_EXTERNAL_ID_FIELD, given[ENVELOPE_EXTERNAL_ID])
+            if refusal:
+                problems.append(f"row {index}: external_id: {refusal}")
+            elif not value.strip():
+                problems.append(f"row {index}: external_id must be non-blank text; leave it out or name the row")
+            else:
+                external_id = value
+    cells: dict[str, str] = {}
+    for key, raw in raw_cells.items():
+        value, refusal = _field_value(_CELL_FIELD, raw)
+        if refusal:
+            problems.append(f"row {index}: column {key!r}: {refusal}")
+        else:
+            cells[key] = value
+    return problems, IncomingRow(cells=cells, external_id=external_id)
+
+
+def validate_ingest_rows(target: Sheet, rows: list[dict[str, Any]]) -> tuple[list[str], list[IncomingRow]]:
     """Validate a push against the sheet's columns BEFORE it is accepted,
     so a malformed push is refused up front (a 400 the producer can fix)
     rather than stored as sent. Returns (problems, storable_rows): each
     problem is one line (row index plus cause, an unknown key or a value
     the column's type refuses), and when problems is EMPTY the storable
-    rows are what to publish. They run through the SAME cells_for_storage
-    the writers use (normalize to the type's canonical form, then clamp),
-    so the bus carries exactly what add_rows will store on append (a pushed
-    "1,234" is published and stored as "1234", a 70k-char cell clamped once
-    here, not at full size on the bus). This is the push's reaction to a
-    shape mismatch: an unknown key or a type mismatch both become a 400. A
-    blank value is 'not provided', kept as-is; a workflow column's key is
-    refused whatever its value, so a producer leaves one out entirely.
-    Capped at MAX_INGEST_PROBLEMS."""
+    rows are what to publish, each carrying its sender's external_id
+    (blank for a row sent without one). A row is a plain map of cells, or
+    an envelope {external_id?, cells}; an external_id is non-blank and
+    bounded, and a push may repeat one (the append keeps the first). Cells
+    run through the SAME cells_for_storage the writers use (normalize to
+    the type's canonical form, then clamp), so the bus carries exactly
+    what add_rows will store on append. A blank value is 'not provided',
+    kept as-is; a workflow column's key is refused whatever its value, so
+    a producer leaves one out entirely. Capped at MAX_INGEST_PROBLEMS."""
     from .services.sheets import cells_for_storage
 
     types = {column.key: column.type for column in target.columns if not isinstance(column, WorkflowColumn)}
     columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
     problems: list[str] = []
-    storable_rows: list[dict[str, str]] = []
-    for index, row in enumerate(rows):
-        storable, mismatches = cells_for_storage(types, row, where="ingest")
-        storable_rows.append(storable)
+    storable_rows: list[IncomingRow] = []
+    for index, given in enumerate(rows):
+        shape_problems, row = _unwrap_row(index, given)
+        problems.extend(shape_problems)
+        storable, mismatches = cells_for_storage(types, row.cells, where="ingest")
+        storable_rows.append(replace(row, cells=storable))
         # A workflow column EXISTS, so it is refused in its own words
         # rather than as an unknown key: it is filled through its own
         # path and takes no pushed value.
         problems.extend(
             f"row {index}: column {key!r} is filled for you and takes no pushed value"
-            for key in row
+            for key in row.cells
             if key in columns_to_record
         )
         problems.extend(
-            f"row {index}: unknown column {key!r}" for key in row if key not in types and key not in columns_to_record
+            f"row {index}: unknown column {key!r}"
+            for key in row.cells
+            if key not in types and key not in columns_to_record
         )
         problems.extend(f"row {index}: {mismatch}" for mismatch in mismatches)
         if len(problems) >= MAX_INGEST_PROBLEMS:

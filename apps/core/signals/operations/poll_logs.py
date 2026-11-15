@@ -21,6 +21,7 @@ from django.db import transaction
 
 from sheets.constants import MAX_SHEET_ROWS, RowSource
 from sheets.operations.append_rows import AppendRowsOperation
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import SheetFull, SheetNotFound
 
 from ..constants import (
@@ -164,7 +165,7 @@ class PollLogOperation:
         room = MAX_SHEET_ROWS - sheet.row_count
         landing = matches[:room]
         shape = LOG_SHAPES[feed.signal]
-        rows = [shape.cells(match) for match in landing]
+        rows = rows_without_external_ids(shape.cells(match) for match in landing)
         append = AppendRowsOperation(
             account_id=self.account_id,
             target_sheet=sheet,

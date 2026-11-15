@@ -25,7 +25,8 @@ a feed (SheetNotAppendable otherwise). A sheet whose `autofill` is off
 lands the rows without the trigger, whichever door brought them: nothing
 is queued for them, and a person fills them. The flag is read under the
 lock the primitive takes, so a switch flipped mid-append decides the
-whole batch one way."""
+whole batch one way. A row naming an external_id the sheet already holds
+is skipped by the primitive under that same lock, and not counted."""
 
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ from django.db import transaction
 
 from ..constants import IngestErrorCode, RowSource, SheetKind
 from ..models import Sheet, SheetRow
+from ..rows import IncomingRow
 from ..services.sheets import SheetService
 from ..services.workflow_reactions import WorkflowReactions
 
@@ -85,7 +87,7 @@ class AppendRowsOperation:
         *,
         account_id: str,
         target_sheet: Sheet,
-        rows: Sequence[dict[str, str]],
+        rows: Sequence[IncomingRow],
         source: RowSource,
     ) -> None:
         self.account_id = account_id
