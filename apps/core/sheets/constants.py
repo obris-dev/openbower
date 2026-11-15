@@ -57,6 +57,12 @@ RERANK_WAIT_SECONDS = 60
 # is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
 # UUID, their own event id), bounded so it can key a store cheaply.
 MAX_INGEST_EVENT_ID_LENGTH = 255
+# The ingest inbox (ProcessedIngestEvent) keeps a push's event_id this long
+# (2^21 s, about 24 days). It must outlast the ingest topic's retention: an
+# event redelivered after its inbox row is pruned would append twice.
+INGEST_INBOX_MAX_AGE_SECONDS = 2_097_152
+# Inbox ids deleted per prune transaction.
+INGEST_INBOX_WRITE_BATCH = 1024
 # How many push problems one ingest 400 lists before truncating: enough
 # to fix a batch in one round, bounded so a wholly-malformed push cannot
 # return a response as large as itself.
