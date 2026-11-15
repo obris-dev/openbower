@@ -26,7 +26,7 @@ DEPLOY_DIR ?= ../deployments
 -include $(DEPLOY_DIR)/make/common.mk $(DEPLOY_DIR)/make/app/*.mk
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-poller restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-poller logs-web prune-preview-runs prune-webhook-deliveries flush-deferred run-jobs poll-logs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test-workers test schema schema-check
+.PHONY: help hooks install-admin doctor setup providers tools upgrade test-scripts db-up up build down reset stop restart restart-core restart-worker restart-poller restart-cron restart-web reset-web-deps prune-venvs logs logs-core logs-worker logs-ingest logs-autofill logs-cron logs-jobs logs-poller logs-web prune-preview-runs prune-webhook-deliveries prune-ingest-inbox flush-deferred run-jobs poll-logs receiver receiver-stop local-exec local-manage local-dbshell test-core test-web test-images test-workers test schema schema-check
 
 help: ## List targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-22s %s\n", $$1, $$2}'
@@ -168,6 +168,8 @@ prune-preview-runs: ## Run the preview-run prune once, in the cron container (pr
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_preview_runs
 prune-webhook-deliveries: ## Run the webhook delivery prune once, in the cron container
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_webhook_deliveries
+prune-ingest-inbox: ## Run the ingest inbox prune once, in the cron container
+	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py prune_ingest_inbox
 flush-deferred: ## Run the deferred flush once, in the cron container (sends every digest that is due)
 	$(COMPOSE) exec cron uv run --frozen --package openbower-core python apps/core/manage.py flush_deferred
 run-jobs: ## Run one jobs tick by hand, in the jobs container (the service loops on its own)
