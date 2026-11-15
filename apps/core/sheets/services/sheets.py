@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from django.db import transaction
@@ -35,6 +35,7 @@ from ..constants import (
     SheetKind,
 )
 from ..models import Folder, NodeRun, Sheet, SheetRow
+from ..rows import IncomingRow
 from . import cell_truth, fill_progress, webhook_runs
 from .cell_truth import CellRecord
 from .workflows import WorkflowService
@@ -422,13 +423,16 @@ class SheetService:
             target.save(update_fields=["folder_id", "updated_at"])
         return target
 
-    def add_rows(self, target: Sheet, rows: list[dict[str, str]]) -> list[SheetRow]:
-        """Append rows (each a data dict keyed by column keys), ranked by
-        `_append_ranks` (after the last row, or before the first on a
-        log); the count ceiling AND the cell clamp
-        live here so every entry path (import, snapshot, manual) hits one
-        writer's rules (authored values clamp, never reject). Returns the
-        created rows (WITH ids, a ULID assigned before insert). The
+    def add_rows(self, target: Sheet, rows: Sequence[IncomingRow]) -> list[SheetRow]:
+        """Append rows (each its cells keyed by column keys, and the sender's
+        external_id when one was sent), ranked by `_append_ranks` (after
+        the last row, or before the first on a log); the count ceiling AND
+        the cell clamp live here so every entry path (import, snapshot,
+        manual) hits one writer's rules (authored values clamp, never
+        reject). A row whose external_id the sheet already holds, or that
+        an earlier row of the batch named, is skipped under the sheet lock:
+        not created, counted or returned. Returns the created rows (WITH
+        ids, a ULID assigned before insert). The
         PRIMITIVE: it writes rows and nothing else. Rows enter a sheet
         through operations/append_rows.py, which calls this and then
         triggers the workflow in one transaction; in production nothing
@@ -442,17 +446,16 @@ class SheetService:
         # the mismatches are ignored (the raw value stores), because an
         # import must never fail a whole batch over one bad cell.
         columns_to_record = {column.key for column in target.columns if isinstance(column, WorkflowColumn)}
-        for index, data in enumerate(rows):
-            refused = sorted(key for key in data if key in columns_to_record)
+        for index, row in enumerate(rows):
+            refused = sorted(key for key in row.cells if key in columns_to_record)
             if refused:
                 names = ", ".join(repr(key) for key in refused)
                 raise ColumnNotWritable(f"row {index}: {names} cannot arrive with a row; automation fills it")
         types = {column.key: column.type for column in target.columns}
-        stored_rows = []
-        for data in rows:
-            stored, _ = cells_for_storage(types, data, where="add_rows")  # mismatches ignored (tolerate)
-            stored_rows.append(stored)
-        rows = stored_rows
+        stored_rows: list[IncomingRow] = []
+        for row in rows:
+            stored, _ = cells_for_storage(types, row.cells, where="add_rows")  # mismatches ignored (tolerate)
+            stored_rows.append(replace(row, cells=stored))
         with transaction.atomic():
             # Ranks allocate off the sheet's last (or a log's first) row,
             # so concurrent appends must serialize on the sheet row or the
@@ -462,17 +465,42 @@ class SheetService:
                 locked = Sheet.objects.select_for_update().get(id=str(target.id), account_id=self.account_id)
             except Sheet.DoesNotExist as e:
                 raise SheetNotFound(str(target.id)) from e
+            # Under the sheet lock, so two pushes carrying one id cannot both
+            # find it absent: the first lands, the second skips it.
+            kept = self._rows_not_held(str(locked.id), stored_rows)
             current = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
-            if current + len(rows) > MAX_SHEET_ROWS:
+            if current + len(kept) > MAX_SHEET_ROWS:
                 raise SheetFull(f"a sheet holds at most {MAX_SHEET_ROWS} rows")
+            if not kept:
+                return []
             created = [
-                SheetRow(sheet_id=str(locked.id), rank=rank, data=data)
-                for rank, data in zip(self._append_ranks(locked, len(rows)), rows, strict=True)
+                SheetRow(sheet_id=str(locked.id), rank=rank, data=row.cells, external_id=row.external_id)
+                for rank, row in zip(self._append_ranks(locked, len(kept)), kept, strict=True)
             ]
             SheetRow.objects.bulk_create(created, batch_size=1000)
             locked.row_count = current + len(created)
             locked.save(update_fields=["row_count", "updated_at"])
         return created
+
+    @staticmethod
+    def _rows_not_held(sheet_id: str, rows: list[IncomingRow]) -> list[IncomingRow]:
+        """The rows to write: a row whose id the sheet already holds, or one
+        this batch already named, is skipped; a row without an id always
+        lands."""
+        named = [row.external_id for row in rows if row.external_id]
+        # The exclude states the partial index's own condition: the planner
+        # proves it from an IN list of at most 100 ids, so without it a
+        # larger push scans the sheet's rows under the lock.
+        candidates = SheetRow.objects.filter(sheet_id=sheet_id, external_id__in=named).exclude(external_id="")
+        held = set(candidates.values_list("external_id", flat=True))
+        kept: list[IncomingRow] = []
+        for row in rows:
+            if row.external_id:
+                if row.external_id in held:
+                    continue
+                held.add(row.external_id)
+            kept.append(row)
+        return kept
 
     def _append_ranks(self, locked: Sheet, n: int) -> list[str]:
         """The ranks of `n` rows about to be appended, in the batch's

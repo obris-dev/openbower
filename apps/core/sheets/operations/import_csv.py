@@ -27,6 +27,7 @@ from ..constants import (
     SheetOrigin,
 )
 from ..models import Sheet
+from ..rows import rows_without_external_ids
 from ..services.sheets import SheetService
 from .append_rows import AppendRowsOperation
 
@@ -173,7 +174,10 @@ class ImportCsvOperation:
         # import into an existing sheet must page its append within
         # MAX_JUDGED_ROWS.
         appended = AppendRowsOperation(
-            account_id=self.account_id, target_sheet=target, rows=rows, source=RowSource.IMPORT
+            account_id=self.account_id,
+            target_sheet=target,
+            rows=rows_without_external_ids(rows),
+            source=RowSource.IMPORT,
         ).run()
         added = appended.added
         target.refresh_from_db()

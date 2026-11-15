@@ -18,6 +18,7 @@ from common.testing import TEST_IDENTITY, login_session
 from jobs.constants import JobStatus
 from openbower_schema.agents import AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import AiColumn, PlainColumn, SheetSummary
+from sheets.rows import rows_without_external_ids
 
 from ..constants import MAX_SHEET_COLUMNS, StoredCellState
 from ..models import Node, SheetCellState, SheetRow
@@ -253,10 +254,12 @@ class ColumnDeleteTests(TestCase):
         # states below are what a landing would have written with them.
         self.sheets.add_rows(
             self.sheet,
-            [
-                {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
-                {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
-            ],
+            rows_without_external_ids(
+                [
+                    {"company": "acme.com", "contact_name": "A Person", "contact_url": "https://x/1"},
+                    {"company": "example.io", "contact_name": "B Person", "contact_url": "https://x/2"},
+                ]
+            ),
         )
         self.sheet.columns = [
             self.sheet.columns[0],

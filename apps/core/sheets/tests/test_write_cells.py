@@ -16,6 +16,7 @@ from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validat
 from sheets.cells import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
 from sheets.constants import CELL_MAX_LENGTH, CellSource, ColumnType, SheetOrigin, StoredCellState
 from sheets.models import SheetCellState, SheetRow
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import CellWrittenTwice, RowNotFound, SheetNotFound, SheetService
 
 _COLUMNS = [
@@ -60,7 +61,7 @@ def _recorded_sheet(service: SheetService, rows: list[dict[str, str]]):
     target = service.create(
         owner_id="01US" + "A" * 22, label="Recorded", columns=_RECORDED_COLUMNS, origin=SheetOrigin.CSV
     )
-    created = service.add_rows(target, [{} for _ in rows])
+    created = service.add_rows(target, rows_without_external_ids([{} for _ in rows]))
     for row, data in zip(created, rows, strict=True):
         SheetRow.objects.filter(id=str(row.id)).update(data=data)
     return target, service.rows_page(target, limit=len(rows))
@@ -68,7 +69,7 @@ def _recorded_sheet(service: SheetService, rows: list[dict[str, str]]):
 
 def _sheet(service: SheetService, rows: list[dict[str, str]]):
     target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-    service.add_rows(target, rows)
+    service.add_rows(target, rows_without_external_ids(rows))
     return target, service.rows_page(target, limit=len(rows))
 
 
@@ -630,7 +631,7 @@ class LockGranularityTests(TransactionTestCase):
         sheet = sheets.create(
             owner_id="01US" + "A" * 22, label="Sheet", columns=_RECORDED_COLUMNS, origin=SheetOrigin.MANUAL
         )
-        sheets.add_rows(sheet, [{}])
+        sheets.add_rows(sheet, rows_without_external_ids([{}]))
         row = SheetRow.objects.get(sheet_id=str(sheet.id))
         flow = NodeRunFlow(worker_id="test:order")
         task = NodeRun.objects.create(
@@ -668,7 +669,7 @@ class LockGranularityTests(TransactionTestCase):
         from sheets.models import SheetCellState
         from sheets.nodes.registry import WEBHOOK
 
-        (other,) = sheets.add_rows(sheet, [{}])
+        (other,) = sheets.add_rows(sheet, rows_without_external_ids([{}]))
         SheetCellState.objects.create(
             account_id="01AC" + "A" * 22,
             sheet_id=str(sheet.id),
@@ -700,7 +701,7 @@ class LockGranularityTests(TransactionTestCase):
     def test_the_write_locks_the_row_and_not_the_sheet(self) -> None:
         sheets = SheetService(account_id="01AC" + "A" * 22)
         sheet = sheets.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.MANUAL)
-        sheets.add_rows(sheet, [{"name": "acme"}])
+        sheets.add_rows(sheet, rows_without_external_ids([{"name": "acme"}]))
         row = SheetRow.objects.get(sheet_id=str(sheet.id))
         with CaptureQueriesContext(connection) as captured:
             sheets.land_row(

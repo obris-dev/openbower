@@ -18,6 +18,7 @@ from jobs.models import Job
 from jobs.services import JobRunner, JobService
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.sheets import AiColumn
+from sheets.rows import rows_without_external_ids
 
 from ..constants import (
     FREE_SEARCH_FILL_BUDGET,
@@ -95,7 +96,9 @@ class AdmissionTestCase(TestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         patcher = patch("sheets.services.runnable.model_for")
         self.model_for = patcher.start()
         self.addCleanup(patcher.stop)
@@ -342,7 +345,7 @@ class GuardTests(AdmissionTestCase):
     def test_account_cap_refuses(self) -> None:
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.sheets.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
-            self.sheets.add_rows(sheet, [{"company": "acme.com"}])
+            self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "acme.com"}]))
             self.add_and_fill(sheet_id=str(sheet.id))
         with self.assertRaises(AccountFillsFull):
             self.add_and_fill()
@@ -352,7 +355,7 @@ class GuardTests(AdmissionTestCase):
         fills = []
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.sheets.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
-            self.sheets.add_rows(sheet, [{"company": "acme.com"}])
+            self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "acme.com"}]))
             fills.append(self.add_and_fill(sheet_id=str(sheet.id)))
         Job.objects.filter(id=fills[0].id).update(status=JobStatus.DONE)
         fill = self.add_and_fill()
@@ -362,7 +365,7 @@ class GuardTests(AdmissionTestCase):
     def test_free_search_budget_refuses_wide_tool_fills(self) -> None:
         wide = self.sheets.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(rows)]))
         config = quick_config(tools=AgentTools(web_search=True))
         with self.assertRaises(FreeSearchBudget) as caught:
             self.add_and_fill(sheet_id=str(wide.id), config=config)
@@ -382,7 +385,7 @@ class GuardTests(AdmissionTestCase):
     def test_paid_provider_lifts_the_free_budget(self) -> None:
         wide = self.sheets.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(rows)]))
         config = quick_config(tools=AgentTools(web_search=True))
         fill = self.add_and_fill(sheet_id=str(wide.id), config=config)
         self.assertEqual(fill_status(str(fill.id)), "pending")
@@ -395,7 +398,7 @@ class GuardTests(AdmissionTestCase):
         # reads uses_tools instead of searches_web.
         wide = self.sheets.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(rows)]))
         config = quick_config(tools=AgentTools(find_contacts=True))
         fill = self.add_and_fill(sheet_id=str(wide.id), config=config)
         self.assertEqual(fill_status(str(fill.id)), "pending")
@@ -412,7 +415,7 @@ class GuardTests(AdmissionTestCase):
         # FAILS if the predicate reads the credential pair again.
         wide = self.sheets.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(rows)]))
         config = quick_config(tools=AgentTools(web_search=True))
         with self.assertRaises(FreeSearchBudget):
             self.add_and_fill(sheet_id=str(wide.id), config=config)
@@ -423,7 +426,10 @@ class ScopedFillTests(AdmissionTestCase):
         super().setUp()
         # Positions 3-5: a variable-blank row INSIDE the scope range,
         # then two more eligible rows (1-2 seeded by the base class).
-        self.sheets.add_rows(self.sheet, [{"company": ""}, {"company": "initech.com"}, {"company": "umbrella.io"}])
+        self.sheets.add_rows(
+            self.sheet,
+            rows_without_external_ids([{"company": ""}, {"company": "initech.com"}, {"company": "umbrella.io"}]),
+        )
 
     def test_a_scoped_fill_targets_the_first_n_eligible(self) -> None:
         # max_row_count=3 walks rows 1, 2, then SKIPS the variable-blank
@@ -459,7 +465,7 @@ class ScopedFillTests(AdmissionTestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(bare, [{"company": ""}, {"other": "unrelated"}])
+        self.sheets.add_rows(bare, rows_without_external_ids([{"company": ""}, {"other": "unrelated"}]))
         with self.assertRaises(NoEligibleRows) as caught:
             self.add_and_fill(sheet_id=str(bare.id))
         self.assertEqual(str(caught.exception), "No rows have values for this prompt's variables.")
@@ -480,7 +486,7 @@ class ScopedFillTests(AdmissionTestCase):
         # too wide to run free still starts when N fits the budget.
         wide = self.sheets.create(owner_id=USER, label="Wide", columns=[], origin="manual")
         over = FREE_SEARCH_FILL_BUDGET // 4 + 1
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(over)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(over)]))
         (key,) = self.add_column(sheet_id=str(wide.id), config=quick_config(tools=AgentTools(web_search=True)))
         with self.assertRaises(FreeSearchBudget):
             self.admission.fill_column(sheet_id=str(wide.id), column_key=key)
@@ -605,7 +611,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         # on a race.
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.sheets.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
-            self.sheets.add_rows(sheet, [{"company": "acme.com"}])
+            self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "acme.com"}]))
             self.add_and_fill(sheet_id=str(sheet.id))
         queued_before = Job.objects.count()
         with CaptureQueriesContext(connection) as captured, self.assertRaises(AccountFillsFull):
@@ -620,7 +626,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
         # without the column there is nothing to fill.
         for n in range(MAX_ACTIVE_FILLS):
             sheet = self.sheets.create(owner_id=USER, label=f"S{n}", columns=[], origin="manual")
-            self.sheets.add_rows(sheet, [{"company": "acme.com"}])
+            self.sheets.add_rows(sheet, rows_without_external_ids([{"company": "acme.com"}]))
             self.add_and_fill(sheet_id=str(sheet.id))
         wide = self.sheets.create(
             owner_id=USER,
@@ -630,7 +636,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             ],
             origin="manual",
         )
-        self.sheets.add_rows(wide, [{"c0": "x"}])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"c0": "x"}]))
         with self.assertRaises(ColumnsFull):
             self.add_column(sheet_id=str(wide.id))
 
@@ -643,7 +649,7 @@ class AdmissionLockSpanTests(AdmissionTestCase):
             ],
             origin="manual",
         )
-        self.sheets.add_rows(wide, [{"c0": "x"}])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"c0": "x"}]))
         # The cap is judged under the lock before the agent or node is
         # written, so the refusal inserts no row at all. FAILS if the
         # cap check moves after any write.
