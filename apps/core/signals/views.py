@@ -69,7 +69,7 @@ def _as_api_error(exc: Exception) -> Exception:
     service (the sync key's mint) or the signals service. Anything else is
     left as raised."""
     if isinstance(exc, LogNotFound):
-        return NotFound("no log with that id")
+        return NotFound("no signal with that id")
     if isinstance(exc, ListenerGone):
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):

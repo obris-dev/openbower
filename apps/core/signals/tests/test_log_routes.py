@@ -83,7 +83,8 @@ class LogRouteTests(TestCase):
 
         gone = self.client.delete(reverse("signals_detail", kwargs={"id": log_id}))
         self.assertEqual(gone.status_code, 204)
-        self.assertEqual(self.client.get(reverse("signals_detail", kwargs={"id": log_id})).status_code, 404)
+        missing = self.client.get(reverse("signals_detail", kwargs={"id": log_id}))
+        self.assertEqual((missing.status_code, missing.json()["detail"]), (404, "no signal with that id"))
 
     def test_the_index_lists_logs_only_newest_first(self):
         first = self._create()["sheet"]["id"]
