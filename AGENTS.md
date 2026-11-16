@@ -62,15 +62,19 @@ live in a separate private repo.
   (`move_row` refuses), and a time window on it is an id range (ids are
   time) filtered on every page. A log is a sheet in the ONE sheets index
   (home lists every sheet; folders hold and count every kind), and the
-  UI calls a listener and the log it fills a SIGNAL (the API keeps
-  `/v1/logs`). A log has ONE listener on the signals
+  UI and the API's paths call a listener and the log it fills a SIGNAL
+  (`/v1/signals`; the hosted types a person sets one up from are
+  `/v1/signal-types`, and a setup's trial `/v1/signal-previews`). HTTP
+  and the wire say signal (views, route names, the contract's types, the
+  web client); code below the HTTP layer keeps the sheet's name, a log
+  (`LogService`, `SheetKind.LOG`). A log has ONE listener on the signals
   service (`signals.LogFeed` links them) and they live and die together
-  through `/v1/logs` (`signals.operations.logs`): create mints the
+  through `/v1/signals` (`signals.operations.logs`): create mints the
   account's sync key first, then the listener, then the sheet and its
   feed, undoing the listener if that write fails; delete removes the
   listener first and keeps everything local if it cannot. So the sheet
   service refuses a log's rename and delete (`SheetIsLog`, 409
-  `log_route` at the sheet doors), and only `signals.services.logs.LogService` reaches
+  `log_route` at the sheet routes), and only `signals.services.logs.LogService` reaches
   its `rename_log` / `delete_log` (pinned); its base columns are
   `signals.log_columns`, filled from each match. Its RUNS wait in arrival order instead,
   oldest first (`processors.base.queue_position` stamps a log's run with

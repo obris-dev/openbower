@@ -6,12 +6,12 @@ import { Card, CheckboxField, FieldError, Input, Label, Select, Slider, Textarea
 import {
   FUNDING_STAGES,
   LISTENER_GONE_CODE,
-  createLog,
-  editLog,
+  createSignal,
+  editSignal,
   webRoutes,
   type FundingStage,
   type KnownSignal,
-  type LogDetail,
+  type SignalDetail,
   type SignalsCatalog,
 } from "@bower/api";
 
@@ -89,7 +89,7 @@ const NAME_GAP_ID = "signal-label-gap";
 // request per pause in editing, not one per keystroke.
 const AUTO_PREVIEW_DELAY_MS = 500;
 
-type Listener = NonNullable<LogDetail["listener"]>;
+type Listener = NonNullable<SignalDetail["listener"]>;
 
 /** A signal as its settings page edits it: the sheet it fills (its id is
  * the signal's), and its listener's saved setup. */
@@ -217,7 +217,7 @@ export function SignalForm({
     setRefusal(null);
     setBusy(true);
     const label = nameOf(form);
-    const res = await createLog({ label, signal, ...setup });
+    const res = await createSignal({ label, signal, ...setup });
     setBusy(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
@@ -233,7 +233,7 @@ export function SignalForm({
     if (!saved || busy || blockOn(ATTEMPT.SAVE) || changes === null) return;
     setRefusal(null);
     setBusy(true);
-    const res = await editLog(saved.id, changes);
+    const res = await editSignal(saved.id, changes);
     setBusy(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
