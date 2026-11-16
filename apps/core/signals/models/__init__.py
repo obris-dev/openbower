@@ -1,4 +1,5 @@
 from .log_feed import LogFeed
+from .signal_source import SignalSource
 from .sync_key import SignalsSyncKey
 
-__all__ = ["LogFeed", "SignalsSyncKey"]
+__all__ = ["LogFeed", "SignalSource", "SignalsSyncKey"]

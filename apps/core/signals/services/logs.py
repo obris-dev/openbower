@@ -1,25 +1,47 @@
 """An account's logs as the app keeps them: a sheet of kind log and its
-feed (the listener behind it). This is the local half of a log, written
-together in one transaction; signals.operations.logs orders it against the
-listener on the signals service."""
+sources (what feeds it: a hosted signal's listener, a custom signal's
+webhook). This is the
+local half of a log, written together in one transaction;
+signals.operations.logs orders it against the listener on the signals
+service."""
 
 from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
 from functools import cached_property
+from typing import TypeVar
 
 from django.db import models, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
-from sheets.constants import MAX_SHEET_ROWS, SheetKind, SheetOrigin
+from openbower_schema.sheets import PlainColumn
+from sheets.constants import MAX_SHEET_ROWS, ColumnType, SheetKind, SheetOrigin
 from sheets.models import Sheet
+from sheets.services.columns import new_column_key
 from sheets.services.sheets import SheetNotFound, SheetService
 
 from ..constants import LogStatus
 from ..log_columns import LOG_SHAPES
-from ..models import LogFeed, SignalsSyncKey
+from ..models import SignalSource, SignalsSyncKey
+from ..sources.base import SourceConfig
+from ..sources.hosted import HostedSource
+from ..sources.registry import WEBHOOK
+from ..sources.webhook import WebhookSource
 from .sync_key import SyncKeyService
+
+C = TypeVar("C", bound=SourceConfig)
+
+# Where a log stands when its sources and its sheet each have a word: the
+# first here that any of them says wins, and a log nothing speaks for is
+# active. A status a kind says that is not ranked here refuses loudly.
+_STATUS_ORDER: tuple[LogStatus, ...] = (
+    LogStatus.LISTENER_GONE,
+    LogStatus.RECONNECT,
+    LogStatus.FULL,
+    LogStatus.WAITING,
+)
 
 
 class LogNotFound(Exception):
@@ -27,75 +49,131 @@ class LogNotFound(Exception):
     as missing too)."""
 
 
-class LogFeedOrphaned(Exception):
-    """A feed whose sheet is gone, or is no log: a broken invariant, since a
-    log's create and delete write its sheet and feed together."""
+class SourceOrphaned(Exception):
+    """A source whose sheet is gone, or is no log: a broken invariant, since
+    a log's create and delete write its sheet and sources together."""
 
-    def __init__(self, feed_id: str, sheet_id: str) -> None:
-        super().__init__(f"feed {feed_id}: its log {sheet_id} is gone or is not a log")
-        self.feed_id = feed_id
+    def __init__(self, source_id: str, sheet_id: str) -> None:
+        super().__init__(f"source {source_id}: its log {sheet_id} is gone or is not a log")
+        self.source_id = source_id
+        self.sheet_id = sheet_id
+
+
+class SignalTakesNoPush(Exception):
+    """A push to a signal no webhook source feeds (a hosted one): its rows
+    are its listener's."""
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("this signal takes no pushes; only a custom signal does")
         self.sheet_id = sheet_id
 
 
 @dataclass(frozen=True)
 class LocalLog:
-    """The rows this app holds for a log: its sheet and its feed, and where
-    it stands. Its listener lives on the signals service (`Log` carries
-    both)."""
+    """The rows this app holds for a log: its sheet, its sources, and where
+    it stands. A hosted source's listener lives on the signals service
+    (`Log` carries both)."""
 
     sheet: Sheet
-    feed: LogFeed
+    sources: tuple[SignalSource, ...]
     status: LogStatus
 
     @property
     def sheet_id(self) -> str:
         """The log's id: its sheet's, as the routes take it."""
-        return self.feed.sheet_id
+        return str(self.sheet.id)
+
+    def find(self, kind: type[C]) -> tuple[SignalSource, C] | None:
+        """The source of that kind and its config, typed as the kind's class;
+        None when no such source feeds the log."""
+        for source in self.sources:
+            config = source.config
+            if isinstance(config, kind):
+                return source, config
+        return None
 
 
-class LogFeedGlobal:
-    """The poller's queue across every account: which logs are due, and the
-    lease that hands one to one poller at a time. Every write is a
-    compare-and-set on the feed, so pollers need no lock between them."""
+def _free(now: datetime.datetime) -> models.Q:
+    return models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
+
+
+def _live_polled() -> models.Q:
+    # A kind the poller never reads has no due time (SignalSource.save).
+    return models.Q(gone_at__isnull=True, next_poll_at__isnull=False)
+
+
+class SignalSourceGlobal:
+    """The poller's queue across every account: which polled sources are
+    due, and the lease that hands one to one poller at a time. Every write
+    is a compare-and-set on the source, so pollers need no lock between
+    them."""
 
     @staticmethod
     def due(now: datetime.datetime, *, limit: int) -> list[str]:
-        """Live logs due by `now` and not held, longest waiting first."""
-        free = models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
-        due = LogFeed.objects.filter(free, listener_gone_at__isnull=True, next_poll_at__lte=now)
+        """Live polled sources due by `now` and not held, longest waiting
+        first."""
+        free = _free(now)
+        live = _live_polled()
+        due = SignalSource.objects.filter(free, live, next_poll_at__lte=now)
         ordered = due.order_by("next_poll_at", "id")
-        return [str(feed_id) for feed_id in ordered.values_list("id", flat=True)[:limit]]
+        return [str(source_id) for source_id in ordered.values_list("id", flat=True)[:limit]]
 
     @staticmethod
-    def claim(feed_id: str, *, worker_id: str, now: datetime.datetime, lease_seconds: int) -> LogFeed | None:
-        """The log for this poller until the lease lapses, or None when
+    def claim(source_id: str, *, worker_id: str, now: datetime.datetime, lease_seconds: int) -> SignalSource | None:
+        """The source for this poller until the lease lapses, or None when
         another holds it or it is no longer due."""
-        free = models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
-        live = LogFeed.objects.filter(free, id=feed_id, listener_gone_at__isnull=True, next_poll_at__lte=now)
+        free = _free(now)
+        polled = _live_polled()
+        live = SignalSource.objects.filter(free, polled, id=source_id, next_poll_at__lte=now)
         until = now + datetime.timedelta(seconds=lease_seconds)
         if live.update(leased_until=until, leased_by=worker_id) != 1:
             return None
-        return LogFeed.objects.filter(id=feed_id).first()
+        return SignalSource.objects.filter(id=source_id).first()
 
     @staticmethod
     def release(
-        feed_id: str, *, worker_id: str, next_poll_at: datetime.datetime, polled_at: datetime.datetime | None
+        source_id: str, *, worker_id: str, next_poll_at: datetime.datetime, polled_at: datetime.datetime | None
     ) -> None:
-        """Hand the log back, due again at `next_poll_at`, and record
-        `polled_at` when this turn read the listener through. Only the
-        holder releases: a poller whose lease lapsed and was taken over
-        writes nothing."""
+        """Hand the source back, due again at `next_poll_at`, and record
+        `polled_at` when this turn read it through. Only the holder
+        releases: a poller whose lease lapsed and was taken over writes
+        nothing."""
         fields: dict = {"leased_until": None, "leased_by": "", "next_poll_at": next_poll_at}
         if polled_at is not None:
             fields["last_polled_at"] = polled_at
-        held = LogFeed.objects.filter(id=feed_id, leased_by=worker_id)
+        held = SignalSource.objects.filter(id=source_id, leased_by=worker_id)
         held.update(**fields)
+
+
+@dataclass(frozen=True)
+class DeclaredColumn:
+    """A column a person declares on a custom signal: its key derives from
+    its label, as every column's does."""
+
+    label: str
+    type: ColumnType
+
+
+@dataclass(frozen=True)
+class _LogContext:
+    """What a source's status reads beyond its own row (sources.base)."""
+
+    service: LogService
+    sheet: Sheet
+
+    @property
+    def has_working_key(self) -> bool:
+        return self.service.current_key is not None
+
+    @property
+    def has_rows(self) -> bool:
+        return self.sheet.row_count > 0
 
 
 class LogService:
     """One account's logs."""
 
-    Global = LogFeedGlobal
+    Global = SignalSourceGlobal
 
     def __init__(self, *, account_id: str) -> None:
         self.account_id = account_id
@@ -112,57 +190,90 @@ class LogService:
         keys = SyncKeyService(account_id=self.account_id)
         return keys.current()
 
-    def _local(self, sheet: Sheet, feed: LogFeed) -> LocalLog:
-        return LocalLog(sheet=sheet, feed=feed, status=self._status(sheet, feed))
+    def _sources(self, sheet_ids: list[str]) -> dict[str, tuple[SignalSource, ...]]:
+        """Each log's sources, in one read. Every log has at least one (its
+        create writes them with its sheet), so a log without is a broken
+        invariant its caller raises on."""
+        mine = SignalSource.objects.filter(account_id=self.account_id, sheet_id__in=sheet_ids)
+        rows = mine.order_by("id")
+        grouped: dict[str, list[SignalSource]] = {}
+        for source in rows:
+            sheet_sources = grouped.setdefault(source.sheet_id, [])
+            sheet_sources.append(source)
+        return {sheet_id: tuple(sources) for sheet_id, sources in grouped.items()}
 
-    def _status(self, sheet: Sheet, feed: LogFeed) -> LogStatus:
-        if feed.listener_gone_at is not None:
-            return LogStatus.LISTENER_GONE
-        if self.current_key is None:
-            return LogStatus.RECONNECT
+    def _local(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LocalLog:
+        status = self.status_of(sheet, sources)
+        return LocalLog(sheet=sheet, sources=sources, status=status)
+
+    def status_of(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LogStatus:
+        """What the sources say and what the sheet says, ranked by
+        _STATUS_ORDER."""
+        context = _LogContext(service=self, sheet=sheet)
+        said = {source.config.status(source, context) for source in sources}
+        said.discard(None)
         if sheet.row_count >= MAX_SHEET_ROWS:
-            return LogStatus.FULL
-        return LogStatus.ACTIVE
+            said.add(LogStatus.FULL)
+        unranked = said.difference(_STATUS_ORDER)
+        if unranked:
+            raise ValueError(f"log {sheet.id}: statuses {sorted(unranked)!r} have no rank in _STATUS_ORDER")
+        return next((status for status in _STATUS_ORDER if status in said), LogStatus.ACTIVE)
 
     def get(self, sheet_id: str) -> LocalLog:
         try:
             sheet = self.sheets.get(sheet_id)
         except SheetNotFound as e:
             raise LogNotFound(sheet_id) from e
-        feed = LogFeed.objects.filter(account_id=self.account_id, sheet_id=sheet_id).first()
-        if sheet.kind != SheetKind.LOG or feed is None:
+        found = self._sources([sheet_id])
+        sources = found.get(sheet_id)
+        if sheet.kind != SheetKind.LOG or sources is None:
             raise LogNotFound(sheet_id)
-        return self._local(sheet, feed)
+        return self._local(sheet, sources)
 
-    def for_feed(self, feed: LogFeed) -> LocalLog:
-        """The log a feed already read fills (the poller's claim hands the
-        row back fresh), so only its sheet is loaded. Raises LogNotFound when
-        the log was deleted (its sheet and feed go together) and
-        LogFeedOrphaned when the feed outlived its sheet."""
+    def push_target(self, sheet_id: str) -> Sheet:
+        """The sheet a push to a signal lands in, in one read: the signal's
+        sheet, with whether a webhook source feeds it (answered from the
+        unique (sheet_id, kind) index). Raises LogNotFound for no signal in
+        the account and SignalTakesNoPush for one no push may reach. Reads
+        no status, sync key or listener: a push needs none of them."""
+        webhook = SignalSource.objects.filter(sheet_id=OuterRef("id"), kind=WEBHOOK)
+        signals = Sheet.objects.filter(id=sheet_id, account_id=self.account_id, kind=SheetKind.LOG)
+        annotated = signals.annotate(pushable=Exists(webhook))
+        found = annotated.first()
+        if found is None:
+            raise LogNotFound(sheet_id)
+        if not found.pushable:
+            raise SignalTakesNoPush(sheet_id)
+        return found
+
+    def sheet_for(self, source: SignalSource) -> Sheet:
+        """The sheet a source the poller just claimed fills: the claim hands
+        the source back fresh, so only the sheet is read. Raises LogNotFound
+        when the log was deleted (its sheet and sources go together) and
+        SourceOrphaned when the source outlived its sheet."""
         try:
-            sheet = self.sheets.get(feed.sheet_id)
+            sheet = self.sheets.get(source.sheet_id)
         except SheetNotFound:
             sheet = None
         if sheet is not None and sheet.kind == SheetKind.LOG:
-            return self._local(sheet, feed)
-        still_fed = LogFeed.objects.filter(id=feed.id, account_id=self.account_id)
-        if not still_fed.exists():
-            raise LogNotFound(feed.sheet_id)
-        raise LogFeedOrphaned(str(feed.id), feed.sheet_id)
+            return sheet
+        still_there = SignalSource.objects.filter(id=source.id, account_id=self.account_id)
+        if not still_there.exists():
+            raise LogNotFound(source.sheet_id)
+        raise SourceOrphaned(str(source.id), source.sheet_id)
 
     def page(self, *, after_id: str, limit: int) -> list[LocalLog]:
-        """Newest first, keyset paged: the logs index. One feed read for the
-        page, never one per log. Every log has exactly one feed (create and
-        delete write both in one transaction), so a missing one is a broken
+        """Newest first, keyset paged: the logs index. One sources read for
+        the page, never one per log; a log without a source is a broken
         invariant and raises."""
         sheets = self.sheets.page(kind=SheetKind.LOG, after_id=after_id, limit=limit)
         sheet_ids = [str(sheet.id) for sheet in sheets]
-        rows = LogFeed.objects.filter(account_id=self.account_id, sheet_id__in=sheet_ids)
-        feeds = {feed.sheet_id: feed for feed in rows}
-        return [self._local(sheet, feeds[str(sheet.id)]) for sheet in sheets]
+        sources = self._sources(sheet_ids)
+        return [self._local(sheet, sources[str(sheet.id)]) for sheet in sheets]
 
     def create(self, *, owner_id: str, label: str, signal: str, listener_id: str, autofill: bool) -> LocalLog:
-        """A log's sheet, with its signal's base columns, and its feed."""
+        """A hosted signal's log: its sheet, with the signal's base columns,
+        and its hosted source."""
         shape = LOG_SHAPES[signal]
         with transaction.atomic():
             sheet = self.sheets.create(
@@ -173,13 +284,35 @@ class LogService:
                 kind=SheetKind.LOG,
                 autofill=autofill,
             )
-            feed = LogFeed.objects.create(
+            source = SignalSource(
                 account_id=self.account_id,
                 sheet_id=str(sheet.id),
-                listener_id=listener_id,
-                signal=signal,
+                config=HostedSource(signal=signal, listener_id=listener_id),
             )
-        return self._local(sheet, feed)
+            source.save()
+        return self._local(sheet, (source,))
+
+    def create_custom(self, *, owner_id: str, label: str, columns: list[DeclaredColumn], autofill: bool) -> LocalLog:
+        """A custom signal's log: a sheet with the declared columns (each
+        value arrives with its row, so each is immutable) and its webhook
+        source. Nothing to mint and no listener: rows arrive by push."""
+        declared: list[PlainColumn] = []
+        for column in columns:
+            taken = {each.key for each in declared}
+            key = new_column_key(column.label, taken=taken, count=len(declared))
+            declared.append(PlainColumn(key=key, label=column.label, type=column.type, immutable=True))
+        with transaction.atomic():
+            sheet = self.sheets.create(
+                owner_id=owner_id,
+                label=label,
+                columns=declared,
+                origin=SheetOrigin.MANUAL,
+                kind=SheetKind.LOG,
+                autofill=autofill,
+            )
+            source = SignalSource(account_id=self.account_id, sheet_id=str(sheet.id), config=WebhookSource())
+            source.save()
+        return self._local(sheet, (source,))
 
     def edit(self, local_log: LocalLog, *, label: str | None) -> LocalLog:
         """A new label on the sheet (its autofill is the sheet's own, set
@@ -187,51 +320,43 @@ class LogService:
         sheet = local_log.sheet
         if label is not None:
             sheet = self.sheets.rename_log(sheet, label=label)
-        return self._local(sheet, local_log.feed)
+        return self._local(sheet, local_log.sources)
 
-    def advance(self, feed: LogFeed, *, to_cursor: str) -> bool:
-        """Move the log's cursor past the matches just appended, from where
+    def advance(self, source: SignalSource, *, to_cursor: str) -> bool:
+        """Move the source's cursor past the items just appended, from where
         this read started: False when another read moved the cursor first
         (a page lands once), so the caller rolls back the rows it appended.
         Autofill needs no guard here: the append read it under the sheet's
         lock."""
-        moved = LogFeed.objects.filter(id=feed.id, account_id=self.account_id, cursor=feed.cursor)
+        moved = SignalSource.objects.filter(id=source.id, account_id=self.account_id, cursor=source.cursor)
         return moved.update(cursor=to_cursor) == 1
 
     def wake(self) -> int:
-        """Make every live log of the account due at once: what a reconnect
-        does, since its logs were parked waiting for a working key."""
-        live = LogFeed.objects.filter(account_id=self.account_id, listener_gone_at__isnull=True)
+        """Make every live polled source of the account due at once: what a
+        reconnect does, since its logs were parked waiting for a working
+        key."""
+        polled = _live_polled()
+        live = SignalSource.objects.filter(polled, account_id=self.account_id)
         return live.update(next_poll_at=timezone.now())
 
-    def mark_listener_gone(self, local_log: LocalLog) -> LocalLog:
-        """The signals service has no such listener: recorded once (the
-        first time wins) and final, so the log stops polling. Raises
-        LogNotFound when the log itself is gone meanwhile (its delete
-        removes the listener first, so a read in that window sees the 404
-        before the rows go)."""
-        feed = local_log.feed
-        if feed.listener_gone_at is not None:
-            return self._local(local_log.sheet, feed)
-        sheet = local_log.sheet
-        now = timezone.now()
-        unmarked = LogFeed.objects.filter(id=feed.id, listener_gone_at__isnull=True)
-        if unmarked.update(listener_gone_at=now) == 1:
-            feed.listener_gone_at = now
-            return self._local(sheet, feed)
-        marked = LogFeed.objects.filter(id=feed.id).values_list("listener_gone_at", flat=True)
-        gone_at = marked.first()
-        if gone_at is None:
-            raise LogNotFound(feed.sheet_id)
-        feed.listener_gone_at = gone_at
-        return self._local(sheet, feed)
+    def mark_gone(self, source: SignalSource) -> None:
+        """The source stopped for good (a hosted listener the signals service
+        no longer has): recorded once, the first time wins, and final, so it
+        stops polling. Raises LogNotFound when the log itself is gone
+        meanwhile (its delete removes the listener first, so a read in that
+        window sees the 404 before the rows go)."""
+        unmarked = SignalSource.objects.filter(id=source.id, account_id=self.account_id, gone_at__isnull=True)
+        if unmarked.update(gone_at=timezone.now()) == 1:
+            return
+        still = SignalSource.objects.filter(id=source.id, account_id=self.account_id)
+        if not still.exists():
+            raise LogNotFound(source.sheet_id)
 
     def delete(self, local_log: LocalLog) -> None:
-        """The sheet first, then its feed: the order a feed's append takes
-        them (add_rows locks the sheet, then the cursor moves), so a delete
-        and an append wait for each other rather than deadlock."""
-        sheet = local_log.sheet
-        feed = local_log.feed
+        """The sheet first, then its sources: the order a poller's append
+        takes them (add_rows locks the sheet, then the cursor moves), so a
+        delete and an append wait for each other rather than deadlock."""
         with transaction.atomic():
-            self.sheets.delete_log(sheet)
-            feed.delete()
+            self.sheets.delete_log(local_log.sheet)
+            sources = SignalSource.objects.filter(account_id=self.account_id, sheet_id=local_log.sheet_id)
+            sources.delete()

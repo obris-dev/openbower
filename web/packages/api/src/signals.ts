@@ -3,6 +3,8 @@
 // the caller decides what each means for the UI.
 
 import {
+  HostedSourceSummarySchema,
+  WebhookSourceSummarySchema,
   ListenerVersionWireSchema,
   ListenerWireSchema,
   SignalDetailSchema,
@@ -27,12 +29,14 @@ import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 /** Where a signal stands, as the server names it: active (it fills),
  * reconnect (the account's sync key was refused; a person reconnects),
  * listener_gone (the signals service no longer has it: final), full (its
- * sheet holds as many rows as it may). */
+ * sheet holds as many rows as it may), waiting (a custom signal whose
+ * sheet holds no row). */
 export const SIGNAL_STATUS = {
   ACTIVE: "active",
   RECONNECT: "reconnect",
   LISTENER_GONE: "listener_gone",
   FULL: "full",
+  WAITING: "waiting",
 } as const;
 // A status this bundle has not heard of reads as this client-only member,
 // which renders no status: every real one claims something (that it fills,
@@ -45,12 +49,58 @@ const TolerantSignalStatusSchema = z
   .string()
   .transform((status): SignalStatus => (KNOWN_SIGNAL_STATUSES.has(status) ? (status as SignalStatus) : UNKNOWN_SIGNAL_STATUS));
 
-export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status"> & { sheet: SheetSummary; status: SignalStatus };
+/** What feeds a signal: at most one source of each kind, each carrying its
+ * own kind's facts (hosted: a signal's listener, which the app reads;
+ * webhook: a custom signal's endpoint, which a sender pushes rows to). A
+ * kind this bundle has not heard of reads as a client-only member that
+ * claims nothing; a known kind that arrives malformed fails the parse. */
+export const SOURCE_KIND = { HOSTED: "hosted", WEBHOOK: "webhook" } as const;
+export const UNKNOWN_SOURCE_KIND = "unknown_kind" as const;
+// What the client reads of each kind; the rest is left unread, so a fact
+// the server adds to a kind never fails a parse.
+const HostedSourceSchema = HostedSourceSummarySchema.pick({ kind: true, signal: true });
+const WebhookSourceSchema = WebhookSourceSummarySchema.pick({ kind: true });
+export type HostedSource = z.output<typeof HostedSourceSchema>;
+export type WebhookSource = z.output<typeof WebhookSourceSchema>;
+export type SourceSummary = HostedSource | WebhookSource | { kind: typeof UNKNOWN_SOURCE_KIND };
+export const KNOWN_SOURCE_KINDS: ReadonlySet<string> = new Set<string>([
+  HostedSourceSummarySchema.shape.kind.value,
+  WebhookSourceSummarySchema.shape.kind.value,
+]);
+const UnknownSourceSchema = z
+  .looseObject({ kind: z.string().refine((kind) => !KNOWN_SOURCE_KINDS.has(kind)) })
+  .transform((): SourceSummary => ({ kind: UNKNOWN_SOURCE_KIND }));
+const TolerantSourceSchema = z.union([HostedSourceSchema, WebhookSourceSchema, UnknownSourceSchema]);
+
+/** The signal's hosted source, if a hosted signal feeds it. */
+export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | undefined {
+  return log.sources.find((source): source is HostedSource => source.kind === SOURCE_KIND.HOSTED);
+}
+
+/** What feeds a signal, as a page tells them apart: a hosted signal (its
+ * listener, which the app reads and edits), a custom one (rows pushed to
+ * its webhook), or neither, which this bundle cannot name and so claims
+ * nothing about. */
+export const SIGNAL_FEED = { HOSTED: "hosted", CUSTOM: "custom", UNKNOWN: "unknown" } as const;
+export type SignalFeed = (typeof SIGNAL_FEED)[keyof typeof SIGNAL_FEED];
+
+export function signalFeed(signal: { sources: SourceSummary[] }): SignalFeed {
+  if (hostedSource(signal) !== undefined) return SIGNAL_FEED.HOSTED;
+  const pushed = signal.sources.some((source) => source.kind === SOURCE_KIND.WEBHOOK);
+  return pushed ? SIGNAL_FEED.CUSTOM : SIGNAL_FEED.UNKNOWN;
+}
+
+export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status" | "sources"> & {
+  sheet: SheetSummary;
+  status: SignalStatus;
+  sources: SourceSummary[];
+};
 export type SignalsPage = { items: SignalSummary[]; next_cursor: string | null };
 
 export const TolerantSignalSummarySchema = SignalSummarySchema.extend({
   sheet: TolerantSheetSummarySchema,
   status: TolerantSignalStatusSchema,
+  sources: z.array(TolerantSourceSchema),
 });
 export const TolerantSignalsPageSchema = SignalsPageSchema.extend({ items: z.array(TolerantSignalSummarySchema) });
 
@@ -77,6 +127,7 @@ const TolerantListenerSchema = ListenerWireSchema.extend({
 export const TolerantSignalDetailSchema = SignalDetailSchema.extend({
   sheet: TolerantSheetSummarySchema,
   status: TolerantSignalStatusSchema,
+  sources: z.array(TolerantSourceSchema),
   listener: TolerantListenerSchema.nullable(),
 });
 /** One signal with its listener as the signals service has it now (null
@@ -134,8 +185,9 @@ export async function editSignal(id: string, body: SignalEdit): Promise<ApiResul
   return http.patch(apiRoutes.signals.detail(id), TolerantSignalDetailSchema, body);
 }
 
-/** Delete a signal: its listener stops, then its sheet and rows go (204).
- * The signals service unreachable deletes nothing, so it can be retried. */
+/** Delete a signal: a hosted signal's listener stops first, then its sheet
+ * and rows go (204). The signals service unreachable deletes nothing, so
+ * it can be retried. */
 export async function deleteSignal(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.signals.detail(id));
 }

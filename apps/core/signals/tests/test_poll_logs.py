@@ -26,7 +26,7 @@ from signals.constants import (
     LOG_POLL_PARKED_SECONDS,
     LogStatus,
 )
-from signals.models import LogFeed, SignalsSyncKey
+from signals.models import SignalSource, SignalsSyncKey
 from signals.operations.log_poller import PollLogsOperation
 from signals.operations.logs import CreateLogOperation, DeleteLogOperation
 from signals.operations.poll_logs import PollLogOperation, PollResult
@@ -50,224 +50,224 @@ class _PollTests(TestCase):
         install(self, self.signals, self.identity)
         self.logs = LogService(account_id=USER.account_id)
 
-    def _log(self, label: str = "Seed raises", *, due: datetime.datetime = _NOW, autofill: bool = True) -> LogFeed:
+    def _log(self, label: str = "Seed raises", *, due: datetime.datetime = _NOW, autofill: bool = True) -> SignalSource:
         log = CreateLogOperation(self.session, label=label, signal="funding", filter={}, autofill=autofill).run()
-        LogFeed.objects.filter(id=log.local_log.feed.id).update(next_poll_at=due)
-        return LogFeed.objects.get(id=log.local_log.feed.id)
+        SignalSource.objects.filter(id=log.local_log.sources[0].id).update(next_poll_at=due)
+        return SignalSource.objects.get(id=log.local_log.sources[0].id)
 
-    def _matches(self, feed: LogFeed, companies: list[str], *, start: int = 1) -> None:
-        held = self.signals.matches.setdefault(feed.listener_id, [])
+    def _matches(self, source: SignalSource, companies: list[str], *, start: int = 1) -> None:
+        held = self.signals.matches.setdefault(source.config.listener_id, [])
         held.extend(match_body(start + n, company=name) for n, name in enumerate(companies))
 
-    def _companies(self, feed: LogFeed) -> list[str]:
-        sheet = Sheet.objects.get(id=feed.sheet_id)
+    def _companies(self, source: SignalSource) -> list[str]:
+        sheet = Sheet.objects.get(id=source.sheet_id)
         rows = SheetService(account_id=USER.account_id).rows_page(sheet, limit=MAX_SHEET_ROWS)
         return [row.data["company"] for row in rows]
 
-    def _poll(self, feed: LogFeed, now: datetime.datetime = _NOW):
-        fresh = LogFeed.objects.get(id=feed.id)
-        return PollLogOperation(feed=fresh, now=now).run()
+    def _poll(self, source: SignalSource, now: datetime.datetime = _NOW):
+        fresh = SignalSource.objects.get(id=source.id)
+        return PollLogOperation(source=fresh, config=fresh.config, now=now).run()
 
 
 class PollPageTests(_PollTests):
     def test_a_page_lands_as_rows_newest_first_and_moves_the_cursor(self):
-        feed = self._log()
-        self._matches(feed, ["Acme", "Globex", "Initech"])
-        outcome = self._poll(feed)
+        source = self._log()
+        self._matches(source, ["Acme", "Globex", "Initech"])
+        outcome = self._poll(source)
         self.assertEqual((outcome.result, outcome.rows), (PollResult.APPENDED, 3))
-        self.assertEqual(self._companies(feed), ["Initech", "Globex", "Acme"])
-        self.assertEqual(LogFeed.objects.get(id=feed.id).cursor, match_body(3, company="x")["id"])
+        self.assertEqual(self._companies(source), ["Initech", "Globex", "Acme"])
+        self.assertEqual(SignalSource.objects.get(id=source.id).cursor, match_body(3, company="x")["id"])
         # A short page: nothing more is waiting, so it rests an interval.
         self.assertEqual(outcome.next_poll_at, _NOW + _seconds(LOG_POLL_INTERVAL_SECONDS))
 
     def test_the_next_page_starts_after_the_cursor(self):
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        self._poll(feed)
-        self._matches(feed, ["Globex"], start=2)
-        later = self._poll(feed)
+        source = self._log()
+        self._matches(source, ["Acme"])
+        self._poll(source)
+        self._matches(source, ["Globex"], start=2)
+        later = self._poll(source)
         self.assertEqual(later.rows, 1)
-        self.assertEqual(self._companies(feed), ["Globex", "Acme"])
+        self.assertEqual(self._companies(source), ["Globex", "Acme"])
 
-    def test_a_poll_reads_the_claimed_feed_once(self):
-        # FAILS if the poll reads its feed again: the claim hands it back
+    def test_a_poll_reads_the_claimed_source_once(self):
+        # FAILS if the poll reads its source again: the claim hands it back
         # fresh, so only the sheet and the account's key are read before the
         # signals call, and nothing is written when nothing is new.
-        feed = self._log()
-        claimed = LogFeed.objects.get(id=feed.id)
+        source = self._log()
+        claimed = SignalSource.objects.get(id=source.id)
         with self.assertNumQueries(2):
-            outcome = PollLogOperation(feed=claimed, now=_NOW).run()
+            outcome = PollLogOperation(source=claimed, config=claimed.config, now=_NOW).run()
         self.assertEqual(outcome.result, PollResult.CAUGHT_UP)
 
     def test_nothing_new_writes_nothing(self):
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        self._poll(feed)
-        again = self._poll(feed)
+        source = self._log()
+        self._matches(source, ["Acme"])
+        self._poll(source)
+        again = self._poll(source)
         self.assertEqual((again.result, again.rows), (PollResult.CAUGHT_UP, 0))
-        self.assertEqual(self._companies(feed), ["Acme"])
+        self.assertEqual(self._companies(source), ["Acme"])
 
     def test_a_full_page_is_due_again_at_once(self):
         # FAILS if a backlog rests an interval per page: a log with a
         # thousand matches would take minutes to catch up.
-        feed = self._log()
-        self._matches(feed, [f"Co{n}" for n in range(LOG_POLL_PAGE + 1)])
-        first = self._poll(feed)
+        source = self._log()
+        self._matches(source, [f"Co{n}" for n in range(LOG_POLL_PAGE + 1)])
+        first = self._poll(source)
         self.assertEqual((first.rows, first.next_poll_at), (LOG_POLL_PAGE, _NOW))
-        rest = self._poll(feed)
+        rest = self._poll(source)
         self.assertEqual(rest.rows, 1)
 
     def test_arriving_rows_autofill_as_the_sheet_says(self):
         for autofill in (True, False):
             with self.subTest(autofill=autofill):
-                feed = self._log(f"Log {autofill}", autofill=autofill)
-                self._matches(feed, ["Acme"])
+                source = self._log(f"Log {autofill}", autofill=autofill)
+                self._matches(source, ["Acme"])
                 with patch("sheets.operations.append_rows.WorkflowReactions", autospec=True) as reactions:
-                    self._poll(feed)
+                    self._poll(source)
                 self.assertEqual(reactions.return_value.trigger.called, autofill)
 
     def test_a_page_lands_once(self):
         # FAILS if the cursor move is not a compare-and-set: a second poller
         # holding the same read (a lease that lapsed under a slow one)
         # would append the page again.
-        feed = self._log()
-        self._matches(feed, ["Acme", "Globex"])
+        source = self._log()
+        self._matches(source, ["Acme", "Globex"])
         rival = []
-        self.signals.on_matches = lambda: rival.append(self._poll(feed))
-        lost = self._poll(feed)
+        self.signals.on_matches = lambda: rival.append(self._poll(source))
+        lost = self._poll(source)
         self.assertEqual((rival[0].result, lost.result), (PollResult.APPENDED, PollResult.LOST))
-        self.assertEqual(self._companies(feed), ["Globex", "Acme"])
+        self.assertEqual(self._companies(source), ["Globex", "Acme"])
 
     def test_autofill_turned_off_mid_read_applies_to_that_page(self):
         # FAILS if the page lands under the autofill read before the fetch:
         # a person who just turned autofill off would still pay for a page
         # of runs.
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        self.signals.on_matches = lambda: Sheet.objects.filter(id=feed.sheet_id).update(autofill=False)
+        source = self._log()
+        self._matches(source, ["Acme"])
+        self.signals.on_matches = lambda: Sheet.objects.filter(id=source.sheet_id).update(autofill=False)
         with patch("sheets.operations.append_rows.WorkflowReactions", autospec=True) as reactions:
-            landed = self._poll(feed)
-        self.assertEqual((landed.result, self._companies(feed)), (PollResult.APPENDED, ["Acme"]))
+            landed = self._poll(source)
+        self.assertEqual((landed.result, self._companies(source)), (PollResult.APPENDED, ["Acme"]))
         self.assertFalse(reactions.return_value.trigger.called)
 
     def test_a_log_near_its_cap_takes_what_fits(self):
         # FAILS if the page is appended whole: a sheet two rows from its cap
         # holding a three-row page would take more than it has room for.
-        feed = self._log()
-        self._matches(feed, ["Acme", "Globex", "Initech"])
-        Sheet.objects.filter(id=feed.sheet_id).update(row_count=MAX_SHEET_ROWS - 2)
-        outcome = self._poll(feed)
+        source = self._log()
+        self._matches(source, ["Acme", "Globex", "Initech"])
+        Sheet.objects.filter(id=source.sheet_id).update(row_count=MAX_SHEET_ROWS - 2)
+        outcome = self._poll(source)
         self.assertEqual(outcome.rows, 2)
-        self.assertEqual(LogFeed.objects.get(id=feed.id).cursor, match_body(2, company="x")["id"])
+        self.assertEqual(SignalSource.objects.get(id=source.id).cursor, match_body(2, company="x")["id"])
 
     def test_a_sheet_that_refuses_the_page_parks_the_log_with_nothing_moved(self):
         # The sheet's own count is the truth: when it refuses the append
         # (SheetFull), the page rolls back and the log parks as full.
-        feed = self._log()
-        self._matches(feed, ["Acme", "Globex"])
+        source = self._log()
+        self._matches(source, ["Acme", "Globex"])
         with patch("sheets.services.sheets.MAX_SHEET_ROWS", 1):
-            outcome = self._poll(feed)
+            outcome = self._poll(source)
         self.assertEqual(
             (outcome.result, outcome.next_poll_at), (PollResult.FULL, _NOW + _seconds(LOG_POLL_PARKED_SECONDS))
         )
-        self.assertEqual((LogFeed.objects.get(id=feed.id).cursor, self._companies(feed)), ("", []))
+        self.assertEqual((SignalSource.objects.get(id=source.id).cursor, self._companies(source)), ("", []))
 
 
 class PollFailureTests(_PollTests):
     def test_a_refused_key_waits_and_a_reconnect_resumes_from_the_cursor(self):
         # FAILS if the refused key is not marked: every turn would ask the
         # service again with a key it has refused.
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        self._poll(feed)
-        self._matches(feed, ["Globex"], start=2)
+        source = self._log()
+        self._matches(source, ["Acme"])
+        self._poll(source)
+        self._matches(source, ["Globex"], start=2)
         self.signals.next["GET"] = httpx.Response(401, json={"error": "not_authenticated", "detail": "inactive"})
-        refused = self._poll(feed)
+        refused = self._poll(source)
         self.assertEqual(refused.result, PollResult.WAITING)
         # Parked: nothing can fill it until a person reconnects.
         self.assertEqual(refused.next_poll_at, _NOW + _seconds(LOG_POLL_PARKED_SECONDS))
         self.assertIsNotNone(SignalsSyncKey.objects.get().rejected_at)
         self.signals.calls.clear()
-        waiting = self._poll(feed)
+        waiting = self._poll(source)
         self.assertEqual(waiting.result, PollResult.WAITING)
         self.assertEqual(self.signals.calls, [])
         SyncKeyService(account_id=USER.account_id).reconnect(self.session)
-        resumed = self._poll(feed)
+        resumed = self._poll(source)
         self.assertEqual(resumed.rows, 1)
-        self.assertEqual(self._companies(feed), ["Globex", "Acme"])
+        self.assertEqual(self._companies(source), ["Globex", "Acme"])
 
     def test_a_gone_listener_leaves_the_queue(self):
-        feed = self._log()
+        source = self._log()
         self.signals.listeners.clear()
-        outcome = self._poll(feed)
+        outcome = self._poll(source)
         self.assertEqual((outcome.result, outcome.next_poll_at), (PollResult.GONE, None))
-        self.assertEqual(self.logs.get(feed.sheet_id).status, LogStatus.LISTENER_GONE)
+        self.assertEqual(self.logs.get(source.sheet_id).status, LogStatus.LISTENER_GONE)
         self.assertEqual(LogService.Global.due(_NOW + _seconds(3600), limit=10), [])
 
     def test_a_404_the_listener_does_not_confirm_never_ends_the_log(self):
         # FAILS if any 404 on the matches read is taken as the listener's:
         # gone is final, so one 404 from a gateway would end the log.
-        feed = self._log()
+        source = self._log()
         self.signals.next["GET"] = httpx.Response(404, json={"error": "not_found", "detail": "no route"})
         with self.assertLogs("signals.operations.poll_logs", level="ERROR"):
-            outcome = self._poll(feed)
+            outcome = self._poll(source)
         self.assertEqual(outcome.result, PollResult.BACKOFF)
-        self.assertIsNone(LogFeed.objects.get(id=feed.id).listener_gone_at)
+        self.assertIsNone(SignalSource.objects.get(id=source.id).gone_at)
 
     def test_an_outage_backs_the_log_off_with_nothing_moved(self):
-        feed = self._log()
-        self._matches(feed, ["Acme"])
+        source = self._log()
+        self._matches(source, ["Acme"])
         self.signals.next["GET"] = httpx.Response(503)
-        outcome = self._poll(feed)
+        outcome = self._poll(source)
         self.assertEqual(outcome.result, PollResult.BACKOFF)
         self.assertEqual(outcome.next_poll_at, _NOW + _seconds(LOG_POLL_BACKOFF_SECONDS))
-        self.assertEqual((LogFeed.objects.get(id=feed.id).cursor, self._companies(feed)), ("", []))
+        self.assertEqual((SignalSource.objects.get(id=source.id).cursor, self._companies(source)), ("", []))
 
     def test_a_refused_cursor_is_never_guessed_around(self):
-        feed = self._log()
-        LogFeed.objects.filter(id=feed.id).update(cursor="01MAT" + "9" * 21)
+        source = self._log()
+        SignalSource.objects.filter(id=source.id).update(cursor="01MAT" + "9" * 21)
         with self.assertLogs("signals.operations.poll_logs", level="ERROR"):
-            outcome = self._poll(feed)
+            outcome = self._poll(source)
         self.assertEqual(outcome.result, PollResult.BACKOFF)
-        self.assertEqual(LogFeed.objects.get(id=feed.id).cursor, "01MAT" + "9" * 21)
+        self.assertEqual(SignalSource.objects.get(id=source.id).cursor, "01MAT" + "9" * 21)
 
-    def test_a_feed_whose_sheet_is_gone_is_said_loudly(self):
-        # FAILS if an orphan feed reads as a deleted log: it would be claimed
+    def test_a_source_whose_sheet_is_gone_is_said_loudly(self):
+        # FAILS if an orphan source reads as a deleted log: it would be claimed
         # again every lease, silently, forever.
-        feed = self._log()
-        Sheet.objects.filter(id=feed.sheet_id).delete()
+        source = self._log()
+        Sheet.objects.filter(id=source.sheet_id).delete()
         with self.assertLogs("signals.operations.poll_logs", level="ERROR"):
-            outcome = self._poll(feed)
+            outcome = self._poll(source)
         self.assertEqual(outcome.result, PollResult.BACKOFF)
         self.assertEqual(outcome.next_poll_at, _NOW + _seconds(LOG_POLL_BACKOFF_SECONDS))
 
     def test_a_log_deleted_while_the_page_was_out_is_left_alone(self):
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        stale = LogFeed.objects.get(id=feed.id)
-        DeleteLogOperation(self.session, feed.sheet_id).run()
-        outcome = PollLogOperation(feed=stale, now=_NOW).run()
+        source = self._log()
+        self._matches(source, ["Acme"])
+        stale = SignalSource.objects.get(id=source.id)
+        DeleteLogOperation(self.session, source.sheet_id).run()
+        outcome = PollLogOperation(source=stale, config=stale.config, now=_NOW).run()
         self.assertEqual((outcome.result, outcome.next_poll_at), (PollResult.DELETED, None))
 
 
 class PollDeleteRaceTests(_PollTests):
     def test_a_log_deleted_during_the_read_is_left_alone(self):
-        # FAILS if marking the listener gone assumes the feed is still
+        # FAILS if marking the listener gone assumes the source is still
         # there: the delete removes the listener first, so this read sees
         # its 404, and the rows are gone by the time the mark is written.
-        feed = self._log()
-        self.signals.on_matches = lambda: DeleteLogOperation(self.session, feed.sheet_id).run()
-        outcome = self._poll(feed)
+        source = self._log()
+        self.signals.on_matches = lambda: DeleteLogOperation(self.session, source.sheet_id).run()
+        outcome = self._poll(source)
         self.assertEqual((outcome.result, outcome.next_poll_at), (PollResult.DELETED, None))
 
     def test_a_log_deleted_after_its_page_was_read_is_left_alone(self):
         # The page is out and the listener still answers; the log goes
         # before the rows land, so the append finds no sheet.
-        feed = self._log()
-        self._matches(feed, ["Acme"])
-        local_log = self.logs.get(feed.sheet_id)
+        source = self._log()
+        self._matches(source, ["Acme"])
+        local_log = self.logs.get(source.sheet_id)
         self.signals.on_matches = lambda: self.logs.delete(local_log)
-        outcome = self._poll(feed)
+        outcome = self._poll(source)
         self.assertEqual((outcome.result, outcome.next_poll_at), (PollResult.DELETED, None))
 
 
@@ -286,20 +286,20 @@ class PollQueueTests(_PollTests):
     def test_a_claim_holds_a_log_for_one_poller_until_its_lease_lapses(self):
         # FAILS if the claim is not a compare-and-set on the lease: two
         # pollers would read the same log at once.
-        feed = self._log()
+        source = self._log()
         claims = LogService.Global
-        first = claims.claim(str(feed.id), worker_id="a", now=_NOW, lease_seconds=LOG_POLL_LEASE_SECONDS)
-        second = claims.claim(str(feed.id), worker_id="b", now=_NOW, lease_seconds=LOG_POLL_LEASE_SECONDS)
+        first = claims.claim(str(source.id), worker_id="a", now=_NOW, lease_seconds=LOG_POLL_LEASE_SECONDS)
+        second = claims.claim(str(source.id), worker_id="b", now=_NOW, lease_seconds=LOG_POLL_LEASE_SECONDS)
         self.assertIsNotNone(first)
         self.assertIsNone(second)
         self.assertEqual(claims.due(_NOW, limit=10), [])
         lapsed = _NOW + _seconds(LOG_POLL_LEASE_SECONDS + 1)
-        taken = claims.claim(str(feed.id), worker_id="b", now=lapsed, lease_seconds=LOG_POLL_LEASE_SECONDS)
+        taken = claims.claim(str(source.id), worker_id="b", now=lapsed, lease_seconds=LOG_POLL_LEASE_SECONDS)
         self.assertIsNotNone(taken)
         # The first poller, back from a slow read, cannot release what is
         # no longer its own.
-        claims.release(str(feed.id), worker_id="a", next_poll_at=_NOW, polled_at=None)
-        self.assertEqual(LogFeed.objects.get(id=feed.id).leased_by, "b")
+        claims.release(str(source.id), worker_id="a", next_poll_at=_NOW, polled_at=None)
+        self.assertEqual(SignalSource.objects.get(id=source.id).leased_by, "b")
 
     def test_steps_drain_every_due_log_and_hand_each_back(self):
         # One step is one page: the busy log's second page waits behind the
@@ -315,8 +315,8 @@ class PollQueueTests(_PollTests):
         self.assertEqual(steps, 3)
         self.assertEqual(len(self._companies(busy)), LOG_POLL_PAGE + 1)
         self.assertEqual(self._companies(quiet), ["Acme"])
-        for feed in (busy, quiet):
-            after = LogFeed.objects.get(id=feed.id)
+        for source in (busy, quiet):
+            after = SignalSource.objects.get(id=source.id)
             self.assertEqual((after.leased_by, after.next_poll_at), ("", _NOW + _seconds(LOG_POLL_INTERVAL_SECONDS)))
 
     def test_a_full_page_goes_behind_the_logs_already_waiting(self):
@@ -344,7 +344,7 @@ class PollCrashTests(_PollTests):
         run = PollLogOperation.run
 
         def crash_one(op):
-            if op.feed.id == broken.id:
+            if op.source.id == broken.id:
                 raise ValueError("a bug in one log's cells")
             return run(op)
 
@@ -354,7 +354,7 @@ class PollCrashTests(_PollTests):
             self.assertLogs("signals.operations.log_poller", level="ERROR"),
         ):
             self.assertTrue(poller.step(now=_NOW))
-        held = LogFeed.objects.get(id=broken.id)
+        held = SignalSource.objects.get(id=broken.id)
         self.assertEqual((held.leased_by, held.next_poll_at), ("", _NOW + _seconds(LOG_POLL_BACKOFF_SECONDS)))
         self.assertTrue(poller.step(now=_NOW))
         self.assertEqual(self._companies(fine), ["Acme"])
@@ -364,11 +364,13 @@ class PollClockTests(_PollTests):
     def test_each_step_reads_the_clock(self):
         # FAILS if a step reuses an old clock read: a log would hold a short
         # lease and be due again too soon.
-        feed = self._log(due=_NOW - _seconds(1))
+        source = self._log(due=_NOW - _seconds(1))
         late = _NOW + _seconds(30)
         with patch("signals.operations.log_poller.timezone.now", return_value=late):
             PollLogsOperation(worker_id="w").step()
-        self.assertEqual(LogFeed.objects.get(id=feed.id).next_poll_at, late + _seconds(LOG_POLL_INTERVAL_SECONDS))
+        self.assertEqual(
+            SignalSource.objects.get(id=source.id).next_poll_at, late + _seconds(LOG_POLL_INTERVAL_SECONDS)
+        )
 
 
 class PollRecordTests(_PollTests):
@@ -382,16 +384,16 @@ class PollRecordTests(_PollTests):
         poller = PollLogsOperation(worker_id="w")
         poller.step(now=_NOW)
         poller.step(now=_NOW)
-        self.assertIsNone(LogFeed.objects.get(id=failing.id).last_polled_at)
-        self.assertEqual(LogFeed.objects.get(id=quiet.id).last_polled_at, _NOW)
+        self.assertIsNone(SignalSource.objects.get(id=failing.id).last_polled_at)
+        self.assertEqual(SignalSource.objects.get(id=quiet.id).last_polled_at, _NOW)
 
 
 class PollCommandTests(_PollTests):
     def test_once_drains_the_due_logs_and_exits(self):
-        feed = self._log(due=_NOW - _seconds(1))
-        self._matches(feed, ["Acme"])
+        source = self._log(due=_NOW - _seconds(1))
+        self._matches(source, ["Acme"])
         call_command("poll_signal_logs", "--once")
-        self.assertEqual(self._companies(feed), ["Acme"])
+        self.assertEqual(self._companies(source), ["Acme"])
 
     def test_the_healthcheck_window_outlasts_a_slow_step(self):
         # Compose cannot import the constants, so its heartbeat window

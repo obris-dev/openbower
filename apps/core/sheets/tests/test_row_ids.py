@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -56,7 +56,9 @@ class EnvelopeDoorTests(TestCase):
 
     def _push(self, rows: list, sheet: Sheet | None = None, capture: list | None = None):
         target = sheet or self.sheet
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])):
+        with patch(
+            "sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])
+        ):
             return self.client.post(
                 reverse("sheets_ingest", kwargs={"id": str(target.id)}),
                 {"rows": rows},
@@ -207,6 +209,7 @@ class ExternalIdAppendTests(TestCase):
                 user_id=TEST_IDENTITY["id"],
                 rows=[IncomingRow(cells={"title": title}, external_id="x:1")],
                 received_at=timezone.now(),
+                source=RowSource.PUSH,
             )
             handle_ingest_event(from_wire(to_wire(event)))
         self.assertEqual(self._titles(), ["first"])
@@ -221,6 +224,7 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"}, external_id="x:1"), IncomingRow(cells={"title": "b"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self._append(("held", "x:1"))
         with self.assertLogs("sheets.ingest.consumer", level="INFO") as logs:
@@ -238,6 +242,7 @@ class ExternalIdAppendTests(TestCase):
                 user_id=TEST_IDENTITY["id"],
                 rows=[],
                 received_at=timezone.now(),
+                source=RowSource.PUSH,
             )
         )
         wire["rows"] = [{"title": "old"}, {"cells": "battery cells"}]
@@ -255,6 +260,7 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(to_wire(event)["rows"], [{"title": "a"}])
 
@@ -267,5 +273,23 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"}, external_id="x:1"), IncomingRow(cells={"title": "b"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(from_wire(to_wire(event)).rows, event.rows)
+
+
+class PushSourceOnTheBusTests(SimpleTestCase):
+    def test_an_event_names_its_source_and_an_old_one_reads_as_a_sheet_push(self):
+        # FAILS if the bus drops the source: a signal's rows would land as a
+        # sheet push, which a log refuses, and be dropped.
+        wire = {
+            "event_id": "e1",
+            "sheet_id": "s1",
+            "account_id": "01JQ" + "B" * 22,
+            "user_id": "u1",
+            "rows": [{"title": "x"}],
+            "received_at": timezone.now().isoformat(),
+        }
+        self.assertEqual(from_wire(wire).source, RowSource.PUSH)
+        signal_event = from_wire(wire | {"source": RowSource.SIGNAL})
+        self.assertEqual(from_wire(to_wire(signal_event)).source, RowSource.SIGNAL)

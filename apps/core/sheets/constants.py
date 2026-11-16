@@ -243,13 +243,17 @@ class IngestErrorCode(StrEnum):
     # A push too big for one bus message (413): sending it again fails the
     # same way, so it is never a retryable 503.
     INGEST_TOO_LARGE = "ingest_too_large"
-    # A sheet whose rows arrive from its source only (a log) takes none
-    # from a push or a person (409).
+    # A sheet refused rows from a source its kind does not take
+    # (APPENDS_FROM): a log takes a signal's rows only, and a standard
+    # sheet anything but those (409).
     NOT_APPENDABLE = "not_appendable"
+    # A push carrying more rows than the sheet has room for (409): refused
+    # whole, as the append would refuse it.
+    SHEET_FULL = "sheet_full"
 
 
-# The sheet routes' refusals of a log, all 409: a log's label and life are
-# its listener's too, so it is renamed and deleted through /v1/signals.
+# The sheet routes' refusals of a log, all 409: a log's life is its
+# sources' too, so it is renamed and deleted through /v1/signals.
 class SheetErrorCode(StrEnum):
     LOG_ROUTE = "log_route"
 
@@ -418,14 +422,16 @@ CELL_SOURCE_MAX_LENGTH = 8
 
 class RowSource(StrEnum):
     """Where an append's rows come from, named at every call of the one
-    append (the row side of CellSource). A LOG takes rows from its FEED
-    only (what feeds it: a signal's matches today); a standard sheet
-    takes rows from anything but a feed."""
+    append (the row side of CellSource). Which sources each sheet kind
+    takes is declared in sheets.operations.append_rows.APPENDS_FROM."""
 
     MANUAL = "manual"  # a person: POST rows, the add-rows bar (as CellSource.MANUAL)
-    PUSH = "push"  # the ingest consumer (an API key's push)
+    PUSH = "push"  # a sheet's own push endpoint (an API key's or a session's push)
     IMPORT = "import"  # a CSV import, into the sheet it creates
-    FEED = "feed"  # what feeds a log
+    # One of a signal's sources (a hosted listener's matches, a webhook's
+    # push); which source may feed which signal is the signals app's to
+    # decide at its own endpoint.
+    SIGNAL = "signal"
 
 
 class CellSource(StrEnum):

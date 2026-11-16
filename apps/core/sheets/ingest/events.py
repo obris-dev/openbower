@@ -2,8 +2,9 @@
 nothing downstream (the publisher, the worker) handles a bare dict.
 
 Rows are IncomingRows, the shape every append takes; the worker appends
-them through AppendRowsOperation, the one append every door takes, so
-the row shape stays single.
+them through AppendRowsOperation, the one append every endpoint takes,
+as the source the push named (a sheet's push, a signal's), so the row
+shape stays single.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from datetime import datetime
 
 from django.conf import settings
 
+from ..constants import IngestErrorCode, RowSource
 from ..rows import ENVELOPE_CELLS, ENVELOPE_EXTERNAL_ID, IncomingRow, is_envelope
 
 
@@ -30,6 +32,9 @@ class IngestEvent:
     user_id: str
     rows: list[IncomingRow]
     received_at: datetime
+    # Where the rows come from, as the append checks it: a sheet's own push
+    # endpoint, or a signal's (its webhook source).
+    source: RowSource
 
 
 def to_wire(event: IngestEvent) -> dict:
@@ -44,6 +49,7 @@ def to_wire(event: IngestEvent) -> dict:
         "user_id": event.user_id,
         "rows": [_row_to_wire(row) for row in event.rows],
         "received_at": event.received_at.isoformat(),
+        "source": event.source,
     }
 
 
@@ -56,6 +62,9 @@ def from_wire(data: dict) -> IngestEvent:
         user_id=data["user_id"],
         rows=[_row_from_wire(row) for row in data["rows"]],
         received_at=datetime.fromisoformat(data["received_at"]),
+        # A message from before sources rode the bus came from the sheets
+        # push endpoint, the only producer then.
+        source=RowSource(data.get("source", RowSource.PUSH)),
     )
 
 
@@ -67,6 +76,8 @@ _RECORD_HEADROOM_BYTES = 1024
 class IngestTooLarge(Exception):
     """A push too big for one bus message (INGEST_MAX_MESSAGE_BYTES): it can
     never be accepted as sent, so it is refused, never retried."""
+
+    code = IngestErrorCode.INGEST_TOO_LARGE
 
     def __init__(self, *, size: int, limit: int) -> None:
         super().__init__(f"this push is {size} bytes, over the {limit}-byte limit; send fewer rows per push")

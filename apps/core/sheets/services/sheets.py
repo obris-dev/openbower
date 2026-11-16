@@ -155,9 +155,10 @@ class CellWrittenTwice(Exception):
 
 
 class SheetIsLog(Exception):
-    """A rename or delete of a log as a plain sheet: a log's label and life
-    are its listener's too, so its own service renames and deletes it
-    (`rename_log`, `delete_log`) with the listener beside."""
+    """A rename or delete of a log as a plain sheet: a log's life is its
+    sources' too (and a hosted source's listener's label), so its own
+    service renames and deletes it (`rename_log`, `delete_log`) with them
+    beside."""
 
     code = SheetErrorCode.LOG_ROUTE
 
@@ -394,8 +395,8 @@ class SheetService:
         return self._rename(target, label=label)
 
     def rename_log(self, target: Sheet, *, label: str) -> Sheet:
-        """A log's sheet renamed, for the log's own service alone (its
-        listener is renamed beside it)."""
+        """A log's sheet renamed, for the log's own service alone (a hosted
+        source's listener is renamed beside it)."""
         return self._rename(target, label=label)
 
     def _rename(self, target: Sheet, *, label: str) -> Sheet:
@@ -937,15 +938,15 @@ class SheetService:
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
         account's fill slots with nothing visible to cancel). A log is
-        refused (`SheetIsLog`): its feed (signals.LogFeed) is the signals
-        app's child, not this service's, so the log's own service deletes
-        its sheet (`delete_log`) and its feed together."""
+        refused (`SheetIsLog`): its sources (signals.SignalSource) are the
+        signals app's children, not this service's, so the log's own
+        service deletes its sheet (`delete_log`) and its sources together."""
         if target.kind == SheetKind.LOG:
             raise SheetIsLog(str(target.id))
         self._delete(target)
 
     def delete_log(self, target: Sheet) -> None:
-        """A log's sheet deleted, for the log's own service alone (its feed
+        """A log's sheet deleted, for the log's own service alone (its sources
         and listener go beside it)."""
         self._delete(target)
 
