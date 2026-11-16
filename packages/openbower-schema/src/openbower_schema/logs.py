@@ -89,6 +89,23 @@ class SignalDetail(BaseModel):
     last_polled_at: str | None = Field(description=_LAST_POLLED)
 
 
+class CustomSignalCreated(SignalDetail):
+    """A custom signal's create and its webhook rotate: the signal as its
+    detail reads, plus the ONE time its webhook URL is on the wire. The
+    token in it is stored only as a hash and never returned again; a lost
+    URL is replaced by rotating, which stops the old one at once. The detail
+    is extended rather than nested: a nested signal would be a `signal`
+    key, which the contract keeps for no field, and a reader of the detail
+    reads this response unchanged."""
+
+    webhook_url: str = Field(
+        description=(
+            "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope "
+            "({event_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema."
+        )
+    )
+
+
 class SyncKeyReconnected(BaseModel):
     """`POST /v1/signals/reconnect`: the account's logs fill again from where
     they stopped. The replaced key is revoked when the person reconnecting

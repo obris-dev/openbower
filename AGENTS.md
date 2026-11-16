@@ -106,7 +106,16 @@ live in a separate private repo.
   the columns a person declares (each immutable, its values arriving with
   its rows), touching the signals service at no step, never polled, and
   filled by pushes to `POST /v1/signals/{id}/ingest` (its `GET` the
-  pushable row schema): the sheets push endpoint's envelope and answers,
+  pushable row schema), with an API key or a session, or to its WEBHOOK
+  URL, `/v1/signals/{id}/ingest/{token}` (POST and the schema GET), with
+  neither: the token is the credential
+  (`signals.authentication.WebhookTokenAuthentication`, the route's only
+  lane, over `signals.SourceToken`, stored only as its hash, shown once at
+  the create and at each `POST /v1/signals/{id}/webhook/rotate`, one live
+  per signal and the newest few revoked kept, a wrong one a 404), resolved
+  in one read, and the push is the signal's creator's. Both push routes
+  accept through one helper, with the sheets push endpoint's envelope and
+  answers,
   through the same `sheets.ingest.accept.accept_push` and its refusal map
   (`sheets.ingest.refusals`), the rows marked as a signal's.
   A log's STATUS (active, reconnect, listener_gone, full, waiting) is

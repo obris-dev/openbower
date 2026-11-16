@@ -316,7 +316,8 @@ class LogService:
     def create_custom(self, *, owner_id: str, label: str, columns: list[DeclaredColumn], autofill: bool) -> LocalLog:
         """A custom signal's log: a sheet with the declared columns (each
         value arrives with its row, so each is immutable) and its webhook
-        source. Nothing to mint and no listener: rows arrive by push."""
+        source. No sync key and no listener: rows arrive by push (its webhook
+        URL's token is minted beside it, by the create operation)."""
         declared: list[PlainColumn] = []
         for column in columns:
             taken = {each.key for each in declared}
@@ -376,8 +377,14 @@ class LogService:
     def delete(self, local_log: LocalLog) -> None:
         """The sheet first, then its sources: the order a poller's append
         takes them (add_rows locks the sheet, then the cursor moves), so a
-        delete and an append wait for each other rather than deadlock."""
+        delete and an append wait for each other rather than deadlock. Then
+        the webhook's tokens, through their own service."""
         with transaction.atomic():
             self.sheets.delete_log(local_log.sheet)
             sources = SignalSource.objects.filter(account_id=self.account_id, sheet_id=local_log.sheet_id)
             sources.delete()
+            # Imported here: webhook_tokens imports LogNotFound from this module.
+            from .webhook_tokens import WebhookTokenService
+
+            tokens = WebhookTokenService(account_id=self.account_id)
+            tokens.delete_for(local_log.sheet_id)
