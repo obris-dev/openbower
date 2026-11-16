@@ -26,16 +26,16 @@ import { apiRoutes } from "./routes.ts";
 
 export type { FundingFilter, SignalEventsPage, SignalKind, SignalLimits };
 
-/** The signals this bundle has a form for. The catalog can offer more
+/** The signal types this bundle has a form for. The catalog can offer more
  * than a bundle knows; those are left out, never shown as a form that
  * cannot say what it sends. */
-export const SIGNAL = { FUNDING: "funding" } as const;
-export type KnownSignal = (typeof SIGNAL)[keyof typeof SIGNAL];
-const KNOWN_SIGNALS = new Set<string>(Object.values(SIGNAL));
+export const SIGNAL_TYPE = { FUNDING: "funding" } as const;
+export type KnownSignalType = (typeof SIGNAL_TYPE)[keyof typeof SIGNAL_TYPE];
+const KNOWN_SIGNAL_TYPES = new Set<string>(Object.values(SIGNAL_TYPE));
 
-/** Whether this bundle has a form for a signal the server names. */
-export function isKnownSignal(signal: string): signal is KnownSignal {
-  return KNOWN_SIGNALS.has(signal);
+/** Whether this bundle has a form for a signal type the server names. */
+export function isKnownSignalType(type: string): type is KnownSignalType {
+  return KNOWN_SIGNAL_TYPES.has(type);
 }
 
 const STAGE_SCHEMA = FundingEventSchema.shape.stage;
@@ -77,21 +77,21 @@ export const TolerantFundingFilterSchema = FundingFilterSchema.extend({
 });
 const TolerantSignalEventsPageSchema = SignalEventsPageSchema.extend({ items: z.array(TolerantSignalEventSchema) });
 
-export type OfferedSignal = Omit<SignalKind, "signal"> & { signal: KnownSignal };
-export type SignalsCatalog = { signals: OfferedSignal[]; limits: SignalLimits };
+export type OfferedSignalType = Omit<SignalKind, "type"> & { type: KnownSignalType };
+export type SignalsCatalog = { types: OfferedSignalType[]; limits: SignalLimits };
 
 export const TolerantSignalsCatalogSchema = SignalsCatalogSchema.transform((catalog): SignalsCatalog => {
-  const offered: OfferedSignal[] = [];
-  for (const kind of catalog.signals) {
-    if (KNOWN_SIGNALS.has(kind.signal)) {
-      offered.push({ ...kind, signal: kind.signal as KnownSignal });
+  const offered: OfferedSignalType[] = [];
+  for (const kind of catalog.types) {
+    if (KNOWN_SIGNAL_TYPES.has(kind.type)) {
+      offered.push({ ...kind, type: kind.type as KnownSignalType });
       continue;
     }
-    // A signal added after this bundle: not offered until the app is
+    // A type added after this bundle: not offered until the app is
     // updated, and said so where a developer looks.
-    console.error(`Unknown signal "${kind.signal}": not offered until the app is updated.`);
+    console.error(`Unknown signal type "${kind.type}": not offered until the app is updated.`);
   }
-  return { signals: offered, limits: catalog.limits };
+  return { types: offered, limits: catalog.limits };
 });
 
 // A preview's status and its rows' outcomes are the server's, and a
@@ -191,24 +191,24 @@ export type SignalSetup = {
   min_confidence?: number;
 };
 
-/** Every signal this bundle can offer, and the limits a setup is held to. */
+/** Every signal type this bundle can offer, and the limits a setup is held to. */
 export async function fetchSignalsCatalog(): Promise<ApiResult<SignalsCatalog>> {
   return http.get(apiRoutes.signalTypes.index, TolerantSignalsCatalogSchema);
 }
 
-/** A signal's most recent events, newest first. */
-export async function fetchSignalEvents(signal: KnownSignal, limit: number): Promise<ApiResult<SignalEventsPage>> {
-  return http.get(`${apiRoutes.signalTypes.events(signal)}?limit=${limit}`, TolerantSignalEventsPageSchema);
+/** A signal type's most recent events, newest first. */
+export async function fetchSignalEvents(type: KnownSignalType, limit: number): Promise<ApiResult<SignalEventsPage>> {
+  return http.get(`${apiRoutes.signalTypes.events(type)}?limit=${limit}`, TolerantSignalEventsPageSchema);
 }
 
 /** Try a setup on chosen events (202): complete at once when the filter
  * decides every event, otherwise poll it while the judge reads. */
 export async function createSignalPreview(
-  signal: KnownSignal,
+  type: KnownSignalType,
   setup: SignalSetup,
   eventIds: string[],
 ): Promise<ApiResult<PreviewRun>> {
-  return http.post(apiRoutes.signalPreviews.index, TolerantPreviewRunSchema, { signal, ...setup, event_ids: eventIds });
+  return http.post(apiRoutes.signalPreviews.index, TolerantPreviewRunSchema, { type, ...setup, event_ids: eventIds });
 }
 
 export async function fetchSignalPreview(id: string): Promise<ApiResult<PreviewRun>> {

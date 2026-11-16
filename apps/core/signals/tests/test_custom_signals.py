@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
+from openbower_schema import CUSTOM_SIGNAL_TYPE
 from sheets.constants import MAX_SHEET_ROWS, FillErrorCode, IngestErrorCode, RowSource
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.models import Sheet, SheetRow
@@ -30,7 +31,7 @@ from .fakes import FakeIdentity, FakeSignals, install
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 _COLUMNS = [{"label": "Title", "type": "text"}, {"label": "Link", "type": "url"}, {"label": "Score", "type": "number"}]
-_CUSTOM = {"source": WEBHOOK, "label": "Forum mentions", "columns": _COLUMNS}
+_CUSTOM = {"type": CUSTOM_SIGNAL_TYPE, "label": "Forum mentions", "columns": _COLUMNS}
 
 
 class _Capture:
@@ -125,7 +126,7 @@ class CustomSignalTests(TestCase):
             [(column["key"], column["type"]) for column in schema.json()["columns"]],
             [("title", "text"), ("link", "url"), ("score", "number")],
         )
-        hosted = self._post({"label": "Raises", "signal": "funding", "filter": {}}).json()["sheet"]["id"]
+        hosted = self._post({"label": "Raises", "type": "funding", "filter": {}}).json()["sheet"]["id"]
         refused = self.client.get(reverse("signals_ingest", kwargs={"id": hosted}))
         self.assertEqual(refused.status_code, 409, refused.content)
 
@@ -149,7 +150,7 @@ class CustomSignalTests(TestCase):
         # FAILS if a push reaches a signal it should not: a hosted signal's
         # rows are its listener's, and a log takes no sheet push.
         log_id = self._create()["sheet"]["id"]
-        hosted = self._post({"label": "Raises", "signal": "funding", "filter": {}}).json()["sheet"]["id"]
+        hosted = self._post({"label": "Raises", "type": "funding", "filter": {}}).json()["sheet"]["id"]
         refused = self._push(hosted, [{"company": "x"}], status=409)
         self.assertEqual(refused.json()["error"], IngestErrorCode.NOT_APPENDABLE)
         sheet_push = self.client.post(
@@ -193,10 +194,11 @@ class CustomSignalTests(TestCase):
 
     def test_a_create_is_refused_for_what_the_other_kind_takes(self):
         for case, body, cause in (
-            ("setup on custom", _CUSTOM | {"signal": "funding"}, "takes no signal"),
-            ("no columns", {"source": "webhook", "label": "x", "columns": []}, "at least one column"),
-            ("columns on hosted", {"label": "x", "signal": "funding", "filter": {}, "columns": _COLUMNS}, "no columns"),
-            ("hosted without filter", {"label": "x", "signal": "funding"}, "names its signal and filter"),
+            ("setup on custom", _CUSTOM | {"filter": {}}, "a custom signal takes no filter"),
+            ("no columns", {"type": CUSTOM_SIGNAL_TYPE, "label": "x", "columns": []}, "at least one column"),
+            ("columns on hosted", {"label": "x", "type": "funding", "filter": {}, "columns": _COLUMNS}, "no columns"),
+            ("hosted without filter", {"label": "x", "type": "funding"}, "a funding signal names its filter"),
+            ("the old type key", {"label": "x", "signal": "funding", "filter": {}}, "is `type`, not `signal`"),
         ):
             with self.subTest(case=case):
                 resp = self._post(body)

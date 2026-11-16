@@ -23,7 +23,14 @@ from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
-from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
+from openbower_schema import (
+    CUSTOM_SIGNAL_TYPE,
+    SignalDetail,
+    SignalsPage,
+    SignalSummary,
+    SourceSummary,
+    SyncKeyReconnected,
+)
 from resource_server import MachineTokenAuthentication
 from sheets.column_refusals import column_refusal_status
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE, IngestErrorCode, RowSource
@@ -44,9 +51,10 @@ from .operations.logs import (
     ReconnectLogsOperation,
     SetupOnCustomSignal,
     UnknownSignal,
+    require_hosted_type,
 )
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
-from .services.logs import LocalLog, LogNotFound, LogService, SignalTakesNoPush
+from .services.logs import LocalLog, LogNotFound, LogService, SignalTakesNoPush, signal_type_of
 from .services.signals_client import (
     SignalsAccessDenied,
     SignalsClientRequestError,
@@ -54,9 +62,9 @@ from .services.signals_client import (
     SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
+    preview_payload,
     setup_payload,
 )
-from .sources.registry import WEBHOOK
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +140,7 @@ def _summary(local_log: LocalLog) -> SignalSummary:
     sheet = sheet_summary(local_log.sheet)
     return SignalSummary(
         sheet=sheet,
+        type=signal_type_of(local_log),
         sources=_sources(local_log),
         status=local_log.status,
         last_polled_at=_last_polled(local_log),
@@ -142,6 +151,7 @@ def _detail(log: Log) -> SignalDetail:
     sheet = sheet_summary(log.local_log.sheet)
     return SignalDetail(
         sheet=sheet,
+        type=signal_type_of(log.local_log),
         sources=_sources(log.local_log),
         listener=log.listener,
         status=log.local_log.status,
@@ -182,10 +192,11 @@ class SignalsView(_SignalsScopedView):
         body = LogCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
         fields = dict(body.validated_data)
-        if fields.pop("source") == WEBHOOK:
+        signal_type = fields.pop("type")
+        if signal_type == CUSTOM_SIGNAL_TYPE:
             operation = CreateCustomSignalOperation(request.auth, **fields)
         else:
-            operation = CreateLogOperation(request.auth, **fields)
+            operation = CreateLogOperation(request.auth, signal_type=signal_type, **fields)
         log = operation.run()
         detail = _detail(log)
         return Response(detail.model_dump(), status=201)
@@ -259,14 +270,22 @@ class SignalTypesView(_SignalsScopedView):
         # holds it to is the tighter of the two.
         limits = catalog.limits
         limits.label_max_length = min(limits.label_max_length, LABEL_MAX_LENGTH)
+        # `custom` is the app's own type (a signal a sender pushes to): a
+        # hosted type by that name would be created as a custom signal, so
+        # it is never offered.
+        offered = [kind for kind in catalog.types if kind.type != CUSTOM_SIGNAL_TYPE]
+        if len(offered) != len(catalog.types):
+            logger.warning("signals: the catalog names a hosted type %r; not offered", CUSTOM_SIGNAL_TYPE)
+        catalog.types = offered
         return Response(catalog.model_dump())
 
 
 class SignalTypeEventsView(_SignalsScopedView):
-    def get(self, request: Request, signal: str) -> Response:
+    def get(self, request: Request, signal_type: str) -> Response:
+        require_hosted_type(signal_type)
         after = request.query_params.get("after") or None
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
-        page = self.signals.signal_events(signal=signal, after=after, limit=limit)
+        page = self.signals.signal_events(signal=signal_type, after=after, limit=limit)
         return Response(page.model_dump())
 
 
@@ -275,10 +294,11 @@ class SignalPreviewsView(_SignalsScopedView):
         body = PreviewCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
         data = body.validated_data
+        require_hosted_type(data["type"])
         setup = setup_payload(
             filter=data["filter"], prompt=data.get("prompt"), min_confidence=data.get("min_confidence")
         )
-        payload = {"signal": data["signal"], "event_ids": data["event_ids"], **setup}
+        payload = preview_payload(signal_type=data["type"], event_ids=data["event_ids"], setup=setup)
         preview = self.signals.create_preview(payload=payload)
         return Response(preview.model_dump(), status=202)
 

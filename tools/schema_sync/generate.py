@@ -28,6 +28,7 @@ from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
     API_KEY_NAME_MAX_LENGTH,
+    CUSTOM_SIGNAL_TYPE,
     MAX_API_KEYS,
     AgentCatalog,
     AgentsList,
@@ -185,6 +186,9 @@ def build_schema() -> dict[str, Any]:
         # CellState so the client derives it instead of retyping it.
         "x-constants": {
             "API_KEY_NAME_MAX_LENGTH": API_KEY_NAME_MAX_LENGTH,
+            # The one signal type that is not a hosted type key: `type` is a
+            # plain string on the wire, so nothing else names it.
+            "CUSTOM_SIGNAL_TYPE": CUSTOM_SIGNAL_TYPE,
             "MAX_API_KEYS": MAX_API_KEYS,
             "NODE_RUN_ATTEMPTS": NODE_RUN_ATTEMPTS,
             "FREE_SEARCH_FILL_BUDGET": FREE_SEARCH_FILL_BUDGET,

@@ -17,13 +17,14 @@ child table with its own index, and a secret is never config at all
 (it is kept encrypted in its own row, as the sync key is).
 
 A kind ANSWERS every seam where a log's sources are walked without
-regard to kind: what it says about its log's status, how it reads on
-the wire, what a log's delete undoes elsewhere, and (a polled kind
-only) one read by the poller. Each default raises, and `register()`
-refuses a kind that leaves one at its default, so a new kind decides
-each seam in its own module, a no-op included, before it can boot. A
-feature about one kind alone (a hosted listener's setup) asks the log
-for that kind's config (`LocalLog.find`) instead of growing a seam.
+regard to kind: what type it gives its signal, what it says about its
+log's status, how it reads on the wire, what a log's delete undoes
+elsewhere, and (a polled kind only) one read by the poller. Each default
+raises, and `register()` refuses a kind that leaves one at its default,
+so a new kind decides each seam in its own module, a no-op included,
+before it can boot. A feature about one kind alone (a hosted listener's
+setup) asks the log for that kind's config (`LocalLog.find`) instead of
+growing a seam.
 
 To add a kind: a module here, a SourceConfig subclass answering every
 seam, `register(...)` at the bottom, its name in the wire's SourceKind
@@ -65,7 +66,7 @@ class StatusContext(Protocol):
 
 
 # The seams every kind answers, and the one only a polled kind answers.
-SEAMS: tuple[str, ...] = ("status", "summary", "tear_down")
+SEAMS: tuple[str, ...] = ("signal_type", "status", "summary", "tear_down")
 POLLED_SEAM = "poll"
 
 
@@ -81,6 +82,12 @@ class SourceConfig(BaseModel):
     @property
     def kind(self) -> str:
         return self.KIND
+
+    def signal_type(self) -> str:
+        """The type this source gives its signal: a hosted type's key, or
+        custom for a kind a sender feeds. The log service holds every source
+        of a signal to one type (`signal_type_of`)."""
+        raise NotImplementedError
 
     def status(self, source: SignalSource, context: StatusContext) -> LogStatus | None:
         """What this source says about its log's status, or None when it

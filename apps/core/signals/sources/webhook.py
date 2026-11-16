@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from openbower_schema import WebhookSourceSummary
+from openbower_schema import CUSTOM_SIGNAL_TYPE, WebhookSourceSummary
 
 from ..constants import LogStatus
 from .base import SourceConfig, StatusContext
@@ -22,6 +22,9 @@ class WebhookSource(SourceConfig):
 
     KIND: ClassVar[str] = WEBHOOK
     POLLED: ClassVar[bool] = False
+
+    def signal_type(self) -> str:
+        return CUSTOM_SIGNAL_TYPE
 
     def status(self, source: SignalSource, context: StatusContext) -> LogStatus | None:
         return None if context.has_rows else LogStatus.WAITING

@@ -1128,18 +1128,19 @@
           "title": "Logged At",
           "type": "string"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "source": {
           "$ref": "#/$defs/EventSource"
+        },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
         "id",
-        "signal",
+        "type",
         "data",
         "logged_at",
         "source"
@@ -1227,16 +1228,10 @@
           "description": "The listener whose matches become the log's rows.",
           "title": "Listener Id",
           "type": "string"
-        },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
         }
       },
       "required": [
         "kind",
-        "signal",
         "listener_id"
       ],
       "title": "HostedSourceSummary",
@@ -1408,11 +1403,6 @@
           "title": "Label",
           "type": "string"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "status": {
           "enum": [
             "active",
@@ -1420,6 +1410,12 @@
             "held"
           ],
           "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
           "type": "string"
         },
         "updated_at": {
@@ -1438,7 +1434,7 @@
       "required": [
         "id",
         "label",
-        "signal",
+        "type",
         "user_id",
         "status",
         "error",
@@ -1714,11 +1710,6 @@
           "title": "Rows",
           "type": "array"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "status": {
           "enum": [
             "pending",
@@ -1730,6 +1721,12 @@
           "title": "Status",
           "type": "string"
         },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
+          "type": "string"
+        },
         "user_id": {
           "title": "User Id",
           "type": "string"
@@ -1737,7 +1734,7 @@
       },
       "required": [
         "id",
-        "signal",
+        "type",
         "filter",
         "prompt",
         "min_confidence",
@@ -2202,10 +2199,16 @@
           ],
           "title": "Status",
           "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
         "sheet",
+        "type",
         "sources",
         "listener",
         "status",
@@ -2215,7 +2218,7 @@
       "type": "object"
     },
     "SignalEventsPage": {
-      "description": "The app's `GET /v1/signal-types/{signal}/events` (the service's\n`GET /v1/signals/{signal}/events`): newest first, to choose from.",
+      "description": "The app's `GET /v1/signal-types/{type}/events` (the service's\n`GET /v1/signals/{signal}/events`): newest first, to choose from.",
       "properties": {
         "items": {
           "items": {
@@ -2263,13 +2266,14 @@
           "title": "Min Confidence Default",
           "type": "number"
         },
-        "signal": {
-          "title": "Signal",
+        "type": {
+          "description": "The type's key, as listeners, events and previews name it.",
+          "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "signal",
+        "type",
         "filter",
         "event",
         "min_confidence_default"
@@ -2358,10 +2362,16 @@
           ],
           "title": "Status",
           "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
         "sheet",
+        "type",
         "sources",
         "status",
         "last_polled_at"
@@ -2375,16 +2385,16 @@
         "limits": {
           "$ref": "#/$defs/SignalLimits"
         },
-        "signals": {
+        "types": {
           "items": {
             "$ref": "#/$defs/SignalKind"
           },
-          "title": "Signals",
+          "title": "Types",
           "type": "array"
         }
       },
       "required": [
-        "signals",
+        "types",
         "limits"
       ],
       "title": "SignalsCatalog",
@@ -3132,6 +3142,7 @@
   "title": "OpenBower contract",
   "x-constants": {
     "API_KEY_NAME_MAX_LENGTH": 80,
+    "CUSTOM_SIGNAL_TYPE": "custom",
     "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_API_KEYS": 50,

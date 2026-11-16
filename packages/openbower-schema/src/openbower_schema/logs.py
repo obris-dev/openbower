@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
 from .sheets import SheetSummary
 from .signals import ListenerWire
 
-_SIGNAL = "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`)."
+# What a signal is: a hosted type the catalog names (`SignalsCatalog.types[].type`),
+# or `custom` for one a sender pushes rows to.
+CUSTOM_SIGNAL_TYPE = "custom"
+_TYPE = (
+    "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), "
+    "or `custom` for one a sender pushes rows to."
+)
 
 # Where a log stands, derived on every read: listener_gone (final; delete
 # the log), reconnect (the account has no working sync key), full (the
@@ -37,7 +43,6 @@ class HostedSourceSummary(BaseModel):
     """A hosted signal: a listener on the signals service, which the app reads."""
 
     kind: Literal["hosted"]
-    signal: str = Field(description=_SIGNAL)
     listener_id: str = Field(description="The listener whose matches become the log's rows.")
 
 
@@ -54,6 +59,7 @@ class SignalSummary(BaseModel):
     """One log as the logs index shows it: no signals call behind it."""
 
     sheet: SheetSummary
+    type: str = Field(description=_TYPE)
     sources: list[SourceSummary] = Field(description=_SOURCES)
     status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
@@ -71,6 +77,7 @@ class SignalDetail(BaseModel):
     has it now."""
 
     sheet: SheetSummary
+    type: str = Field(description=_TYPE)
     sources: list[SourceSummary] = Field(description=_SOURCES)
     listener: ListenerWire | None = Field(
         description=(

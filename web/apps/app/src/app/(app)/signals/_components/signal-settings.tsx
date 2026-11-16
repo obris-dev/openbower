@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@bower/ui";
-import { SIGNAL_FEED, hostedSource, isKnownSignal, signalFeed, type SignalDetail, type SignalsCatalog } from "@bower/api";
+import { SIGNAL_FEED, hostedSource, isKnownSignalType, signalFeed, type SignalDetail, type SignalsCatalog } from "@bower/api";
 
 import { ReconnectDialog, SignalBanner } from "../../_components/signals";
 import { CUSTOM_NOTE, DELETE_ACTION, UNKNOWN_FEED_NOTE, noSetupNote } from "./copy";
@@ -13,7 +13,7 @@ import { SignalForm } from "./signal-form";
 
 /** A signal's settings: what stops it (its banner, with Reconnect), then
  * the form editing a hosted signal's saved setup. A custom signal, one fed
- * by a kind this bundle cannot name, one whose listener is gone, and one
+ * by a source kind this bundle cannot name, one whose listener is gone, and one
  * this bundle has no form for offer only their delete. The catalog is read
  * for a hosted signal alone (null otherwise), so a custom signal's page
  * never waits on the signals service. */
@@ -41,20 +41,22 @@ export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: S
   );
   const remove = <DeleteSignalDialog open={askingDelete} onClose={() => setAskingDelete(false)} signal={signal} />;
 
-  // The catalog offers only the signals this bundle knows, so an offered
-  // kind is the one test the form needs; the note says which part failed.
+  // The catalog offers only the types this bundle knows, so an offered
+  // type is the one test the form needs; the note says which part failed.
   const feed = signalFeed(log);
   const hosted = hostedSource(log);
   if (hosted !== undefined && catalog === null) throw new Error("A hosted signal's settings need the catalog.");
-  const offered = hosted && catalog?.signals.find((each) => each.signal === hosted.signal);
+  const offered = hosted && catalog?.types.find((each) => each.type === log.type);
   const listener = log.listener;
   if (hosted === undefined || catalog === null || offered === undefined || listener === null) {
+    // On the feed, not the type: the note says what there is to set up,
+    // which is a source's question (the list's type column asks the type).
     const note =
       feed === SIGNAL_FEED.CUSTOM
         ? CUSTOM_NOTE
         : hosted === undefined
           ? UNKNOWN_FEED_NOTE
-          : noSetupNote({ listenerGone: listener === null, signal: hosted.signal, known: isKnownSignal(hosted.signal) });
+          : noSetupNote({ listenerGone: listener === null, type: log.type, known: isKnownSignalType(log.type) });
     return (
       <>
         <SignalHeader title={log.sheet.label} sheetId={log.sheet.id} />
@@ -75,7 +77,7 @@ export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: S
     <>
       <SignalForm
         catalog={catalog}
-        saved={{ ...signal, signal: offered.signal, listener }}
+        saved={{ ...signal, type: offered.type, listener }}
         notice={banner}
         onDelete={() => setAskingDelete(true)}
       />

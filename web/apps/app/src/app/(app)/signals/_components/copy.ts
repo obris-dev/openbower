@@ -30,10 +30,10 @@ export function notOfferedNote(type: string): string {
 /** Why a signal's settings have no setup to edit: its listener is gone, or
  * its type is one this app version has no form for, or one the service is
  * not offering now. Never blames the app for what the service decided. */
-export function noSetupNote(facts: { listenerGone: boolean; signal: string; known: boolean }): string {
+export function noSetupNote(facts: { listenerGone: boolean; type: string; known: boolean }): string {
   if (facts.listenerGone) return GONE_NOTE;
-  const type = signalType(facts.signal);
-  return facts.known ? notOfferedNote(type) : unknownTypeNote(type);
+  const name = signalType(facts.type);
+  return facts.known ? notOfferedNote(name) : unknownTypeNote(name);
 }
 
 /** What a delete takes with it, said once: the signal stops, and its
@@ -45,15 +45,15 @@ export function deleteConsequence(rows: number): string {
 }
 
 // A custom signal follows no hosted type: its rows are pushed to it.
-export const CUSTOM_TYPE = "Custom";
+export const CUSTOM_TYPE_LABEL = "Custom";
 export const CUSTOM_NOTE = "This signal fills from rows pushed to it, so it has no setup to edit.";
 // A signal fed by nothing this bundle can name.
 export const UNKNOWN_FEED_NOTE = "This version of the app can't edit this signal. You can still delete it.";
 
 /** A signal type as a person reads it: the catalog's key, title-cased
  * (funding reads Funding). */
-export function signalType(signal: string): string {
-  return signal
+export function signalType(type: string): string {
+  return type
     .split("_")
     .map((word) => (word ? word[0]!.toUpperCase() + word.slice(1) : word))
     .join(" ");
