@@ -12,14 +12,16 @@ Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_ingest
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from unittest.mock import Mock, patch
 
 from django.core.cache import caches
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, SheetOrigin
+from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, IngestErrorCode, SheetOrigin
+from sheets.ingest import from_wire
 from sheets.models import Sheet
 from sheets.serializers import ingest_schema_wire
 from sheets.services.sheets import SheetService
@@ -329,3 +331,63 @@ class IngestValidationTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         # one "row N: …" problem per bad row, truncated at the cap
         self.assertEqual(resp.json()["detail"].count("row "), MAX_INGEST_PROBLEMS)
+
+
+_ACCENTED = "é" * 1000
+
+
+class IngestMessageSizeTests(TestCase):
+    """A push rides the bus as one message: its text as sent (UTF-8), so a
+    push within the request limit fits the message limit; one that cannot
+    fit is a 413 sent again to no avail, never a 503 retried forever."""
+
+    def setUp(self) -> None:
+        login_session(self.client)
+        self.sheet_id = str(
+            SheetService(account_id=_ACCT)
+            .create(
+                owner_id=TEST_IDENTITY["id"],
+                label="text target",
+                columns=[{"kind": "plain", "key": "note", "label": "Note", "type": "text"}],
+                origin=SheetOrigin.MANUAL,
+            )
+            .id
+        )
+
+    def _push(self, rows):
+        url = reverse("sheets_ingest", kwargs={"id": self.sheet_id})
+        return self.client.post(url, {"rows": rows}, content_type="application/json")
+
+    def test_the_bus_carries_text_as_sent(self):
+        # FAILS if the message escapes non-ASCII: 1,000 accented characters
+        # would ride as 6,000 bytes, three times the push that brought them.
+        sent: list = []
+        producer = Mock()
+        producer.produce.side_effect = lambda topic, key, value, on_delivery: sent.append(value)
+        producer.flush.return_value = 0
+        with (
+            override_settings(INGEST_KAFKA_BOOTSTRAP_SERVERS="kafka:9092"),
+            patch.dict("sheets.ingest.publisher._kafka_publishers", clear=True),
+            patch("confluent_kafka.Producer", return_value=producer),
+        ):
+            resp = self._push([{"note": _ACCENTED}])
+        self.assertEqual(resp.status_code, 202, resp.content)
+        self.assertIn(_ACCENTED.encode(), sent[0])
+        self.assertLess(len(sent[0]), 2 * len(_ACCENTED) + 512)
+        # The worker reads it back as sent.
+        decoded = from_wire(json.loads(sent[0]))
+        self.assertEqual(decoded.rows[0]["note"], _ACCENTED)
+
+    def test_a_push_too_big_for_one_message_is_a_413(self):
+        with override_settings(INGEST_MAX_MESSAGE_BYTES=2048):
+            resp = self._push([{"note": _ACCENTED}])
+        self.assertEqual(resp.status_code, 413, resp.content)
+        self.assertEqual(resp.json()["error"], IngestErrorCode.INGEST_TOO_LARGE)
+        self.assertIn("send fewer rows per push", resp.json()["detail"])
+
+    def test_text_that_is_not_unicode_never_reaches_the_encoder(self):
+        # FAILS if the request stops refusing an unpaired surrogate: the
+        # UTF-8 encode would raise, and the push answer 500.
+        resp = self._push([{"note": "a\ud800b"}])
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn("Surrogate", resp.json()["detail"])

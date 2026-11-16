@@ -131,9 +131,8 @@ class IngestRequest(serializers.Serializer):
     the per-cell clamp is not the serializer's job, it rides the shared
     cells_for_storage the POST runs before publishing (so the bus carries
     the clamped, stored form, not a raw oversized cell) and add_rows runs
-    again on append. The whole-message byte bound sized to the bus message
-    limit is a separate, durable-backend decision (see
-    ingest.get_ingest_publisher)."""
+    again on append. The whole message is bounded by the bus message
+    limit when it is encoded (sheets.ingest.events.encode_event)."""
 
     rows = serializers.ListField(
         child=serializers.DictField(child=serializers.CharField(allow_blank=True, trim_whitespace=False)),

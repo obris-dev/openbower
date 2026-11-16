@@ -8,8 +8,11 @@ SheetService.add_rows, so the wire contract stays single.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
+
+from django.conf import settings
 
 
 @dataclass(frozen=True)
@@ -52,3 +55,32 @@ def from_wire(data: dict) -> IngestEvent:
         rows=data["rows"],
         received_at=datetime.fromisoformat(data["received_at"]),
     )
+
+
+# Kafka sends a record's key and headers beside its value: the value keeps
+# this much clear of the message cap.
+_RECORD_HEADROOM_BYTES = 1024
+
+
+class IngestTooLarge(Exception):
+    """A push too big for one bus message (INGEST_MAX_MESSAGE_BYTES): it can
+    never be accepted as sent, so it is refused, never retried."""
+
+    def __init__(self, *, size: int, limit: int) -> None:
+        super().__init__(f"this push is {size} bytes, over the {limit}-byte limit; send fewer rows per push")
+        self.size = size
+        self.limit = limit
+
+
+def encode_event(event: IngestEvent) -> bytes:
+    """The event as one bus message: its JSON in UTF-8, every character as
+    sent (escaping non-ASCII would triple a body of accented text), so a
+    message is about the size of the request that brought it. The request
+    already refused text that is not valid Unicode (an unpaired
+    surrogate), so it encodes. Raises IngestTooLarge."""
+    text = json.dumps(to_wire(event), ensure_ascii=False)
+    payload = text.encode()
+    limit = settings.INGEST_MAX_MESSAGE_BYTES - _RECORD_HEADROOM_BYTES
+    if len(payload) > limit:
+        raise IngestTooLarge(size=len(payload), limit=limit)
+    return payload
