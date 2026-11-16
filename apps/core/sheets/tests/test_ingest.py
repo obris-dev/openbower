@@ -102,14 +102,14 @@ class IngestMachineTests(TestCase):
         self.assertEqual(resp.status_code, 202)
         body = resp.json()
         self.assertEqual(body["accepted"], 2)
-        self.assertTrue(body["event_id"])
+        self.assertTrue(body["request_id"])
         # Exactly one event, carrying the rows bound to this sheet + account.
         self.assertEqual(len(captured), 1)
         event = captured[0]
         self.assertEqual(event.sheet_id, self.sheet_id)
         self.assertEqual(event.account_id, _ACCT)
         self.assertEqual([r.cells["domain"] for r in event.rows], ["acme.com", "example.io"])
-        self.assertEqual(event.event_id, body["event_id"])
+        self.assertEqual(event.event_id, body["request_id"])
 
     def test_the_old_path_still_takes_a_key_push(self):
         # API keys pushed to /v1/lists before the rename; the alias keeps
@@ -133,25 +133,25 @@ class IngestMachineTests(TestCase):
         self.assertEqual(pushed.status_code, 202)
         self.assertEqual([event.sheet_id for event in captured], [self.sheet_id])
 
-    def test_a_caller_supplied_event_id_is_used_as_the_idempotency_key(self):
+    def test_a_caller_supplied_request_id_is_used_as_the_idempotency_key(self):
         captured: list = []
         with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
-            resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": "caller-key-123"})
+            resp = self._ingest({"rows": [{"domain": "acme.com"}], "request_id": "caller-key-123"})
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(resp.json()["event_id"], "caller-key-123")
+        self.assertEqual(resp.json()["request_id"], "caller-key-123")
         self.assertEqual(captured[0].event_id, "caller-key-123")
 
     def test_a_minted_ulid_is_used_when_none_supplied(self):
         captured: list = []
         with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}]})
-        minted = resp.json()["event_id"]
+        minted = resp.json()["request_id"]
         self.assertEqual(len(minted), 26)  # a ULID
         self.assertEqual(captured[0].event_id, minted)
 
-    def test_a_blank_event_id_is_rejected_400(self):
+    def test_a_blank_request_id_is_rejected_400(self):
         # A present-but-empty key is a client bug, not a request to mint.
-        resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": ""})
+        resp = self._ingest({"rows": [{"domain": "acme.com"}], "request_id": ""})
         self.assertEqual(resp.status_code, 400)
 
     def test_interim_publisher_does_not_append_rows_yet(self):
@@ -181,8 +181,8 @@ class IngestMachineTests(TestCase):
         resp = self._ingest({"rows": [{"domain": "x"}] * (MAX_ROWS_PER_ADD + 1)})
         self.assertEqual(resp.status_code, 400)
 
-    def test_over_length_event_id_is_400(self):
-        resp = self._ingest({"rows": [{"domain": "x"}], "event_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
+    def test_over_length_request_id_is_400(self):
+        resp = self._ingest({"rows": [{"domain": "x"}], "request_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
         self.assertEqual(resp.status_code, 400)
 
     def test_a_publish_failure_is_503_not_a_dropped_202(self):

@@ -6,15 +6,17 @@ import { Button, Card } from "@bower/ui";
 import { SIGNAL_FEED, hostedSource, isKnownSignalType, signalFeed, type SignalDetail, type SignalsCatalog } from "@bower/api";
 
 import { ReconnectDialog, SignalBanner } from "../../_components/signals";
-import { CUSTOM_NOTE, DELETE_ACTION, UNKNOWN_FEED_NOTE, noSetupNote } from "./copy";
+import { DELETE_ACTION, UNKNOWN_FEED_NOTE, noSetupNote } from "./copy";
 import { DeleteSignalDialog } from "./delete-signal-dialog";
 import { SignalHeader } from "./signal-header";
 import { SignalForm } from "./signal-form";
+import { WebhookConnection } from "./webhook-connection";
 
 /** A signal's settings: what stops it (its banner, with Reconnect), then
- * the form editing a hosted signal's saved setup. A custom signal, one fed
- * by a source kind this bundle cannot name, one whose listener is gone, and one
- * this bundle has no form for offer only their delete. The catalog is read
+ * the form editing a hosted signal's saved setup, or a custom signal's
+ * webhook connection. One fed by a source kind this bundle cannot name,
+ * one whose listener is gone, and one this bundle has no form for offer
+ * only their delete. The catalog is read
  * for a hosted signal alone (null otherwise), so a custom signal's page
  * never waits on the signals service. */
 export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: SignalsCatalog | null }) {
@@ -48,15 +50,34 @@ export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: S
   if (hosted !== undefined && catalog === null) throw new Error("A hosted signal's settings need the catalog.");
   const offered = hosted && catalog?.types.find((each) => each.type === log.type);
   const listener = log.listener;
+  // On the feed, not the type: what there is to set up is a source's
+  // question (the list's type column asks the type).
+  if (feed === SIGNAL_FEED.CUSTOM) {
+    return (
+      <>
+        <SignalHeader
+          title={log.sheet.label}
+          sheetId={log.sheet.id}
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => setAskingDelete(true)} className="text-danger">
+              {DELETE_ACTION}
+            </Button>
+          }
+        />
+        {banner}
+        <Card className="p-4">
+          <WebhookConnection signalId={log.sheet.id} />
+        </Card>
+        {remove}
+        {reconnect}
+      </>
+    );
+  }
   if (hosted === undefined || catalog === null || offered === undefined || listener === null) {
-    // On the feed, not the type: the note says what there is to set up,
-    // which is a source's question (the list's type column asks the type).
     const note =
-      feed === SIGNAL_FEED.CUSTOM
-        ? CUSTOM_NOTE
-        : hosted === undefined
-          ? UNKNOWN_FEED_NOTE
-          : noSetupNote({ listenerGone: listener === null, type: log.type, known: isKnownSignalType(log.type) });
+      hosted === undefined
+        ? UNKNOWN_FEED_NOTE
+        : noSetupNote({ listenerGone: listener === null, type: log.type, known: isKnownSignalType(log.type) });
     return (
       <>
         <SignalHeader title={log.sheet.label} sheetId={log.sheet.id} />

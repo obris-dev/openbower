@@ -66,7 +66,7 @@ export type FundingFilter = z.infer<typeof FundingFilterSchema>;
 export const HostedSourceSummarySchema = z.object({ "kind": z.literal("hosted"), "listener_id": z.string().describe("The listener whose matches become the log's rows.") }).describe("A hosted signal: a listener on the signals service, which the app reads.");
 export type HostedSourceSummary = z.infer<typeof HostedSourceSummarySchema>;
 
-export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "event_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.");
+export const IngestAcceptedSchema = z.object({ "accepted": z.number().int().describe("Number of rows accepted."), "request_id": z.string().describe("The push's idempotency key (caller-supplied, else a minted ULID).") }).describe("The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `request_id` correlates them.");
 export type IngestAccepted = z.infer<typeof IngestAcceptedSchema>;
 
 export const IngestColumnSchema = z.object({ "key": z.string().max(40).describe("Row data dicts key on this."), "label": z.string().max(80).describe("Display label."), "type": z.enum(["text","number","currency","date","url","email"]).describe("The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, and date carry shape rules), so send values of this type.") }).describe("One column of the push schema: the key a row dict keys on and the\nvalue's type. Only the columns a producer OWNS appear: a column the\nsystem fills is written with its own record of what filled it, and\na push writes rows alone, so such a column is absent here and its\nkey is refused on append.");
@@ -113,6 +113,9 @@ export type SignalKind = z.infer<typeof SignalKindSchema>;
 
 export const SignalLimitsSchema = z.object({ "label_max_length": z.number().int(), "max_listeners": z.number().int().describe("Listeners an account may have."), "preview_max_events": z.number().int().describe("Events one preview may be tried on."), "prompt_max_length": z.number().int() });
 export type SignalLimits = z.infer<typeof SignalLimitsSchema>;
+
+export const SignalWebhookSchema = z.object({ "webhook_url": z.string().describe("Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.") }).describe("`GET /v1/signals/{id}/webhook`: a custom signal's webhook URL, for a\nsigned-in person to copy any time. The URL is not a credential for this\nroute; only a session reads it.");
+export type SignalWebhook = z.infer<typeof SignalWebhookSchema>;
 
 export const SignalsCatalogSchema = z.object({ "limits": z.lazy(() => SignalLimitsSchema), "types": z.array(z.lazy(() => SignalKindSchema)) }).describe("The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):\nevery signal type, and the limits a setup is held to.");
 export type SignalsCatalog = z.infer<typeof SignalsCatalogSchema>;
@@ -219,7 +222,7 @@ export type WebhookDigestData = z.infer<typeof WebhookDigestDataSchema>;
 export const WebhookEnvelopeDataSchema = z.discriminatedUnion("type", [WebhookPingDataSchema, WebhookDigestDataSchema]);
 export type WebhookEnvelopeData = z.infer<typeof WebhookEnvelopeDataSchema>;
 
-export const CustomSignalCreatedSchema = z.object({ "last_polled_at": z.union([z.string(), z.null()]).describe("When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for."), "listener": z.union([z.lazy(() => ListenerWireSchema), z.null()]).describe("Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."), "sheet": z.lazy(() => SheetSummarySchema), "sources": z.array(z.discriminatedUnion("kind", [HostedSourceSummarySchema, WebhookSourceSummarySchema])).describe("What feeds it, at most one of each kind, each carrying its own kind's facts."), "status": z.enum(["active","listener_gone","reconnect","full","waiting"]).describe("Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail."), "type": z.string().describe("What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to."), "webhook_url": z.string().describe("Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({event_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.") }).describe("A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus the ONE time its webhook URL is on the wire. The\ntoken in it is stored only as a hash and never returned again; a lost\nURL is replaced by rotating, which stops the old one at once. The detail\nis extended rather than nested: a nested signal would be a `signal`\nkey, which the contract keeps for no field, and a reader of the detail\nreads this response unchanged.");
+export const CustomSignalCreatedSchema = z.object({ "last_polled_at": z.union([z.string(), z.null()]).describe("When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for."), "listener": z.union([z.lazy(() => ListenerWireSchema), z.null()]).describe("Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."), "sheet": z.lazy(() => SheetSummarySchema), "sources": z.array(z.discriminatedUnion("kind", [HostedSourceSummarySchema, WebhookSourceSummarySchema])).describe("What feeds it, at most one of each kind, each carrying its own kind's facts."), "status": z.enum(["active","listener_gone","reconnect","full","waiting"]).describe("Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail."), "type": z.string().describe("What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to."), "webhook_url": z.string().describe("Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.") }).describe("A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus its webhook URL (a signed-in person reads it again\nany time from `GET /v1/signals/{id}/webhook`; a rotate replaces a leaked\none and stops the old one at once). The detail is extended rather than\nnested: a nested signal would be a `signal` key, which the contract\nkeeps for no field, and a reader of the detail reads this response\nunchanged.");
 export type CustomSignalCreated = z.infer<typeof CustomSignalCreatedSchema>;
 
 export const ImportResultSchema = z.object({ "rows": z.number().int().describe("Rows imported."), "sheet": z.lazy(() => SheetSummarySchema), "skipped": z.number().int().describe("Blank lines and rows wider than the header, not imported.") }).describe("What a CSV upload produced.");
@@ -357,6 +360,7 @@ export const WIRE_CONSTANTS = {
   "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
   "FREE_SEARCH_FILL_BUDGET": 768,
   "MAX_API_KEYS": 50,
+  "MAX_SHEET_COLUMNS": 70,
   "MAX_TOOL_CALLS": 6,
   "MAX_WEBHOOK_DESTINATIONS": 32,
   "MAX_WEBHOOK_HEADERS": 8,
@@ -367,6 +371,10 @@ export const WIRE_CONSTANTS = {
     "queued",
     "processing",
     "deferred"
+  ],
+  "RESERVED_COLUMN_KEYS": [
+    "ai",
+    "webhook"
   ],
   "RESERVED_OUTPUT_MARKER": "_bwr_",
   "RESERVED_WEBHOOK_HEADER_NAMES": [
@@ -394,6 +402,7 @@ export const WIRE_CONSTANTS = {
     "unparseable",
     "type_mismatch"
   ],
+  "SHEET_LABEL_MAX_LENGTH": 120,
   "TEST_KEY_MAX_LENGTH": 64,
   "TEST_ROW_MAX_KEYS": 16,
   "TEST_VALUE_MAX_LENGTH": 512,

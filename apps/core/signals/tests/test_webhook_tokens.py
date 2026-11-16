@@ -1,6 +1,6 @@
-"""A custom signal's webhook URL: minted at the create and shown once,
-pushed to with no session and no API key, resolved in one read, rotated
-(the old URL stops at once), and gone with its signal.
+"""A custom signal's webhook URL: minted at the create, read back any time
+by a signed-in person, pushed to with no session and no API key, resolved
+in one read, rotated (the old URL stops at once), and gone with its signal.
 
 Run: DJANGO_ENV=test uv run python manage.py test signals.tests.test_webhook_tokens
 """
@@ -25,7 +25,7 @@ from sheets.models import SheetRow
 from signals.constants import WEBHOOK_TOKENS_REVOKED_KEPT, SignalsErrorCode
 from signals.models import SignalSource, SourceToken
 from signals.services.logs import LogNotFound, LogService
-from signals.services.webhook_tokens import WebhookTokenGlobal, WebhookTokenService
+from signals.services.webhook_tokens import NoLiveToken, WebhookTokenGlobal, WebhookTokenService
 
 from .fakes import FakeIdentity, FakeSignals, install
 
@@ -63,9 +63,9 @@ class WebhookTokenTests(TestCase):
         self.assertEqual(resp.status_code, status, resp.content)
         return captured
 
-    def test_the_create_shows_the_webhook_url_once_and_stores_only_its_hash(self):
-        # FAILS if the token is stored or served again: a database read or a
-        # detail would hand out a working URL.
+    def test_the_create_returns_the_url_and_the_detail_never_carries_it(self):
+        # FAILS if the detail carries the URL, or the hash is not what a push
+        # is looked up by.
         created = self._create()
         url = created["webhook_url"]
         signal_id = created["sheet"]["id"]
@@ -159,6 +159,62 @@ class WebhookTokenTests(TestCase):
         last = self.client.post(rotate)
         self._push(last.json()["webhook_url"], status=202)
 
+    def test_a_signed_in_person_reads_the_live_url_any_time(self):
+        # FAILS if the URL can be copied only once, or a read hands back a
+        # revoked URL after a rotate.
+        created = self._create()
+        webhook = reverse("signals_webhook", kwargs={"id": created["sheet"]["id"]})
+        read = self.client.get(webhook)
+        self.assertEqual(read.status_code, 200, read.content)
+        self.assertEqual(read.json()["webhook_url"], created["webhook_url"])
+        self._push(read.json()["webhook_url"], status=202)
+        rotated = self.client.post(reverse("signals_webhook_rotate", kwargs={"id": created["sheet"]["id"]}))
+        again = self.client.get(webhook)
+        self.assertEqual(again.json()["webhook_url"], rotated.json()["webhook_url"])
+
+    def test_only_a_session_in_the_account_reads_the_url(self):
+        # FAILS if the URL reads itself (the token lane is not this route's),
+        # or another account reads it.
+        created = self._create()
+        signal_id = created["sheet"]["id"]
+        token = created["webhook_url"].rsplit("/", 1)[1]
+        webhook = reverse("signals_webhook", kwargs={"id": signal_id})
+        self.assertIn(self.sender.get(webhook).status_code, (401, 403))
+        by_token = self.sender.get(webhook, HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertNotEqual(by_token.status_code, 200)
+        outsider = Client()
+        login_session(outsider, {**TEST_IDENTITY, "id": _TEAMMATE, "account_id": "01JQ" + "Z" * 22})
+        self.assertEqual(outsider.get(webhook).status_code, 404)
+
+    def test_the_token_is_stored_encrypted(self):
+        # FAILS if the column holds the token as sent: a database read would
+        # hand out a working URL.
+        created = self._create()
+        token = created["webhook_url"].rsplit("/", 1)[1]
+        with connection.cursor() as cursor:
+            cursor.execute("select token from signals_sourcetoken where sheet_id = %s", [created["sheet"]["id"]])
+            [(stored,)] = cursor.fetchall()
+        self.assertNotIn(token, stored)
+        self.assertEqual(SourceToken.objects.get(sheet_id=created["sheet"]["id"]).token, token)
+
+    def test_a_url_that_no_longer_decrypts_says_to_rotate(self):
+        # FAILS if a token the key can no longer decrypt is served as a URL:
+        # it would 404 while the real one kept pushing.
+        created = self._create()
+        signal_id = created["sheet"]["id"]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "update signals_sourcetoken set token = %s where sheet_id = %s", ["not-our-ciphertext", signal_id]
+            )
+        read = self.client.get(reverse("signals_webhook", kwargs={"id": signal_id}))
+        self.assertEqual((read.status_code, read.json()["error"]), (409, SignalsErrorCode.WEBHOOK_UNREADABLE))
+        self._push(created["webhook_url"], status=202)
+        rotated = self.client.post(reverse("signals_webhook_rotate", kwargs={"id": signal_id}))
+        self.assertEqual(
+            self.client.get(reverse("signals_webhook", kwargs={"id": signal_id})).json()["webhook_url"],
+            rotated.json()["webhook_url"],
+        )
+
     def test_a_hosted_signal_has_no_webhook_to_rotate(self):
         hosted = LogService(account_id=ACCOUNT).create(
             owner_id=TEST_IDENTITY["id"],
@@ -169,6 +225,8 @@ class WebhookTokenTests(TestCase):
         )
         resp = self.client.post(reverse("signals_webhook_rotate", kwargs={"id": hosted.sheet_id}))
         self.assertEqual((resp.status_code, resp.json()["error"]), (409, SignalsErrorCode.NO_WEBHOOK))
+        read = self.client.get(reverse("signals_webhook", kwargs={"id": hosted.sheet_id}))
+        self.assertEqual((read.status_code, read.json()["error"]), (409, SignalsErrorCode.NO_WEBHOOK))
         self.assertFalse(SourceToken.objects.exists())
 
     def test_a_mint_on_a_source_gone_or_not_a_webhook_is_not_found(self):
@@ -187,6 +245,20 @@ class WebhookTokenTests(TestCase):
         [hosted_source] = hosted.sources
         with self.assertRaises(LogNotFound):
             tokens.mint(hosted_source, user_id=TEST_IDENTITY["id"])
+
+    def test_a_read_that_loses_a_race_with_the_delete_is_not_found(self):
+        # FAILS if the read answers 500 for a signal deleted between its two
+        # reads; a source left with no live token is still said loudly.
+        created = self._create()
+        source = SignalSource.objects.get(sheet_id=created["sheet"]["id"])
+        tokens = WebhookTokenService(account_id=ACCOUNT)
+        SourceToken.objects.filter(source_id=source.id).delete()
+        with self.assertRaises(NoLiveToken):
+            tokens.live_token(source)
+        source.delete()
+        with self.assertRaises(LogNotFound) as gone:
+            tokens.live_token(source)
+        self.assertEqual(str(gone.exception), created["sheet"]["id"])
 
     def test_a_deleted_signals_tokens_go_with_it(self):
         # FAILS if a token outlives its signal: an orphan row no delete owns.

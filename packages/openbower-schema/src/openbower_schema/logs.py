@@ -89,21 +89,30 @@ class SignalDetail(BaseModel):
     last_polled_at: str | None = Field(description=_LAST_POLLED)
 
 
+_WEBHOOK_URL = (
+    "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope "
+    "({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema."
+)
+
+
 class CustomSignalCreated(SignalDetail):
     """A custom signal's create and its webhook rotate: the signal as its
-    detail reads, plus the ONE time its webhook URL is on the wire. The
-    token in it is stored only as a hash and never returned again; a lost
-    URL is replaced by rotating, which stops the old one at once. The detail
-    is extended rather than nested: a nested signal would be a `signal`
-    key, which the contract keeps for no field, and a reader of the detail
-    reads this response unchanged."""
+    detail reads, plus its webhook URL (a signed-in person reads it again
+    any time from `GET /v1/signals/{id}/webhook`; a rotate replaces a leaked
+    one and stops the old one at once). The detail is extended rather than
+    nested: a nested signal would be a `signal` key, which the contract
+    keeps for no field, and a reader of the detail reads this response
+    unchanged."""
 
-    webhook_url: str = Field(
-        description=(
-            "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope "
-            "({event_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema."
-        )
-    )
+    webhook_url: str = Field(description=_WEBHOOK_URL)
+
+
+class SignalWebhook(BaseModel):
+    """`GET /v1/signals/{id}/webhook`: a custom signal's webhook URL, for a
+    signed-in person to copy any time. The URL is not a credential for this
+    route; only a session reads it."""
+
+    webhook_url: str = Field(description=_WEBHOOK_URL)
 
 
 class SyncKeyReconnected(BaseModel):

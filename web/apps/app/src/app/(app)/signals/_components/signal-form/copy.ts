@@ -8,13 +8,9 @@ import {
   type PreviewRun,
 } from "@bower/api";
 
-export const TITLE = "Create signal";
 export const INTRO = "Get new funding rounds that match who you sell to.";
-export const CREATE_ACTION = "Create signal";
 export const TEST_ACTION = "Test";
-export const CREATED_TOAST = "Signal created.";
 // Editing a saved signal: the same form, its own verbs.
-export const SAVE_ACTION = "Save";
 export const SAVED_TOAST = "Signal saved.";
 export const UNSAVED = "Unsaved changes | Save keeps them.";
 
@@ -36,14 +32,14 @@ export const PROMPT_LABEL = "Describe the companies you want";
 export const PROMPT_HINT = "Each round that passes the checks above is read against this, and only the ones that fit are kept.";
 export const PROMPT_PLACEHOLDER = "B2B software sold to finance teams";
 export const THRESHOLD_LABEL = "Minimum confidence";
-export const NAME_TITLE = "Name";
 export const NAME_HINT = "Suggested from your setup below. Change it if you like.";
 
-export const NAME_GAP = "Name the signal to create it.";
 export const NAME_SAVE_GAP = "Name the signal to save it.";
 export const AMOUNT_INVALID_GAP = "Enter an amount as a number above zero, like 5000000.";
 export const AMOUNT_REVERSED_GAP = "The lower amount is above the upper one.";
-export const NAME_CHECK = "Name";
+// From the copy module itself, not form-parts' index: setup.ts reads this
+// under the node test lane, which cannot load the index's components.
+export { NAME_CHECK } from "../form-parts/copy.ts";
 export const AMOUNT_CHECK = AMOUNT_LABEL;
 
 /** A funding stage as a person reads it. A stage the contract adds fails
