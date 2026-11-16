@@ -51,7 +51,7 @@ class _PollTests(TestCase):
         self.logs = LogService(account_id=USER.account_id)
 
     def _log(self, label: str = "Seed raises", *, due: datetime.datetime = _NOW, autofill: bool = True) -> SignalSource:
-        log = CreateLogOperation(self.session, label=label, signal="funding", filter={}, autofill=autofill).run()
+        log = CreateLogOperation(self.session, label=label, signal_type="funding", filter={}, autofill=autofill).run()
         SignalSource.objects.filter(id=log.local_log.sources[0].id).update(next_poll_at=due)
         return SignalSource.objects.get(id=log.local_log.sources[0].id)
 

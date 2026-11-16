@@ -21,7 +21,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 
-from openbower_schema import HostedSourceSummary
+from openbower_schema import CUSTOM_SIGNAL_TYPE, HostedSourceSummary
 from openbower_schema.logs import SourceKind
 from sheets.constants import MAX_SHEET_ROWS
 from sheets.models import Sheet, SheetRow
@@ -30,9 +30,9 @@ from signals.constants import SOURCE_CURSOR_MAX_LENGTH, LogStatus
 from signals.models import SignalSource
 from signals.operations.logs import CreateLogOperation
 from signals.operations.poll_logs import PollLogOperation, PollResult
-from signals.services.logs import LogService, SignalSourceGlobal
+from signals.services.logs import LocalLog, LogService, SignalSourceGlobal, SourcesDisagreeOnType, signal_type_of
 from signals.sources import registry
-from signals.sources.base import SourceConfig
+from signals.sources.base import SEAMS, SourceConfig
 from signals.sources.hosted import HostedSource
 from signals.sources.registry import (
     HOSTED,
@@ -42,6 +42,7 @@ from signals.sources.registry import (
     register,
     validate_source_kinds,
 )
+from signals.sources.webhook import WebhookSource
 
 from .fakes import USER, FakeIdentity, FakeSignals, install, match_body, session_for
 
@@ -93,7 +94,7 @@ class FeedsBecomeSourcesTests(TransactionTestCase):
             ),
             (
                 HOSTED,
-                HostedSource(signal="funding", listener_id="01LI" + "A" * 22),
+                HostedSource(type="funding", listener_id="01LI" + "A" * 22),
                 USER.account_id,
                 feed.sheet_id,
                 feed.cursor,
@@ -110,11 +111,14 @@ class _Quiet(SourceConfig):
     KIND: ClassVar[str] = "quiet"
     POLLED: ClassVar[bool] = False
 
+    def signal_type(self):
+        return "quiet"
+
     def status(self, source, context):
         return None
 
     def summary(self, source):
-        return HostedSourceSummary(kind=HOSTED, signal="quiet", listener_id="")
+        return HostedSourceSummary(kind=HOSTED, listener_id="")
 
     def tear_down(self, signals):
         return None
@@ -151,9 +155,10 @@ class SourceRegistryTests(SimpleTestCase):
 
     def test_a_kind_that_leaves_a_seam_unanswered_refuses(self):
         # FAILS if a new kind can boot without deciding a seam: a log's
-        # status, its wire, or its delete would skip it without a word.
-        for seam in ("status", "summary", "tear_down"):
-            members = {name: getattr(_Quiet, name) for name in ("status", "summary", "tear_down") if name != seam}
+        # type, its status, its wire, or its delete would skip it without a
+        # word.
+        for seam in ("signal_type", "status", "summary", "tear_down"):
+            members = {name: getattr(_Quiet, name) for name in SEAMS if name != seam}
             members.update({"KIND": "unanswered", "POLLED": False, "__annotations__": {"KIND": ClassVar[str]}})
             silent = type("Silent", (SourceConfig,), members)
             with self.subTest(seam=seam), self.assertRaisesMessage(ValueError, f"must answer {seam}()"):
@@ -188,8 +193,8 @@ class SourceRegistryTests(SimpleTestCase):
             LogService(account_id=USER.account_id).status_of(sheet, (source,))
 
     def test_a_stored_config_parses_as_its_kind_s_class(self):
-        config = parse_source_config('{"kind": "hosted", "signal": "funding", "listener_id": "l1"}')
-        self.assertEqual(config, HostedSource(signal="funding", listener_id="l1"))
+        config = parse_source_config('{"kind": "hosted", "type": "funding", "listener_id": "l1"}')
+        self.assertEqual(config, HostedSource(type="funding", listener_id="l1"))
         self.assertEqual(config.model_dump(mode="json")["kind"], HOSTED)
         # FAILS if a config naming no kind escapes as a bare KeyError or
         # TypeError, which nothing can tell from a bug.
@@ -200,6 +205,32 @@ class SourceRegistryTests(SimpleTestCase):
     def test_the_boot_gate_refuses_a_roster_without_hosted(self):
         with patch.dict(registry._REGISTRY, clear=True), self.assertRaisesMessage(ImproperlyConfigured, "hosted"):
             validate_source_kinds()
+
+
+class SignalTypeTests(SimpleTestCase):
+    """A signal's type is what its sources declare, never a fallback."""
+
+    def _type(self, *configs):
+        sources = tuple(SimpleNamespace(config=config) for config in configs)
+        sheet = SimpleNamespace(id="01SH" + "T" * 22)
+        return signal_type_of(LocalLog(sheet=sheet, sources=sources, status=LogStatus.ACTIVE))
+
+    def test_each_kind_names_its_own_type(self):
+        hosted = HostedSource(type="funding", listener_id="l1")
+        self.assertEqual(self._type(hosted), "funding")
+        self.assertEqual(self._type(WebhookSource()), CUSTOM_SIGNAL_TYPE)
+
+    def test_a_signal_whose_sources_name_no_one_type_is_said_loudly(self):
+        # FAILS if a type is guessed: a signal with no source would read as
+        # custom, and two kinds naming different types (a hosted one beside
+        # a webhook included) as either.
+        hosted = HostedSource(type="funding", listener_id="l1")
+        with self.assertRaises(SourcesDisagreeOnType):
+            self._type()
+        with self.assertRaises(SourcesDisagreeOnType):
+            self._type(WebhookSource(), _Quiet())
+        with self.assertRaises(SourcesDisagreeOnType):
+            self._type(WebhookSource(), hosted)
 
 
 class UnpolledKindTests(TestCase):
@@ -228,7 +259,7 @@ class FirstDueTests(TestCase):
                     account_id=USER.account_id,
                     sheet_id="01SH" + "E" * 22,
                     kind=HOSTED,
-                    config=HostedSource(signal="funding", listener_id="l1"),
+                    config=HostedSource(type="funding", listener_id="l1"),
                 )
             ]
         )
@@ -238,7 +269,7 @@ class FirstDueTests(TestCase):
         source = SignalSource(
             account_id=USER.account_id,
             sheet_id="01SH" + "F" * 22,
-            config=HostedSource(signal="funding", listener_id="l1"),
+            config=HostedSource(type="funding", listener_id="l1"),
         )
         source.save()
         self.assertEqual(SignalSourceGlobal.due(timezone.now() + datetime.timedelta(days=1), limit=8), [str(source.id)])
@@ -252,7 +283,7 @@ class CursorTests(TestCase):
         source = SignalSource(
             account_id=USER.account_id,
             sheet_id="01SH" + "G" * 22,
-            config=HostedSource(signal="funding", listener_id="l1"),
+            config=HostedSource(type="funding", listener_id="l1"),
             cursor=token,
         )
         source.save()
@@ -267,7 +298,7 @@ class FullCleanTests(TestCase):
             account_id=USER.account_id,
             sheet_id="01SH" + "D" * 22,
             kind=HOSTED,
-            config=HostedSource(signal="funding", listener_id="l1"),
+            config=HostedSource(type="funding", listener_id="l1"),
         )
         source.full_clean(exclude=["id"])
 
@@ -280,7 +311,7 @@ class HostedSourceTests(TestCase):
         install(self, self.signals, self.identity)
 
     def test_the_kind_column_is_the_config_s_own(self):
-        log = CreateLogOperation(self.session, label="Raises", signal="funding", filter={}).run()
+        log = CreateLogOperation(self.session, label="Raises", signal_type="funding", filter={}).run()
         source = SignalSource.objects.get(id=log.local_log.sources[0].id)
         self.assertEqual((source.kind, source.config.kind), (HOSTED, HOSTED))
         self.assertEqual(source.config.listener_id, log.listener.id)
@@ -288,7 +319,7 @@ class HostedSourceTests(TestCase):
     def test_a_page_read_twice_lands_once(self):
         # FAILS if a hosted row carries no external_id: a cursor that falls
         # behind (a copy, a lost write) would append the same matches again.
-        log = CreateLogOperation(self.session, label="Raises", signal="funding", filter={}).run()
+        log = CreateLogOperation(self.session, label="Raises", signal_type="funding", filter={}).run()
         source = log.local_log.sources[0]
         SignalSource.objects.filter(id=source.id).update(next_poll_at=_NOW)
         self.signals.matches[source.config.listener_id] = [match_body(1, company="Acme"), match_body(2, company="Beta")]

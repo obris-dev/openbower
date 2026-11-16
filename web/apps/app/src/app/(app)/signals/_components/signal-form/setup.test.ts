@@ -46,7 +46,7 @@ function saved(filter: Partial<Listener["version"]["filter"]>, prompt = "", minC
   return {
     id: "l1",
     label: "Seed raises",
-    signal: "funding",
+    type: "funding",
     user_id: "u1",
     status: "active",
     error: null,

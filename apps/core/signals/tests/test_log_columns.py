@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from openbower_schema import MatchWire
+from openbower_schema import CUSTOM_SIGNAL_TYPE, MatchWire
 from sheets.services.sheets import cells_for_storage
 from signals.log_columns import FUNDING_COLUMNS, LOG_SHAPES, funding_cells
 
@@ -97,3 +97,10 @@ class FundingCellsTests(SimpleTestCase):
         self.assertTrue(all(column.immutable for column in FUNDING_COLUMNS))
         self.assertEqual(len(FUNDING_COLUMNS), 12)
         self.assertEqual(LOG_SHAPES["funding"].columns, FUNDING_COLUMNS)
+
+
+class LogShapesTests(SimpleTestCase):
+    def test_no_log_shape_is_keyed_custom(self):
+        # FAILS if a hosted type is ever logged as custom: the create would
+        # route it to a custom signal instead.
+        self.assertNotIn(CUSTOM_SIGNAL_TYPE, LOG_SHAPES)

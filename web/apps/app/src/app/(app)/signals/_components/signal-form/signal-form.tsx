@@ -10,7 +10,7 @@ import {
   editSignal,
   webRoutes,
   type FundingStage,
-  type KnownSignal,
+  type KnownSignalType,
   type SignalDetail,
   type SignalsCatalog,
 } from "@bower/api";
@@ -97,7 +97,7 @@ export type SavedSignal = {
   id: string;
   label: string;
   rowCount: number;
-  signal: KnownSignal;
+  type: KnownSignalType;
   listener: Listener;
 };
 
@@ -120,9 +120,9 @@ export function SignalForm({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const { limits, signals } = catalog;
-  const [signal, setSignal] = useState<KnownSignal>(saved?.signal ?? signals[0]!.signal);
-  const kind = signals.find((each) => each.signal === signal) ?? signals[0]!;
+  const { limits, types } = catalog;
+  const [type, setType] = useState<KnownSignalType>(saved?.type ?? types[0]!.type);
+  const kind = types.find((each) => each.type === type) ?? types[0]!;
   // What Save compares against: the setup as last saved.
   const [baseline, setBaseline] = useState<SignalFormState | null>(() =>
     saved ? formFromSaved(saved.label, saved.listener) : null,
@@ -189,7 +189,7 @@ export function SignalForm({
     amountInvalid: gaps.amount !== null,
   });
   const preview = useEffectEvent(() => {
-    void test.runTest(signal, setup, limits.preview_max_events);
+    void test.runTest(type, setup, limits.preview_max_events);
   });
   useEffect(() => {
     if (autoKey === null) return;
@@ -209,7 +209,7 @@ export function SignalForm({
 
   function runTest() {
     if (blockOn(ATTEMPT.TEST)) return;
-    void test.runTest(signal, setup, limits.preview_max_events);
+    void test.runTest(type, setup, limits.preview_max_events);
   }
 
   async function create() {
@@ -217,7 +217,7 @@ export function SignalForm({
     setRefusal(null);
     setBusy(true);
     const label = nameOf(form);
-    const res = await createSignal({ label, signal, ...setup });
+    const res = await createSignal({ label, type, ...setup });
     setBusy(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
@@ -298,21 +298,21 @@ export function SignalForm({
           <Section title={WHICH_ROUNDS_TITLE}>
             {saved ? (
               <p className="text-sm text-muted">
-                {TYPE_LABEL}: <span className="text-foreground">{signalType(saved.signal)}</span>
+                {TYPE_LABEL}: <span className="text-foreground">{signalType(saved.type)}</span>
               </p>
             ) : (
-              signals.length > 1 && (
+              types.length > 1 && (
                 <div>
                   <Label htmlFor={TYPE_ID}>{TYPE_LABEL}</Label>
                   <Select
                     id={TYPE_ID}
-                    value={signal}
-                    onChange={(event) => setSignal(event.target.value as KnownSignal)}
+                    value={type}
+                    onChange={(event) => setType(event.target.value as KnownSignalType)}
                     className="mt-1"
                   >
-                    {signals.map((each) => (
-                      <option key={each.signal} value={each.signal}>
-                        {signalType(each.signal)}
+                    {types.map((each) => (
+                      <option key={each.type} value={each.type}>
+                        {signalType(each.type)}
                       </option>
                     ))}
                   </Select>

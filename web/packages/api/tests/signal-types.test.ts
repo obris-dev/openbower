@@ -1,4 +1,4 @@
-// Creating a signal: the catalog offers only the signals this bundle has a
+// Creating a signal: the catalog offers only the types this bundle has a
 // form for, a preview's status and outcomes read tolerantly (held to the
 // contract's own enums), and the create posts the setup whole.
 import { strict as assert } from "node:assert";
@@ -9,7 +9,7 @@ import { PreviewRowWireSchema, PreviewRunWireSchema } from "@bower/schema";
 import {
   PREVIEW_OUTCOME,
   PREVIEW_STATUS,
-  SIGNAL,
+  SIGNAL_TYPE,
   UNKNOWN_PREVIEW_OUTCOME,
   UNKNOWN_PREVIEW_STATUS,
   cancelSignalPreview,
@@ -18,7 +18,7 @@ import {
   fetchSignalEvents,
   fetchSignalsCatalog,
   fetchSignalPreview,
-  isKnownSignal,
+  isKnownSignalType,
   isPreviewOpen,
 } from "../src/index.ts";
 
@@ -27,7 +27,7 @@ const KIND = { filter: {}, event: {}, min_confidence_default: 0.8 };
 
 const EVENT = {
   id: "01JQ" + "E".repeat(22),
-  signal: "funding",
+  type: "funding",
   logged_at: "2026-11-12T12:00:00+00:00",
   data: {
     company: { name: "Acme", domain: "acme.example", hq: null, description: null },
@@ -44,7 +44,7 @@ const EVENT = {
 function preview(status: string, outcome: string) {
   return {
     id: "01JQ" + "P".repeat(22),
-    signal: "funding",
+    type: "funding",
     filter: { stages: null, min_amount: null, max_amount: null, currency: null },
     prompt: "",
     min_confidence: 0.8,
@@ -83,21 +83,21 @@ function silenceErrors(t: { after: (fn: () => void) => void }) {
   return reported;
 }
 
-test("the catalog offers the signals this bundle knows, and reports the rest once", async (t) => {
-  // FAILS if an unknown signal is offered: a form for it could not say
+test("the catalog offers the types this bundle knows, and reports the rest once", async (t) => {
+  // FAILS if an unknown type is offered: a form for it could not say
   // what it sends.
   const reported = silenceErrors(t);
-  stubFetch(t, { signals: [{ signal: "funding", ...KIND }, { signal: "hiring", ...KIND }], limits: LIMITS });
+  stubFetch(t, { types: [{ type: "funding", ...KIND }, { type: "hiring", ...KIND }], limits: LIMITS });
   const res = await fetchSignalsCatalog();
   assert.equal(res.status, "ok");
-  if (res.status === "ok") assert.deepEqual(res.data.signals.map((kind) => kind.signal), [SIGNAL.FUNDING]);
+  if (res.status === "ok") assert.deepEqual(res.data.types.map((kind) => kind.type), [SIGNAL_TYPE.FUNDING]);
   assert.equal(reported.length, 1);
   assert.match(String(reported[0]?.[0]), /hiring/);
 });
 
-test("a catalog of known signals reports nothing", async (t) => {
+test("a catalog of known types reports nothing", async (t) => {
   const reported = silenceErrors(t);
-  stubFetch(t, { signals: [{ signal: "funding", ...KIND }], limits: LIMITS });
+  stubFetch(t, { types: [{ type: "funding", ...KIND }], limits: LIMITS });
   const res = await fetchSignalsCatalog();
   assert.equal(res.status, "ok");
   assert.equal(reported.length, 0);
@@ -105,18 +105,18 @@ test("a catalog of known signals reports nothing", async (t) => {
 
 test("recent events ask for the limit given", async (t) => {
   const calls = stubFetch(t, { items: [EVENT], next_cursor: null });
-  const res = await fetchSignalEvents(SIGNAL.FUNDING, 20);
+  const res = await fetchSignalEvents(SIGNAL_TYPE.FUNDING, 20);
   assert.equal(res.status, "ok");
   assert.ok(calls[0]?.url.endsWith("/v1/signal-types/funding/events?limit=20"));
 });
 
 test("a preview posts the setup and the events chosen", async (t) => {
   const calls = stubFetch(t, preview("pending", "waiting"), 202);
-  const res = await createSignalPreview(SIGNAL.FUNDING, { filter: { stages: ["seed"] }, prompt: "B2B" }, [EVENT.id]);
+  const res = await createSignalPreview(SIGNAL_TYPE.FUNDING, { filter: { stages: ["seed"] }, prompt: "B2B" }, [EVENT.id]);
   assert.equal(res.status, "ok");
   assert.ok(calls[0]?.url.endsWith("/v1/signal-previews"));
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), {
-    signal: "funding",
+    type: "funding",
     filter: { stages: ["seed"] },
     prompt: "B2B",
     event_ids: [EVENT.id],
@@ -172,7 +172,7 @@ test("a failure, an error, a stage or an instrument the server adds never fails 
 
 test("an event page with a stage the server adds still reads", async (t) => {
   stubFetch(t, { items: [{ ...EVENT, data: { ...EVENT.data, stage: "series_z" } }], next_cursor: null });
-  const res = await fetchSignalEvents(SIGNAL.FUNDING, 20);
+  const res = await fetchSignalEvents(SIGNAL_TYPE.FUNDING, 20);
   assert.equal(res.status === "ok" && res.data.items[0]?.data.stage, null);
 });
 
@@ -220,7 +220,7 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
   const listener = {
     id: "01JQ" + "L".repeat(22),
     label: "Seed rounds",
-    signal: "funding",
+    type: "funding",
     user_id: "u1",
     status: "paused_for_review",
     error: { kind: "a_kind_added_later" },
@@ -235,19 +235,19 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
     created_at: "2026-11-12T12:00:00+00:00",
     updated_at: "2026-11-12T12:00:00+00:00",
   };
-  const detail = { sheet, listener, signal: "funding", status: "active", last_polled_at: null };
+  const detail = { sheet, listener, type: "funding", status: "active", last_polled_at: null };
   const calls = stubFetch(t, detail, 201);
-  const res = await createSignal({ label: "Seed rounds", signal: SIGNAL.FUNDING, filter: {} });
+  const res = await createSignal({ label: "Seed rounds", type: SIGNAL_TYPE.FUNDING, filter: {} });
   assert.equal(res.status === "ok" && res.data.sheet.id, sheet.id);
   assert.ok(calls[0]?.url.endsWith("/v1/signals"));
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), {
     label: "Seed rounds",
-    signal: "funding",
+    type: "funding",
     filter: {},
   });
 });
 
-test("a signal is known only when this bundle has its form", () => {
-  assert.equal(isKnownSignal(SIGNAL.FUNDING), true);
-  assert.equal(isKnownSignal("hiring"), false);
+test("a signal type is known only when this bundle has its form", () => {
+  assert.equal(isKnownSignalType(SIGNAL_TYPE.FUNDING), true);
+  assert.equal(isKnownSignalType("hiring"), false);
 });

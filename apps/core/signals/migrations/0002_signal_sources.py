@@ -27,7 +27,7 @@ def copy_feeds(apps, schema_editor):
                     account_id=feed.account_id,
                     sheet_id=feed.sheet_id,
                     kind="hosted",
-                    config={"kind": "hosted", "signal": feed.signal, "listener_id": feed.listener_id},
+                    config={"kind": "hosted", "type": feed.signal, "listener_id": feed.listener_id},
                     cursor=feed.cursor,
                     next_poll_at=feed.next_poll_at,
                     last_polled_at=feed.last_polled_at,

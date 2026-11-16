@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from common.testing import TEST_IDENTITY, login_session
+from openbower_schema import CUSTOM_SIGNAL_TYPE
 from sheets.constants import LABEL_MAX_LENGTH, MAX_SHEET_ROWS, SheetErrorCode, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.services.sheets import FolderService, SheetService
@@ -28,7 +29,7 @@ from signals.models import SignalSource, SignalsSyncKey
 from .fakes import FakeIdentity, FakeSignals, install
 from .test_client import _CATALOG, _EVENT, _EVENT_ID, _PREVIEW, _PREVIEW_ID
 
-_CREATE = {"label": "Robotics raises", "signal": "funding", "filter": {"stages": ["series_a"]}}
+_CREATE = {"label": "Robotics raises", "type": "funding", "filter": {"stages": ["series_a"]}}
 
 
 class LogRouteTests(TestCase):
@@ -54,10 +55,12 @@ class LogRouteTests(TestCase):
         # would say what feeds the signal twice, or not at all.
         self.assertEqual(
             created["sources"],
-            [{"kind": "hosted", "signal": "funding", "listener_id": created["listener"]["id"]}],
+            [{"kind": "hosted", "listener_id": created["listener"]["id"]}],
         )
         self.assertNotIn("listener_id", created)
         self.assertNotIn("signal", created)
+        self.assertEqual((created["type"], created["listener"]["type"]), ("funding", "funding"))
+        self.assertNotIn("signal", created["listener"])
         self.assertEqual(created["listener"]["label"], "Robotics raises")
 
         read = self.client.get(reverse("signals_detail", kwargs={"id": log_id}))
@@ -100,9 +103,7 @@ class LogRouteTests(TestCase):
             owner_id=TEST_IDENTITY["id"], label="A sheet", columns=[], origin=SheetOrigin.MANUAL
         )
         page = self.client.get(reverse("signals_index"), {"limit": "1"}).json()
-        self.assertEqual(
-            [(item["sheet"]["id"], item["sources"][0]["signal"]) for item in page["items"]], [(second, "funding")]
-        )
+        self.assertEqual([(item["sheet"]["id"], item["type"]) for item in page["items"]], [(second, "funding")])
         rest = self.client.get(reverse("signals_index"), {"limit": "1", "after": page["next_cursor"]}).json()
         self.assertEqual([item["sheet"]["id"] for item in rest["items"]], [first])
 
@@ -122,7 +123,7 @@ class LogRouteTests(TestCase):
         self.assertFalse(Sheet.objects.filter(kind=SheetKind.LOG).exists())
 
     def test_a_signal_with_no_log_columns_is_a_400(self):
-        resp = self._post(reverse("signals_index"), _CREATE | {"signal": "hiring"})
+        resp = self._post(reverse("signals_index"), _CREATE | {"type": "hiring"})
         self.assertEqual((resp.status_code, resp.json()["error"]), (400, SignalsErrorCode.UNKNOWN_SIGNAL))
 
     def test_an_outage_is_a_503(self):
@@ -346,7 +347,7 @@ class SignalsPassThroughTests(TestCase):
         self.signals.fixed = {("POST", "/v1/previews"): httpx.Response(409, json=running)}
         resp = self.client.post(
             reverse("signal_previews_index"),
-            {"signal": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
+            {"type": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 409)
@@ -361,6 +362,16 @@ class SignalsPassThroughTests(TestCase):
         self.assertGreater(_CATALOG["limits"]["label_max_length"], LABEL_MAX_LENGTH)
         self.assertEqual(resp.json()["limits"]["label_max_length"], LABEL_MAX_LENGTH)
 
+    def test_a_hosted_type_named_custom_is_never_offered(self):
+        # FAILS if it is: a create naming it would make a custom signal.
+        hosted = _CATALOG["signals"][0]
+        named_custom = {**hosted, "signal": CUSTOM_SIGNAL_TYPE}
+        catalog = {**_CATALOG, "signals": [hosted, named_custom]}
+        self.signals.fixed = {("GET", "/v1/signals"): httpx.Response(200, json=catalog)}
+        with self.assertLogs("signals.views", level="WARNING"):
+            resp = self.client.get(reverse("signal_types_index"))
+        self.assertEqual([kind["type"] for kind in resp.json()["types"]], ["funding"])
+
     def test_the_catalog_events_and_previews_reach_their_upstream_routes(self):
         self.signals.fixed = {
             ("GET", "/v1/signals"): httpx.Response(200, json=_CATALOG),
@@ -370,18 +381,24 @@ class SignalsPassThroughTests(TestCase):
             ("DELETE", f"/v1/previews/{_PREVIEW_ID}"): httpx.Response(200, json=_PREVIEW),
         }
         catalog = self.client.get(reverse("signal_types_index"))
-        events = self.client.get(reverse("signal_types_events", kwargs={"signal": "funding"}))
+        events = self.client.get(reverse("signal_types_events", kwargs={"signal_type": "funding"}))
         preview = self.client.post(
             reverse("signal_previews_index"),
-            {"signal": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
+            {"type": "funding", "filter": {}, "event_ids": [_EVENT_ID]},
             content_type="application/json",
         )
         polled = self.client.get(reverse("signal_previews_detail", kwargs={"id": _PREVIEW_ID}))
         canceled = self.client.delete(reverse("signal_previews_detail", kwargs={"id": _PREVIEW_ID}))
         statuses = [r.status_code for r in (catalog, events, preview, polled, canceled)]
         self.assertEqual(statuses, [200, 200, 202, 200, 200])
-        self.assertEqual(catalog.json()["signals"][0]["signal"], "funding")
+        # FAILS if a pass-through answers the service's key: the app's wire
+        # says type, whatever the signals service calls it.
+        self.assertEqual(catalog.json()["types"][0]["type"], "funding")
+        self.assertNotIn("signals", catalog.json())
         self.assertEqual(events.json()["items"][0]["id"], _EVENT_ID)
+        rows = (preview.json()["rows"][0]["event"], polled.json()["rows"][0]["event"])
+        for body in (catalog.json()["types"][0], events.json()["items"][0], preview.json(), polled.json(), *rows):
+            self.assertEqual((body["type"], "signal" in body), ("funding", False))
         sent = [(method, path) for method, path, _body in self.signals.calls]
         self.assertEqual(
             sent,
@@ -394,13 +411,43 @@ class SignalsPassThroughTests(TestCase):
             ],
         )
 
+    def test_an_unknown_type_is_refused_one_way_everywhere(self):
+        # FAILS if the create, a preview or a type's events answer an unknown
+        # type differently, or pass it to the signals service (whose refusal
+        # would speak its own words).
+        create = self.client.post(
+            reverse("signals_index"), {"type": "hiring", "label": "x", "filter": {}}, content_type="application/json"
+        )
+        preview = self.client.post(
+            reverse("signal_previews_index"),
+            {"type": "hiring", "filter": {}, "event_ids": [_EVENT_ID]},
+            content_type="application/json",
+        )
+        events = self.client.get(reverse("signal_types_events", kwargs={"signal_type": "hiring"}))
+        for resp in (create, preview, events):
+            self.assertEqual((resp.status_code, resp.json()["error"]), (400, SignalsErrorCode.UNKNOWN_SIGNAL))
+        self.assertEqual(self.signals.calls, [])
+
+    def test_a_preview_names_a_type_this_app_can_log(self):
+        # FAILS if an unknown type, or the released `signal` key, reaches the
+        # signals service: its refusal would speak the service's words.
+        for body, cause in (
+            ({"type": "hiring", "filter": {}, "event_ids": [_EVENT_ID]}, "it takes: funding"),
+            ({"signal": "funding", "filter": {}, "event_ids": [_EVENT_ID]}, "is `type`, not `signal`"),
+        ):
+            with self.subTest(cause=cause):
+                resp = self.client.post(reverse("signal_previews_index"), body, content_type="application/json")
+                self.assertEqual(resp.status_code, 400, resp.content)
+                self.assertIn(cause, str(resp.json()))
+        self.assertEqual(self.signals.calls, [])
+
     def test_a_preview_sends_its_setup_as_a_log_does(self):
         # FAILS if the preview passes its body through: a null threshold
         # would reach the service, where a log create leaves it out.
         self.signals.fixed = {("POST", "/v1/previews"): httpx.Response(202, json=_PREVIEW)}
         self.client.post(
             reverse("signal_previews_index"),
-            {"signal": "funding", "filter": {}, "min_confidence": None, "event_ids": [_EVENT_ID]},
+            {"type": "funding", "filter": {}, "min_confidence": None, "event_ids": [_EVENT_ID]},
             content_type="application/json",
         )
         [(_method, _path, sent)] = self.signals.calls

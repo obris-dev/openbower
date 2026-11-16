@@ -17,6 +17,7 @@ from django.test import TestCase
 
 from auth_client.constants import ApiKeyRefusalCode
 from auth_client.services.api_keys import ApiKeyRefused
+from openbower_schema import CUSTOM_SIGNAL_TYPE
 from sheets.constants import SheetKind
 from sheets.models import Sheet
 from signals.log_columns import FUNDING_COLUMNS
@@ -36,7 +37,7 @@ class LogOperationTests(TestCase):
         install(self, self.signals, self.identity)
 
     def _create(self, label: str = "Robotics raises", **over):
-        kwargs = {"label": label, "signal": "funding", "filter": {"stages": ["series_a"]}} | over
+        kwargs = {"label": label, "signal_type": "funding", "filter": {"stages": ["series_a"]}} | over
         return CreateLogOperation(self.session, **kwargs).run()
 
     def _signals_calls(self, method: str) -> list:
@@ -64,7 +65,7 @@ class LogOperationTests(TestCase):
         self.assertTrue(all(column.immutable for column in sheet.columns))
         source = SignalSource.objects.get(sheet_id=str(sheet.id))
         self.assertEqual(
-            (source.config.listener_id, source.config.signal, sheet.autofill), (log.listener.id, "funding", True)
+            (source.config.listener_id, source.config.type, sheet.autofill), (log.listener.id, "funding", True)
         )
         self.assertEqual(SignalsSyncKey.objects.get().token, "obw_live_1")
 
@@ -108,9 +109,11 @@ class LogOperationTests(TestCase):
         self.assertFalse(SignalSource.objects.exists())
 
     def test_a_signal_with_no_log_columns_is_refused(self):
-        with self.assertRaises(UnknownSignal):
-            self._create(signal="hiring")
+        with self.assertRaises(UnknownSignal) as refused:
+            self._create(signal_type="hiring")
         self.assertEqual(self.signals.calls, [])
+        # The refusal lists every type a create takes, custom included.
+        self.assertIn(f"it takes: funding, {CUSTOM_SIGNAL_TYPE}", str(refused.exception))
 
     def test_edit_sends_the_label_to_both_and_the_setup_to_the_listener(self):
         log = self._create()

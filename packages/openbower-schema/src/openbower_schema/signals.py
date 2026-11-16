@@ -7,19 +7,40 @@ contract (tools.schema_sync), as roots or nested in one; the rest only
 the client reads. The app's /v1/signal-types is the service's
 /v1/signals, passed through.
 
-The parts that differ by signal (an event's `data`, a setup's `filter`)
-are typed per signal type. Funding is the only type today: an event is
-picked by its `signal` field, and a filter is the funding filter. A
-second signal joins as its own models here; the shapes that carry a
-filter without a `signal` beside it (a listener's version) then need
-the service to name the signal on them.
+The service names a signal's type `signal` (`SERVICE_TYPE_KEY`); the
+app's wire names it `type`. Each model that carries it reads the
+service's key and writes the app's (`_SERVICE_TYPE`, under
+`_READS_SERVICE_KEYS`), so the client validates an upstream body
+unchanged and a view dumps it as the app's shape: there is one model per
+shape, not an upstream and an app copy. The catalog's list reads
+`signals` and writes `types` the same way.
+
+The parts that differ by type (an event's `data`, a setup's `filter`)
+are typed per type. Funding is the only type today: an event is picked by
+its `type`, and a filter is the funding filter. A second type joins as
+its own models here; the shapes that carry a filter without a type beside
+it (a listener's version) then need the service to name the type on them.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+# Keys the service names differently from the app's wire (a type is its
+# `signal`, the catalog's list its `signals`): read from either key (the
+# service's body, or the app's own when a test builds one), written as the
+# app's.
+_READS_SERVICE_KEYS = ConfigDict(validate_by_name=True, validate_by_alias=True)
+# The key the service names a signal's type under, read here and written by
+# the app's payloads to the service.
+SERVICE_TYPE_KEY = "signal"
+_SERVICE_TYPE = Field(
+    validation_alias=SERVICE_TYPE_KEY,
+    description="The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+)
+
 
 # The closed value sets, as the service defines them: codegen would emit
 # each as a zod enum, and an unknown value fails validation loudly rather
@@ -77,8 +98,8 @@ class FundingFilter(BaseModel):
     currency: str | None = None
 
 
-# One member per signal; a union discriminated on the parent's `signal`
-# once there are two.
+# One member per type; a union discriminated on the parent's `type` once
+# there are two.
 SignalFilter = FundingFilter
 
 
@@ -95,14 +116,16 @@ class FundingEventWire(BaseModel):
     """A funding event: its id is the same under every listener that matched
     it and in every preview that chose it."""
 
+    model_config = _READS_SERVICE_KEYS
+
     id: str
-    signal: Literal["funding"]
+    type: Annotated[Literal["funding"], _SERVICE_TYPE]
     data: FundingEvent
     logged_at: str
     source: EventSource
 
 
-# Discriminated on `signal` once a second signal joins.
+# Discriminated on `type` once a second type joins.
 SignalEventWire = FundingEventWire
 
 
@@ -110,9 +133,11 @@ class SignalKind(BaseModel):
     """One signal type a listener can follow. Its filter and event are given as
     JSON Schemas, so a form can be built from the catalog alone."""
 
-    # Any signal the service offers, known to this app's version or not: a
-    # signal added later lists here without failing the catalog.
-    signal: str
+    model_config = _READS_SERVICE_KEYS
+
+    # Any type the service offers, known to this app's version or not: a
+    # type added later lists here without failing the catalog.
+    type: Annotated[str, _SERVICE_TYPE, Field(description="The type's key, as listeners, events and previews name it.")]
     filter: dict[str, Any] = Field(description="JSON Schema of the signal's filter.")
     event: dict[str, Any] = Field(description="JSON Schema of the signal's event data.")
     min_confidence_default: float = Field(description="A new setup's judge threshold when it gives none.")
@@ -129,12 +154,14 @@ class SignalsCatalog(BaseModel):
     """The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):
     every signal type, and the limits a setup is held to."""
 
-    signals: list[SignalKind]
+    model_config = _READS_SERVICE_KEYS
+
+    types: list[SignalKind] = Field(validation_alias="signals")
     limits: SignalLimits
 
 
 class SignalEventsPage(BaseModel):
-    """The app's `GET /v1/signal-types/{signal}/events` (the service's
+    """The app's `GET /v1/signal-types/{type}/events` (the service's
     `GET /v1/signals/{signal}/events`): newest first, to choose from."""
 
     items: list[SignalEventWire]
@@ -164,9 +191,11 @@ class ListenerVersionWire(BaseModel):
 class ListenerWire(BaseModel):
     """A listener and its current setup."""
 
+    model_config = _READS_SERVICE_KEYS
+
     id: str
     label: str
-    signal: Literal["funding"]
+    type: Annotated[Literal["funding"], _SERVICE_TYPE]
     user_id: str = Field(description="Who created it.")
     status: ListenerStatus
     error: MatchErrorWire | None = Field(description="Why it is retrying or held; null when active.")
@@ -229,8 +258,10 @@ class PreviewRunWire(BaseModel):
     """A setup tried on chosen events. Complete at create when the filter
     decides every event; otherwise poll it while its rows land."""
 
+    model_config = _READS_SERVICE_KEYS
+
     id: str
-    signal: Literal["funding"]
+    type: Annotated[Literal["funding"], _SERVICE_TYPE]
     filter: SignalFilter
     prompt: str
     min_confidence: float

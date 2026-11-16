@@ -20,7 +20,7 @@ export default async function NewSignalPage() {
   return (
     <div className="p-6">
       <div className="mx-auto w-full max-w-6xl space-y-6 pb-28 pt-2">
-        {catalog.data.signals.length === 0 ? (
+        {catalog.data.types.length === 0 ? (
           <EmptyState title={NONE_OFFERED_TITLE} subtitle={NONE_OFFERED_SUBTITLE} />
         ) : (
           <SignalForm catalog={catalog.data} />

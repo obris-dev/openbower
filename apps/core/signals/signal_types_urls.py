@@ -4,5 +4,5 @@ from . import views
 
 urlpatterns = [
     api_path("", views.SignalTypesView.as_view(), name="signal_types_index"),
-    api_path("<str:signal>/events", views.SignalTypeEventsView.as_view(), name="signal_types_events"),
+    api_path("<str:signal_type>/events", views.SignalTypeEventsView.as_view(), name="signal_types_events"),
 ]

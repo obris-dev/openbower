@@ -80,7 +80,7 @@ export const apiRoutes = {
     // GET: every signal type, and the limits a setup is held to.
     index: `/${API_VERSION}/signal-types`,
     // GET: a type's recent events, newest first (?limit=).
-    events: (signal: string) => `/${API_VERSION}/signal-types/${encodeURIComponent(signal)}/events`,
+    events: (type: string) => `/${API_VERSION}/signal-types/${encodeURIComponent(type)}/events`,
   },
   signalPreviews: {
     // POST: a setup tried on chosen events; 202 + a preview to poll.
