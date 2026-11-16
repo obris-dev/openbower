@@ -390,7 +390,7 @@ class IngestMessageSizeTests(TestCase):
         self.assertLess(len(sent[0]), 2 * len(_ACCENTED) + 512)
         # The worker reads it back as sent.
         decoded = from_wire(json.loads(sent[0]))
-        self.assertEqual(decoded.rows[0]["note"], _ACCENTED)
+        self.assertEqual(decoded.rows[0].cells["note"], _ACCENTED)
 
     def test_a_push_too_big_for_one_message_is_a_413(self):
         with override_settings(INGEST_MAX_MESSAGE_BYTES=2048):
