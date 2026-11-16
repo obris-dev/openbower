@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 
-from sheets.constants import SheetOrigin
+from sheets.constants import RowSource, SheetOrigin
 from sheets.ingest import IngestEvent, IngestPublishError, from_wire, get_ingest_publisher, to_wire
 from sheets.ingest.consumer import IngestConsumer, handle_ingest_event
 from sheets.ingest.publisher import KafkaIngestPublisher, LoggingIngestPublisher
@@ -37,6 +37,7 @@ def _event(event_id="evt-1", account_id=_ACCT, rows=None, sheet_id=_SHEET) -> In
         user_id=_USER,
         rows=rows_without_external_ids(rows if rows is not None else [{"domain": "acme.com"}]),
         received_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
+        source=RowSource.PUSH,
     )
 
 

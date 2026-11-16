@@ -21,5 +21,7 @@ class SheetsConfig(AppConfig):
         # The services write one kind by name, so a roster without it
         # refuses HERE, at boot, where the roster is known.
         from .nodes.registry import validate_node_kinds
+        from .operations.append_rows import validate_appends_from
 
         validate_node_kinds()
+        validate_appends_from()

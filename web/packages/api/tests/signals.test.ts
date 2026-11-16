@@ -5,13 +5,19 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { ListenerWireSchema, SignalSummarySchema } from "@bower/schema";
+import { z } from "zod";
 
 import {
   LISTENER_STATUS,
   SIGNAL_STATUS,
+  SOURCE_KIND,
   UNKNOWN_LISTENER_STATUS,
   UNKNOWN_SIGNAL_STATUS,
+  UNKNOWN_SOURCE_KIND,
   deleteSignal,
+  hostedSource,
+  SIGNAL_FEED,
+  signalFeed,
   editSignal,
   fetchSignal,
   fetchSignalsPage,
@@ -32,11 +38,12 @@ const SHEET = {
   updated_at: "2026-11-12T12:00:00+00:00",
 };
 
+const HOSTED = { kind: "hosted", signal: "funding", listener_id: "01JQ" + "L".repeat(22) };
+
 function log(status: string) {
   return {
     sheet: SHEET,
-    listener_id: "01JQ" + "L".repeat(22),
-    signal: "funding",
+    sources: [HOSTED],
     status,
     last_polled_at: "2026-11-12T12:01:00+00:00",
   };
@@ -61,7 +68,7 @@ test("a page of signals parses, and the cursor rides ?after= encoded", async (t)
   assert.equal(res.status, "ok");
   assert.ok(calls[0]?.url.endsWith("/v1/signals?after=01JQ%2Fnext"));
   if (res.status === "ok") {
-    assert.equal(res.data.items[0]?.signal, "funding");
+    assert.equal(hostedSource(res.data.items[0]!)?.signal, "funding");
     assert.equal(res.data.items[0]?.sheet.kind, "log");
   }
 });
@@ -80,6 +87,50 @@ test("an unknown status reads as the client-only member, which claims nothing", 
   stubFetch(t, { items: [log("paused_for_review")], next_cursor: null });
   const res = await fetchSignalsPage();
   assert.equal(res.status === "ok" && res.data.items[0]?.status, UNKNOWN_SIGNAL_STATUS);
+});
+
+test("a hosted source reads with its own signal", async (t) => {
+  stubFetch(t, { items: [log("active")], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.deepEqual(res.data.items[0]?.sources, [{ kind: SOURCE_KIND.HOSTED, signal: "funding" }]);
+});
+
+test("a custom signal reads as its webhook, waiting until a push arrives", async (t) => {
+  const custom = { ...log("waiting"), sources: [{ kind: "webhook" }], last_polled_at: null };
+  stubFetch(t, { items: [custom], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    const item = res.data.items[0]!;
+    assert.deepEqual([item.sources, item.status, hostedSource(item)], [[{ kind: SOURCE_KIND.WEBHOOK }], SIGNAL_STATUS.WAITING, undefined]);
+  }
+});
+
+test("a source kind this bundle has not heard of claims nothing", async (t) => {
+  stubFetch(t, { items: [{ ...log("active"), sources: [{ kind: "carrier_pigeon", wings: 2 }] }], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.deepEqual(res.data.items[0]?.sources, [{ kind: UNKNOWN_SOURCE_KIND }]);
+});
+
+test("a hosted source missing its own facts fails the parse", async (t) => {
+  // FAILS if a malformed entry of a known kind reads as unknown: a broken
+  // server would read as a signal this bundle cannot name, not as broken.
+  stubFetch(t, { items: [{ ...log("active"), sources: [{ kind: "hosted" }] }], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.notEqual(res.status, "ok");
+});
+
+test("SOURCE_KIND names exactly the contract's kinds", () => {
+  // FAILS when the server adds or drops a kind: the web names it here first.
+  const raw: z.ZodType = SignalSummarySchema.shape.sources.element;
+  const element = raw instanceof z.ZodLazy ? raw.unwrap() : raw;
+  const members = (element instanceof z.ZodUnion ? element.options : [element]) as z.ZodObject<{
+    kind: z.ZodLiteral<string>;
+  }>[];
+  const kinds = new Set(members.map((member) => member.shape.kind.value));
+  assert.deepEqual(new Set(Object.values(SOURCE_KIND)), kinds);
 });
 
 test("SIGNAL_STATUS names exactly the contract's statuses", () => {
@@ -116,7 +167,7 @@ test("an edit PATCHes the signal with the body given, unknown stages and all", a
 });
 
 function detail(logStatus: string, listener: Record<string, unknown> | null) {
-  return { sheet: SHEET, listener, signal: "funding", status: logStatus, last_polled_at: null };
+  return { sheet: SHEET, sources: [HOSTED], listener, status: logStatus, last_polled_at: null };
 }
 
 function listener(status: string) {
@@ -150,6 +201,15 @@ test("one signal reads with its listener, and a gone listener reads as null", as
   assert.equal(gone.status === "ok" && gone.data.listener, null);
 });
 
+test("a custom signal reads with its webhook and no listener", async (t) => {
+  // The shape a custom signal's settings page receives.
+  stubFetch(t, { ...detail("waiting", null), sources: [{ kind: "webhook" }] });
+  const res = await fetchSignal(SHEET.id);
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual([res.data.sources, res.data.listener, signalFeed(res.data)], [[{ kind: "webhook" }], null, SIGNAL_FEED.CUSTOM]);
+});
+
 test("an unknown listener state, error kind or stage never fails the signal", async (t) => {
   // FAILS if any of the listener's server-owned sets is read strictly: the
   // signal's sheet would lose its status and banner on an added value.
@@ -178,4 +238,14 @@ test("reconnect posts to the account's reconnect and reads which key was left li
   assert.equal(calls[0]?.init.method, "POST");
   assert.ok(calls[0]?.url.endsWith("/v1/signals/reconnect"));
   assert.equal(res.status === "ok" && res.data.left_live_user_id, "u2");
+});
+
+test("a signal's feed is hosted, custom, or one this bundle cannot name", () => {
+  // FAILS if a signal with no hosted source reads as custom: a kind this
+  // bundle has not heard of would claim rows are pushed to it.
+  const of = (sources: { kind: string; signal?: string }[]) => signalFeed({ sources } as Parameters<typeof signalFeed>[0]);
+  assert.deepEqual(
+    [of([{ kind: "hosted", signal: "funding" }]), of([{ kind: "webhook" }]), of([{ kind: "unknown_kind" }])],
+    [SIGNAL_FEED.HOSTED, SIGNAL_FEED.CUSTOM, SIGNAL_FEED.UNKNOWN],
+  );
 });

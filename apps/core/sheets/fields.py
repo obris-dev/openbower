@@ -24,7 +24,11 @@ needs a hand-written data migration that nothing will prompt for.
 This is the field route for a contract value in a JSON column. Node
 config takes the service route (parsed by its kind's class through
 the registry) because its kind is a separate column and the roster is
-open; a closed union every reader touches belongs on the field. The
+open; a closed union every reader touches belongs on the field. A
+signal's source config takes the field route though its roster is open
+too: every read of a source wants it typed, and its kind rides inside
+the stored config, so the field parses it alone (the kind column beside
+it is written from the config by save()). The
 app's second contract column, the row cells, is where the parse/dump
 pair becomes a parametrized base here, and not before. It stays
 app-local: the kernel carries no pydantic dependency."""

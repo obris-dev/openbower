@@ -23,7 +23,7 @@ from sheets.constants import LABEL_MAX_LENGTH, MAX_SHEET_ROWS, SheetErrorCode, S
 from sheets.models import Sheet
 from sheets.services.sheets import FolderService, SheetService
 from signals.constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, LogStatus, SignalsConflictCode, SignalsErrorCode
-from signals.models import LogFeed, SignalsSyncKey
+from signals.models import SignalSource, SignalsSyncKey
 
 from .fakes import FakeIdentity, FakeSignals, install
 from .test_client import _CATALOG, _EVENT, _EVENT_ID, _PREVIEW, _PREVIEW_ID
@@ -49,9 +49,15 @@ class LogRouteTests(TestCase):
     def test_a_log_is_created_read_edited_and_deleted(self):
         created = self._create()
         log_id = created["sheet"]["id"]
+        self.assertEqual((created["sheet"]["kind"], created["sheet"]["autofill"]), ("log", True))
+        # FAILS if the hosted entry stops carrying its own facts: the wire
+        # would say what feeds the signal twice, or not at all.
         self.assertEqual(
-            (created["sheet"]["kind"], created["signal"], created["sheet"]["autofill"]), ("log", "funding", True)
+            created["sources"],
+            [{"kind": "hosted", "signal": "funding", "listener_id": created["listener"]["id"]}],
         )
+        self.assertNotIn("listener_id", created)
+        self.assertNotIn("signal", created)
         self.assertEqual(created["listener"]["label"], "Robotics raises")
 
         read = self.client.get(reverse("signals_detail", kwargs={"id": log_id}))
@@ -94,7 +100,9 @@ class LogRouteTests(TestCase):
             owner_id=TEST_IDENTITY["id"], label="A sheet", columns=[], origin=SheetOrigin.MANUAL
         )
         page = self.client.get(reverse("signals_index"), {"limit": "1"}).json()
-        self.assertEqual([(item["sheet"]["id"], item["signal"]) for item in page["items"]], [(second, "funding")])
+        self.assertEqual(
+            [(item["sheet"]["id"], item["sources"][0]["signal"]) for item in page["items"]], [(second, "funding")]
+        )
         rest = self.client.get(reverse("signals_index"), {"limit": "1", "after": page["next_cursor"]}).json()
         self.assertEqual([item["sheet"]["id"] for item in rest["items"]], [first])
 
@@ -245,7 +253,7 @@ class LogStatusTests(TestCase):
         SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
         Sheet.objects.filter(id=self.log_id).update(row_count=MAX_SHEET_ROWS)
         self.assertEqual(self._status(), LogStatus.RECONNECT)
-        LogFeed.objects.update(listener_gone_at="2026-11-12T00:00:00Z")
+        SignalSource.objects.update(gone_at="2026-11-12T00:00:00Z")
         self.assertEqual(self._status(), LogStatus.LISTENER_GONE)
 
     def test_a_gone_listener_still_opens_the_log(self):
@@ -255,14 +263,14 @@ class LogStatusTests(TestCase):
         opened = self.client.get(self.url)
         self.assertEqual(opened.status_code, 200)
         self.assertEqual((opened.json()["listener"], opened.json()["status"]), (None, LogStatus.LISTENER_GONE))
-        self.assertIsNotNone(LogFeed.objects.get(sheet_id=self.log_id).listener_gone_at)
+        self.assertIsNotNone(SignalSource.objects.get(sheet_id=self.log_id).gone_at)
         self.signals.calls.clear()
         again = self.client.get(self.url)
         self.assertEqual(again.json()["status"], LogStatus.LISTENER_GONE)
         self.assertEqual(self.signals.calls, [])
 
     def test_a_log_known_to_be_gone_is_refused_without_asking_the_service(self):
-        LogFeed.objects.update(listener_gone_at="2026-11-12T00:00:00Z")
+        SignalSource.objects.update(gone_at="2026-11-12T00:00:00Z")
         self.signals.calls.clear()
         refused = self.client.patch(self.url, {"label": "Renamed"}, content_type="application/json")
         self.assertEqual((refused.status_code, refused.json()["error"]), (409, SignalsErrorCode.LISTENER_GONE))
@@ -304,9 +312,9 @@ class ReconnectRouteTests(TestCase):
         # FAILS if the logs stay parked: a person who reconnects would wait
         # out the park before anything arrived.
         SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
-        LogFeed.objects.update(next_poll_at=timezone.now() + datetime.timedelta(hours=1))
+        SignalSource.objects.update(next_poll_at=timezone.now() + datetime.timedelta(hours=1))
         self.client.post(reverse("signals_reconnect"))
-        self.assertLessEqual(LogFeed.objects.get().next_poll_at, timezone.now())
+        self.assertLessEqual(SignalSource.objects.get().next_poll_at, timezone.now())
 
     def test_a_reconnect_at_the_key_limit_answers_in_the_apps_words(self):
         SignalsSyncKey.objects.update(rejected_at="2026-11-12T00:00:00Z")
@@ -406,6 +414,7 @@ class SignalPathsTests(SimpleTestCase):
         paths = {
             "/v1/signals": "signals_index",
             "/v1/signals/01X": "signals_detail",
+            "/v1/signals/01X/ingest": "signals_ingest",
             "/v1/signals/reconnect": "signals_reconnect",
             "/v1/signal-types": "signal_types_index",
             "/v1/signal-types/funding/events": "signal_types_events",

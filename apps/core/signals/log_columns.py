@@ -1,6 +1,6 @@
 """A log's base columns, per signal, and the cells a match fills them
 with. The columns are immutable plain columns (a person never edits what
-the signal brought); a log gets them at create, and its feed appends the
+the signal brought); a log gets them at create, and its hosted source appends the
 row `LOG_SHAPES[signal].cells(match)` gives for every match. Keyed by signal
 kind, so a second signal adds its own entry."""
 

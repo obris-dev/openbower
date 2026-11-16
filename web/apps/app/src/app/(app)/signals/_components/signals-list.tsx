@@ -4,13 +4,22 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
-import { deleteSignal, fetchSignalsPage, webRoutes, type SignalSummary } from "@bower/api";
+import {
+  SIGNAL_FEED,
+  deleteSignal,
+  fetchSignalsPage,
+  hostedSource,
+  signalFeed,
+  webRoutes,
+  type SignalSummary,
+} from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
 import { LinkButton } from "../../../_components/link-button";
 import {
   CREATE_ACTION,
+  CUSTOM_TYPE,
   DELETE_QUESTION,
   DELETED_TOAST,
   EMPTY_SUBTITLE,
@@ -154,7 +163,7 @@ export function SignalsList({
                     </Link>
                   </td>
                   <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">
-                    {signalType(signal.signal)}
+                    {signalTypeOf(signal)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5">
                     <SignalStatusPill status={signal.status} />
@@ -163,7 +172,8 @@ export function SignalsList({
                     {signal.sheet.row_count.toLocaleString("en-US")}
                   </td>
                   <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted md:table-cell">
-                    {signal.last_polled_at ? (
+                    {/* Only a hosted signal is read; a custom one is pushed to. */}
+                    {signalFeed(signal) !== SIGNAL_FEED.HOSTED ? null : signal.last_polled_at ? (
                       <LocalTime iso={signal.last_polled_at} format={TIME_FORMAT.MINUTE} />
                     ) : (
                       NOT_YET_READ
@@ -207,4 +217,10 @@ export function SignalsList({
       </ConfirmDialog>
     </>
   );
+}
+
+function signalTypeOf(signal: SignalSummary): string | null {
+  const hosted = hostedSource(signal);
+  if (hosted !== undefined) return signalType(hosted.signal);
+  return signalFeed(signal) === SIGNAL_FEED.CUSTOM ? CUSTOM_TYPE : null;
 }

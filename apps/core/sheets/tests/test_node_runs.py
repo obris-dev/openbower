@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from jobs.services import JobRunner
 from openbower_schema.sheets import AiColumn
+from sheets.constants import RowSource
 from sheets.rows import rows_without_external_ids
 
 from ..constants import CellSource, NodeRunStatus, StoredCellState
@@ -91,6 +92,7 @@ class AutofillHarness(TransactionTestCase):
             user_id=USER,
             rows=rows_without_external_ids(rows),
             received_at=datetime(2026, 9, 9, 12, 0, tzinfo=UTC),
+            source=RowSource.PUSH,
         )
         return handle_ingest_event(event)
 

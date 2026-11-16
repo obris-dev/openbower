@@ -8,7 +8,9 @@ Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_log_writes
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
+from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -20,7 +22,7 @@ from sheets.constants import CellErrorCode, FillErrorCode, IngestErrorCode, RowS
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun, Sheet
-from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendable
+from sheets.operations.append_rows import APPENDS_FROM, AppendRowsOperation, SheetNotAppendable, validate_appends_from
 from sheets.processors.base import queue_position
 from sheets.rows import rows_without_external_ids
 from sheets.services.node_runs import NodeRunFlow
@@ -49,7 +51,7 @@ class ImmutableColumnTests(TestCase):
             account_id=ACCOUNT,
             target_sheet=self.log,
             rows=rows_without_external_ids([{"company": "acme.example"}]),
-            source=RowSource.FEED,
+            source=RowSource.SIGNAL,
         ).run()
         self.row_id = str(report.created[0].id)
 
@@ -161,6 +163,7 @@ class LogAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=rows_without_external_ids([{"company": "acme.example"}]),
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(handle_ingest_event(event), "dropped")
 
@@ -169,7 +172,7 @@ class LogAppendTests(TestCase):
             account_id=ACCOUNT,
             target_sheet=self.log,
             rows=rows_without_external_ids([{"company": "acme.example"}]),
-            source=RowSource.FEED,
+            source=RowSource.SIGNAL,
         ).run()
         self.assertEqual(report.added, 1)
         self.assertEqual(report.queued, 1)
@@ -186,13 +189,21 @@ class LogAppendTests(TestCase):
             account_id=ACCOUNT,
             target_sheet=self.log,
             rows=rows_without_external_ids([{"company": "acme.example"}]),
-            source=RowSource.FEED,
+            source=RowSource.SIGNAL,
         ).run()
         self.assertEqual((report.added, report.queued), (1, 0))
         self.assertFalse(NodeRun.objects.filter(sheet_id=str(self.log.id)).exists())
 
-    def test_a_feed_appends_to_a_log_only(self):
-        # FAILS if the rule is one-sided: a feed's rows would land on a
+    def test_every_sheet_kind_declares_its_row_sources(self):
+        # FAILS if a kind can go undeclared: it would refuse every append,
+        # or (read as "anything") take a signal's rows it never asked for.
+        with patch.dict(APPENDS_FROM, {}, clear=False):
+            del APPENDS_FROM[SheetKind.LOG]
+            with self.assertRaisesMessage(ImproperlyConfigured, "log"):
+                validate_appends_from()
+
+    def test_a_signal_appends_to_a_log_only(self):
+        # FAILS if the rule is one-sided: a signal's rows would land on a
         # standard sheet that never asked for them.
         sheet = SheetService(account_id=ACCOUNT).create(
             owner_id=TEST_IDENTITY["id"], label="Sheet", columns=[], origin=SheetOrigin.MANUAL
@@ -202,9 +213,9 @@ class LogAppendTests(TestCase):
                 account_id=ACCOUNT,
                 target_sheet=sheet,
                 rows=rows_without_external_ids([{"company": "x.example"}]),
-                source=RowSource.FEED,
+                source=RowSource.SIGNAL,
             ).run()
-        self.assertIn("only a log takes rows from a feed", str(caught.exception))
+        self.assertIn("does not take rows from signal", str(caught.exception))
 
     def test_the_refusal_names_the_log(self):
         with self.assertRaises(SheetNotAppendable) as caught:
@@ -231,7 +242,7 @@ class LogQueueOrderTests(TestCase):
                 account_id=ACCOUNT,
                 target_sheet=log,
                 rows=rows_without_external_ids([{"company": n} for n in names]),
-                source=RowSource.FEED,
+                source=RowSource.SIGNAL,
             ).run()
             arrivals += [str(row.id) for row in report.created]
             time.sleep(0.003)
@@ -244,7 +255,7 @@ class LogQueueOrderTests(TestCase):
             account_id=ACCOUNT,
             target_sheet=log,
             rows=rows_without_external_ids([{"company": "acme.example"}]),
-            source=RowSource.FEED,
+            source=RowSource.SIGNAL,
         ).run()
         [row] = report.created
         self.assertEqual(queue_position(log, row), str(row.id))
