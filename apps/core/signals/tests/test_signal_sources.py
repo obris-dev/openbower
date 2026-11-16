@@ -292,9 +292,11 @@ class HostedSourceTests(TestCase):
         source = log.local_log.sources[0]
         SignalSource.objects.filter(id=source.id).update(next_poll_at=_NOW)
         self.signals.matches[source.config.listener_id] = [match_body(1, company="Acme"), match_body(2, company="Beta")]
-        first = PollLogOperation(source=SignalSource.objects.get(id=source.id), now=_NOW).run()
+        claimed = SignalSource.objects.get(id=source.id)
+        first = PollLogOperation(source=claimed, config=claimed.config, now=_NOW).run()
         SignalSource.objects.filter(id=source.id).update(cursor="")
-        again = PollLogOperation(source=SignalSource.objects.get(id=source.id), now=_NOW).run()
+        reclaimed = SignalSource.objects.get(id=source.id)
+        again = PollLogOperation(source=reclaimed, config=reclaimed.config, now=_NOW).run()
         self.assertEqual(
             (first.result, first.rows, again.result, again.rows), (PollResult.APPENDED, 2, PollResult.APPENDED, 0)
         )

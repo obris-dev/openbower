@@ -59,7 +59,7 @@ class DeleteDuringPollTests(TransactionTestCase):
         def poll() -> None:
             try:
                 fresh = SignalSource.objects.get(id=self.source.id)
-                outcome.append(PollLogOperation(source=fresh, now=_NOW).run())
+                outcome.append(PollLogOperation(source=fresh, config=fresh.config, now=_NOW).run())
             except BaseException as e:
                 errors.append(e)
             finally:

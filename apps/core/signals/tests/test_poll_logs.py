@@ -66,7 +66,7 @@ class _PollTests(TestCase):
 
     def _poll(self, source: SignalSource, now: datetime.datetime = _NOW):
         fresh = SignalSource.objects.get(id=source.id)
-        return PollLogOperation(source=fresh, now=now).run()
+        return PollLogOperation(source=fresh, config=fresh.config, now=now).run()
 
 
 class PollPageTests(_PollTests):
@@ -96,7 +96,7 @@ class PollPageTests(_PollTests):
         source = self._log()
         claimed = SignalSource.objects.get(id=source.id)
         with self.assertNumQueries(2):
-            outcome = PollLogOperation(source=claimed, now=_NOW).run()
+            outcome = PollLogOperation(source=claimed, config=claimed.config, now=_NOW).run()
         self.assertEqual(outcome.result, PollResult.CAUGHT_UP)
 
     def test_nothing_new_writes_nothing(self):
@@ -246,7 +246,7 @@ class PollFailureTests(_PollTests):
         self._matches(source, ["Acme"])
         stale = SignalSource.objects.get(id=source.id)
         DeleteLogOperation(self.session, source.sheet_id).run()
-        outcome = PollLogOperation(source=stale, now=_NOW).run()
+        outcome = PollLogOperation(source=stale, config=stale.config, now=_NOW).run()
         self.assertEqual((outcome.result, outcome.next_poll_at), (PollResult.DELETED, None))
 
 

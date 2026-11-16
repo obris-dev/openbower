@@ -83,10 +83,7 @@ class _LostRace(Exception):
 
 
 class PollLogOperation:
-    def __init__(self, *, source: SignalSource, now: datetime.datetime) -> None:
-        config = source.config
-        if not isinstance(config, HostedSource):
-            raise TypeError(f"source {source.id} is {config.kind}, not hosted")
+    def __init__(self, *, source: SignalSource, config: HostedSource, now: datetime.datetime) -> None:
         self.source = source
         self.config = config
         self.account_id = source.account_id

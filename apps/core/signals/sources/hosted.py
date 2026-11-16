@@ -50,7 +50,7 @@ class HostedSource(SourceConfig):
         # imports this module.
         from ..operations.poll_logs import PollLogOperation
 
-        operation = PollLogOperation(source=source, now=now)
+        operation = PollLogOperation(source=source, config=self, now=now)
         return operation.run()
 
 
