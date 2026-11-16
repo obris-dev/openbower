@@ -27,6 +27,7 @@ from .fills import (
 )
 from .logs import (
     CUSTOM_SIGNAL_TYPE,
+    CustomSignalCreated,
     HostedSourceSummary,
     SignalDetail,
     SignalsPage,
@@ -113,6 +114,7 @@ __all__ = [
     "CellRunResult",
     "ColumnFillSummary",
     "ColumnPromptWire",
+    "CustomSignalCreated",
     "EventSource",
     "FillCounters",
     "FillError",

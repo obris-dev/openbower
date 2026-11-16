@@ -1,10 +1,12 @@
 """`/v1/signals` (an account's signals: a sheet of kind log fed by its
-sources, and a custom signal's push at `/v1/signals/{id}/ingest`), and
-what the Create-signal screen reads: `/v1/signal-types` (the catalog and
-a type's recent events) and `/v1/signal-previews` (a setup tried before
-it is saved). Session-authed, but for the push, which an account API key
-may also make; every signals call acts as the person, and every failure
-answers through one mapping so a refusal reads the same everywhere."""
+sources; a custom signal's push at `/v1/signals/{id}/ingest`, its webhook
+URL at `/v1/signals/{id}/ingest/{token}` and that URL's rotate), and what
+the Create-signal screen reads: `/v1/signal-types` (the catalog and a
+type's recent events) and `/v1/signal-previews` (a setup tried before it
+is saved). Session-authed, but for the push, which an account API key may
+also make, and the webhook URL, whose token is its only credential; every
+signals call acts as a person, and every failure answers through one
+mapping so a refusal reads the same everywhere."""
 
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import datetime
 import logging
 from functools import cached_property
 
+from django.conf import settings
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotFound, PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -25,6 +28,7 @@ from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema import (
     CUSTOM_SIGNAL_TYPE,
+    CustomSignalCreated,
     SignalDetail,
     SignalsPage,
     SignalSummary,
@@ -36,19 +40,24 @@ from sheets.column_refusals import column_refusal_status
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE, IngestErrorCode, RowSource
 from sheets.ingest.accept import accept_push
 from sheets.ingest.refusals import PUSH_REFUSALS, push_refusal
+from sheets.models import Sheet
 from sheets.serializers import IngestRequest, ingest_schema_wire, sheet_summary
 from sheets.services.columns import ColumnRefused
 
+from .authentication import WebhookTokenAuthentication
 from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
 from .operations.logs import (
     CreateCustomSignalOperation,
     CreateLogOperation,
     DeleteLogOperation,
     EditLogOperation,
+    IssuedWebhook,
     ListenerGone,
     Log,
+    NoWebhook,
     ReadLogOperation,
     ReconnectLogsOperation,
+    RotateWebhookOperation,
     SetupOnCustomSignal,
     UnknownSignal,
     require_hosted_type,
@@ -95,6 +104,8 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalTakesNoPush):
         return _Relayed({"error": IngestErrorCode.NOT_APPENDABLE, "detail": str(exc)}, status=409)
+    if isinstance(exc, NoWebhook):
+        return _Relayed({"error": SignalsErrorCode.NO_WEBHOOK, "detail": str(exc)}, status=409)
     if isinstance(exc, SetupOnCustomSignal):
         return _Relayed({"error": SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL, "detail": str(exc)}, status=409)
     if isinstance(exc, ColumnRefused):
@@ -163,6 +174,43 @@ def _iso(at: datetime.datetime | None) -> str | None:
     return None if at is None else at.isoformat()
 
 
+def _webhook_url(sheet_id: str, token: str) -> str:
+    """The URL a sender is given. Spelled out: the routes' optional-slash
+    include reverses without the slash after the prefix."""
+    return f"{settings.BASE_URL}/{settings.API_VERSION_PREFIX}/signals/{sheet_id}/ingest/{token}"
+
+
+def _issued(issued: IssuedWebhook) -> CustomSignalCreated:
+    """The signal's detail and the one reading of its webhook URL."""
+    sheet_id = issued.log.local_log.sheet_id
+    url = _webhook_url(sheet_id, issued.token)
+    detail = _detail(issued.log)
+    fields = detail.model_dump()
+    return CustomSignalCreated(**fields, webhook_url=url)
+
+
+def _accept_push(sheet: Sheet, request: Request) -> Response:
+    """A push to a custom signal, by whichever lane let it in: the sheets
+    push envelope validated, accepted onto the bus as the request's user,
+    and answered with the receipt or the push's refusal. Every push route
+    calls this, so a step a push takes is taken on each."""
+    body = IngestRequest(data=request.data)
+    body.is_valid(raise_exception=True)
+    user = request.user
+    try:
+        accepted = accept_push(
+            sheet,
+            body.validated_data["rows"],
+            event_id=body.validated_data.get("event_id"),
+            account_id=user.account_id,
+            user_id=user.id,
+            source=RowSource.SIGNAL,
+        )
+    except PUSH_REFUSALS as e:
+        return push_refusal(e)
+    return Response(accepted.model_dump(), status=202)
+
+
 class _SignalsScopedView(ScopedView):
     """Every signals and identity failure answers through `_as_api_error`,
     so a refusal reads the same on every route."""
@@ -194,10 +242,10 @@ class SignalsView(_SignalsScopedView):
         fields = dict(body.validated_data)
         signal_type = fields.pop("type")
         if signal_type == CUSTOM_SIGNAL_TYPE:
-            operation = CreateCustomSignalOperation(request.auth, **fields)
-        else:
-            operation = CreateLogOperation(request.auth, signal_type=signal_type, **fields)
-        log = operation.run()
+            issued = CreateCustomSignalOperation(request.auth, **fields).run()
+            created = _issued(issued)
+            return Response(created.model_dump(), status=201)
+        log = CreateLogOperation(request.auth, signal_type=signal_type, **fields).run()
         detail = _detail(log)
         return Response(detail.model_dump(), status=201)
 
@@ -219,21 +267,36 @@ class SignalIngestView(_SignalsScopedView):
 
     def post(self, request: Request, id: str) -> Response:
         sheet = self.logs.push_target(id)
-        body = IngestRequest(data=request.data)
-        body.is_valid(raise_exception=True)
-        user = request.user
-        try:
-            accepted = accept_push(
-                sheet,
-                body.validated_data["rows"],
-                event_id=body.validated_data.get("event_id"),
-                account_id=user.account_id,
-                user_id=user.id,
-                source=RowSource.SIGNAL,
-            )
-        except PUSH_REFUSALS as e:
-            return push_refusal(e)
-        return Response(accepted.model_dump(), status=202)
+        return _accept_push(sheet, request)
+
+
+class SignalWebhookIngestView(_SignalsScopedView):
+    """POST /v1/signals/{id}/ingest/{token}: the webhook URL a sender is
+    given. The same envelope, answers and refusals as /ingest, with no
+    session and no API key: the token in the path is the credential
+    (WebhookTokenAuthentication), and the push is the signal's creator's.
+    Resolved in one read, so a push touches only the database and the bus."""
+
+    authentication_classes = [WebhookTokenAuthentication]
+
+    def get(self, request: Request, id: str, token: str) -> Response:
+        """The pushable row schema, as GET /ingest serves it."""
+        grant = request.auth
+        return Response(ingest_schema_wire(grant.sheet))
+
+    def post(self, request: Request, id: str, token: str) -> Response:
+        grant = request.auth
+        return _accept_push(grant.sheet, request)
+
+
+class SignalWebhookRotateView(_SignalsScopedView):
+    """POST /v1/signals/{id}/webhook/rotate: a new webhook URL for a custom
+    signal, shown once; the old one stops working at once."""
+
+    def post(self, request: Request, id: str) -> Response:
+        issued = RotateWebhookOperation(request.auth, id).run()
+        rotated = _issued(issued)
+        return Response(rotated.model_dump())
 
 
 class SignalsReconnectView(_SignalsScopedView):

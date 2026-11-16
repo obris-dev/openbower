@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 
 from auth_client.downstream import DownstreamTokenRejected
 from auth_client.models import AppSession
@@ -35,7 +35,9 @@ from ..services.signals_client import (
     setup_payload,
 )
 from ..services.sync_key import SyncKeyReplaced, SyncKeyService
+from ..services.webhook_tokens import WebhookTokenService
 from ..sources.hosted import HostedSource
+from ..sources.webhook import WebhookSource
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,15 @@ def require_hosted_type(signal_type: str) -> None:
     reaches the signals service, so a refusal is in the app's words."""
     if signal_type not in LOG_SHAPES:
         raise UnknownSignal(signal_type, hosted_types())
+
+
+class NoWebhook(Exception):
+    """A webhook rotate on a signal no webhook feeds: a hosted signal's rows
+    are its listener's, so it has no URL to replace."""
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("this signal has no webhook URL to rotate; only a custom signal does")
+        self.sheet_id = sheet_id
 
 
 class SetupOnCustomSignal(Exception):
@@ -84,10 +95,19 @@ class Log:
     listener: ListenerWire | None
 
 
+@dataclass(frozen=True)
+class IssuedWebhook:
+    """A custom signal with its webhook URL's token, the one time the token
+    is in hand: at the create and at each rotate."""
+
+    log: Log
+    token: str
+
+
 class _LogOperation:
     """What every log operation acts through: the person's session, the
-    log's local half, the account's sync key, and the signals client that
-    acts as them."""
+    log's local half, the account's sync key, the signals client that acts
+    as them, and a custom signal's webhook tokens."""
 
     session: AppSession
 
@@ -102,6 +122,10 @@ class _LogOperation:
     @cached_property
     def signals(self) -> SessionSignalsClient:
         return SignalsClientService.for_session(self.session)
+
+    @cached_property
+    def tokens(self) -> WebhookTokenService:
+        return WebhookTokenService(account_id=self.session.account_id)
 
 
 class CreateLogOperation(_LogOperation):
@@ -157,13 +181,35 @@ class CreateCustomSignalOperation(_LogOperation):
         self.columns = columns
         self.autofill = autofill
 
-    def run(self) -> Log:
-        """The sheet and its webhook source, in one transaction. No sync key
-        and no listener: nothing reads the signals service for it."""
-        local_log = self.logs.create_custom(
-            owner_id=self.session.user_id, label=self.label, columns=self.columns, autofill=self.autofill
-        )
-        return Log(local_log=local_log, listener=None)
+    def run(self) -> IssuedWebhook:
+        """The sheet, its webhook source and the first token of its URL, in
+        one transaction. No sync key and no listener: nothing reads the
+        signals service for it."""
+        with transaction.atomic():
+            local_log = self.logs.create_custom(
+                owner_id=self.session.user_id, label=self.label, columns=self.columns, autofill=self.autofill
+            )
+            source, _ = local_log.find(WebhookSource)
+            token = self.tokens.mint(source, user_id=self.session.user_id)
+        return IssuedWebhook(log=Log(local_log=local_log, listener=None), token=token)
+
+
+class RotateWebhookOperation(_LogOperation):
+    def __init__(self, session: AppSession, sheet_id: str) -> None:
+        self.session = session
+        self.sheet_id = sheet_id
+
+    def run(self) -> IssuedWebhook:
+        """A new token for a custom signal's webhook URL; the old URL stops
+        working at once. Raises NoWebhook for a signal no webhook
+        feeds."""
+        local_log = self.logs.get(self.sheet_id)
+        found = local_log.find(WebhookSource)
+        if found is None:
+            raise NoWebhook(self.sheet_id)
+        source, _ = found
+        token = self.tokens.mint(source, user_id=self.session.user_id)
+        return IssuedWebhook(log=Log(local_log=local_log, listener=None), token=token)
 
 
 class ReconnectLogsOperation(_LogOperation):

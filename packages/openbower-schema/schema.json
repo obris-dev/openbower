@@ -689,6 +689,92 @@
       "title": "ColumnPromptWire",
       "type": "object"
     },
+    "CustomSignalCreated": {
+      "description": "A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus the ONE time its webhook URL is on the wire. The\ntoken in it is stored only as a hash and never returned again; a lost\nURL is replaced by rotating, which stops the old one at once. The detail\nis extended rather than nested: a nested signal would be a `signal`\nkey, which the contract keeps for no field, and a reader of the detail\nreads this response unchanged.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
+          "title": "Last Polled At"
+        },
+        "listener": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full",
+            "waiting"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
+        },
+        "webhook_url": {
+          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({event_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
+          "title": "Webhook Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "type",
+        "sources",
+        "listener",
+        "status",
+        "last_polled_at",
+        "webhook_url"
+      ],
+      "title": "CustomSignalCreated",
+      "type": "object"
+    },
     "EventSource": {
       "description": "The article an event was read from.",
       "properties": {
