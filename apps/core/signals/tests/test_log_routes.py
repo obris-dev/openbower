@@ -1,7 +1,8 @@
-"""/v1/signals, /v1/signal-types and /v1/signal-previews through real cookie auth, with the signals and
-identity services as fakes at their httpx seams: a log's create, read,
-edit and delete; the refusals each relays; the pass-throughs; and the
-sheet doors refusing what would split a log from its listener.
+"""/v1/signals, /v1/signal-types and /v1/signal-previews through real
+cookie auth, with the signals and identity services as fakes at their
+httpx seams: a signal's create, read, edit and delete; the refusals each
+relays; the pass-throughs; and the sheet routes refusing what would split
+a log from its listener.
 
 Run: DJANGO_ENV=test uv run python manage.py test signals.tests.test_log_routes
 """
@@ -318,6 +319,9 @@ class ReconnectRouteTests(TestCase):
 
 
 class SignalsPassThroughTests(TestCase):
+    # The fakes' paths are the signals service's own: its /v1/signals is
+    # the catalog the app serves at /v1/signal-types.
+
     def setUp(self) -> None:
         login_session(self.client)
         self.signals = FakeSignals()

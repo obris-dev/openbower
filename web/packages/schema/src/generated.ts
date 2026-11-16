@@ -102,16 +102,16 @@ export type SheetRowWire = z.infer<typeof SheetRowWireSchema>;
 export const SheetRowsPageSchema = z.object({ "items": z.array(z.lazy(() => SheetRowWireSchema)), "next_cursor": z.union([z.string(), z.null()]).describe("An opaque cursor for the next page when more rows exist: hand it back as ?after= verbatim (it carries what the server needs to continue; nothing about it is for the client to read).").default(null) });
 export type SheetRowsPage = z.infer<typeof SheetRowsPageSchema>;
 
-export const SignalEventsPageSchema = z.object({ "items": z.array(z.lazy(() => FundingEventWireSchema)), "next_cursor": z.union([z.string(), z.null()]) }).describe("`GET /v1/signal-types/{signal}/events`: newest first, to choose from.");
+export const SignalEventsPageSchema = z.object({ "items": z.array(z.lazy(() => FundingEventWireSchema)), "next_cursor": z.union([z.string(), z.null()]) }).describe("The app's `GET /v1/signal-types/{signal}/events` (the service's\n`GET /v1/signals/{signal}/events`): newest first, to choose from.");
 export type SignalEventsPage = z.infer<typeof SignalEventsPageSchema>;
 
-export const SignalKindSchema = z.object({ "event": z.record(z.string(), z.any()).describe("JSON Schema of the signal's event data."), "filter": z.record(z.string(), z.any()).describe("JSON Schema of the signal's filter."), "min_confidence_default": z.number().describe("A new setup's judge threshold when it gives none."), "signal": z.string() }).describe("One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.");
+export const SignalKindSchema = z.object({ "event": z.record(z.string(), z.any()).describe("JSON Schema of the signal's event data."), "filter": z.record(z.string(), z.any()).describe("JSON Schema of the signal's filter."), "min_confidence_default": z.number().describe("A new setup's judge threshold when it gives none."), "signal": z.string() }).describe("One signal type a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.");
 export type SignalKind = z.infer<typeof SignalKindSchema>;
 
 export const SignalLimitsSchema = z.object({ "label_max_length": z.number().int(), "max_listeners": z.number().int().describe("Listeners an account may have."), "preview_max_events": z.number().int().describe("Events one preview may be tried on."), "prompt_max_length": z.number().int() });
 export type SignalLimits = z.infer<typeof SignalLimitsSchema>;
 
-export const SignalsCatalogSchema = z.object({ "limits": z.lazy(() => SignalLimitsSchema), "signals": z.array(z.lazy(() => SignalKindSchema)) }).describe("`GET /v1/signal-types`: every signal type, and the limits a setup is held to.");
+export const SignalsCatalogSchema = z.object({ "limits": z.lazy(() => SignalLimitsSchema), "signals": z.array(z.lazy(() => SignalKindSchema)) }).describe("The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):\nevery signal type, and the limits a setup is held to.");
 export type SignalsCatalog = z.infer<typeof SignalsCatalogSchema>;
 
 export const SyncKeyReconnectedSchema = z.object({ "left_live_key_id": z.string().describe("The replaced key while it is still live (another member minted it, or its revoke failed)."), "left_live_user_id": z.string().describe("Who minted the key left live; empty when none was.") }).describe("`POST /v1/signals/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.");

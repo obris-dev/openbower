@@ -1,6 +1,6 @@
-// Creating a signal: the catalog of signals a person can follow, a
-// signal's recent events, and previews (a setup tried on events before it
-// is saved), passed through to the signals service.
+// Creating a signal: the catalog of signal types a person can follow, a
+// type's recent events, and previews (a setup tried on events before it is
+// saved), passed through to the signals service.
 
 import {
   FundingEventSchema,

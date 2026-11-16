@@ -2170,7 +2170,7 @@
       "type": "object"
     },
     "SignalEventsPage": {
-      "description": "`GET /v1/signal-types/{signal}/events`: newest first, to choose from.",
+      "description": "The app's `GET /v1/signal-types/{signal}/events` (the service's\n`GET /v1/signals/{signal}/events`): newest first, to choose from.",
       "properties": {
         "items": {
           "items": {
@@ -2199,7 +2199,7 @@
       "type": "object"
     },
     "SignalKind": {
-      "description": "One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
+      "description": "One signal type a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
       "properties": {
         "event": {
           "additionalProperties": true,
@@ -2313,7 +2313,7 @@
       "type": "object"
     },
     "SignalsCatalog": {
-      "description": "`GET /v1/signal-types`: every signal type, and the limits a setup is held to.",
+      "description": "The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):\nevery signal type, and the limits a setup is held to.",
       "properties": {
         "limits": {
           "$ref": "#/$defs/SignalLimits"

@@ -17,8 +17,8 @@ class SignalsConflictCode(StrEnum):
     ALREADY_RUNNING = "already_running"  # the account has a preview open
 
 
-# The app's own codes on the {error, detail} envelope its logs and signals
-# routes answer with; the signals service's own 400/404/409 codes pass
+# The app's own codes on the {error, detail} envelope its /v1/signals,
+# /v1/signal-types and /v1/signal-previews routes answer with; the signals service's own 400/404/409 codes pass
 # through untouched beside them.
 class SignalsErrorCode(StrEnum):
     SIGNALS_UNAVAILABLE = "signals_unavailable"  # 503: the service is down or answered nonsense

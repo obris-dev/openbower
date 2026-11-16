@@ -1,6 +1,6 @@
-// Signals: a listener on the signals service and the sheet it fills, which
-// the API calls a log. The client names outcomes as a result union; the
-// caller decides what each means for the UI.
+// Signals: a listener on the signals service and the sheet it fills (the
+// code calls the sheet a log). The client names outcomes as a result union;
+// the caller decides what each means for the UI.
 
 import {
   ListenerVersionWireSchema,

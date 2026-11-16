@@ -2,11 +2,13 @@
 
 The app's signals client validates every upstream body against these
 before anything downstream reads it. The ones the app's /v1/signals,
-/v1/signal-types and /v1/signal-previews routes answer with are in the contract (tools.schema_sync),
-as roots or nested in one; the rest only the client reads.
+/v1/signal-types and /v1/signal-previews routes answer with are in the
+contract (tools.schema_sync), as roots or nested in one; the rest only
+the client reads. The app's /v1/signal-types is the service's
+/v1/signals, passed through.
 
 The parts that differ by signal (an event's `data`, a setup's `filter`)
-are typed per signal. Funding is the only signal today: an event is
+are typed per signal type. Funding is the only type today: an event is
 picked by its `signal` field, and a filter is the funding filter. A
 second signal joins as its own models here; the shapes that carry a
 filter without a `signal` beside it (a listener's version) then need
@@ -105,7 +107,7 @@ SignalEventWire = FundingEventWire
 
 
 class SignalKind(BaseModel):
-    """One signal a listener can follow. Its filter and event are given as
+    """One signal type a listener can follow. Its filter and event are given as
     JSON Schemas, so a form can be built from the catalog alone."""
 
     # Any signal the service offers, known to this app's version or not: a
@@ -124,14 +126,16 @@ class SignalLimits(BaseModel):
 
 
 class SignalsCatalog(BaseModel):
-    """`GET /v1/signal-types`: every signal type, and the limits a setup is held to."""
+    """The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):
+    every signal type, and the limits a setup is held to."""
 
     signals: list[SignalKind]
     limits: SignalLimits
 
 
 class SignalEventsPage(BaseModel):
-    """`GET /v1/signal-types/{signal}/events`: newest first, to choose from."""
+    """The app's `GET /v1/signal-types/{signal}/events` (the service's
+    `GET /v1/signals/{signal}/events`): newest first, to choose from."""
 
     items: list[SignalEventWire]
     next_cursor: str | None
