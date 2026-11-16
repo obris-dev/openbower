@@ -28,6 +28,7 @@ class SignalsErrorCode(StrEnum):
     LISTENER_GONE = "listener_gone"  # 409: the log's listener no longer exists; delete the log
     SETUP_ON_CUSTOM_SIGNAL = "setup_on_custom_signal"  # 409: a listener setup sent to a signal with no listener
     NO_WEBHOOK = "no_webhook"  # 409: a webhook read or rotate on a signal no webhook feeds (a hosted one)
+    HOSTED_NEEDS_SESSION = "hosted_needs_session"  # 400: a hosted signal created with an API key
     WEBHOOK_UNREADABLE = "webhook_unreadable"  # 409: the URL no longer decrypts (key changed); rotate it
 
 

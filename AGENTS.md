@@ -102,8 +102,9 @@ live in a separate private repo.
   cursor, read with the account's sync key, appended and the cursor moved
   by compare-and-set in ONE transaction, sheet first and source second
   (the order a delete takes), so a page lands once.
-  A CUSTOM signal is a log whose one source is a WEBHOOK: created with
-  the columns a person declares (each immutable, its values arriving with
+  A CUSTOM signal is a log whose one source is a WEBHOOK: created, by a
+  signed-in person or an API key (a sender provisioning its own; a hosted
+  signal's create needs a person's session), with the columns declared (each immutable, its values arriving with
   its rows), touching the signals service at no step, never polled, and
   filled by pushes to `POST /v1/signals/{id}/ingest` (its `GET` the
   pushable row schema), with an API key or a session, or to its WEBHOOK
