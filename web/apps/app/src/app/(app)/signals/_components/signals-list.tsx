@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
 import {
+  CUSTOM_SIGNAL_TYPE,
   SIGNAL_FEED,
   deleteSignal,
   fetchSignalsPage,
-  hostedSource,
   signalFeed,
   webRoutes,
   type SignalSummary,
@@ -19,7 +19,7 @@ import { ConfirmDelete } from "../../_components/confirm-delete";
 import { LinkButton } from "../../../_components/link-button";
 import {
   CREATE_ACTION,
-  CUSTOM_TYPE,
+  CUSTOM_TYPE_LABEL,
   DELETE_QUESTION,
   DELETED_TOAST,
   EMPTY_SUBTITLE,
@@ -219,8 +219,6 @@ export function SignalsList({
   );
 }
 
-function signalTypeOf(signal: SignalSummary): string | null {
-  const hosted = hostedSource(signal);
-  if (hosted !== undefined) return signalType(hosted.signal);
-  return signalFeed(signal) === SIGNAL_FEED.CUSTOM ? CUSTOM_TYPE : null;
+function signalTypeOf(signal: SignalSummary): string {
+  return signal.type === CUSTOM_SIGNAL_TYPE ? CUSTOM_TYPE_LABEL : signalType(signal.type);
 }

@@ -21,15 +21,18 @@ if TYPE_CHECKING:
 
 
 class HostedSource(SourceConfig):
-    """The listener whose matches become the log's rows, and the signal it
-    follows, as the catalog names it (what chose the sheet's base columns
-    and reads each match into a row)."""
+    """The listener whose matches become the log's rows, and the type its
+    listener follows, as the catalog names it (what chose the sheet's base
+    columns and reads each match into a row)."""
 
     KIND: ClassVar[str] = HOSTED
     POLLED: ClassVar[bool] = True
 
-    signal: str
+    type: str
     listener_id: str
+
+    def signal_type(self) -> str:
+        return self.type
 
     def status(self, source: SignalSource, context: StatusContext) -> LogStatus | None:
         if source.gone_at is not None:
@@ -39,7 +42,7 @@ class HostedSource(SourceConfig):
         return None
 
     def summary(self, source: SignalSource) -> HostedSourceSummary:
-        return HostedSourceSummary(kind=self.KIND, signal=self.signal, listener_id=self.listener_id)
+        return HostedSourceSummary(kind=self.KIND, listener_id=self.listener_id)
 
     def tear_down(self, signals: SessionSignalsClient) -> None:
         # The client counts a listener already gone as deleted.

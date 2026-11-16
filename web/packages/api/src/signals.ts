@@ -11,6 +11,7 @@ import {
   SignalSummarySchema,
   SignalsPageSchema,
   SyncKeyReconnectedSchema,
+  WIRE_CONSTANTS,
   type SignalSummary as WireSignalSummary,
   type SyncKeyReconnected,
 } from "@bower/schema";
@@ -21,7 +22,7 @@ import { apiRoutes } from "./routes.ts";
 import {
   TolerantFundingFilterSchema,
   TolerantMatchErrorSchema,
-  type KnownSignal,
+  type KnownSignalType,
   type SignalSetup,
 } from "./signal-types.ts";
 import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
@@ -53,12 +54,12 @@ const TolerantSignalStatusSchema = z
  * own kind's facts (hosted: a signal's listener, which the app reads;
  * webhook: a custom signal's endpoint, which a sender pushes rows to). A
  * kind this bundle has not heard of reads as a client-only member that
- * claims nothing; a known kind that arrives malformed fails the parse. */
+ * claims nothing; a known kind is read by its kind alone. */
 export const SOURCE_KIND = { HOSTED: "hosted", WEBHOOK: "webhook" } as const;
 export const UNKNOWN_SOURCE_KIND = "unknown_kind" as const;
 // What the client reads of each kind; the rest is left unread, so a fact
 // the server adds to a kind never fails a parse.
-const HostedSourceSchema = HostedSourceSummarySchema.pick({ kind: true, signal: true });
+const HostedSourceSchema = HostedSourceSummarySchema.pick({ kind: true });
 const WebhookSourceSchema = WebhookSourceSummarySchema.pick({ kind: true });
 export type HostedSource = z.output<typeof HostedSourceSchema>;
 export type WebhookSource = z.output<typeof WebhookSourceSchema>;
@@ -71,6 +72,9 @@ const UnknownSourceSchema = z
   .looseObject({ kind: z.string().refine((kind) => !KNOWN_SOURCE_KINDS.has(kind)) })
   .transform((): SourceSummary => ({ kind: UNKNOWN_SOURCE_KIND }));
 const TolerantSourceSchema = z.union([HostedSourceSchema, WebhookSourceSchema, UnknownSourceSchema]);
+
+/** What a signal is, besides a hosted type: one a sender pushes rows to. */
+export const CUSTOM_SIGNAL_TYPE = WIRE_CONSTANTS.CUSTOM_SIGNAL_TYPE;
 
 /** The signal's hosted source, if a hosted signal feeds it. */
 export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | undefined {
@@ -114,8 +118,8 @@ export type ListenerStatus = (typeof LISTENER_STATUS)[keyof typeof LISTENER_STAT
 const KNOWN_LISTENER_STATUSES = new Set<string>(ListenerWireSchema.shape.status.options);
 
 const TolerantListenerSchema = ListenerWireSchema.extend({
-  // The signal it follows, as the catalog names it: any, as on the log.
-  signal: z.string(),
+  // The type it follows, as the catalog names it: any, as on the signal.
+  type: z.string(),
   status: z
     .string()
     .transform((status): ListenerStatus =>
@@ -153,7 +157,7 @@ export async function fetchSignalsPage(after?: string) {
  * it fills (201), whose arriving rows fill its AI columns. The account's
  * first signal mints its sync key. */
 export async function createSignal(
-  body: { label: string; signal: KnownSignal } & SignalSetup,
+  body: { label: string; type: KnownSignalType } & SignalSetup,
 ): Promise<ApiResult<CreatedSignal>> {
   return http.post(apiRoutes.signals.index, CreatedSignalSchema, body);
 }

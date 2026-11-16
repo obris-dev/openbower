@@ -93,6 +93,27 @@ class LocalLog:
         return None
 
 
+class SourcesDisagreeOnType(Exception):
+    """A signal whose sources name no type, or more than one: a broken
+    invariant, said loudly."""
+
+    def __init__(self, sheet_id: str, named: list[str]) -> None:
+        super().__init__(f"log {sheet_id}: its sources name {named!r} as its type")
+        self.sheet_id = sheet_id
+        self.named = named
+
+
+def signal_type_of(local_log: LocalLog) -> str:
+    """What a signal is, as every one of its sources says
+    (SourceConfig.signal_type). No field of its own."""
+    named = {source.config.signal_type() for source in local_log.sources}
+    if len(named) != 1:
+        listed = sorted(named)
+        raise SourcesDisagreeOnType(local_log.sheet_id, listed)
+    (only,) = named
+    return only
+
+
 def _free(now: datetime.datetime) -> models.Q:
     return models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
 
@@ -271,10 +292,10 @@ class LogService:
         sources = self._sources(sheet_ids)
         return [self._local(sheet, sources[str(sheet.id)]) for sheet in sheets]
 
-    def create(self, *, owner_id: str, label: str, signal: str, listener_id: str, autofill: bool) -> LocalLog:
-        """A hosted signal's log: its sheet, with the signal's base columns,
+    def create(self, *, owner_id: str, label: str, signal_type: str, listener_id: str, autofill: bool) -> LocalLog:
+        """A hosted signal's log: its sheet, with its type's base columns,
         and its hosted source."""
-        shape = LOG_SHAPES[signal]
+        shape = LOG_SHAPES[signal_type]
         with transaction.atomic():
             sheet = self.sheets.create(
                 owner_id=owner_id,
@@ -287,7 +308,7 @@ class LogService:
             source = SignalSource(
                 account_id=self.account_id,
                 sheet_id=str(sheet.id),
-                config=HostedSource(signal=signal, listener_id=listener_id),
+                config=HostedSource(type=signal_type, listener_id=listener_id),
             )
             source.save()
         return self._local(sheet, (source,))

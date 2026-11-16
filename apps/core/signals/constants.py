@@ -23,7 +23,7 @@ class SignalsConflictCode(StrEnum):
 # through untouched beside them.
 class SignalsErrorCode(StrEnum):
     SIGNALS_UNAVAILABLE = "signals_unavailable"  # 503: the service is down or answered nonsense
-    UNKNOWN_SIGNAL = "unknown_signal"  # 400: a signal this app cannot log
+    UNKNOWN_SIGNAL = "unknown_signal"  # 400: a signal type this app cannot log
     KEY_LIMIT_REACHED = "key_limit_reached"  # 409: the sync key would exceed the person's key limit
     LISTENER_GONE = "listener_gone"  # 409: the log's listener no longer exists; delete the log
     SETUP_ON_CUSTOM_SIGNAL = "setup_on_custom_signal"  # 409: a listener setup sent to a signal with no listener

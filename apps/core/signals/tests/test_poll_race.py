@@ -37,7 +37,7 @@ class DeleteDuringPollTests(TransactionTestCase):
         self.signals = FakeSignals()
         install(self, self.signals, FakeIdentity())
         session = session_for()
-        log = CreateLogOperation(session, label="Seed raises", signal="funding", filter={}).run()
+        log = CreateLogOperation(session, label="Seed raises", signal_type="funding", filter={}).run()
         self.source = SignalSource.objects.get(id=log.local_log.sources[0].id)
         self.signals.matches[self.source.config.listener_id] = [match_body(1, company="Acme")]
 

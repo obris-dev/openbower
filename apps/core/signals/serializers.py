@@ -4,17 +4,24 @@ when there are any; the service validates what a setup may say."""
 
 from __future__ import annotations
 
-from rest_framework import serializers
+from collections.abc import Mapping
+from typing import Any
 
+from rest_framework import serializers
+from rest_framework.settings import api_settings
+
+from openbower_schema import CUSTOM_SIGNAL_TYPE
 from sheets.constants import COLUMN_LABEL_MAX_LENGTH, LABEL_MAX_LENGTH, MAX_SHEET_COLUMNS, ColumnType
 
 from .services.logs import DeclaredColumn
-from .sources.registry import HOSTED, WEBHOOK
 
-# What each kind's create takes beyond the label and autofill: a hosted
-# signal's listener setup, or a custom signal's declared columns.
-_HOSTED_FIELDS = frozenset({"signal", "filter", "prompt", "min_confidence"})
-_WEBHOOK_FIELDS = frozenset({"columns"})
+# What each type's create takes beyond its type, label and autofill: a
+# hosted signal's listener setup, or a custom signal's declared columns.
+_HOSTED_FIELDS = frozenset({"filter", "prompt", "min_confidence"})
+_CUSTOM_FIELDS = frozenset({"columns"})
+# The key a released client sends a signal's type under (v0.0.11 and
+# before), refused by name rather than read as a body with no type.
+_RETIRED_TYPE_KEY = "signal"
 
 
 class LogColumnRequest(serializers.Serializer):
@@ -22,13 +29,27 @@ class LogColumnRequest(serializers.Serializer):
     type = serializers.ChoiceField(choices=[column_type.value for column_type in ColumnType])
 
 
-class LogCreateRequest(serializers.Serializer):
-    """A hosted signal ({signal, filter, ...}) or a custom signal ({source:
-    webhook, columns}); each refuses the other's fields by name."""
+class _SignalTypeRequest(serializers.Serializer):
+    """A body that names a signal's type as `type`, refusing the key a
+    released client sends it under by name."""
 
-    source = serializers.ChoiceField(choices=[HOSTED, WEBHOOK], default=HOSTED)
+    type = serializers.CharField()
+
+    def to_internal_value(self, data: Any) -> dict:
+        # Before the fields: a body naming the old key has no `type`, and
+        # "type is required" would hide which key to rename.
+        if isinstance(data, Mapping) and _RETIRED_TYPE_KEY in data:
+            detail = f"a signal's type is `type`, not `{_RETIRED_TYPE_KEY}`"
+            raise serializers.ValidationError({api_settings.NON_FIELD_ERRORS_KEY: [detail]})
+        return super().to_internal_value(data)
+
+
+class LogCreateRequest(_SignalTypeRequest):
+    """A hosted signal ({type: a hosted type, filter, ...}) or a custom
+    signal ({type: custom, columns}); each refuses the other's fields by
+    name."""
+
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH)
-    signal = serializers.CharField(required=False)
     filter = serializers.DictField(required=False)
     prompt = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     min_confidence = serializers.FloatField(required=False, allow_null=True)
@@ -36,16 +57,17 @@ class LogCreateRequest(serializers.Serializer):
     autofill = serializers.BooleanField(required=False, default=True)
 
     def validate(self, attrs: dict) -> dict:
-        custom = attrs["source"] == WEBHOOK
-        others = _HOSTED_FIELDS if custom else _WEBHOOK_FIELDS
         sent = set(self.initial_data)
+        signal_type = attrs["type"]
+        custom = signal_type == CUSTOM_SIGNAL_TYPE
+        others = _HOSTED_FIELDS if custom else _CUSTOM_FIELDS
         foreign = sorted(others & sent)
         if foreign:
-            raise serializers.ValidationError(f"a {attrs['source']} signal takes no {', '.join(foreign)}")
+            raise serializers.ValidationError(f"a {signal_type} signal takes no {', '.join(foreign)}")
         if custom and not attrs.get("columns"):
             raise serializers.ValidationError("a custom signal declares at least one column")
-        if not custom and ("signal" not in attrs or "filter" not in attrs):
-            raise serializers.ValidationError("a hosted signal names its signal and filter")
+        if not custom and "filter" not in attrs:
+            raise serializers.ValidationError(f"a {signal_type} signal names its filter")
         if custom:
             declared = attrs["columns"]
             attrs["columns"] = [DeclaredColumn(label=each["label"], type=ColumnType(each["type"])) for each in declared]
@@ -71,8 +93,9 @@ class LogPatchRequest(serializers.Serializer):
         return attrs
 
 
-class PreviewCreateRequest(serializers.Serializer):
-    signal = serializers.CharField()
+class PreviewCreateRequest(_SignalTypeRequest):
+    """A setup tried on a hosted type's events."""
+
     filter = serializers.DictField()
     prompt = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     min_confidence = serializers.FloatField(required=False, allow_null=True)

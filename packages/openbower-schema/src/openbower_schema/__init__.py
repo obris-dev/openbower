@@ -26,6 +26,7 @@ from .fills import (
     FillRunWire,
 )
 from .logs import (
+    CUSTOM_SIGNAL_TYPE,
     HostedSourceSummary,
     SignalDetail,
     SignalsPage,
@@ -94,6 +95,7 @@ from .webhooks import (
 
 __all__ = [
     "API_KEY_NAME_MAX_LENGTH",
+    "CUSTOM_SIGNAL_TYPE",
     "MAX_API_KEYS",
     "AgentCatalog",
     "AgentConfig",

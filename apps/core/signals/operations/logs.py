@@ -21,16 +21,17 @@ from django.db import DatabaseError
 
 from auth_client.downstream import DownstreamTokenRejected
 from auth_client.models import AppSession
-from openbower_schema import ListenerWire
+from openbower_schema import CUSTOM_SIGNAL_TYPE, ListenerWire
 
 from ..constants import LogStatus
-from ..log_columns import LOG_SHAPES
+from ..log_columns import LOG_SHAPES, hosted_types
 from ..services.logs import DeclaredColumn, LocalLog, LogService
 from ..services.signals_client import (
     SessionSignalsClient,
     SignalsClientError,
     SignalsClientService,
     SignalsNotFound,
+    listener_payload,
     setup_payload,
 )
 from ..services.sync_key import SyncKeyReplaced, SyncKeyService
@@ -40,11 +41,20 @@ logger = logging.getLogger(__name__)
 
 
 class UnknownSignal(Exception):
-    """A signal this app has no log columns for: it cannot be logged yet."""
+    """A signal type this app has no log columns for, refused before the
+    signals service is called; `takes` is what the refusing route accepts."""
 
-    def __init__(self, signal: str) -> None:
-        super().__init__(f"{signal!r} cannot be logged; this app logs: {', '.join(sorted(LOG_SHAPES))}")
-        self.signal = signal
+    def __init__(self, signal_type: str, takes: list[str]) -> None:
+        types = ", ".join(takes)
+        super().__init__(f"{signal_type!r} is not a type this app takes here; it takes: {types}")
+        self.signal_type = signal_type
+
+
+def require_hosted_type(signal_type: str) -> None:
+    """A preview or a type's events: only a hosted type this app can log
+    reaches the signals service, so a refusal is in the app's words."""
+    if signal_type not in LOG_SHAPES:
+        raise UnknownSignal(signal_type, hosted_types())
 
 
 class SetupOnCustomSignal(Exception):
@@ -100,7 +110,7 @@ class CreateLogOperation(_LogOperation):
         session: AppSession,
         *,
         label: str,
-        signal: str,
+        signal_type: str,
         filter: dict[str, Any],
         prompt: str | None = None,
         min_confidence: float | None = None,
@@ -108,7 +118,7 @@ class CreateLogOperation(_LogOperation):
     ) -> None:
         self.session = session
         self.label = label
-        self.signal = signal
+        self.signal_type = signal_type
         self.setup = setup_payload(filter=filter, prompt=prompt, min_confidence=min_confidence)
         self.autofill = autofill
 
@@ -116,16 +126,19 @@ class CreateLogOperation(_LogOperation):
         """The account's sync key first (a refused mint stops the create
         before anything exists), then the listener, then the sheet and its
         hosted source in one transaction; a local failure deletes the listener."""
-        if self.signal not in LOG_SHAPES:
-            raise UnknownSignal(self.signal)
+        if self.signal_type not in LOG_SHAPES:
+            takes = hosted_types()
+            takes.append(CUSTOM_SIGNAL_TYPE)
+            raise UnknownSignal(self.signal_type, takes)
         session = self.session
         self.keys.ensure(session)
-        listener = self.signals.create_listener(payload={"label": self.label, "signal": self.signal, **self.setup})
+        payload = listener_payload(label=self.label, signal_type=self.signal_type, setup=self.setup)
+        listener = self.signals.create_listener(payload=payload)
         try:
             local_log = self.logs.create(
                 owner_id=session.user_id,
                 label=self.label,
-                signal=self.signal,
+                signal_type=self.signal_type,
                 listener_id=listener.id,
                 autofill=self.autofill,
             )

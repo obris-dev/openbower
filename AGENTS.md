@@ -67,7 +67,15 @@ live in a separate private repo.
   `/v1/signal-types`, and a setup's trial `/v1/signal-previews`). HTTP
   and the wire say signal (views, route names, the contract's types, the
   web client); code below the HTTP layer keeps the sheet's name, a log
-  (`LogService`, `SheetKind.LOG`). What feeds a log is its SOURCES
+  (`LogService`, `SheetKind.LOG`). A signal's TYPE is `type` on the
+  wire: a hosted type key (`funding`) or `custom`, read from its sources
+  (each kind declares the type it gives, and every source of a signal
+  names the same one) with no field of its own, and the create body's one
+  discriminator. The signals service calls it `signal`, and its catalog's
+  list `signals`: the shared schema models read those keys
+  (`validation_alias`) and serve `type` and `types`, and only the client's
+  payload builders (`listener_payload`, `preview_payload`) write `signal`.
+  What feeds a log is its SOURCES
   (`signals.SignalSource`, one row per kind, its config typed by kind in
   `signals.sources`, with the polling state a polled kind keeps beside
   it). A HOSTED source is one listener on the signals service, and they
@@ -140,7 +148,8 @@ live in a separate private repo.
   genuinely dynamic read (a stored row whose kind is a column). Signals
   source kinds are the same shape (KIND, POLLED, the kind riding in the
   stored config), and every place a log's sources are walked is a SEAM
-  each kind answers (status, summary, tear_down, poll for a polled kind):
+  each kind answers (signal_type, status, summary, tear_down, poll for a
+  polled kind):
   each default raises and register() refuses a kind that leaves one
   unanswered, so a new kind decides every seam, a no-op included.
 - Scheduled work is a crontab line per job (apps/core/crontab, run

@@ -20,7 +20,7 @@ test("a delete says what goes, counted", () => {
 test("a signal with no setup to edit says why, blaming the app only when it is the app", () => {
   // FAILS if a type the service stopped offering is blamed on this app
   // version, which knows it: a client note claiming knowledge it lacks.
-  assert.equal(noSetupNote({ listenerGone: true, signal: "funding", known: true }), GONE_NOTE);
-  assert.match(noSetupNote({ listenerGone: false, signal: "funding", known: true }), /service isn't offering Funding/);
-  assert.match(noSetupNote({ listenerGone: false, signal: "job_change", known: false }), /version of the app can't edit a Job Change/);
+  assert.equal(noSetupNote({ listenerGone: true, type: "funding", known: true }), GONE_NOTE);
+  assert.match(noSetupNote({ listenerGone: false, type: "funding", known: true }), /service isn't offering Funding/);
+  assert.match(noSetupNote({ listenerGone: false, type: "job_change", known: false }), /version of the app can't edit a Job Change/);
 });

@@ -72,3 +72,8 @@ class LogShape:
 
 # Each signal this app can log, by its catalog name.
 LOG_SHAPES: dict[str, LogShape] = {"funding": LogShape(columns=FUNDING_COLUMNS, cells=funding_cells)}
+
+
+def hosted_types() -> list[str]:
+    """Every hosted type this app can log, in a stable order."""
+    return sorted(LOG_SHAPES)

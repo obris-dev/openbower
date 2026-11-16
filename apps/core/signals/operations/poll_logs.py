@@ -168,7 +168,7 @@ class PollLogOperation:
         matches it has room for and the cursor stops at the last of them."""
         room = MAX_SHEET_ROWS - sheet.row_count
         landing = matches[:room]
-        shape = LOG_SHAPES[self.config.signal]
+        shape = LOG_SHAPES[self.config.type]
         rows = [IncomingRow(cells=shape.cells(match), external_id=match.id) for match in landing]
         append = AppendRowsOperation(
             account_id=self.account_id,
