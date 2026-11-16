@@ -18,6 +18,7 @@ export const STATUS_PILL: Record<LogStatus, { label: string; tone: "quiet" | "wa
   [LOG_STATUS.RECONNECT]: { label: "Reconnect needed", tone: "warning" },
   [LOG_STATUS.LISTENER_GONE]: { label: "Listener gone", tone: "danger" },
   [LOG_STATUS.FULL]: { label: "Full", tone: "warning" },
+  [LOG_STATUS.WAITING]: { label: "Waiting", tone: "quiet" },
   [UNKNOWN_LOG_STATUS]: null,
 };
 

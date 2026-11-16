@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 
 from openbower_kernel.models import UserScopedModel
 
-from ..constants import KIND_MAX_LENGTH, LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH, SheetKind
+from ..constants import KIND_MAX_LENGTH, LABEL_MAX_LENGTH, ORIGIN_MAX_LENGTH, RowSource, SheetKind
 from ..fields import SheetColumnsField
 
 
@@ -38,6 +38,16 @@ class Sheet(UserScopedModel):
     # Whether rows arriving start the sheet's entry actions; db_default for
     # the same rolling deploy as kind.
     autofill = models.BooleanField(_("autofill"), default=True, db_default=True)
+    # The one source a LOG takes rows from: its feed (a hosted signal) or a
+    # push (a custom signal's webhook). Read by the append guard alone; a
+    # standard sheet keeps the default, which the guard ignores.
+    row_source = models.CharField(
+        _("row source"),
+        max_length=KIND_MAX_LENGTH,
+        default=RowSource.FEED.value,
+        db_default=RowSource.FEED.value,
+        help_text=_("RowSource"),
+    )
 
     class Meta:
         verbose_name = _("sheet")

@@ -25,18 +25,29 @@ class SignalsErrorCode(StrEnum):
     UNKNOWN_SIGNAL = "unknown_signal"  # 400: a signal this app cannot log
     KEY_LIMIT_REACHED = "key_limit_reached"  # 409: the sync key would exceed the person's key limit
     LISTENER_GONE = "listener_gone"  # 409: the log's listener no longer exists; delete the log
+    SETUP_ON_WEBHOOK = "setup_on_webhook"  # 400: a listener setup sent to a custom signal, which has none
 
 
-# Where a log stands, derived on every read and never stored: from its feed
-# (the listener gone), the account's sync key (none working), and its sheet
-# (at the row cap). The first that holds wins, in this order. The app's side
-# only: the listener's own state on the signals service (retrying, held) is
-# the listener's `status`, read live on the log's detail.
+# What feeds a log. A hosted signal is the signals service's listener, read
+# by the log poller through the account's sync key; a custom signal is fed
+# by pushes to its webhook (the ingest door), and nothing polls it.
+class LogSource(StrEnum):
+    HOSTED = "hosted"
+    WEBHOOK = "webhook"
+
+
+# Where a log stands, derived on every read and never stored. A hosted log:
+# from its feed (the listener gone), the account's sync key (none working),
+# and its sheet (at the row cap), the first that holds winning, in this
+# order. A webhook log: waiting until its first row, then full at the cap.
+# The app's side only: the listener's own state on the signals service
+# (retrying, held) is the listener's `status`, read live on the log's detail.
 class LogStatus(StrEnum):
     ACTIVE = "active"
     LISTENER_GONE = "listener_gone"  # the signals service has no such listener: final
     RECONNECT = "reconnect"  # the account has no working sync key: a person reconnects
     FULL = "full"  # the sheet holds MAX_SHEET_ROWS rows: nothing more arrives
+    WAITING = "waiting"  # a webhook log no push has reached yet
 
 
 # The log poller (signals.operations.log_poller). Each log is due at its own

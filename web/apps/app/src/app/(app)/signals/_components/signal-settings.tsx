@@ -43,7 +43,7 @@ export function SignalSettings({ log, catalog }: { log: LogDetail; catalog: Sign
   const offered = catalog.signals.find((each) => each.signal === log.signal);
   const listener = log.listener;
   if (offered === undefined || listener === null) {
-    const note = noSetupNote({ listenerGone: listener === null, signal: log.signal, known: isKnownSignal(log.signal) });
+    const note = noSetupNote({ listenerGone: listener === null, signal: log.signal, known: log.signal !== null && isKnownSignal(log.signal) });
     return (
       <>
         <SignalHeader title={log.sheet.label} sheetId={log.sheet.id} />

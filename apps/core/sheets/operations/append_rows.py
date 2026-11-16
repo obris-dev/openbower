@@ -44,27 +44,32 @@ from ..services.workflow_reactions import WorkflowReactions
 
 class SheetNotAppendable(Exception):
     """An append refused by where its rows come from: a log takes rows
-    from its feed only, and only a log takes a feed's rows."""
+    from its own source only, and only a log takes a feed's rows."""
 
     code = IngestErrorCode.NOT_APPENDABLE
 
-    def __init__(self, sheet_id: str, *, source: RowSource) -> None:
-        if source == RowSource.FEED:
-            detail = "only a log takes rows from a feed"
-        else:
+    def __init__(self, sheet_id: str, *, source: RowSource, takes: RowSource | None = None) -> None:
+        if takes == RowSource.PUSH:
+            detail = "a custom signal's rows arrive by push to its webhook"
+        elif takes == RowSource.FEED:
             detail = "a log's rows arrive from its feed; add rows to a sheet instead"
+        else:
+            detail = "only a log takes rows from a feed"
         super().__init__(detail)
         self.sheet_id = sheet_id
         self.source = source
 
 
 def require_appendable(target_sheet: Sheet, *, source: RowSource) -> None:
-    """The one rule for who may append: a log takes rows from its feed
-    only, a standard sheet from anything else. The operation checks it,
-    and a door whose append happens later (the ingest push) checks it
-    first too."""
-    from_feed = source == RowSource.FEED
-    if (target_sheet.kind == SheetKind.LOG) != from_feed:
+    """The one rule for who may append: a log takes rows from its own
+    `row_source` only (its feed, or a custom signal's push), a standard
+    sheet from anything but a feed. The operation checks it, and a door
+    whose append happens later (the ingest push) checks it first too."""
+    if target_sheet.kind == SheetKind.LOG:
+        takes = RowSource(target_sheet.row_source)
+        if source != takes:
+            raise SheetNotAppendable(str(target_sheet.id), source=source, takes=takes)
+    elif source == RowSource.FEED:
         raise SheetNotAppendable(str(target_sheet.id), source=source)
 
 

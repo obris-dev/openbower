@@ -8,8 +8,10 @@ import { ListenerWireSchema, LogSummarySchema } from "@bower/schema";
 
 import {
   LISTENER_STATUS,
+  LOG_SOURCE,
   LOG_STATUS,
   UNKNOWN_LISTENER_STATUS,
+  UNKNOWN_LOG_SOURCE,
   UNKNOWN_LOG_STATUS,
   deleteLog,
   editLog,
@@ -80,6 +82,38 @@ test("an unknown status reads as the client-only member, which claims nothing", 
   stubFetch(t, { items: [log("paused_for_review")], next_cursor: null });
   const res = await fetchLogsPage();
   assert.equal(res.status === "ok" && res.data.items[0]?.status, UNKNOWN_LOG_STATUS);
+});
+
+test("a server from before custom signals reads as hosted, with no arrival time", async (t) => {
+  // FAILS if the new fields are required: every signal a person has would
+  // fail to parse against an older server.
+  stubFetch(t, { items: [log("active")], next_cursor: null });
+  const res = await fetchLogsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    assert.equal(res.data.items[0]?.source, LOG_SOURCE.HOSTED);
+    assert.equal(res.data.items[0]?.last_received_at, null);
+  }
+});
+
+test("a custom signal reads its source, its null signal and its last arrival", async (t) => {
+  const custom = {
+    ...log("waiting"),
+    source: "webhook",
+    listener_id: null,
+    signal: null,
+    last_polled_at: null,
+    last_received_at: "2026-11-12T12:05:00+00:00",
+  };
+  stubFetch(t, { items: [custom, { ...custom, source: "carrier_pigeon" }], next_cursor: null });
+  const res = await fetchLogsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    const [first, second] = res.data.items;
+    assert.deepEqual([first?.source, first?.status, first?.signal], [LOG_SOURCE.WEBHOOK, LOG_STATUS.WAITING, null]);
+    assert.equal(first?.last_received_at, "2026-11-12T12:05:00+00:00");
+    assert.equal(second?.source, UNKNOWN_LOG_SOURCE);
+  }
 });
 
 test("LOG_STATUS names exactly the contract's statuses", () => {

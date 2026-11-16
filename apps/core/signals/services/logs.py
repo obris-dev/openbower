@@ -12,11 +12,13 @@ from functools import cached_property
 from django.db import models, transaction
 from django.utils import timezone
 
-from sheets.constants import MAX_SHEET_ROWS, SheetKind, SheetOrigin
+from openbower_schema.sheets import PlainColumn
+from sheets.constants import MAX_SHEET_ROWS, RowSource, SheetKind, SheetOrigin
 from sheets.models import Sheet
+from sheets.services.columns import new_column_key
 from sheets.services.sheets import SheetNotFound, SheetService
 
-from ..constants import LogStatus
+from ..constants import LogSource, LogStatus
 from ..log_columns import LOG_SHAPES
 from ..models import LogFeed, SignalsSyncKey
 from .sync_key import SyncKeyService
@@ -38,6 +40,15 @@ class LogFeedOrphaned(Exception):
 
 
 @dataclass(frozen=True)
+class DeclaredColumn:
+    """A column a person declares on a custom signal: its key derives from
+    the label, as every column's does."""
+
+    label: str
+    type: str
+
+
+@dataclass(frozen=True)
 class LocalLog:
     """The rows this app holds for a log: its sheet and its feed, and where
     it stands. Its listener lives on the signals service (`Log` carries
@@ -52,6 +63,12 @@ class LocalLog:
         """The log's id: its sheet's, as the routes take it."""
         return self.feed.sheet_id
 
+    @property
+    def is_hosted(self) -> bool:
+        """Fed by a hosted signal's listener, which the signals service
+        holds; a webhook log has none."""
+        return self.feed.source == LogSource.HOSTED
+
 
 class LogFeedGlobal:
     """The poller's queue across every account: which logs are due, and the
@@ -60,9 +77,12 @@ class LogFeedGlobal:
 
     @staticmethod
     def due(now: datetime.datetime, *, limit: int) -> list[str]:
-        """Live logs due by `now` and not held, longest waiting first."""
+        """Live hosted logs due by `now` and not held, longest waiting
+        first. A webhook log is never due: pushes fill it."""
         free = models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
-        due = LogFeed.objects.filter(free, listener_gone_at__isnull=True, next_poll_at__lte=now)
+        due = LogFeed.objects.filter(
+            free, source=LogSource.HOSTED, listener_gone_at__isnull=True, next_poll_at__lte=now
+        )
         ordered = due.order_by("next_poll_at", "id")
         return [str(feed_id) for feed_id in ordered.values_list("id", flat=True)[:limit]]
 
@@ -71,7 +91,9 @@ class LogFeedGlobal:
         """The log for this poller until the lease lapses, or None when
         another holds it or it is no longer due."""
         free = models.Q(leased_until__isnull=True) | models.Q(leased_until__lt=now)
-        live = LogFeed.objects.filter(free, id=feed_id, listener_gone_at__isnull=True, next_poll_at__lte=now)
+        live = LogFeed.objects.filter(
+            free, id=feed_id, source=LogSource.HOSTED, listener_gone_at__isnull=True, next_poll_at__lte=now
+        )
         until = now + datetime.timedelta(seconds=lease_seconds)
         if live.update(leased_until=until, leased_by=worker_id) != 1:
             return None
@@ -116,6 +138,12 @@ class LogService:
         return LocalLog(sheet=sheet, feed=feed, status=self._status(sheet, feed))
 
     def _status(self, sheet: Sheet, feed: LogFeed) -> LogStatus:
+        if feed.source == LogSource.WEBHOOK:
+            if sheet.row_count == 0:
+                return LogStatus.WAITING
+            if sheet.row_count >= MAX_SHEET_ROWS:
+                return LogStatus.FULL
+            return LogStatus.ACTIVE
         if feed.listener_gone_at is not None:
             return LogStatus.LISTENER_GONE
         if self.current_key is None:
@@ -161,6 +189,32 @@ class LogService:
         feeds = {feed.sheet_id: feed for feed in rows}
         return [self._local(sheet, feeds[str(sheet.id)]) for sheet in sheets]
 
+    def last_arrivals(self, local_logs: list[LocalLog]) -> dict[str, datetime.datetime]:
+        """When each log's newest row arrived, by log id, in one read."""
+        return self.sheets.last_arrivals([local_log.sheet for local_log in local_logs])
+
+    def create_webhook(self, *, owner_id: str, label: str, columns: list[DeclaredColumn], autofill: bool) -> LocalLog:
+        """A custom signal's log: a sheet with the declared columns (values
+        arrive with each pushed row, so each is immutable) that takes rows
+        by push, and its webhook feed. Nothing to mint and no listener: a
+        push reaches it through the ingest door."""
+        declared: list[PlainColumn] = []
+        for column in columns:
+            key = new_column_key(column.label, taken={each.key for each in declared}, count=len(declared))
+            declared.append(PlainColumn(key=key, label=column.label, type=column.type, immutable=True))
+        with transaction.atomic():
+            sheet = self.sheets.create(
+                owner_id=owner_id,
+                label=label,
+                columns=declared,
+                origin=SheetOrigin.MANUAL,
+                kind=SheetKind.LOG,
+                autofill=autofill,
+                row_source=RowSource.PUSH,
+            )
+            feed = LogFeed.objects.create(account_id=self.account_id, sheet_id=str(sheet.id), source=LogSource.WEBHOOK)
+        return self._local(sheet, feed)
+
     def create(self, *, owner_id: str, label: str, signal: str, listener_id: str, autofill: bool) -> LocalLog:
         """A log's sheet, with its signal's base columns, and its feed."""
         shape = LOG_SHAPES[signal]
@@ -199,9 +253,12 @@ class LogService:
         return moved.update(cursor=to_cursor) == 1
 
     def wake(self) -> int:
-        """Make every live log of the account due at once: what a reconnect
-        does, since its logs were parked waiting for a working key."""
-        live = LogFeed.objects.filter(account_id=self.account_id, listener_gone_at__isnull=True)
+        """Make every live hosted log of the account due at once: what a
+        reconnect does, since its logs were parked waiting for a working
+        key."""
+        live = LogFeed.objects.filter(
+            account_id=self.account_id, source=LogSource.HOSTED, listener_gone_at__isnull=True
+        )
         return live.update(next_poll_at=timezone.now())
 
     def mark_listener_gone(self, local_log: LocalLog) -> LocalLog:

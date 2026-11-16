@@ -4,6 +4,7 @@ a missing row, so foreign ids are not an oracle)."""
 
 from __future__ import annotations
 
+import datetime
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -31,6 +32,7 @@ from ..constants import (
     RANK_MAX_LENGTH,
     RANK_REBALANCE_LENGTH,
     CellErrorCode,
+    RowSource,
     SheetErrorCode,
     SheetKind,
 )
@@ -359,6 +361,7 @@ class SheetService:
         folder_id: str = "",
         kind: SheetKind = SheetKind.STANDARD,
         autofill: bool = True,
+        row_source: RowSource = RowSource.FEED,
     ) -> Sheet:
         return Sheet.objects.create(
             account_id=self.account_id,
@@ -366,6 +369,7 @@ class SheetService:
             label=label,
             kind=kind,
             autofill=autofill,
+            row_source=row_source,
             columns=columns,
             origin=origin,
             origin_ref=origin_ref,
@@ -381,6 +385,14 @@ class SheetService:
         if after_id:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
+
+    def last_arrivals(self, logs: Sequence[Sheet]) -> dict[str, datetime.datetime]:
+        """When each log's newest row arrived, by sheet id, in one read; a
+        log with no row is absent. A log ranks each arrival before its
+        first row, so its newest row is its first in sheet order."""
+        log_ids = [str(log.id) for log in logs if log.kind == SheetKind.LOG]
+        rows = SheetRow.objects.filter(sheet_id__in=log_ids).order_by("sheet_id", "rank").distinct("sheet_id")
+        return dict(rows.values_list("sheet_id", "created_at"))
 
     def get(self, sheet_id: str) -> Sheet:
         try:

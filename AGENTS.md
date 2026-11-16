@@ -63,8 +63,15 @@ live in a separate private repo.
   time) filtered on every page. A log is a sheet in the ONE sheets index
   (home lists every sheet; folders hold and count every kind), and the
   UI calls a listener and the log it fills a SIGNAL (the API keeps
-  `/v1/logs`). A log has ONE listener on the signals
-  service (`signals.LogFeed` links them) and they live and die together
+  `/v1/logs`). What feeds a log is its feed's `source`
+  (`signals.LogFeed`, a `LogSource`): a HOSTED signal's listener on the
+  signals service, or a CUSTOM signal's WEBHOOK, which the person
+  declares columns for and pushes to through the ingest door (the
+  sheet's `row_source` is `push`, so the one append guard takes pushes
+  for it and refuses a feed, and a hosted log the reverse); a webhook
+  log touches the signals service at no step and nothing polls it. A
+  hosted log has ONE listener (`signals.LogFeed` links them) and they
+  live and die together
   through `/v1/logs` (`signals.operations.logs`): create mints the
   account's sync key first, then the listener, then the sheet and its
   feed, undoing the listener if that write fails; delete removes the
@@ -76,7 +83,7 @@ live in a separate private repo.
   oldest first (`processors.base.queue_position` stamps a log's run with
   its row's id, a standard sheet's with its rank), so a backlog drains
   FIFO. The LOG POLLER (the `log-poller` service,
-  `signals.operations.log_poller`) fills a log: each log is due at its
+  `signals.operations.log_poller`) fills a hosted log: each is due at its
   own `next_poll_at`, served longest waiting first, and held by one
   poller through a compare-and-set lease that lapses if the poller dies,
   so any number run and a busy log never starves a quiet one; one that
@@ -85,9 +92,10 @@ live in a separate private repo.
   cursor, read with the account's sync key, appended and the cursor moved
   by compare-and-set in ONE transaction, sheet first and feed second
   (the order a delete takes), so a page lands once.
-  A log's STATUS (active, reconnect, listener_gone, full) is derived on
-  every read from its feed, the account's key and its row count, never
-  stored.
+  A log's STATUS (active, reconnect, listener_gone, full; waiting for a
+  webhook log no push has reached) is derived on every read from its
+  feed, the account's key and its row count, never stored, and so is
+  when its newest row arrived (`last_received_at`, one read per page).
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,

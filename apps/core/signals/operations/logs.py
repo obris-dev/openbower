@@ -1,5 +1,6 @@
-"""A log's lifecycle, as the person who asks: one listener per log, created,
-edited and deleted with it. The listener lives on the signals service (as
+"""A log's lifecycle, as the person who asks. A hosted log has one listener,
+created, edited and deleted with it; a custom signal's log is fed by its
+webhook and touches the signals service at no step. The listener lives on the signals service (as
 the person, through their session); the sheet and its feed live here. No
 signals call runs inside a transaction. Create and delete order themselves
 so a failure leaves nothing half made: create makes the listener first and
@@ -23,7 +24,7 @@ from openbower_schema import ListenerWire
 
 from ..constants import LogStatus
 from ..log_columns import LOG_SHAPES
-from ..services.logs import LocalLog, LogService
+from ..services.logs import DeclaredColumn, LocalLog, LogService
 from ..services.signals_client import (
     SessionSignalsClient,
     SignalsClientError,
@@ -42,6 +43,15 @@ class UnknownSignal(Exception):
     def __init__(self, signal: str) -> None:
         super().__init__(f"{signal!r} cannot be logged; this app logs: {', '.join(sorted(LOG_SHAPES))}")
         self.signal = signal
+
+
+class SetupOnWebhookLog(Exception):
+    """A filter, prompt or threshold sent to a custom signal: those set a
+    hosted signal's listener, and a webhook log has none."""
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("a custom signal has no listener setup; send a label only")
+        self.sheet_id = sheet_id
 
 
 class ListenerGone(Exception):
@@ -123,6 +133,24 @@ class CreateLogOperation(_LogOperation):
         return Log(local_log=local_log, listener=listener)
 
 
+class CreateWebhookLogOperation(_LogOperation):
+    def __init__(
+        self, session: AppSession, *, label: str, columns: list[dict[str, str]], autofill: bool = True
+    ) -> None:
+        self.session = session
+        self.label = label
+        self.columns = [DeclaredColumn(label=column["label"], type=column["type"]) for column in columns]
+        self.autofill = autofill
+
+    def run(self) -> Log:
+        """The sheet and its webhook feed, in one transaction. No sync key
+        and no listener: nothing reads the signals service for it."""
+        local_log = self.logs.create_webhook(
+            owner_id=self.session.user_id, label=self.label, columns=self.columns, autofill=self.autofill
+        )
+        return Log(local_log=local_log, listener=None)
+
+
 class ReconnectLogsOperation(_LogOperation):
     def __init__(self, session: AppSession) -> None:
         self.session = session
@@ -146,7 +174,7 @@ class ReadLogOperation(_LogOperation):
         longer has is recorded as gone (the log stops polling) and answered
         as None, so the log still opens to say so."""
         local_log = self.logs.get(self.sheet_id)
-        if local_log.status == LogStatus.LISTENER_GONE:
+        if not local_log.is_hosted or local_log.status == LogStatus.LISTENER_GONE:
             return Log(local_log=local_log, listener=None)
         feed = local_log.feed
         try:
@@ -182,6 +210,11 @@ class EditLogOperation(_LogOperation):
         edit is retried. Raises ListenerGone for a log whose listener the
         service no longer has (recorded the first time it says so)."""
         local_log = self.logs.get(self.sheet_id)
+        if not local_log.is_hosted:
+            if self.setup is not None:
+                raise SetupOnWebhookLog(self.sheet_id)
+            edited = self.logs.edit(local_log, label=self.label)
+            return Log(local_log=edited, listener=None)
         if local_log.status == LogStatus.LISTENER_GONE:
             raise ListenerGone(self.sheet_id)
         feed = local_log.feed
@@ -206,12 +239,13 @@ class DeleteLogOperation(_LogOperation):
         self.sheet_id = sheet_id
 
     def run(self) -> None:
-        """The listener first (the client counts one already gone as
-        deleted), then the sheet and its feed in one transaction. A signals failure
-        deletes nothing here, so the person can try again."""
+        """A hosted log's listener first (the client counts one already gone
+        as deleted), then the sheet and its feed in one transaction. A
+        signals failure deletes nothing here, so the person can try again.
+        A webhook log has no listener: its rows go alone."""
         local_log = self.logs.get(self.sheet_id)
-        feed = local_log.feed
-        self.signals.delete_listener(listener_id=feed.listener_id)
+        if local_log.is_hosted:
+            self.signals.delete_listener(listener_id=local_log.feed.listener_id)
         self.logs.delete(local_log)
 
 

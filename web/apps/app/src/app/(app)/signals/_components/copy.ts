@@ -30,7 +30,7 @@ export function notOfferedNote(type: string): string {
 /** Why a signal's settings have no setup to edit: its listener is gone, or
  * its type is one this app version has no form for, or one the service is
  * not offering now. Never blames the app for what the service decided. */
-export function noSetupNote(facts: { listenerGone: boolean; signal: string; known: boolean }): string {
+export function noSetupNote(facts: { listenerGone: boolean; signal: string | null; known: boolean }): string {
   if (facts.listenerGone) return GONE_NOTE;
   const type = signalType(facts.signal);
   return facts.known ? notOfferedNote(type) : unknownTypeNote(type);
@@ -46,7 +46,11 @@ export function deleteConsequence(rows: number): string {
 
 /** A signal type as a person reads it: the catalog's key, title-cased
  * (funding reads Funding). */
-export function signalType(signal: string): string {
+// A custom signal names no hosted signal.
+const CUSTOM_TYPE = "Custom";
+
+export function signalType(signal: string | null): string {
+  if (signal === null) return CUSTOM_TYPE;
   return signal
     .split("_")
     .map((word) => (word ? word[0]!.toUpperCase() + word.slice(1) : word))

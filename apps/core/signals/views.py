@@ -1,4 +1,5 @@
-"""`/v1/logs` (an account's logs: a sheet fed by one listener) and
+"""`/v1/logs` (an account's logs: a sheet fed by a hosted signal's listener
+or by a custom signal's webhook) and
 `/v1/signals` (the catalog, recent events and previews the Create-log
 screen reads). Session-authed; every signals call acts as the person, and
 every failure answers through one mapping so a refusal reads the same everywhere."""
@@ -22,16 +23,19 @@ from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
 from sheets.serializers import sheet_summary
+from sheets.services.columns import ColumnRefused
 
-from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
+from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, LogSource, SignalsErrorCode
 from .operations.logs import (
     CreateLogOperation,
+    CreateWebhookLogOperation,
     DeleteLogOperation,
     EditLogOperation,
     ListenerGone,
     Log,
     ReadLogOperation,
     ReconnectLogsOperation,
+    SetupOnWebhookLog,
     UnknownSignal,
 )
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
@@ -73,6 +77,12 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, SetupOnWebhookLog):
+        return _Relayed({"error": SignalsErrorCode.SETUP_ON_WEBHOOK, "detail": str(exc)}, status=400)
+    if isinstance(exc, ColumnRefused):
+        # A custom signal's declared columns: the request's own labels
+        # collide or reserve, so it is the request to fix.
+        return _Relayed({"error": exc.code, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalsPreviewRunning):
         return _Relayed({**exc.body, "detail": PREVIEW_RUNNING_DETAIL}, status=exc.status)
     if isinstance(exc, SignalsClientRequestError):
@@ -97,27 +107,31 @@ def _as_api_error(exc: Exception) -> Exception:
     return exc
 
 
-def _summary(local_log: LocalLog) -> LogSummary:
+def _summary(local_log: LocalLog, *, last_received_at: datetime.datetime | None) -> LogSummary:
     sheet = sheet_summary(local_log.sheet)
     feed = local_log.feed
     return LogSummary(
         sheet=sheet,
-        listener_id=feed.listener_id,
-        signal=feed.signal,
+        source=feed.source,
+        listener_id=feed.listener_id or None,
+        signal=feed.signal or None,
         status=local_log.status,
         last_polled_at=_iso(feed.last_polled_at),
+        last_received_at=_iso(last_received_at),
     )
 
 
-def _detail(log: Log) -> LogDetail:
+def _detail(log: Log, *, last_received_at: datetime.datetime | None) -> LogDetail:
     sheet = sheet_summary(log.local_log.sheet)
     feed = log.local_log.feed
     return LogDetail(
         sheet=sheet,
+        source=feed.source,
         listener=log.listener,
-        signal=feed.signal,
+        signal=feed.signal or None,
         status=log.local_log.status,
         last_polled_at=_iso(feed.last_polled_at),
+        last_received_at=_iso(last_received_at),
     )
 
 
@@ -140,12 +154,18 @@ class _SignalsView(ScopedView):
     def signals(self):
         return SignalsClientService.for_session(self.request.auth)
 
+    def _detail_body(self, log: Log) -> dict:
+        arrivals = self.logs.last_arrivals([log.local_log])
+        detail = _detail(log, last_received_at=arrivals.get(log.local_log.sheet_id))
+        return detail.model_dump()
+
 
 class LogsView(_SignalsView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         logs = self.logs.page(after_id=request.query_params.get("after", ""), limit=limit)
-        items = [_summary(log) for log in logs]
+        arrivals = self.logs.last_arrivals(logs)
+        items = [_summary(log, last_received_at=arrivals.get(log.sheet_id)) for log in logs]
         next_cursor = next_cursor_from(logs, limit=limit, cursor=lambda log: log.sheet_id)
         page = LogsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
@@ -153,9 +173,12 @@ class LogsView(_SignalsView):
     def post(self, request: Request) -> Response:
         body = LogCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
-        log = CreateLogOperation(request.auth, **body.validated_data).run()
-        detail = _detail(log)
-        return Response(detail.model_dump(), status=201)
+        data = dict(body.validated_data)
+        if data.pop("source") == LogSource.WEBHOOK:
+            log = CreateWebhookLogOperation(request.auth, **data).run()
+        else:
+            log = CreateLogOperation(request.auth, **data).run()
+        return Response(self._detail_body(log), status=201)
 
 
 class LogsReconnectView(_SignalsView):
@@ -170,15 +193,13 @@ class LogsReconnectView(_SignalsView):
 class LogDetailView(_SignalsView):
     def get(self, request: Request, id: str) -> Response:
         log = ReadLogOperation(request.auth, id).run()
-        detail = _detail(log)
-        return Response(detail.model_dump())
+        return Response(self._detail_body(log))
 
     def patch(self, request: Request, id: str) -> Response:
         body = LogPatchRequest(data=request.data)
         body.is_valid(raise_exception=True)
         log = EditLogOperation(request.auth, id, **body.validated_data).run()
-        detail = _detail(log)
-        return Response(detail.model_dump())
+        return Response(self._detail_body(log))
 
     def delete(self, request: Request, id: str) -> Response:
         DeleteLogOperation(request.auth, id).run()

@@ -27,12 +27,14 @@ import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 /** Where a signal stands, as the server names it: active (it fills),
  * reconnect (the account's sync key was refused; a person reconnects),
  * listener_gone (the signals service no longer has it: final), full (its
- * sheet holds as many rows as it may). */
+ * sheet holds as many rows as it may), waiting (a custom signal no push
+ * has reached yet). */
 export const LOG_STATUS = {
   ACTIVE: "active",
   RECONNECT: "reconnect",
   LISTENER_GONE: "listener_gone",
   FULL: "full",
+  WAITING: "waiting",
 } as const;
 // A status this bundle has not heard of reads as this client-only member,
 // which renders no status: every real one claims something (that it fills,
@@ -45,12 +47,33 @@ const TolerantLogStatusSchema = z
   .string()
   .transform((status): LogStatus => (KNOWN_LOG_STATUSES.has(status) ? (status as LogStatus) : UNKNOWN_LOG_STATUS));
 
-export type LogSummary = Omit<WireLogSummary, "sheet" | "status"> & { sheet: SheetSummary; status: LogStatus };
+/** What feeds a signal: hosted (a signal's listener, which the app reads)
+ * or webhook (a custom signal's pushes). A server from before custom
+ * signals sends none, and every signal it holds is hosted; one this bundle
+ * has not heard of reads as a client-only member that claims neither. */
+export const LOG_SOURCE = { HOSTED: "hosted", WEBHOOK: "webhook" } as const;
+export const UNKNOWN_LOG_SOURCE = "unknown_source" as const;
+export type LogSource = (typeof LOG_SOURCE)[keyof typeof LOG_SOURCE] | typeof UNKNOWN_LOG_SOURCE;
+const KNOWN_LOG_SOURCES = new Set<string>(LogSummarySchema.shape.source.options);
+const TolerantLogSourceSchema = z
+  .string()
+  .default(LOG_SOURCE.HOSTED)
+  .transform((source): LogSource => (KNOWN_LOG_SOURCES.has(source) ? (source as LogSource) : UNKNOWN_LOG_SOURCE));
+// A server from before custom signals sends no arrival time.
+const TolerantLastReceivedSchema = LogSummarySchema.shape.last_received_at.default(null);
+
+export type LogSummary = Omit<WireLogSummary, "sheet" | "status" | "source"> & {
+  sheet: SheetSummary;
+  status: LogStatus;
+  source: LogSource;
+};
 export type LogsPage = { items: LogSummary[]; next_cursor: string | null };
 
 export const TolerantLogSummarySchema = LogSummarySchema.extend({
   sheet: TolerantSheetSummarySchema,
   status: TolerantLogStatusSchema,
+  source: TolerantLogSourceSchema,
+  last_received_at: TolerantLastReceivedSchema,
 });
 export const TolerantLogsPageSchema = LogsPageSchema.extend({ items: z.array(TolerantLogSummarySchema) });
 
@@ -77,6 +100,8 @@ const TolerantListenerSchema = ListenerWireSchema.extend({
 export const TolerantLogDetailSchema = LogDetailSchema.extend({
   sheet: TolerantSheetSummarySchema,
   status: TolerantLogStatusSchema,
+  source: TolerantLogSourceSchema,
+  last_received_at: TolerantLastReceivedSchema,
   listener: TolerantListenerSchema.nullable(),
 });
 /** One signal with its listener as the signals service has it now (null

@@ -1434,8 +1434,20 @@
               "type": "null"
             }
           ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "description": "When its listener's matches were last read through (ISO); null before the first read, and always for a custom signal, which nothing polls.",
           "title": "Last Polled At"
+        },
+        "last_received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its newest row arrived (ISO); null before the first.",
+          "title": "Last Received At"
         },
         "listener": {
           "anyOf": [
@@ -1446,14 +1458,30 @@
               "type": "null"
             }
           ],
-          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
+          "description": "Read live from the signals service; null once the listener is gone (status listener_gone), and for a custom signal."
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
         "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The hosted signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`); null for a custom signal.",
+          "title": "Signal"
+        },
+        "source": {
+          "description": "What feeds it: hosted (a signal's listener, which the app reads) or webhook (a custom signal's pushes).",
+          "enum": [
+            "hosted",
+            "webhook"
+          ],
+          "title": "Source",
           "type": "string"
         },
         "status": {
@@ -1462,7 +1490,8 @@
             "active",
             "listener_gone",
             "reconnect",
-            "full"
+            "full",
+            "waiting"
           ],
           "title": "Status",
           "type": "string"
@@ -1470,10 +1499,12 @@
       },
       "required": [
         "sheet",
+        "source",
         "listener",
         "signal",
         "status",
-        "last_polled_at"
+        "last_polled_at",
+        "last_received_at"
       ],
       "title": "LogDetail",
       "type": "object"
@@ -1490,20 +1521,55 @@
               "type": "null"
             }
           ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "description": "When its listener's matches were last read through (ISO); null before the first read, and always for a custom signal, which nothing polls.",
           "title": "Last Polled At"
         },
+        "last_received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its newest row arrived (ISO); null before the first.",
+          "title": "Last Received At"
+        },
         "listener_id": {
-          "description": "The listener whose matches become the log's rows.",
-          "title": "Listener Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The listener whose matches become the log's rows; null for a custom signal.",
+          "title": "Listener Id"
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
         "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The hosted signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`); null for a custom signal.",
+          "title": "Signal"
+        },
+        "source": {
+          "description": "What feeds it: hosted (a signal's listener, which the app reads) or webhook (a custom signal's pushes).",
+          "enum": [
+            "hosted",
+            "webhook"
+          ],
+          "title": "Source",
           "type": "string"
         },
         "status": {
@@ -1512,7 +1578,8 @@
             "active",
             "listener_gone",
             "reconnect",
-            "full"
+            "full",
+            "waiting"
           ],
           "title": "Status",
           "type": "string"
@@ -1520,10 +1587,12 @@
       },
       "required": [
         "sheet",
+        "source",
         "listener_id",
         "signal",
         "status",
-        "last_polled_at"
+        "last_polled_at",
+        "last_received_at"
       ],
       "title": "LogSummary",
       "type": "object"

@@ -8,6 +8,7 @@ edit, and reordering. Account-scoped like every sheets service."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 
 from django.db import models, transaction
 from django.db.models import Value
@@ -138,22 +139,29 @@ def locked_sheet(account_id: str, sheet_id: str) -> Sheet:
         raise SheetNotFound(sheet_id) from e
 
 
-def claim_key(target_sheet: Sheet, *, label: str) -> str:
-    """The key a new column takes for `label`, through the ONE
-    derivation rule, refused when reserved, taken, or over the cap.
-    Under the sheet lock, by every path that appends a column."""
+def new_column_key(label: str, *, taken: Collection[str], count: int) -> str:
+    """The key a column labelled `label` takes beside `count` columns whose
+    keys (and any held) are `taken`: through the ONE derivation rule,
+    refused when reserved, taken, or over the cap. What every column a
+    sheet gains goes through, whether added to a sheet or declared with a
+    new one."""
     key = derive_column_key(label)
     if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
         raise ReservedColumnKey(label=label)
-    if key in {column.key for column in target_sheet.columns}:
+    if key in taken:
         raise ColumnExists(key=key)
-    # A key an open fill still writes is held too: a column added under
-    # it now would receive that fill's answers.
-    if key in keys_under_fill(target_sheet):
-        raise ColumnExists(key=key)
-    if len(target_sheet.columns) >= MAX_SHEET_COLUMNS:
+    if count >= MAX_SHEET_COLUMNS:
         raise ColumnsFull()
     return key
+
+
+def claim_key(target_sheet: Sheet, *, label: str) -> str:
+    """The key a new column on `target_sheet` takes for `label`. Under the
+    sheet lock, by every path that appends a column."""
+    # A key an open fill still writes is held too: a column added under
+    # it now would receive that fill's answers.
+    taken = {column.key for column in target_sheet.columns} | set(keys_under_fill(target_sheet))
+    return new_column_key(label, taken=taken, count=len(target_sheet.columns))
 
 
 class ColumnService:

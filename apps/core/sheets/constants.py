@@ -415,9 +415,10 @@ CELL_SOURCE_MAX_LENGTH = 8
 
 class RowSource(StrEnum):
     """Where an append's rows come from, named at every call of the one
-    append (the row side of CellSource). A LOG takes rows from its FEED
-    only (what feeds it: a signal's matches today); a standard sheet
-    takes rows from anything but a feed."""
+    append (the row side of CellSource). A LOG takes rows from its own
+    `row_source` only: its FEED (a hosted signal's matches) or a PUSH (a
+    custom signal's webhook); a standard sheet takes rows from anything
+    but a feed."""
 
     MANUAL = "manual"  # a person: POST rows, the add-rows bar (as CellSource.MANUAL)
     PUSH = "push"  # the ingest consumer (an API key's push)
