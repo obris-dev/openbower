@@ -237,6 +237,9 @@ class PreviewErrorCode(StrEnum):
 class IngestErrorCode(StrEnum):
     INGEST_INVALID = "ingest_invalid"
     INGEST_UNAVAILABLE = "ingest_unavailable"
+    # A push too big for one bus message (413): sending it again fails the
+    # same way, so it is never a retryable 503.
+    INGEST_TOO_LARGE = "ingest_too_large"
     # A sheet whose rows arrive from its source only (a log) takes none
     # from a push or a person (409).
     NOT_APPENDABLE = "not_appendable"

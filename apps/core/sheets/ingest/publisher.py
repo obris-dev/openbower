@@ -14,13 +14,12 @@ swap point, selected by settings:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Protocol
 
 from django.conf import settings
 
-from .events import IngestEvent, to_wire
+from .events import IngestEvent, encode_event
 from .topics import SHEET_ROWS_INGESTED, TopicSpec
 
 logger = logging.getLogger(__name__)
@@ -46,6 +45,9 @@ class LoggingIngestPublisher:
     only where no bus is configured. NOT durable; see the module docstring."""
 
     def publish(self, event: IngestEvent) -> None:
+        # Encoded as the bus would take it, so a push the bus would refuse
+        # is refused here too.
+        encode_event(event)
         logger.info(
             "ingest accepted (no bus configured: NOT persisted) event=%s sheet=%s account=%s rows=%d",
             event.event_id,
@@ -91,7 +93,7 @@ class KafkaIngestPublisher:
         producer.produce(
             self._spec.name,
             key=event.sheet_id.encode(),
-            value=json.dumps(to_wire(event)).encode(),
+            value=encode_event(event),
             on_delivery=_on_delivery,
         )
         # flush returns the count still in the queue: >0 means the ack did not

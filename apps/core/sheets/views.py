@@ -51,7 +51,7 @@ from .constants import (
     SheetKind,
     SheetOrigin,
 )
-from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
+from .ingest import IngestEvent, IngestPublishError, IngestTooLarge, get_ingest_publisher
 from .models import Folder, Sheet
 from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
@@ -447,6 +447,8 @@ class SheetIngestView(_ScopedView):
         )
         try:
             get_ingest_publisher().publish(event)
+        except IngestTooLarge as e:
+            return Response({"error": IngestErrorCode.INGEST_TOO_LARGE, "detail": str(e)}, status=413)
         except IngestPublishError as e:
             # The batch never reached the bus, so it was NOT accepted: 503
             # (retryable), never a 202 that silently dropped it. Dedupe makes
