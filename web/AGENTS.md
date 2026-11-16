@@ -199,7 +199,8 @@ violation shipped once and got caught).
   and can be refused there, so the question holds still until it
   answers (a popover closes on an outside click mid-request), and asks
   the same way wherever it is offered (a signal's row menu, its
-  settings footer, what is left of a gone one) rather than inline in
+  settings footer, a custom signal's page header, what is left of a gone
+  one) rather than inline in
   one place and in a dialog in another; and a
   signal's Reconnect, which waits on the identity service for a fresh
   key, asked from its pill or banner. Polaris opens a modal for every such decision; the

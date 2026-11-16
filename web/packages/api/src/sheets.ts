@@ -230,6 +230,11 @@ export type AiColumnBody = {
 // kind's projection is the base's; plain is the kind with nothing else.
 export const COLUMN_TYPES = PlainColumnSchema.shape.type.options;
 export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.label.maxLength;
+export const COLUMN_KEY_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.key.maxLength;
+/** Keys no column may take (they shadow a route): the server's set. */
+export const RESERVED_COLUMN_KEYS: readonly string[] = WIRE_CONSTANTS.RESERVED_COLUMN_KEYS;
+/** A sheet's label at most (and so a signal's name), the server's bound. */
+export const SHEET_LABEL_MAX_LENGTH: number = WIRE_CONSTANTS.SHEET_LABEL_MAX_LENGTH;
 export type ColumnType = SheetColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the
@@ -712,7 +717,7 @@ export type { IngestColumn, IngestSchema };
 // The server owns the type enum, so the read is tolerant like the
 // sheet's: a type this bundle has not heard of renders as text.
 const KNOWN_INGEST_TYPES = new Set<string>(IngestColumnSchema.shape.type.options);
-const TolerantIngestSchemaSchema = z.object({
+export const TolerantIngestSchemaSchema = z.object({
   columns: z.array(
     z.object({
       key: z.string(),

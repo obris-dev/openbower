@@ -110,9 +110,11 @@ live in a separate private repo.
   URL, `/v1/signals/{id}/ingest/{token}` (POST and the schema GET), with
   neither: the token is the credential
   (`signals.authentication.WebhookTokenAuthentication`, the route's only
-  lane, over `signals.SourceToken`, stored only as its hash, shown once at
-  the create and at each `POST /v1/signals/{id}/webhook/rotate`, one live
-  per signal and the newest few revoked kept, a wrong one a 404), resolved
+  lane, over `signals.SourceToken`, stored as its hash (what a push is
+  resolved by) and encrypted, so a signed-in person reads the URL again any
+  time at `GET /v1/signals/{id}/webhook` (session only); minted at the
+  create and replaced at each `POST /v1/signals/{id}/webhook/rotate`, one
+  live per signal and the newest few revoked kept, a wrong one a 404), resolved
   in one read, and the push is the signal's creator's. Both push routes
   accept through one helper, with the sheets push endpoint's envelope and
   answers,

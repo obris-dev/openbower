@@ -1,9 +1,8 @@
 import { Button, ErrorMessage, PageFooter } from "@bower/ui";
 
-import { ReadinessChecklist } from "../../../_components/readiness";
-import { DELETE_ACTION } from "../copy";
-import { CREATE_ACTION, SAVE_ACTION } from "./copy";
-import type { SignalChecklistItem } from "./setup";
+import { ReadinessChecklist, type ChecklistItem } from "../../../_components/readiness";
+import { CREATE_ACTION, DELETE_ACTION } from "../copy";
+import { SAVE_ACTION } from "./copy";
 
 /** What the footer's actions do: Create signal for a new one; Save and
  * Delete for a saved one. */
@@ -22,7 +21,7 @@ export function SignalFormFooter({
   actions,
 }: {
   refusal: string | null;
-  checklist: SignalChecklistItem[] | null;
+  checklist: ChecklistItem[] | null;
   busy: boolean;
   actions: FooterActions;
 }) {

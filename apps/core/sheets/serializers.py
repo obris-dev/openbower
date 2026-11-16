@@ -140,9 +140,10 @@ class IngestRequest(serializers.Serializer):
     # Each row is either a plain map of cells or an envelope,
     # {external_id?, cells}; validate_ingest_rows reads which, per row.
     rows = serializers.ListField(child=serializers.DictField(), min_length=1, max_length=MAX_ROWS_PER_ADD)
-    # Taken VERBATIM (trim_whitespace=False): stripping would mutate a key
-    # the caller dedupes on.
-    event_id = serializers.CharField(
+    # The push's idempotency key: a retried request with the same one lands
+    # once. Taken VERBATIM (trim_whitespace=False): stripping would mutate a
+    # key the caller dedupes on. Below the wire it is the bus event's id.
+    request_id = serializers.CharField(
         required=False, allow_blank=False, max_length=MAX_INGEST_EVENT_ID_LENGTH, trim_whitespace=False
     )
 
@@ -294,7 +295,7 @@ def ingest_schema_wire(target: Sheet) -> dict[str, Any]:
 # its digits, and never a NUL or a lone surrogate, which the database refuses
 # only after the push was accepted.
 _CELL_FIELD = serializers.CharField(allow_blank=True, trim_whitespace=False)
-# Compared verbatim, like event_id.
+# Compared verbatim, like the envelope's request_id.
 _EXTERNAL_ID_FIELD = serializers.CharField(max_length=EXTERNAL_ID_MAX_LENGTH, trim_whitespace=False)
 
 

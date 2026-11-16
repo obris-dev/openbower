@@ -46,7 +46,17 @@ export function deleteConsequence(rows: number): string {
 
 // A custom signal follows no hosted type: its rows are pushed to it.
 export const CUSTOM_TYPE_LABEL = "Custom";
-export const CUSTOM_NOTE = "This signal fills from rows pushed to it, so it has no setup to edit.";
+// Create signal's first question, and how each answer reads.
+export const CHOOSE_TYPE = "What should this signal collect?";
+export const CUSTOM_CHOICE_DESCRIPTION = "Rows from your own tool, in the columns you choose.";
+
+// A custom signal's webhook URL: where its sender pushes rows.
+export const WEBHOOK_TITLE = "Webhook URL";
+export const WEBHOOK_LEDE = "Send rows to this URL from any tool or script.";
+export const ROTATE_URL = "Rotate URL";
+export const ROTATE_URL_QUESTION = "Rotate the webhook URL?";
+export const ROTATE_URL_CONSEQUENCE = "The current URL stops working at once, so update your sender with the new one.";
+export const ROTATED_TOAST = "Webhook URL rotated.";
 // A signal fed by nothing this bundle can name.
 export const UNKNOWN_FEED_NOTE = "This version of the app can't edit this signal. You can still delete it.";
 

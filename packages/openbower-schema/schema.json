@@ -690,7 +690,7 @@
       "type": "object"
     },
     "CustomSignalCreated": {
-      "description": "A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus the ONE time its webhook URL is on the wire. The\ntoken in it is stored only as a hash and never returned again; a lost\nURL is replaced by rotating, which stops the old one at once. The detail\nis extended rather than nested: a nested signal would be a `signal`\nkey, which the contract keeps for no field, and a reader of the detail\nreads this response unchanged.",
+      "description": "A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus its webhook URL (a signed-in person reads it again\nany time from `GET /v1/signals/{id}/webhook`; a rotate replaces a leaked\none and stops the old one at once). The detail is extended rather than\nnested: a nested signal would be a `signal` key, which the contract\nkeeps for no field, and a reader of the detail reads this response\nunchanged.",
       "properties": {
         "last_polled_at": {
           "anyOf": [
@@ -758,7 +758,7 @@
           "type": "string"
         },
         "webhook_url": {
-          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({event_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
+          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
           "title": "Webhook Url",
           "type": "string"
         }
@@ -1349,21 +1349,21 @@
       "type": "object"
     },
     "IngestAccepted": {
-      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.",
+      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `request_id` correlates them.",
       "properties": {
         "accepted": {
           "description": "Number of rows accepted.",
           "title": "Accepted",
           "type": "integer"
         },
-        "event_id": {
+        "request_id": {
           "description": "The push's idempotency key (caller-supplied, else a minted ULID).",
-          "title": "Event Id",
+          "title": "Request Id",
           "type": "string"
         }
       },
       "required": [
-        "event_id",
+        "request_id",
         "accepted"
       ],
       "title": "IngestAccepted",
@@ -2465,6 +2465,21 @@
       "title": "SignalSummary",
       "type": "object"
     },
+    "SignalWebhook": {
+      "description": "`GET /v1/signals/{id}/webhook`: a custom signal's webhook URL, for a\nsigned-in person to copy any time. The URL is not a credential for this\nroute; only a session reads it.",
+      "properties": {
+        "webhook_url": {
+          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
+          "title": "Webhook Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_url"
+      ],
+      "title": "SignalWebhook",
+      "type": "object"
+    },
     "SignalsCatalog": {
       "description": "The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):\nevery signal type, and the limits a setup is held to.",
       "properties": {
@@ -3232,6 +3247,7 @@
     "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_API_KEYS": 50,
+    "MAX_SHEET_COLUMNS": 70,
     "MAX_TOOL_CALLS": 6,
     "MAX_WEBHOOK_DESTINATIONS": 32,
     "MAX_WEBHOOK_HEADERS": 8,
@@ -3242,6 +3258,10 @@
       "queued",
       "processing",
       "deferred"
+    ],
+    "RESERVED_COLUMN_KEYS": [
+      "ai",
+      "webhook"
     ],
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "RESERVED_WEBHOOK_HEADER_NAMES": [
@@ -3269,6 +3289,7 @@
       "unparseable",
       "type_mismatch"
     ],
+    "SHEET_LABEL_MAX_LENGTH": 120,
     "TEST_KEY_MAX_LENGTH": 64,
     "TEST_ROW_MAX_KEYS": 16,
     "TEST_VALUE_MAX_LENGTH": 512,

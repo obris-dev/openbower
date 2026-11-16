@@ -1,6 +1,7 @@
 """`/v1/signals` (an account's signals: a sheet of kind log fed by its
 sources; a custom signal's push at `/v1/signals/{id}/ingest`, its webhook
-URL at `/v1/signals/{id}/ingest/{token}` and that URL's rotate), and what
+URL at `/v1/signals/{id}/ingest/{token}`, that URL read back at
+`/v1/signals/{id}/webhook` and its rotate), and what
 the Create-signal screen reads: `/v1/signal-types` (the catalog and a
 type's recent events) and `/v1/signal-previews` (a setup tried before it
 is saved). Session-authed, but for the push, which an account API key may
@@ -32,6 +33,7 @@ from openbower_schema import (
     SignalDetail,
     SignalsPage,
     SignalSummary,
+    SignalWebhook,
     SourceSummary,
     SyncKeyReconnected,
 )
@@ -56,6 +58,7 @@ from .operations.logs import (
     Log,
     NoWebhook,
     ReadLogOperation,
+    ReadWebhookOperation,
     ReconnectLogsOperation,
     RotateWebhookOperation,
     SetupOnCustomSignal,
@@ -74,6 +77,7 @@ from .services.signals_client import (
     preview_payload,
     setup_payload,
 )
+from .services.webhook_tokens import WebhookTokenUnreadable
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,8 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalTakesNoPush):
         return _Relayed({"error": IngestErrorCode.NOT_APPENDABLE, "detail": str(exc)}, status=409)
+    if isinstance(exc, WebhookTokenUnreadable):
+        return _Relayed({"error": SignalsErrorCode.WEBHOOK_UNREADABLE, "detail": str(exc)}, status=409)
     if isinstance(exc, NoWebhook):
         return _Relayed({"error": SignalsErrorCode.NO_WEBHOOK, "detail": str(exc)}, status=409)
     if isinstance(exc, SetupOnCustomSignal):
@@ -181,7 +187,7 @@ def _webhook_url(sheet_id: str, token: str) -> str:
 
 
 def _issued(issued: IssuedWebhook) -> CustomSignalCreated:
-    """The signal's detail and the one reading of its webhook URL."""
+    """The signal's detail plus its webhook URL (the create and a rotate)."""
     sheet_id = issued.log.local_log.sheet_id
     url = _webhook_url(sheet_id, issued.token)
     detail = _detail(issued.log)
@@ -201,7 +207,7 @@ def _accept_push(sheet: Sheet, request: Request) -> Response:
         accepted = accept_push(
             sheet,
             body.validated_data["rows"],
-            event_id=body.validated_data.get("event_id"),
+            request_id=body.validated_data.get("request_id"),
             account_id=user.account_id,
             user_id=user.id,
             source=RowSource.SIGNAL,
@@ -289,9 +295,21 @@ class SignalWebhookIngestView(_SignalsScopedView):
         return _accept_push(grant.sheet, request)
 
 
+class SignalWebhookView(_SignalsScopedView):
+    """GET /v1/signals/{id}/webhook: a custom signal's webhook URL, for a
+    signed-in person to copy any time (the token is kept encrypted beside
+    its hash). Session only: the URL is not a credential for this route."""
+
+    def get(self, request: Request, id: str) -> Response:
+        issued = ReadWebhookOperation(request.auth, id).run()
+        url = _webhook_url(issued.log.local_log.sheet_id, issued.token)
+        body = SignalWebhook(webhook_url=url)
+        return Response(body.model_dump())
+
+
 class SignalWebhookRotateView(_SignalsScopedView):
     """POST /v1/signals/{id}/webhook/rotate: a new webhook URL for a custom
-    signal, shown once; the old one stops working at once."""
+    signal; the old one stops working at once."""
 
     def post(self, request: Request, id: str) -> Response:
         issued = RotateWebhookOperation(request.auth, id).run()

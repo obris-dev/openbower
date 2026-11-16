@@ -43,6 +43,21 @@ export function errorCode(body: unknown): string {
     : "";
 }
 
+/** What a failure says when the server could not be reached at all. */
+export const UNREACHABLE_FAILURE = "Could not reach the server.";
+
+/** A refusal's message and code, by the one rule every request follows:
+ * only a 400's or 409's detail is user copy (the request was wrong, or
+ * lost a race the user should hear about), and only they carry a code;
+ * other statuses' bodies are internals, so they read as the general line. */
+export function refusalOf(status: number, body: unknown): { message: string; code?: string } {
+  const classified = status === 400 || status === 409;
+  return {
+    message: (classified ? errorDetail(body) : "") || GENERIC_FAILURE,
+    code: (classified ? errorCode(body) : "") || undefined,
+  };
+}
+
 // schema: the zod validator for the response body, or null for
 // no-content endpoints (delete), whose success carries no data.
 export async function request<T>(path: string, schema: ZodType<T>, init?: RequestInit): Promise<ApiResult<T>>;
@@ -53,7 +68,7 @@ export async function request<T>(
   init?: RequestInit,
 ): Promise<ApiResult<T | null>> {
   const fetched = await fetchJson(path, { credentials: "include", ...init });
-  if (!fetched) return { status: "error", message: "Could not reach the server." };
+  if (!fetched) return { status: "error", message: UNREACHABLE_FAILURE };
   const { res, body } = fetched;
   // 403 lands with 401: the app's endpoints never answer 403 for a
   // signed-in user except when the session predates a required scope,
@@ -61,17 +76,8 @@ export async function request<T>(
   // signals, calling a route that reads them).
   if (res.status === 401 || res.status === 403) return { status: "unauthenticated" };
   if (!res.ok) {
-    // Only a 400's or 409's detail is user copy (the request was
-    // wrong, or lost a race the user should hear about); other
-    // statuses' bodies are internals, not messages.
-    // detail AND code share the gate: other statuses' bodies are
-    // internals, not user copy or classification.
-    const classified = res.status === 400 || res.status === 409;
-    return {
-      status: "error",
-      message: (classified ? errorDetail(body) : "") || GENERIC_FAILURE,
-      code: (classified ? errorCode(body) : "") || undefined,
-    };
+    const refusal = refusalOf(res.status, body);
+    return { status: "error", ...refusal };
   }
   if (schema === null) return { status: "ok", data: null };
   const parsed = schema.safeParse(body);

@@ -37,18 +37,27 @@ COLUMN_KEY_MAX_LENGTH = 40
 # and what every request naming a key is held to).
 COLUMN_KEY_GRAMMAR = r"^[a-z0-9_]+$"
 COLUMN_LABEL_MAX_LENGTH = 80
+# The columns a sheet holds at most (the server refuses one more; a form
+# declaring columns stops here).
+MAX_SHEET_COLUMNS = 70
+# A sheet's label (and so a signal's name) at most this long.
+SHEET_LABEL_MAX_LENGTH = 120
+# Column keys that would shadow a literal route under `columns/` (the AI and
+# webhook add collections): refused at every key claim, and checked by a
+# form that declares columns.
+RESERVED_COLUMN_KEYS: frozenset[str] = frozenset({"ai", "webhook"})
 
 
 def derive_column_key(label: str, *, key: str = "") -> str:
     """THE label-to-key derivation, for every path that puts a column
-    on a sheet: a CSV header, a blank column add, an agent output a
-    fill maps down. It lives on the CONTRACT because a fill decides
+    on a sheet: a CSV header, a blank column add, a custom signal's
+    declared columns, an agent output a fill maps down. It lives on the CONTRACT because a fill decides
     what an output key MEANS by matching it against the sheet's keys,
     so a second derivation anywhere does not produce a second key, it
     changes which column an output is judged against. What that match
     then does is fill admission's resolve_columns rule, stated there
     and nowhere else. The web mirrors this one function
-    (_components/agent-config/lib/output-key.ts)."""
+    (_components/column-key.ts)."""
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 
@@ -337,9 +346,9 @@ class RowsDeleted(BaseModel):
 
 class IngestAccepted(BaseModel):
     """The webhook accept receipt. Rows are accepted for asynchronous
-    append, not applied on the response; `event_id` correlates them."""
+    append, not applied on the response; `request_id` correlates them."""
 
-    event_id: str = Field(description="The push's idempotency key (caller-supplied, else a minted ULID).")
+    request_id: str = Field(description="The push's idempotency key (caller-supplied, else a minted ULID).")
     accepted: int = Field(description="Number of rows accepted.")
 
 

@@ -22,6 +22,10 @@ import {
   fetchSignal,
   fetchSignalsPage,
   reconnectSignals,
+  createCustomSignal,
+  fetchSignalWebhook,
+  rotateSignalWebhook,
+  CUSTOM_SIGNAL_TYPE,
 } from "../src/index.ts";
 
 const SHEET = {
@@ -241,4 +245,38 @@ test("a signal's feed is hosted, custom, or one this bundle cannot name", () => 
     [of([{ kind: "hosted" }]), of([{ kind: "webhook" }]), of([{ kind: "unknown_kind" }])],
     [SIGNAL_FEED.HOSTED, SIGNAL_FEED.CUSTOM, SIGNAL_FEED.UNKNOWN],
   );
+});
+
+const WEBHOOK_URL = "https://api.example.io/v1/signals/" + SHEET.id + "/ingest/tok";
+
+test("a custom create posts its type and columns, and reads its webhook URL", async (t) => {
+  const created = {
+    sheet: SHEET,
+    type: CUSTOM_SIGNAL_TYPE,
+    sources: [{ kind: "webhook" }],
+    listener: null,
+    status: "waiting",
+    last_polled_at: null,
+    webhook_url: WEBHOOK_URL,
+  };
+  const calls = stubFetch(t, created, 201);
+  const res = await createCustomSignal({ label: "Forum mentions", columns: [{ label: "Title", type: "text" }] });
+  assert.equal(res.status === "ok" && res.data.webhook_url, WEBHOOK_URL);
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), {
+    label: "Forum mentions",
+    columns: [{ label: "Title", type: "text" }],
+    type: "custom",
+  });
+});
+
+test("the webhook URL reads any time, and a rotate answers the new one", async (t) => {
+  const calls = stubFetch(t, { webhook_url: WEBHOOK_URL });
+  const read = await fetchSignalWebhook(SHEET.id);
+  assert.equal(read.status === "ok" && read.data.webhook_url, WEBHOOK_URL);
+  assert.ok(calls[0]?.url.endsWith(`/v1/signals/${SHEET.id}/webhook`));
+  const rotateCalls = stubFetch(t, { webhook_url: WEBHOOK_URL + "2" });
+  const rotated = await rotateSignalWebhook(SHEET.id);
+  assert.equal(rotated.status === "ok" && rotated.data.webhook_url, WEBHOOK_URL + "2");
+  assert.ok(rotateCalls[0]?.url.endsWith(`/v1/signals/${SHEET.id}/webhook/rotate`));
+  assert.equal(rotateCalls[0]?.init.method, "POST");
 });
