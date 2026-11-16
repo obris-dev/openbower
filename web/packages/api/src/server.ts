@@ -20,7 +20,7 @@ import {
 import { TolerantSignalDetailSchema, TolerantSignalsPageSchema, type SignalDetail, type SignalsPage } from "./signals.ts";
 import { TolerantSignalsCatalogSchema, type SignalsCatalog } from "./signal-types.ts";
 import { renderablePage, TolerantSheetRowsPageSchema, type RenderableSheetRowsPage, TolerantSheetsPageSchema, TolerantSheetDetailSchema, type SheetsPage, type SheetDetail } from "./sheets.ts";
-import { fetchJson } from "./request.ts";
+import { GENERIC_FAILURE, UNREACHABLE_FAILURE, fetchJson, refusalOf } from "./request.ts";
 import { apiRoutes } from "./routes.ts";
 import {
   TolerantWebhookDestinationsListSchema,
@@ -41,11 +41,13 @@ export async function fetchMeResultWithCookie(cookieHeader: string): Promise<MeR
 // The outcomes a server component can act on: missing renders
 // notFound, unauthenticated redirects to login, error renders an
 // honest failure (never an empty state that lies about a down backend).
+// An error's message is the client funnel's (request.ts refusalOf).
 export type ServerFetchResult<T> =
   | { status: "ok"; data: T }
   | { status: "missing" }
   | { status: "unauthenticated" }
-  | { status: "error" };
+  | { status: "error"; message: string };
+
 
 async function fetchParsedWithCookie<T>(
   path: string,
@@ -53,15 +55,18 @@ async function fetchParsedWithCookie<T>(
   schema: ZodType<T>,
 ): Promise<ServerFetchResult<T>> {
   const fetched = await fetchJson(path, { headers: { cookie: cookieHeader }, cache: "no-store" });
-  if (!fetched) return { status: "error" };
+  if (!fetched) return { status: "error", message: UNREACHABLE_FAILURE };
   const { res, body } = fetched;
   if (res.status === 401 || res.status === 403) return { status: "unauthenticated" };
   if (res.status === 404) return { status: "missing" };
-  if (!res.ok) return { status: "error" };
+  if (!res.ok) {
+    const refusal = refusalOf(res.status, body);
+    return { status: "error", message: refusal.message };
+  }
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     if (process.env.NODE_ENV !== "production") console.error(`contract mismatch at ${path}:`, parsed.error);
-    return { status: "error" };
+    return { status: "error", message: GENERIC_FAILURE };
   }
   return { status: "ok", data: parsed.data };
 }

@@ -27,7 +27,8 @@ class SignalsErrorCode(StrEnum):
     KEY_LIMIT_REACHED = "key_limit_reached"  # 409: the sync key would exceed the person's key limit
     LISTENER_GONE = "listener_gone"  # 409: the log's listener no longer exists; delete the log
     SETUP_ON_CUSTOM_SIGNAL = "setup_on_custom_signal"  # 409: a listener setup sent to a signal with no listener
-    NO_WEBHOOK = "no_webhook"  # 409: a webhook rotate on a signal no webhook feeds (a hosted one)
+    NO_WEBHOOK = "no_webhook"  # 409: a webhook read or rotate on a signal no webhook feeds (a hosted one)
+    WEBHOOK_UNREADABLE = "webhook_unreadable"  # 409: the URL no longer decrypts (key changed); rotate it
 
 
 # A source kind's name: the SignalSource.kind column bound and the
@@ -36,9 +37,9 @@ SOURCE_KIND_MAX_LENGTH = 16
 # Where a polled source's next read starts, as its kind reads it (a hosted
 # listener's last match id; a sender's page token or URL, opaque to us).
 SOURCE_CURSOR_MAX_LENGTH = 512
-# A webhook URL's token: URL-safe base64 of this many random bytes. Only its
-# hash is stored, with its last four characters so a page can say which URL
-# is live.
+# A webhook URL's token: URL-safe base64 of this many random bytes. Stored as
+# its hash (a push's lookup) and encrypted (a signed-in person's read), with
+# its last four characters so a page can say which URL is live.
 WEBHOOK_TOKEN_BYTES = 32
 # Revoked tokens a signal keeps, newest first, so a page can say which URL
 # was replaced and when; a rotate deletes the older ones.

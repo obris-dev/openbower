@@ -52,7 +52,7 @@ def accept_push(
     target_sheet: Sheet,
     rows: list[Any],
     *,
-    event_id: str | None,
+    request_id: str | None,
     account_id: str,
     user_id: str,
     source: RowSource,
@@ -78,10 +78,10 @@ def accept_push(
     room = max(MAX_SHEET_ROWS - target_sheet.row_count, 0)
     if len(typed) > room:
         raise PushTooBig(room=room, rows=len(typed))
-    # The caller's idempotency key if they sent one, else a fresh ULID:
-    # carried through the bus, so a retry or a redelivery appends once.
+    # The caller's request_id if they sent one, else a fresh ULID: the bus
+    # event's id, so a retry or a redelivery appends once.
     event = IngestEvent(
-        event_id=event_id or new_ulid(),
+        event_id=request_id or new_ulid(),
         sheet_id=str(target_sheet.id),
         account_id=account_id,
         user_id=user_id,
@@ -95,4 +95,4 @@ def accept_push(
     except IngestPublishError as e:
         logger.warning("ingest publish failed for sheet %s: %s", event.sheet_id, e)
         raise
-    return IngestAccepted(event_id=event.event_id, accepted=len(typed))
+    return IngestAccepted(request_id=event.event_id, accepted=len(typed))

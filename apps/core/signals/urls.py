@@ -9,5 +9,6 @@ urlpatterns = [
     api_path("<str:id>", views.SignalDetailView.as_view(), name="signals_detail"),
     api_path("<str:id>/ingest", views.SignalIngestView.as_view(), name="signals_ingest"),
     api_path("<str:id>/ingest/<str:token>", views.SignalWebhookIngestView.as_view(), name="signals_webhook_ingest"),
+    api_path("<str:id>/webhook", views.SignalWebhookView.as_view(), name="signals_webhook"),
     api_path("<str:id>/webhook/rotate", views.SignalWebhookRotateView.as_view(), name="signals_webhook_rotate"),
 ]

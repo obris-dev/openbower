@@ -74,6 +74,12 @@ export const apiRoutes = {
     detail: (id: string) => `/${API_VERSION}/signals/${id}`,
     // POST: a fresh sync key in place of a refused one; the signals resume.
     reconnect: `/${API_VERSION}/signals/reconnect`,
+    // GET: the row schema a push to a custom signal is held to.
+    ingest: (id: string) => `/${API_VERSION}/signals/${id}/ingest`,
+    // GET: a custom signal's webhook URL, to copy any time (session only).
+    webhook: (id: string) => `/${API_VERSION}/signals/${id}/webhook`,
+    // POST: a new webhook URL; the old one stops at once.
+    webhookRotate: (id: string) => `/${API_VERSION}/signals/${id}/webhook/rotate`,
   },
   // What creating a signal reads, passed through to the signals service.
   signalTypes: {
@@ -105,7 +111,7 @@ export const apiRoutes = {
     // there; 200 with the row. DELETE: the row, its cell states and its
     // webhook runs; 204.
     row: (id: string, rowId: string) => `/${API_VERSION}/sheets/${id}/rows/${rowId}`,
-    // GET: the push schema (the columns a producer may send). POST {rows, event_id?}
+    // GET: the push schema (the columns a producer may send). POST {rows, request_id?}
     // with a machine API key: the webhook push; 202, rows land off the bus.
     ingest: (id: string) => `/${API_VERSION}/sheets/${id}/ingest`,
     // POST: append one blank column (no fill attached).
@@ -164,6 +170,8 @@ export const webRoutes = {
   // The signals a person set up; a signal's id is its sheet's.
   signals: SIGNAL_PREFIX,
   signalNew: `${SIGNAL_PREFIX}/new`,
+  // Create a signal of one type: a hosted type's key, or custom.
+  signalNewOf: (type: string) => `${SIGNAL_PREFIX}/new/${encodeURIComponent(type)}`,
   signal: (id: string) => `${SIGNAL_PREFIX}/${id}`,
   agents: "/agents",
   agentNew: "/agents/new",

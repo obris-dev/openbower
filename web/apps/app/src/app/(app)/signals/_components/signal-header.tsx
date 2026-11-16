@@ -12,27 +12,38 @@ import { TITLE as SIGNALS_TITLE, VIEW_SHEET_ACTION } from "./copy";
 export function SignalHeader({
   title,
   sheetId,
+  parents = [],
+  actions,
   children,
 }: {
   title: string;
+  /** Crumbs between Signals and this page (Create signal, on a type's create). */
+  parents?: { label: string; href: string }[];
   /** The signal's sheet, once there is one. */
   sheetId?: string;
+  /** Page actions beside View sheet (a custom signal's Delete). */
+  actions?: ReactNode;
   /** The line under the title. */
   children?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <Breadcrumbs trail={[{ label: SIGNALS_TITLE, href: webRoutes.signals }]} />
+        <Breadcrumbs trail={[{ label: SIGNALS_TITLE, href: webRoutes.signals }, ...parents]} />
         <h1 tabIndex={-1} className="mt-1 truncate text-2xl font-bold text-foreground outline-none">
           {title}
         </h1>
         {children}
       </div>
-      {sheetId !== undefined && (
-        <LinkButton size="sm" variant="outline" href={webRoutes.sheet(sheetId)}>
-          {VIEW_SHEET_ACTION}
-        </LinkButton>
+      {(actions !== undefined || sheetId !== undefined) && (
+        <div className="flex items-center gap-2">
+          {actions}
+          {sheetId !== undefined && (
+            <LinkButton size="sm" variant="outline" href={webRoutes.sheet(sheetId)}>
+              {VIEW_SHEET_ACTION}
+            </LinkButton>
+          )}
+        </div>
       )}
     </div>
   );

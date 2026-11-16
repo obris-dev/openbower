@@ -97,8 +97,8 @@ class Log:
 
 @dataclass(frozen=True)
 class IssuedWebhook:
-    """A custom signal with its webhook URL's token, the one time the token
-    is in hand: at the create and at each rotate."""
+    """A custom signal with its webhook URL's live token: at the create, at
+    each rotate, and whenever a signed-in person reads it to copy."""
 
     log: Log
     token: str
@@ -191,6 +191,24 @@ class CreateCustomSignalOperation(_LogOperation):
             )
             source, _ = local_log.find(WebhookSource)
             token = self.tokens.mint(source, user_id=self.session.user_id)
+        return IssuedWebhook(log=Log(local_log=local_log, listener=None), token=token)
+
+
+class ReadWebhookOperation(_LogOperation):
+    def __init__(self, session: AppSession, sheet_id: str) -> None:
+        self.session = session
+        self.sheet_id = sheet_id
+
+    def run(self) -> IssuedWebhook:
+        """A custom signal with its webhook URL's live token, for a signed-in
+        person to copy any time. Raises NoWebhook for a signal no webhook
+        feeds."""
+        local_log = self.logs.get(self.sheet_id)
+        found = local_log.find(WebhookSource)
+        if found is None:
+            raise NoWebhook(self.sheet_id)
+        source, _ = found
+        token = self.tokens.live_token(source)
         return IssuedWebhook(log=Log(local_log=local_log, listener=None), token=token)
 
 

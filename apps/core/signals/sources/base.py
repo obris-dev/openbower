@@ -14,8 +14,9 @@ A config is read once its row is loaded, never queried into: nothing
 filters on a key inside it. Anything a source is looked up by (a
 webhook's token, a listener id if one is ever matched) is a column or a
 child table with its own index, and a secret is never config at all: it
-is kept in its own row, hashed when it is only compared (a webhook's
-token, `SourceToken`) and encrypted when it is replayed (the sync key).
+is kept in its own row, hashed when it is compared and encrypted when it
+is replayed or shown: the sync key is encrypted, and a webhook's token
+(`SourceToken`) is both, since a push compares it and a person copies it.
 
 A kind ANSWERS every seam where a log's sources are walked without
 regard to kind: what type it gives its signal, what it says about its

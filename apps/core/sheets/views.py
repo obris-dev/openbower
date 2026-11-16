@@ -385,7 +385,7 @@ class SheetIngestView(_ScopedView):
     the target sheet (account-scoped, so a key only reaches its owner's
     sheets), publish the batch to the ingest bus, and return 202 once the
     broker acked it. The rows are NOT in the sheet on return: the ingest
-    worker appends them off the bus, deduped on `event_id`, skipping a row
+    worker appends them off the bus, deduped on the request's `request_id`, skipping a row
     whose `external_id` the sheet already holds, and the append starts the
     sheet's workflow for them. A deployment with no bus
     configured logs and drops the batch (sheets.ingest.publisher). Same
@@ -412,7 +412,7 @@ class SheetIngestView(_ScopedView):
             accepted = accept_push(
                 target_sheet,
                 body.validated_data["rows"],
-                event_id=body.validated_data.get("event_id"),
+                request_id=body.validated_data.get("request_id"),
                 account_id=user.account_id,
                 user_id=user.id,
                 source=RowSource.PUSH,

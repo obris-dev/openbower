@@ -1,20 +1,13 @@
-import { AGENT_OUTPUT_KEY_MAX_LENGTH, RESERVED_OUTPUT_KEYS, RESERVED_OUTPUT_MARKER, type AgentOutput } from "@bower/api";
+import type { AgentOutput } from "@bower/api";
 
-/** The result-cell key an output will land under, MIRRORING the ONE
- * server derivation (openbower_schema/sheets.py derive_column_key,
- * which the CSV importer, the blank-column add, and the output
- * serializer all call). Keys fall back to the slugified label, so the
- * preview can match cells for outputs whose key the user left blank
- * (the common case before save). Change one side and an output is
- * judged against a different column than the server judges it
- * against: the pair is pinned by vectors in output-key.test.ts and
- * test_column_keys.py. */
+import { deriveColumnKey, reservedOutputKey } from "../../column-key.ts";
+
+/** The result-cell key an output will land under, through the one client
+ * mirror of the server's derivation (../../column-key). Keys fall back to
+ * the slugified label, so the preview can match cells for outputs whose
+ * key the user left blank (the common case before save). */
 export function outputKey(output: AgentOutput): string {
-  return (output.key || output.label)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, AGENT_OUTPUT_KEY_MAX_LENGTH);
+  return deriveColumnKey(output.key || output.label);
 }
 
 /** A row the user has started (any field non-blank). The readiness
@@ -40,10 +33,7 @@ export function outputsProblem(outputs: AgentOutput[]): OutputsProblem | null {
     if (!outputKey(output)) return { message: "An output name needs at least one letter or number.", index };
     // The server refuses keys colliding with its answer model's own
     // attributes; the message speaks the LABEL the user typed.
-    if (
-      (RESERVED_OUTPUT_KEYS as readonly string[]).includes(outputKey(output)) ||
-      outputKey(output).includes(RESERVED_OUTPUT_MARKER)
-    ) {
+    if (reservedOutputKey(outputKey(output))) {
       return { message: `"${(output.label || output.key).trim()}" can't be used as an output name; pick another.`, index };
     }
   }

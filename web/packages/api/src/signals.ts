@@ -7,12 +7,15 @@ import {
   WebhookSourceSummarySchema,
   ListenerVersionWireSchema,
   ListenerWireSchema,
+  CustomSignalCreatedSchema,
   SignalDetailSchema,
+  SignalWebhookSchema,
   SignalSummarySchema,
   SignalsPageSchema,
   SyncKeyReconnectedSchema,
   WIRE_CONSTANTS,
   type SignalSummary as WireSignalSummary,
+  type SignalWebhook,
   type SyncKeyReconnected,
 } from "@bower/schema";
 import { z } from "zod";
@@ -25,7 +28,13 @@ import {
   type KnownSignalType,
   type SignalSetup,
 } from "./signal-types.ts";
-import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
+import {
+  TolerantIngestSchemaSchema,
+  TolerantSheetSummarySchema,
+  type ColumnType,
+  type IngestSchema,
+  type SheetSummary,
+} from "./sheets.ts";
 
 /** Where a signal stands, as the server names it: active (it fills),
  * reconnect (the account's sync key was refused; a person reconnects),
@@ -162,6 +171,46 @@ export async function createSignal(
   return http.post(apiRoutes.signals.index, CreatedSignalSchema, body);
 }
 
+/** The columns a custom signal may declare: a sheet's cap (the server's
+ * MAX_SHEET_COLUMNS). */
+export const MAX_SIGNAL_COLUMNS = WIRE_CONSTANTS.MAX_SHEET_COLUMNS;
+
+/** A custom signal's create answer: its sheet and its webhook URL. The
+ * rest of the detail is left unread, as a hosted create's is. */
+export type CreatedCustomSignal = { sheet: SheetSummary; webhook_url: string };
+const CreatedCustomSignalSchema = CustomSignalCreatedSchema.pick({ sheet: true, webhook_url: true }).extend({
+  sheet: TolerantSheetSummarySchema,
+});
+
+/** Create a custom signal: a sheet with the columns declared (each value
+ * arrives with its row), fed by pushes to its webhook URL (201). Touches
+ * no signals service. */
+export async function createCustomSignal(body: {
+  label: string;
+  columns: { label: string; type: ColumnType }[];
+}): Promise<ApiResult<CreatedCustomSignal>> {
+  return http.post(apiRoutes.signals.index, CreatedCustomSignalSchema, { ...body, type: CUSTOM_SIGNAL_TYPE });
+}
+
+export type { SignalWebhook };
+
+/** A custom signal's webhook URL, to copy any time. */
+export async function fetchSignalWebhook(id: string): Promise<ApiResult<SignalWebhook>> {
+  return http.get(apiRoutes.signals.webhook(id), SignalWebhookSchema);
+}
+
+/** The row schema a push to a custom signal is held to: the columns its
+ * sender sets, with the keys a row is keyed on. */
+export async function fetchSignalIngestSchema(id: string): Promise<ApiResult<IngestSchema>> {
+  return http.get(apiRoutes.signals.ingest(id), TolerantIngestSchemaSchema);
+}
+
+/** A new webhook URL for a custom signal; the old one stops working at
+ * once. Answers the URL (the rest of the detail is left unread). */
+export async function rotateSignalWebhook(id: string): Promise<ApiResult<SignalWebhook>> {
+  return http.post(apiRoutes.signals.webhookRotate(id), CustomSignalCreatedSchema.pick({ webhook_url: true }));
+}
+
 /** One signal, its listener read live from the signals service. */
 export async function fetchSignal(id: string): Promise<ApiResult<SignalDetail>> {
   return http.get(apiRoutes.signals.detail(id), TolerantSignalDetailSchema);
@@ -178,6 +227,11 @@ export async function reconnectSignals(): Promise<ApiResult<SyncKeyReconnected>>
  * no longer has (409): the server has marked the signal gone, so a fresh
  * read shows what is left of it. */
 export const LISTENER_GONE_CODE = "listener_gone";
+
+/** The refusal of a webhook URL read whose stored token no longer decrypts
+ * (409: the encryption key changed since it was minted). Pushes to it still
+ * work; Rotate URL replaces it with one that can be shown. */
+export const WEBHOOK_UNREADABLE_CODE = "webhook_unreadable";
 
 /** What an edit changes: the name alone, or the setup whole (the service
  * saves a setup as a new version, so a rename never sends one). */

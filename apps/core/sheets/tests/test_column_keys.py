@@ -1,15 +1,15 @@
 """The label-to-key derivation, pinned by vector.
 
 Every path that puts a column on a sheet goes through this one
-function: a CSV header, a blank column add, an agent output a fill
-maps down. It matters because a fill decides what an output key MEANS
+function: a CSV header, a blank column add, a custom signal's declared
+columns, an agent output a fill maps down. It matters because a fill decides what an output key MEANS
 by matching it against the sheet's keys, so a second rule anywhere
 does not produce a second key, it changes which column an output is
 judged against. What that match then does is
 FillAdmissionService._resolve_columns's rule, not this module's.
 
 THE SAME VECTORS live in the web's mirror,
-web/apps/app/src/app/(app)/_components/agent-config/lib/output-key.test.ts.
+web/apps/app/src/app/(app)/_components/column-key.test.ts.
 Changing one list without the other is the drift these exist to catch.
 
 Run: DJANGO_ENV=test uv run python manage.py test sheets

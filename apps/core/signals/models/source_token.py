@@ -1,15 +1,17 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from auth_client.fields import EncryptedTextField
 from openbower_kernel.models import UserScopedModel
 
 
 class SourceToken(UserScopedModel):
     """The secret in a custom signal's webhook URL
     (`/v1/signals/{id}/ingest/{token}`): a push carrying it needs no session
-    and no API key. Only its hash is stored, never the token (it is shown
-    once, at the create or a rotate), and it is looked up by that hash, so
-    a lost one is replaced by rotating. One live token per source: a rotate
+    and no API key. It is kept twice: `token_hash`, which a push is looked up
+    by (one indexed read), and `token`, encrypted at rest and never filtered
+    on, which a signed-in person reads to copy the URL any time; a leaked
+    one is replaced by rotating. One live token per source: a rotate
     revokes the last before minting the next, and keeps only the newest
     WEBHOOK_TOKENS_REVOKED_KEPT revoked. user_id is who minted it.
 
@@ -19,6 +21,7 @@ class SourceToken(UserScopedModel):
     sheet_id = models.CharField(_("sheet id"), max_length=26)
     source_id = models.CharField(_("source id"), max_length=26)
     token_hash = models.CharField(_("token hash"), max_length=64)
+    token = EncryptedTextField(_("token"))
     last4 = models.CharField(_("last four"), max_length=4)
     revoked_at = models.DateTimeField(_("revoked at"), null=True, blank=True)
 

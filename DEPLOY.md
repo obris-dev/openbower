@@ -43,6 +43,7 @@ The database and the web dependencies survive in named volumes; the Python venv 
 
 Environment facts (`apps/core/.env.example` carries the full annotated list):
 
+- `AUTH_TOKEN_ENCRYPTION_KEY` (or `DJANGO_SECRET_KEY`, when it is unset) encrypts what the app keeps for later: sign-in sessions, the signals sync key, and custom signals' webhook URLs. Changing it signs everyone out, needs a Reconnect for signals, and leaves each webhook URL unshowable until it is rotated (pushes to it keep working). Change it deliberately.
 - `DJANGO_ENV` is always explicit (`local` for a machine you own, `cloud` for a deployed instance; unset refuses to start). The api and the workers read the same settings profile, so they see the same providers and search configuration.
 - Repointing the app at a different identity provider means setting both halves: `OPENBOWER_AUTH_URL`, the identity (the browser's authorize target, and the audience the token names), and `OPENBOWER_AUTH_INTERNAL_URL`, the transport this process dials. The signals service takes the matching pair.
 - A custom signal's webhook URL (`/v1/signals/{id}/ingest/{token}`) carries its secret in the path. The app masks it in its own request logs; keep it out of any proxy access log you put in front of the api.
