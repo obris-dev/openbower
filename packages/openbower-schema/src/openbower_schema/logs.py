@@ -16,7 +16,7 @@ _SIGNAL = "The signal it logs, as the catalog names it (`SignalsCatalog.signals[
 # Where a log stands, derived on every read: listener_gone (final; delete
 # the log), reconnect (the account has no working sync key), full (the
 # sheet holds as many rows as it may), else active.
-LogStatus = Literal["active", "listener_gone", "reconnect", "full"]
+SignalStatus = Literal["active", "listener_gone", "reconnect", "full"]
 _STATUS = (
     "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. "
     "The listener's own state on the signals service (retrying, held) is `listener.status` on the detail."
@@ -24,24 +24,24 @@ _STATUS = (
 _LAST_POLLED = "When its listener's matches were last read through (ISO); null before the first read."
 
 
-class LogSummary(BaseModel):
+class SignalSummary(BaseModel):
     """One log as the logs index shows it: no signals call behind it."""
 
     sheet: SheetSummary
     listener_id: str = Field(description="The listener whose matches become the log's rows.")
     signal: str = Field(description=_SIGNAL)
-    status: LogStatus = Field(description=_STATUS)
+    status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
 
 
-class LogsPage(BaseModel):
+class SignalsPage(BaseModel):
     """`GET /v1/signals`: newest first."""
 
-    items: list[LogSummary]
+    items: list[SignalSummary]
     next_cursor: str | None = Field(default=None, description="Hand back as ?after= for the next page.")
 
 
-class LogDetail(BaseModel):
+class SignalDetail(BaseModel):
     """One log with its listener as the signals service has it now."""
 
     sheet: SheetSummary
@@ -49,7 +49,7 @@ class LogDetail(BaseModel):
         description="Read live from the signals service; null once the listener is gone (status listener_gone)."
     )
     signal: str = Field(description=_SIGNAL)
-    status: LogStatus = Field(description=_STATUS)
+    status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
 
 

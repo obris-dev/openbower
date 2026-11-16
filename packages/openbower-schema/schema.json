@@ -1422,142 +1422,6 @@
       "title": "ListenerWire",
       "type": "object"
     },
-    "LogDetail": {
-      "description": "One log with its listener as the signals service has it now.",
-      "properties": {
-        "last_polled_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
-          "title": "Last Polled At"
-        },
-        "listener": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ListenerWire"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
-        },
-        "sheet": {
-          "$ref": "#/$defs/SheetSummary"
-        },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
-        },
-        "status": {
-          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
-          "enum": [
-            "active",
-            "listener_gone",
-            "reconnect",
-            "full"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "sheet",
-        "listener",
-        "signal",
-        "status",
-        "last_polled_at"
-      ],
-      "title": "LogDetail",
-      "type": "object"
-    },
-    "LogSummary": {
-      "description": "One log as the logs index shows it: no signals call behind it.",
-      "properties": {
-        "last_polled_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
-          "title": "Last Polled At"
-        },
-        "listener_id": {
-          "description": "The listener whose matches become the log's rows.",
-          "title": "Listener Id",
-          "type": "string"
-        },
-        "sheet": {
-          "$ref": "#/$defs/SheetSummary"
-        },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
-        },
-        "status": {
-          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
-          "enum": [
-            "active",
-            "listener_gone",
-            "reconnect",
-            "full"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "sheet",
-        "listener_id",
-        "signal",
-        "status",
-        "last_polled_at"
-      ],
-      "title": "LogSummary",
-      "type": "object"
-    },
-    "LogsPage": {
-      "description": "`GET /v1/signals`: newest first.",
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/LogSummary"
-          },
-          "title": "Items",
-          "type": "array"
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Hand back as ?after= for the next page.",
-          "title": "Next Cursor"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "title": "LogsPage",
-      "type": "object"
-    },
     "MatchErrorWire": {
       "properties": {
         "kind": {
@@ -2249,6 +2113,62 @@
       "title": "SheetsPage",
       "type": "object"
     },
+    "SignalDetail": {
+      "description": "One log with its listener as the signals service has it now.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
+        },
+        "listener": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener",
+        "signal",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "SignalDetail",
+      "type": "object"
+    },
     "SignalEventsPage": {
       "description": "`GET /v1/signal-types/{signal}/events`: newest first, to choose from.",
       "properties": {
@@ -2342,6 +2262,56 @@
       "title": "SignalLimits",
       "type": "object"
     },
+    "SignalSummary": {
+      "description": "One log as the logs index shows it: no signals call behind it.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "title": "Last Polled At"
+        },
+        "listener_id": {
+          "description": "The listener whose matches become the log's rows.",
+          "title": "Listener Id",
+          "type": "string"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "listener_id",
+        "signal",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "SignalSummary",
+      "type": "object"
+    },
     "SignalsCatalog": {
       "description": "`GET /v1/signal-types`: every signal type, and the limits a setup is held to.",
       "properties": {
@@ -2361,6 +2331,36 @@
         "limits"
       ],
       "title": "SignalsCatalog",
+      "type": "object"
+    },
+    "SignalsPage": {
+      "description": "`GET /v1/signals`: newest first.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SignalSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hand back as ?after= for the next page.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "SignalsPage",
       "type": "object"
     },
     "SyncKeyReconnected": {

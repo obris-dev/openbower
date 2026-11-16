@@ -22,6 +22,6 @@ urlpatterns = [
     api_include(f"{_V1}/agents", "agents.urls"),
     api_include(f"{_V1}/webhooks", "webhooks.urls"),
     api_include(f"{_V1}/signals", "signals.urls"),
-    api_include(f"{_V1}/signal-types", "signals.types_urls"),
-    api_include(f"{_V1}/signal-previews", "signals.previews_urls"),
+    api_include(f"{_V1}/signal-types", "signals.signal_types_urls"),
+    api_include(f"{_V1}/signal-previews", "signals.signal_previews_urls"),
 ]

@@ -20,7 +20,7 @@ from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
-from openbower_schema import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
+from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SyncKeyReconnected
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
 from sheets.serializers import sheet_summary
 
@@ -98,10 +98,10 @@ def _as_api_error(exc: Exception) -> Exception:
     return exc
 
 
-def _summary(local_log: LocalLog) -> LogSummary:
+def _summary(local_log: LocalLog) -> SignalSummary:
     sheet = sheet_summary(local_log.sheet)
     feed = local_log.feed
-    return LogSummary(
+    return SignalSummary(
         sheet=sheet,
         listener_id=feed.listener_id,
         signal=feed.signal,
@@ -110,10 +110,10 @@ def _summary(local_log: LocalLog) -> LogSummary:
     )
 
 
-def _detail(log: Log) -> LogDetail:
+def _detail(log: Log) -> SignalDetail:
     sheet = sheet_summary(log.local_log.sheet)
     feed = log.local_log.feed
-    return LogDetail(
+    return SignalDetail(
         sheet=sheet,
         listener=log.listener,
         signal=feed.signal,
@@ -126,7 +126,7 @@ def _iso(at: datetime.datetime | None) -> str | None:
     return None if at is None else at.isoformat()
 
 
-class _SignalsView(ScopedView):
+class _SignalsScopedView(ScopedView):
     """Every signals and identity failure answers through `_as_api_error`,
     so a refusal reads the same on every route."""
 
@@ -142,13 +142,13 @@ class _SignalsView(ScopedView):
         return SignalsClientService.for_session(self.request.auth)
 
 
-class LogsView(_SignalsView):
+class SignalsView(_SignalsScopedView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         logs = self.logs.page(after_id=request.query_params.get("after", ""), limit=limit)
         items = [_summary(log) for log in logs]
         next_cursor = next_cursor_from(logs, limit=limit, cursor=lambda log: log.sheet_id)
-        page = LogsPage(items=items, next_cursor=next_cursor)
+        page = SignalsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
     def post(self, request: Request) -> Response:
@@ -159,7 +159,7 @@ class LogsView(_SignalsView):
         return Response(detail.model_dump(), status=201)
 
 
-class LogsReconnectView(_SignalsView):
+class SignalsReconnectView(_SignalsScopedView):
     def post(self, request: Request) -> Response:
         replaced = ReconnectLogsOperation(request.auth).run()
         body = SyncKeyReconnected(
@@ -168,7 +168,7 @@ class LogsReconnectView(_SignalsView):
         return Response(body.model_dump())
 
 
-class LogDetailView(_SignalsView):
+class SignalDetailView(_SignalsScopedView):
     def get(self, request: Request, id: str) -> Response:
         log = ReadLogOperation(request.auth, id).run()
         detail = _detail(log)
@@ -186,7 +186,7 @@ class LogDetailView(_SignalsView):
         return Response(status=204)
 
 
-class SignalsCatalogView(_SignalsView):
+class SignalTypesView(_SignalsScopedView):
     def get(self, request: Request) -> Response:
         catalog = self.signals.catalog()
         # A signal's name is its sheet's label too, so the limit a form
@@ -196,7 +196,7 @@ class SignalsCatalogView(_SignalsView):
         return Response(catalog.model_dump())
 
 
-class SignalEventsView(_SignalsView):
+class SignalTypeEventsView(_SignalsScopedView):
     def get(self, request: Request, signal: str) -> Response:
         after = request.query_params.get("after") or None
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
@@ -204,7 +204,7 @@ class SignalEventsView(_SignalsView):
         return Response(page.model_dump())
 
 
-class PreviewsView(_SignalsView):
+class SignalPreviewsView(_SignalsScopedView):
     def post(self, request: Request) -> Response:
         body = PreviewCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
@@ -217,7 +217,7 @@ class PreviewsView(_SignalsView):
         return Response(preview.model_dump(), status=202)
 
 
-class PreviewDetailView(_SignalsView):
+class SignalPreviewView(_SignalsScopedView):
     def get(self, request: Request, id: str) -> Response:
         preview = self.signals.preview(preview_id=id)
         return Response(preview.model_dump())

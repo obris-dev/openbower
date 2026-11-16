@@ -10,10 +10,10 @@ from typing import get_args
 
 from django.test import SimpleTestCase
 
-from openbower_schema.logs import LogStatus as WireLogStatus
+from openbower_schema.logs import SignalStatus as WireSignalStatus
 from signals.constants import LogStatus
 
 
 class WireEnumParityTests(SimpleTestCase):
     def test_log_status_parity(self):
-        self.assertEqual(set(get_args(WireLogStatus)), {v.value for v in LogStatus})
+        self.assertEqual(set(get_args(WireSignalStatus)), {v.value for v in LogStatus})

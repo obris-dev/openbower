@@ -4,7 +4,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { PREVIEW_OUTCOME, type FundingStage, type LogDetail, type PreviewRow } from "@bower/api";
+import { PREVIEW_OUTCOME, type FundingStage, type SignalDetail, type PreviewRow } from "@bower/api";
 
 import { AMOUNT_INVALID_GAP, AMOUNT_LABEL, matchesTitle, AMOUNT_REVERSED_GAP, STALE_FILTER, TEST_STALE } from "./copy.ts";
 import {
@@ -40,7 +40,7 @@ const EMPTY: SignalFormState = {
   carried: NOTHING_CARRIED,
 };
 
-type Listener = NonNullable<LogDetail["listener"]>;
+type Listener = NonNullable<SignalDetail["listener"]>;
 
 function saved(filter: Partial<Listener["version"]["filter"]>, prompt = "", minConfidence = 0.8): Listener {
   return {
