@@ -10,9 +10,9 @@ import { SignalSettings } from "../_components/signal-settings";
 export default async function SignalSettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const cookieHeader = (await cookies()).toString();
-  const { fetchLogWithCookie, fetchSignalsCatalogWithCookie } = await import("@bower/api/server");
+  const { fetchSignalWithCookie, fetchSignalsCatalogWithCookie } = await import("@bower/api/server");
   const [log, catalog] = await Promise.all([
-    fetchLogWithCookie(cookieHeader, id),
+    fetchSignalWithCookie(cookieHeader, id),
     fetchSignalsCatalogWithCookie(cookieHeader),
   ]);
   if (log.status === "missing") notFound();

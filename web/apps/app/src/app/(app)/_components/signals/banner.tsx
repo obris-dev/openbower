@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Card, cn } from "@bower/ui";
-import type { LogDetail } from "@bower/api";
+import type { SignalDetail } from "@bower/api";
 
 import { LinkButton } from "../../../_components/link-button";
 import { BANNER_ACTION, signalBanner } from "./lib/signal-banner";
@@ -19,7 +19,7 @@ export function SignalBanner({
   /** The signal's settings, as the sheet's verbs name them; null where the
    * banner already sits on them. */
   settingsHref: string | null;
-  log: LogDetail | null;
+  log: SignalDetail | null;
   /** Ask to reconnect (the confirm dialog's). */
   onReconnect: () => void;
   /** On the sheet, a band of its own between the bar and the grid. */

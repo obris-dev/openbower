@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
-import { deleteLog, fetchLogsPage, webRoutes, type LogSummary } from "@bower/api";
+import { deleteSignal, fetchSignalsPage, webRoutes, type SignalSummary } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
@@ -22,13 +22,13 @@ import {
   signalType,
 } from "./copy";
 import { SignalRowActions } from "./row-actions";
-import { SignalStatus } from "../../_components/signals";
+import { SignalStatusPill } from "../../_components/signals";
 
 /** The delete being asked about: which signal, whether it is in flight,
  * and the server's refusal when it answered one (rendered in the dialog,
  * which stays open). Kept after the dialog closes, so its form still
  * fills the panel through the leave transition. */
-type Deleting = { signal: LogSummary; busy: boolean; refusal: string | null };
+type Deleting = { signal: SignalSummary; busy: boolean; refusal: string | null };
 // Where focus goes once a delete's dialog has closed: the actions of the
 // row now in the deleted one's place, or Create signal when none is left.
 const CREATE_TARGET = "create";
@@ -40,7 +40,7 @@ export function SignalsList({
   initialSignals,
   initialNextCursor,
 }: {
-  initialSignals: LogSummary[];
+  initialSignals: SignalSummary[];
   initialNextCursor: string | null;
 }) {
   const toast = useToast();
@@ -65,7 +65,7 @@ export function SignalsList({
     return () => cancelAnimationFrame(frame);
   }, [asking, refocus]);
 
-  function ask(signal: LogSummary) {
+  function ask(signal: SignalSummary) {
     setDeleting({ signal, busy: false, refusal: null });
     setAsking(true);
   }
@@ -82,7 +82,7 @@ export function SignalsList({
     if (!deleting || deleting.busy) return;
     const { signal } = deleting;
     setDeleting({ signal, busy: true, refusal: null });
-    const res = await deleteLog(signal.sheet.id);
+    const res = await deleteSignal(signal.sheet.id);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
       setDeleting({ signal, busy: false, refusal: res.message });
@@ -103,7 +103,7 @@ export function SignalsList({
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
-    const res = await fetchLogsPage(nextCursor);
+    const res = await fetchSignalsPage(nextCursor);
     setLoadingMore(false);
     if (!ensureOk(res, toast)) return;
     setSignals((prev) => [...prev, ...res.data.items]);
@@ -157,7 +157,7 @@ export function SignalsList({
                     {signalType(signal.signal)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5">
-                    <SignalStatus status={signal.status} />
+                    <SignalStatusPill status={signal.status} />
                   </td>
                   <td className="hidden whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-muted md:table-cell">
                     {signal.sheet.row_count.toLocaleString("en-US")}

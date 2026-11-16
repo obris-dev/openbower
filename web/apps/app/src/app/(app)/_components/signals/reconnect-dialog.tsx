@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ConfirmDialog, useToast } from "@bower/ui";
-import { reconnectLogs } from "@bower/api";
+import { reconnectSignals } from "@bower/api";
 import { useUser } from "@bower/auth";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
@@ -41,7 +41,7 @@ export function ReconnectDialog({
   async function reconnect() {
     setBusy(true);
     setRefusal(null);
-    const res = await reconnectLogs();
+    const res = await reconnectSignals();
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
       setBusy(false);

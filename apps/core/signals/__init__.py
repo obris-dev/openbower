@@ -6,4 +6,4 @@
 # (SignalsSyncKey, signals:read). It also keeps a log's feed (LogFeed: the
 # listener whose matches become a log's rows, and where the poller has read
 # to), runs the log poller that fills logs (the log-poller service), and
-# serves /v1/logs and /v1/signals.
+# serves /v1/signals, /v1/signal-types and /v1/signal-previews.
