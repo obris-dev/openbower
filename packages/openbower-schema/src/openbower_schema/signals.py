@@ -1,8 +1,8 @@
 """Signals wire shapes: what the hosted signals service returns.
 
 The app's signals client validates every upstream body against these
-before anything downstream reads it. The ones the app's /v1/logs and
-/v1/signals routes answer with are in the contract (tools.schema_sync),
+before anything downstream reads it. The ones the app's /v1/signals,
+/v1/signal-types and /v1/signal-previews routes answer with are in the contract (tools.schema_sync),
 as roots or nested in one; the rest only the client reads.
 
 The parts that differ by signal (an event's `data`, a setup's `filter`)
@@ -124,14 +124,14 @@ class SignalLimits(BaseModel):
 
 
 class SignalsCatalog(BaseModel):
-    """`GET /v1/signals`: every signal, and the limits a setup is held to."""
+    """`GET /v1/signal-types`: every signal type, and the limits a setup is held to."""
 
     signals: list[SignalKind]
     limits: SignalLimits
 
 
 class SignalEventsPage(BaseModel):
-    """`GET /v1/signals/{signal}/events`: newest first, to choose from."""
+    """`GET /v1/signal-types/{signal}/events`: newest first, to choose from."""
 
     items: list[SignalEventWire]
     next_cursor: str | None

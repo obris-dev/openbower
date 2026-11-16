@@ -1,4 +1,4 @@
-"""/v1/logs and /v1/signals through real cookie auth, with the signals and
+"""/v1/signals, /v1/signal-types and /v1/signal-previews through real cookie auth, with the signals and
 identity services as fakes at their httpx seams: a log's create, read,
 edit and delete; the refusals each relays; the pass-throughs; and the
 sheet doors refusing what would split a log from its listener.
@@ -12,8 +12,8 @@ import datetime
 from unittest.mock import patch
 
 import httpx
-from django.test import TestCase
-from django.urls import reverse
+from django.test import SimpleTestCase, TestCase
+from django.urls import Resolver404, resolve, reverse
 from django.utils import timezone
 
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
@@ -392,3 +392,23 @@ class SignalsPassThroughTests(TestCase):
         )
         [(_method, _path, sent)] = self.signals.calls
         self.assertEqual(sent, {"signal": "funding", "event_ids": [_EVENT_ID], "filter": {}})
+
+
+class SignalPathsTests(SimpleTestCase):
+    def test_signals_read_by_their_name(self):
+        # FAILS if a route drifts from the paths a person reads: a signal is
+        # /v1/signals, the hosted types it is set up from /v1/signal-types.
+        paths = {
+            "/v1/signals": "logs_index",
+            "/v1/signals/01X": "logs_detail",
+            "/v1/signals/reconnect": "logs_reconnect",
+            "/v1/signal-types": "signals_catalog",
+            "/v1/signal-types/funding/events": "signals_events",
+            "/v1/signal-previews": "signals_previews",
+            "/v1/signal-previews/p1": "signals_preview",
+        }
+        self.assertEqual({path: resolve(path).url_name for path in paths}, paths)
+
+    def test_the_old_logs_path_is_gone(self):
+        with self.assertRaises(Resolver404):
+            resolve("/v1/logs")

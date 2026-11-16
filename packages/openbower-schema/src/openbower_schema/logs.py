@@ -35,7 +35,7 @@ class LogSummary(BaseModel):
 
 
 class LogsPage(BaseModel):
-    """`GET /v1/logs`: newest first."""
+    """`GET /v1/signals`: newest first."""
 
     items: list[LogSummary]
     next_cursor: str | None = Field(default=None, description="Hand back as ?after= for the next page.")
@@ -54,7 +54,7 @@ class LogDetail(BaseModel):
 
 
 class SyncKeyReconnected(BaseModel):
-    """`POST /v1/logs/reconnect`: the account's logs fill again from where
+    """`POST /v1/signals/reconnect`: the account's logs fill again from where
     they stopped. The replaced key is revoked when the person reconnecting
     minted it and the revoke succeeds; otherwise it stays live in its
     minter's API keys list until they revoke it. A key still working is

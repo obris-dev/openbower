@@ -59,7 +59,7 @@ test("a page of signals parses, and the cursor rides ?after= encoded", async (t)
   const calls = stubFetch(t, { items: [log("active")], next_cursor: null });
   const res = await fetchLogsPage("01JQ/next");
   assert.equal(res.status, "ok");
-  assert.ok(calls[0]?.url.endsWith("/v1/logs?after=01JQ%2Fnext"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signals?after=01JQ%2Fnext"));
   if (res.status === "ok") {
     assert.equal(res.data.items[0]?.signal, "funding");
     assert.equal(res.data.items[0]?.sheet.kind, "log");
@@ -100,7 +100,7 @@ test("deleting a signal sends DELETE to its log", async (t) => {
   const res = await deleteLog(SHEET.id);
   assert.equal(res.status, "ok");
   assert.equal(calls[0]?.init.method, "DELETE");
-  assert.ok(calls[0]?.url.endsWith(`/v1/logs/${SHEET.id}`));
+  assert.ok(calls[0]?.url.endsWith(`/v1/signals/${SHEET.id}`));
 });
 
 test("an edit PATCHes the signal with the body given, unknown stages and all", async (t) => {
@@ -111,7 +111,7 @@ test("an edit PATCHes the signal with the body given, unknown stages and all", a
   const res = await editLog(SHEET.id, body);
   assert.equal(res.status, "ok");
   assert.equal(calls[0]?.init.method, "PATCH");
-  assert.ok(calls[0]?.url.endsWith(`/v1/logs/${SHEET.id}`));
+  assert.ok(calls[0]?.url.endsWith(`/v1/signals/${SHEET.id}`));
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), body);
 });
 
@@ -143,7 +143,7 @@ function listener(status: string) {
 test("one signal reads with its listener, and a gone listener reads as null", async (t) => {
   const calls = stubFetch(t, detail("active", listener("held")));
   const res = await fetchLog(SHEET.id);
-  assert.ok(calls[0]?.url.endsWith(`/v1/logs/${SHEET.id}`));
+  assert.ok(calls[0]?.url.endsWith(`/v1/signals/${SHEET.id}`));
   assert.equal(res.status === "ok" && res.data.listener?.status, LISTENER_STATUS.HELD);
   stubFetch(t, detail("listener_gone", null));
   const gone = await fetchLog(SHEET.id);
@@ -176,6 +176,6 @@ test("reconnect posts to the account's reconnect and reads which key was left li
   const calls = stubFetch(t, { left_live_key_id: "k1", left_live_user_id: "u2" });
   const res = await reconnectLogs();
   assert.equal(calls[0]?.init.method, "POST");
-  assert.ok(calls[0]?.url.endsWith("/v1/logs/reconnect"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signals/reconnect"));
   assert.equal(res.status === "ok" && res.data.left_live_user_id, "u2");
 });

@@ -1,6 +1,7 @@
-"""`/v1/logs` (an account's logs: a sheet fed by one listener) and
-`/v1/signals` (the catalog, recent events and previews the Create-log
-screen reads). Session-authed; every signals call acts as the person, and
+"""`/v1/signals` (an account's signals: a sheet of kind log fed by one
+listener), `/v1/signal-types` (the catalog and a type's recent events) and
+`/v1/signal-previews` (a setup tried before it is saved), what the
+Create-signal screen reads. Session-authed; every signals call acts as the person, and
 every failure answers through one mapping so a refusal reads the same everywhere."""
 
 from __future__ import annotations

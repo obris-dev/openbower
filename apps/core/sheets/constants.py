@@ -246,7 +246,7 @@ class IngestErrorCode(StrEnum):
 
 
 # The sheet doors' refusals of a log, all 409: a log's label and life are
-# its listener's too, so it is renamed and deleted through /v1/logs.
+# its listener's too, so it is renamed and deleted through /v1/signals.
 class SheetErrorCode(StrEnum):
     LOG_ROUTE = "log_route"
 

@@ -21,6 +21,7 @@ urlpatterns = [
     api_include(f"{_V1}/runs", "sheets.runs_urls"),
     api_include(f"{_V1}/agents", "agents.urls"),
     api_include(f"{_V1}/webhooks", "webhooks.urls"),
-    api_include(f"{_V1}/logs", "signals.logs_urls"),
     api_include(f"{_V1}/signals", "signals.urls"),
+    api_include(f"{_V1}/signal-types", "signals.types_urls"),
+    api_include(f"{_V1}/signal-previews", "signals.previews_urls"),
 ]

@@ -107,14 +107,14 @@ test("recent events ask for the limit given", async (t) => {
   const calls = stubFetch(t, { items: [EVENT], next_cursor: null });
   const res = await fetchSignalEvents(SIGNAL.FUNDING, 20);
   assert.equal(res.status, "ok");
-  assert.ok(calls[0]?.url.endsWith("/v1/signals/funding/events?limit=20"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signal-types/funding/events?limit=20"));
 });
 
 test("a preview posts the setup and the events chosen", async (t) => {
   const calls = stubFetch(t, preview("pending", "waiting"), 202);
   const res = await createSignalPreview(SIGNAL.FUNDING, { filter: { stages: ["seed"] }, prompt: "B2B" }, [EVENT.id]);
   assert.equal(res.status, "ok");
-  assert.ok(calls[0]?.url.endsWith("/v1/signals/previews"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signal-previews"));
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), {
     signal: "funding",
     filter: { stages: ["seed"] },
@@ -198,7 +198,7 @@ test("cancel sends DELETE to the preview", async (t) => {
   const res = await cancelSignalPreview("p1");
   assert.equal(res.status, "ok");
   assert.equal(calls[0]?.init.method, "DELETE");
-  assert.ok(calls[0]?.url.endsWith("/v1/signals/previews/p1"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signal-previews/p1"));
 });
 
 test("create posts the setup and reads the new sheet's id, whatever the listener says", async (t) => {
@@ -239,7 +239,7 @@ test("create posts the setup and reads the new sheet's id, whatever the listener
   const calls = stubFetch(t, detail, 201);
   const res = await createLog({ label: "Seed rounds", signal: SIGNAL.FUNDING, filter: {} });
   assert.equal(res.status === "ok" && res.data.sheet.id, sheet.id);
-  assert.ok(calls[0]?.url.endsWith("/v1/logs"));
+  assert.ok(calls[0]?.url.endsWith("/v1/signals"));
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), {
     label: "Seed rounds",
     signal: "funding",

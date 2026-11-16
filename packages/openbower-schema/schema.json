@@ -1529,7 +1529,7 @@
       "type": "object"
     },
     "LogsPage": {
-      "description": "`GET /v1/logs`: newest first.",
+      "description": "`GET /v1/signals`: newest first.",
       "properties": {
         "items": {
           "items": {
@@ -2250,7 +2250,7 @@
       "type": "object"
     },
     "SignalEventsPage": {
-      "description": "`GET /v1/signals/{signal}/events`: newest first, to choose from.",
+      "description": "`GET /v1/signal-types/{signal}/events`: newest first, to choose from.",
       "properties": {
         "items": {
           "items": {
@@ -2343,7 +2343,7 @@
       "type": "object"
     },
     "SignalsCatalog": {
-      "description": "`GET /v1/signals`: every signal, and the limits a setup is held to.",
+      "description": "`GET /v1/signal-types`: every signal type, and the limits a setup is held to.",
       "properties": {
         "limits": {
           "$ref": "#/$defs/SignalLimits"
@@ -2364,7 +2364,7 @@
       "type": "object"
     },
     "SyncKeyReconnected": {
-      "description": "`POST /v1/logs/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
+      "description": "`POST /v1/signals/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
       "properties": {
         "left_live_key_id": {
           "description": "The replaced key while it is still live (another member minted it, or its revoke failed).",

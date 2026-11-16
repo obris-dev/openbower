@@ -62,10 +62,12 @@ live in a separate private repo.
   (`move_row` refuses), and a time window on it is an id range (ids are
   time) filtered on every page. A log is a sheet in the ONE sheets index
   (home lists every sheet; folders hold and count every kind), and the
-  UI calls a listener and the log it fills a SIGNAL (the API keeps
-  `/v1/logs`). A log has ONE listener on the signals
+  UI and the API call a listener and the log it fills a SIGNAL
+  (`/v1/signals`; the hosted types a person sets one up from are
+  `/v1/signal-types`, and a setup's trial `/v1/signal-previews`), while
+  the code keeps the sheet's name, a log. A log has ONE listener on the signals
   service (`signals.LogFeed` links them) and they live and die together
-  through `/v1/logs` (`signals.operations.logs`): create mints the
+  through `/v1/signals` (`signals.operations.logs`): create mints the
   account's sync key first, then the listener, then the sheet and its
   feed, undoing the listener if that write fails; delete removes the
   listener first and keeps everything local if it cannot. So the sheet
