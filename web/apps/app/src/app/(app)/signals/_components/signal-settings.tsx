@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@bower/ui";
-import { isKnownSignal, type LogDetail, type SignalsCatalog } from "@bower/api";
+import { isKnownSignal, type SignalDetail, type SignalsCatalog } from "@bower/api";
 
 import { ReconnectDialog, SignalBanner } from "../../_components/signals";
 import { DELETE_ACTION, noSetupNote } from "./copy";
@@ -14,7 +14,7 @@ import { SignalForm } from "./signal-form";
 /** A signal's settings: what stops it (its banner, with Reconnect), then
  * the form editing its saved setup. A signal whose listener is gone, or one
  * this bundle has no form for, offers only its delete. */
-export function SignalSettings({ log, catalog }: { log: LogDetail; catalog: SignalsCatalog }) {
+export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: SignalsCatalog }) {
   const router = useRouter();
   const [askingReconnect, setAskingReconnect] = useState(false);
   const [askingDelete, setAskingDelete] = useState(false);

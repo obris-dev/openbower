@@ -6,4 +6,4 @@ export { SignalBanner } from "./banner";
 export { isHeld } from "./lib/signal-banner";
 export { ReconnectDialog } from "./reconnect-dialog";
 export { SignalMarker } from "./marker";
-export { SignalStatus } from "./status";
+export { SignalStatusPill } from "./status";

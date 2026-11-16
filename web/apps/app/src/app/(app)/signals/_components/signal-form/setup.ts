@@ -5,8 +5,8 @@ import {
   FUNDING_STAGES,
   PREVIEW_OUTCOME,
   type FundingStage,
-  type LogEdit,
-  type LogDetail,
+  type SignalEdit,
+  type SignalDetail,
   type PreviewRow,
   type SignalSetup,
 } from "@bower/api";
@@ -45,7 +45,7 @@ export type Carried = {
 
 export const NOTHING_CARRIED: Carried = { unknownStages: [], currency: null };
 
-type Listener = NonNullable<LogDetail["listener"]>;
+type Listener = NonNullable<SignalDetail["listener"]>;
 
 /** The amount range's currency. Amounts compare only within a currency
  * (the service converts nothing), so a range is in US dollars and keeps
@@ -128,7 +128,7 @@ export function formFromSaved(label: string, listener: Listener): SignalFormStat
 /** What Save sends, or null when nothing changed: the name alone when only
  * it changed (the service saves a setup as a new version, so a rename must
  * not mint one), the setup whole when it or its threshold did. */
-export function changesFrom(saved: SignalFormState, form: SignalFormState): LogEdit | null {
+export function changesFrom(saved: SignalFormState, form: SignalFormState): SignalEdit | null {
   const label = nameOf(form);
   const renamed = label !== nameOf(saved);
   const setup = setupFrom(form);

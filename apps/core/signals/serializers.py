@@ -1,4 +1,4 @@
-"""Request bodies for the logs and signals routes. A setup is given whole,
+"""Request bodies for the /v1/signals and /v1/signal-previews routes. A setup is given whole,
 as the signals service takes it: its filter, with its prompt and threshold
 when there are any; the service validates what a setup may say."""
 

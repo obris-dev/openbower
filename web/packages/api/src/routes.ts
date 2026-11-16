@@ -65,26 +65,28 @@ export const apiRoutes = {
     // POST: abandon an unclaimed preview run; a running or terminal run no-ops.
     cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
-  // A signal is a listener on the signals service and the sheet it fills
-  // (the API calls it a log); the UI says Signal.
-  logs: {
+  // A signal: a sheet of kind log fed by a hosted signal's listener (the
+  // code calls the sheet a log).
+  signals: {
     // GET: keyset index (?after=), newest first. POST: create.
-    index: `/${API_VERSION}/logs`,
+    index: `/${API_VERSION}/signals`,
     // GET / PATCH / DELETE: one, with its listener read live.
-    detail: (id: string) => `/${API_VERSION}/logs/${id}`,
+    detail: (id: string) => `/${API_VERSION}/signals/${id}`,
     // POST: a fresh sync key in place of a refused one; the signals resume.
-    reconnect: `/${API_VERSION}/logs/reconnect`,
+    reconnect: `/${API_VERSION}/signals/reconnect`,
   },
   // What creating a signal reads, passed through to the signals service.
-  signals: {
-    // GET: every signal, and the limits a setup is held to.
-    catalog: `/${API_VERSION}/signals`,
-    // GET: a signal's recent events, newest first (?limit=).
-    events: (signal: string) => `/${API_VERSION}/signals/${encodeURIComponent(signal)}/events`,
+  signalTypes: {
+    // GET: every signal type, and the limits a setup is held to.
+    index: `/${API_VERSION}/signal-types`,
+    // GET: a type's recent events, newest first (?limit=).
+    events: (signal: string) => `/${API_VERSION}/signal-types/${encodeURIComponent(signal)}/events`,
+  },
+  signalPreviews: {
     // POST: a setup tried on chosen events; 202 + a preview to poll.
-    previews: `/${API_VERSION}/signals/previews`,
+    index: `/${API_VERSION}/signal-previews`,
     // GET: one preview. DELETE: cancel it (a finished one is left as it is).
-    preview: (id: string) => `/${API_VERSION}/signals/previews/${id}`,
+    detail: (id: string) => `/${API_VERSION}/signal-previews/${id}`,
   },
   sheets: {
     // GET: keyset index (?after=), every kind. POST: create.

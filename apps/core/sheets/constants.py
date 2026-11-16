@@ -245,8 +245,8 @@ class IngestErrorCode(StrEnum):
     NOT_APPENDABLE = "not_appendable"
 
 
-# The sheet doors' refusals of a log, all 409: a log's label and life are
-# its listener's too, so it is renamed and deleted through /v1/logs.
+# The sheet routes' refusals of a log, all 409: a log's label and life are
+# its listener's too, so it is renamed and deleted through /v1/signals.
 class SheetErrorCode(StrEnum):
     LOG_ROUTE = "log_route"
 
