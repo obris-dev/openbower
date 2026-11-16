@@ -1,6 +1,6 @@
 """A log's lifecycle, as the person who asks: one listener per log, created,
 edited and deleted with it. The listener lives on the signals service (as
-the person, through their session); the sheet and its feed live here. No
+the person, through their session); the sheet and its sources live here. No
 signals call runs inside a transaction. Create and delete order themselves
 so a failure leaves nothing half made: create makes the listener first and
 deletes it if the local write fails; delete removes the listener first and
@@ -32,6 +32,7 @@ from ..services.signals_client import (
     setup_payload,
 )
 from ..services.sync_key import SyncKeyReplaced, SyncKeyService
+from ..sources.hosted import HostedSource
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class ListenerGone(Exception):
 
 @dataclass(frozen=True)
 class Log:
-    """A log whole: its sheet and feed, and its listener as the service has
+    """A log whole: its sheet and sources, and its listener as the service has
     it (None once the listener is gone)."""
 
     local_log: LocalLog
@@ -103,7 +104,7 @@ class CreateLogOperation(_LogOperation):
     def run(self) -> Log:
         """The account's sync key first (a refused mint stops the create
         before anything exists), then the listener, then the sheet and its
-        feed in one transaction; a local failure deletes the listener."""
+        hosted source in one transaction; a local failure deletes the listener."""
         if self.signal not in LOG_SHAPES:
             raise UnknownSignal(self.signal)
         session = self.session
@@ -148,11 +149,12 @@ class ReadLogOperation(_LogOperation):
         local_log = self.logs.get(self.sheet_id)
         if local_log.status == LogStatus.LISTENER_GONE:
             return Log(local_log=local_log, listener=None)
-        feed = local_log.feed
+        source, hosted = local_log.require(HostedSource)
         try:
-            listener = self.signals.listener(listener_id=feed.listener_id)
+            listener = self.signals.listener(listener_id=hosted.listener_id)
         except SignalsNotFound:
-            gone = self.logs.mark_listener_gone(local_log)
+            self.logs.mark_gone(source)
+            gone = self.logs.get(self.sheet_id)
             return Log(local_log=gone, listener=None)
         return Log(local_log=local_log, listener=listener)
 
@@ -184,17 +186,18 @@ class EditLogOperation(_LogOperation):
         local_log = self.logs.get(self.sheet_id)
         if local_log.status == LogStatus.LISTENER_GONE:
             raise ListenerGone(self.sheet_id)
-        feed = local_log.feed
+        source, hosted = local_log.require(HostedSource)
+        listener_id = hosted.listener_id
         payload: dict[str, Any] = {**(self.setup or {})}
         if self.label is not None:
             payload["label"] = self.label
         try:
             if payload:
-                listener = self.signals.edit_listener(listener_id=feed.listener_id, payload=payload)
+                listener = self.signals.edit_listener(listener_id=listener_id, payload=payload)
             else:
-                listener = self.signals.listener(listener_id=feed.listener_id)
+                listener = self.signals.listener(listener_id=listener_id)
         except SignalsNotFound:
-            self.logs.mark_listener_gone(local_log)
+            self.logs.mark_gone(source)
             raise ListenerGone(self.sheet_id) from None
         edited = self.logs.edit(local_log, label=self.label)
         return Log(local_log=edited, listener=listener)
@@ -206,12 +209,12 @@ class DeleteLogOperation(_LogOperation):
         self.sheet_id = sheet_id
 
     def run(self) -> None:
-        """The listener first (the client counts one already gone as
-        deleted), then the sheet and its feed in one transaction. A signals failure
-        deletes nothing here, so the person can try again."""
+        """What each source holds elsewhere first (a hosted source's
+        listener), then the sheet and its sources in one transaction. A
+        signals failure deletes nothing here, so the person can try again."""
         local_log = self.logs.get(self.sheet_id)
-        feed = local_log.feed
-        self.signals.delete_listener(listener_id=feed.listener_id)
+        for source in local_log.sources:
+            source.config.tear_down(self.signals)
         self.logs.delete(local_log)
 
 

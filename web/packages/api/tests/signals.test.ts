@@ -5,13 +5,17 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { ListenerWireSchema, SignalSummarySchema } from "@bower/schema";
+import { z } from "zod";
 
 import {
   LISTENER_STATUS,
   SIGNAL_STATUS,
+  SOURCE_KIND,
   UNKNOWN_LISTENER_STATUS,
   UNKNOWN_SIGNAL_STATUS,
+  UNKNOWN_SOURCE_KIND,
   deleteSignal,
+  hostedSource,
   editSignal,
   fetchSignal,
   fetchSignalsPage,
@@ -32,11 +36,18 @@ const SHEET = {
   updated_at: "2026-11-12T12:00:00+00:00",
 };
 
+const HOSTED = { kind: "hosted", signal: "funding", listener_id: "01JQ" + "L".repeat(22) };
+
 function log(status: string) {
+  return { sheet: SHEET, sources: [HOSTED], status, last_polled_at: "2026-11-12T12:01:00+00:00" };
+}
+
+// A server from before sources: its hosted signal at the top level.
+function oldLog(status: string) {
   return {
     sheet: SHEET,
-    listener_id: "01JQ" + "L".repeat(22),
-    signal: "funding",
+    listener_id: HOSTED.listener_id,
+    signal: HOSTED.signal,
     status,
     last_polled_at: "2026-11-12T12:01:00+00:00",
   };
@@ -61,7 +72,7 @@ test("a page of signals parses, and the cursor rides ?after= encoded", async (t)
   assert.equal(res.status, "ok");
   assert.ok(calls[0]?.url.endsWith("/v1/signals?after=01JQ%2Fnext"));
   if (res.status === "ok") {
-    assert.equal(res.data.items[0]?.signal, "funding");
+    assert.equal(hostedSource(res.data.items[0]!)?.signal, "funding");
     assert.equal(res.data.items[0]?.sheet.kind, "log");
   }
 });
@@ -80,6 +91,47 @@ test("an unknown status reads as the client-only member, which claims nothing", 
   stubFetch(t, { items: [log("paused_for_review")], next_cursor: null });
   const res = await fetchSignalsPage();
   assert.equal(res.status === "ok" && res.data.items[0]?.status, UNKNOWN_SIGNAL_STATUS);
+});
+
+test("a hosted source reads with its own signal", async (t) => {
+  stubFetch(t, { items: [log("active")], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.deepEqual(res.data.items[0]?.sources, [{ kind: SOURCE_KIND.HOSTED, signal: "funding" }]);
+});
+
+test("a server from before sources reads as its one hosted source", async (t) => {
+  // FAILS if the hosted signal is read only off sources: every signal a
+  // person has would lose its type against an older server.
+  stubFetch(t, { items: [oldLog("active")], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.equal(hostedSource(res.data.items[0]!)?.signal, "funding");
+});
+
+test("a source kind this bundle has not heard of claims nothing", async (t) => {
+  stubFetch(t, { items: [{ ...log("active"), sources: [{ kind: "carrier_pigeon", wings: 2 }] }], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") assert.deepEqual(res.data.items[0]?.sources, [{ kind: UNKNOWN_SOURCE_KIND }]);
+});
+
+test("a hosted source missing its own facts fails the parse", async (t) => {
+  // FAILS if a malformed entry of a known kind reads as unknown: a broken
+  // server would read as a signal this bundle cannot name, not as broken.
+  stubFetch(t, { items: [{ ...log("active"), sources: [{ kind: "hosted" }] }], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.notEqual(res.status, "ok");
+});
+
+test("SOURCE_KIND names exactly the contract's kinds", () => {
+  // FAILS when the server adds or drops a kind: the web names it here first.
+  const element: z.ZodType = SignalSummarySchema.shape.sources.element.unwrap();
+  const members = (element instanceof z.ZodUnion ? element.options : [element]) as z.ZodObject<{
+    kind: z.ZodLiteral<string>;
+  }>[];
+  const kinds = new Set(members.map((member) => member.shape.kind.value));
+  assert.deepEqual(new Set(Object.values(SOURCE_KIND)), kinds);
 });
 
 test("SIGNAL_STATUS names exactly the contract's statuses", () => {
@@ -116,7 +168,7 @@ test("an edit PATCHes the signal with the body given, unknown stages and all", a
 });
 
 function detail(logStatus: string, listener: Record<string, unknown> | null) {
-  return { sheet: SHEET, listener, signal: "funding", status: logStatus, last_polled_at: null };
+  return { sheet: SHEET, sources: [HOSTED], listener, status: logStatus, last_polled_at: null };
 }
 
 function listener(status: string) {

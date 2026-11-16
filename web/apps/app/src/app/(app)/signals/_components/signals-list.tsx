@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
-import { deleteSignal, fetchSignalsPage, webRoutes, type SignalSummary } from "@bower/api";
+import { deleteSignal, fetchSignalsPage, hostedSource, webRoutes, type SignalSummary } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
@@ -154,7 +154,7 @@ export function SignalsList({
                     </Link>
                   </td>
                   <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted sm:table-cell">
-                    {signalType(signal.signal)}
+                    {signalTypeOf(signal)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5">
                     <SignalStatusPill status={signal.status} />
@@ -207,4 +207,9 @@ export function SignalsList({
       </ConfirmDialog>
     </>
   );
+}
+
+function signalTypeOf(signal: SignalSummary): string | null {
+  const hosted = hostedSource(signal);
+  return hosted === undefined ? null : signalType(hosted.signal);
 }

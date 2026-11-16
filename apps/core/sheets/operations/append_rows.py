@@ -19,9 +19,10 @@ column to fill (a fill whose prompt reads columns skips it as BLOCKED
 until it holds something); an edit starts nothing, by the standing
 rule.
 
-Every caller names where its rows come from (`source`, a RowSource): a
-LOG takes rows from its FEED only, and a standard sheet from anything but
-a feed (SheetNotAppendable otherwise). A sheet whose `autofill` is off
+Every caller names where its rows come from (`source`, a RowSource), and
+each sheet kind takes only the sources APPENDS_FROM declares for it: a
+LOG takes a signal's rows only, and a standard sheet anything but those
+(SheetNotAppendable otherwise). A sheet whose `autofill` is off
 lands the rows without the trigger, whichever door brought them: nothing
 is queued for them, and a person fills them. The flag is read under the
 lock the primitive takes, so a switch flipped mid-append decides the
@@ -33,6 +34,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 
 from ..constants import IngestErrorCode, RowSource, SheetKind
@@ -41,31 +43,45 @@ from ..rows import IncomingRow
 from ..services.sheets import SheetService
 from ..services.workflow_reactions import WorkflowReactions
 
+# Which sources each sheet kind takes rows from. Every kind declares its
+# own (validate_appends_from, at boot), so a new kind is never appendable
+# from everywhere by omission.
+APPENDS_FROM: dict[SheetKind, frozenset[RowSource]] = {
+    SheetKind.STANDARD: frozenset({RowSource.MANUAL, RowSource.PUSH, RowSource.IMPORT}),
+    SheetKind.LOG: frozenset({RowSource.SIGNAL}),
+}
+
 
 class SheetNotAppendable(Exception):
-    """An append refused by where its rows come from: a log takes rows
-    from its feed only, and only a log takes a feed's rows."""
+    """An append refused by where its rows come from (APPENDS_FROM)."""
 
     code = IngestErrorCode.NOT_APPENDABLE
 
-    def __init__(self, sheet_id: str, *, source: RowSource) -> None:
-        if source == RowSource.FEED:
-            detail = "only a log takes rows from a feed"
+    def __init__(self, sheet_id: str, *, kind: SheetKind, source: RowSource) -> None:
+        if kind == SheetKind.LOG:
+            detail = "a signal's rows arrive from its sources; add rows to a sheet instead"
         else:
-            detail = "a log's rows arrive from its feed; add rows to a sheet instead"
+            detail = f"this sheet does not take rows from {source}"
         super().__init__(detail)
         self.sheet_id = sheet_id
+        self.kind = kind
         self.source = source
 
 
 def require_appendable(target_sheet: Sheet, *, source: RowSource) -> None:
-    """The one rule for who may append: a log takes rows from its feed
-    only, a standard sheet from anything else. The operation checks it,
-    and a door whose append happens later (the ingest push) checks it
+    """The one rule for who may append (APPENDS_FROM). The operation checks
+    it, and a door whose append happens later (the ingest push) checks it
     first too."""
-    from_feed = source == RowSource.FEED
-    if (target_sheet.kind == SheetKind.LOG) != from_feed:
-        raise SheetNotAppendable(str(target_sheet.id), source=source)
+    kind = SheetKind(target_sheet.kind)
+    if source not in APPENDS_FROM[kind]:
+        raise SheetNotAppendable(str(target_sheet.id), kind=kind, source=source)
+
+
+def validate_appends_from() -> None:
+    """The boot gate: every sheet kind declares the sources it takes."""
+    missing = sorted(kind.value for kind in SheetKind if kind not in APPENDS_FROM)
+    if missing:
+        raise ImproperlyConfigured(f"sheet kinds {missing!r} declare no row sources in APPENDS_FROM")
 
 
 @dataclass

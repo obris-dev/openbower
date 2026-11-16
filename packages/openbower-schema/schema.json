@@ -1215,6 +1215,33 @@
       "title": "FundingFilter",
       "type": "object"
     },
+    "HostedSourceSummary": {
+      "description": "A hosted signal: a listener on the signals service, which the app reads.",
+      "properties": {
+        "kind": {
+          "const": "hosted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "listener_id": {
+          "description": "The listener whose matches become the log's rows.",
+          "title": "Listener Id",
+          "type": "string"
+        },
+        "signal": {
+          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "signal",
+        "listener_id"
+      ],
+      "title": "HostedSourceSummary",
+      "type": "object"
+    },
     "ImportResult": {
       "description": "What a CSV upload produced.",
       "properties": {
@@ -2125,7 +2152,7 @@
               "type": "null"
             }
           ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
         },
         "listener": {
@@ -2137,15 +2164,18 @@
               "type": "null"
             }
           ],
-          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
+          "description": "Its hosted source's listener, read live from the signals service; null once the listener is gone (status listener_gone)."
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "$ref": "#/$defs/HostedSourceSummary"
+          },
+          "title": "Sources",
+          "type": "array"
         },
         "status": {
           "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
@@ -2161,8 +2191,8 @@
       },
       "required": [
         "sheet",
+        "sources",
         "listener",
-        "signal",
         "status",
         "last_polled_at"
       ],
@@ -2274,21 +2304,19 @@
               "type": "null"
             }
           ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
-        },
-        "listener_id": {
-          "description": "The listener whose matches become the log's rows.",
-          "title": "Listener Id",
-          "type": "string"
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "$ref": "#/$defs/HostedSourceSummary"
+          },
+          "title": "Sources",
+          "type": "array"
         },
         "status": {
           "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
@@ -2304,8 +2332,7 @@
       },
       "required": [
         "sheet",
-        "listener_id",
-        "signal",
+        "sources",
         "status",
         "last_polled_at"
       ],

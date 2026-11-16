@@ -3,7 +3,8 @@
 # of a setup before it is saved. A person's request calls the service with
 # their session's IdP access token (signals:read and signals:write); an
 # account's feed, with no one present, with the account's sync key
-# (SignalsSyncKey, signals:read). It also keeps a log's feed (LogFeed: the
-# listener whose matches become a log's rows, and where the poller has read
-# to), runs the log poller that fills logs (the log-poller service), and
-# serves /v1/signals, /v1/signal-types and /v1/signal-previews.
+# (SignalsSyncKey, signals:read). It also keeps a log's sources
+# (SignalSource: what feeds it, such as the listener whose matches become a
+# log's rows, and where the poller has read to), runs the log poller that
+# fills logs (the log-poller service), and serves /v1/signals,
+# /v1/signal-types and /v1/signal-previews.

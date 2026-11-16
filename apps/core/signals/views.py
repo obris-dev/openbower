@@ -1,5 +1,5 @@
-"""`/v1/signals` (an account's signals: a sheet of kind log fed by one
-listener), and what the Create-signal screen reads: `/v1/signal-types`
+"""`/v1/signals` (an account's signals: a sheet of kind log fed by its
+sources), and what the Create-signal screen reads: `/v1/signal-types`
 (the catalog and a type's recent events) and `/v1/signal-previews` (a
 setup tried before it is saved). Session-authed; every signals call acts
 as the person, and every failure answers through one mapping so a
@@ -21,7 +21,7 @@ from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
-from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SyncKeyReconnected
+from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
 from sheets.serializers import sheet_summary
 
@@ -99,27 +99,34 @@ def _as_api_error(exc: Exception) -> Exception:
     return exc
 
 
+def _sources(local_log: LocalLog) -> list[SourceSummary]:
+    return [source.config.summary(source) for source in local_log.sources]
+
+
+def _last_polled(local_log: LocalLog) -> str | None:
+    """The latest read through by any of the log's polled sources."""
+    reads = [source.last_polled_at for source in local_log.sources if source.last_polled_at is not None]
+    return _iso(max(reads, default=None))
+
+
 def _summary(local_log: LocalLog) -> SignalSummary:
     sheet = sheet_summary(local_log.sheet)
-    feed = local_log.feed
     return SignalSummary(
         sheet=sheet,
-        listener_id=feed.listener_id,
-        signal=feed.signal,
+        sources=_sources(local_log),
         status=local_log.status,
-        last_polled_at=_iso(feed.last_polled_at),
+        last_polled_at=_last_polled(local_log),
     )
 
 
 def _detail(log: Log) -> SignalDetail:
     sheet = sheet_summary(log.local_log.sheet)
-    feed = log.local_log.feed
     return SignalDetail(
         sheet=sheet,
+        sources=_sources(log.local_log),
         listener=log.listener,
-        signal=feed.signal,
         status=log.local_log.status,
-        last_polled_at=_iso(feed.last_polled_at),
+        last_polled_at=_last_polled(log.local_log),
     )
 
 

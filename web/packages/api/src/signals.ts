@@ -3,6 +3,7 @@
 // the caller decides what each means for the UI.
 
 import {
+  HostedSourceSummarySchema,
   ListenerVersionWireSchema,
   ListenerWireSchema,
   SignalDetailSchema,
@@ -45,13 +46,52 @@ const TolerantSignalStatusSchema = z
   .string()
   .transform((status): SignalStatus => (KNOWN_SIGNAL_STATUSES.has(status) ? (status as SignalStatus) : UNKNOWN_SIGNAL_STATUS));
 
-export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status"> & { sheet: SheetSummary; status: SignalStatus };
+/** What feeds a signal: at most one source of each kind, each carrying its
+ * own kind's facts (hosted: a signal's listener, which the app reads). A
+ * kind this bundle has not heard of reads as a client-only member that
+ * claims nothing; a known kind that arrives malformed fails the parse. */
+export const SOURCE_KIND = { HOSTED: "hosted" } as const;
+export const UNKNOWN_SOURCE_KIND = "unknown_kind" as const;
+// What the client reads of each kind; the rest is left unread, so a fact
+// the server adds to a kind never fails a parse.
+const HostedSourceSchema = HostedSourceSummarySchema.pick({ kind: true, signal: true });
+export type HostedSource = z.output<typeof HostedSourceSchema>;
+export type SourceSummary = HostedSource | { kind: typeof UNKNOWN_SOURCE_KIND };
+export const KNOWN_SOURCE_KINDS: ReadonlySet<string> = new Set<string>([HostedSourceSummarySchema.shape.kind.value]);
+const UnknownSourceSchema = z
+  .looseObject({ kind: z.string().refine((kind) => !KNOWN_SOURCE_KINDS.has(kind)) })
+  .transform((): SourceSummary => ({ kind: UNKNOWN_SOURCE_KIND }));
+const TolerantSourceSchema = z.union([HostedSourceSchema, UnknownSourceSchema]);
+
+/** The signal's hosted source, if a hosted signal feeds it. */
+export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | undefined {
+  return log.sources.find((source): source is HostedSource => source.kind === SOURCE_KIND.HOSTED);
+}
+
+// A server from before sources sends no sources and its hosted signal at
+// the top level (the hosted web ships before the API it reads): read as
+// that one hosted source. Drop once the pinned API release sends sources.
+function withSources(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || "sources" in raw) return raw;
+  const { signal } = raw as { signal?: unknown };
+  return { ...raw, sources: [{ kind: SOURCE_KIND.HOSTED, signal }] };
+}
+
+export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status" | "sources"> & {
+  sheet: SheetSummary;
+  status: SignalStatus;
+  sources: SourceSummary[];
+};
 export type SignalsPage = { items: SignalSummary[]; next_cursor: string | null };
 
-export const TolerantSignalSummarySchema = SignalSummarySchema.extend({
-  sheet: TolerantSheetSummarySchema,
-  status: TolerantSignalStatusSchema,
-});
+export const TolerantSignalSummarySchema = z.preprocess(
+  withSources,
+  SignalSummarySchema.extend({
+    sheet: TolerantSheetSummarySchema,
+    status: TolerantSignalStatusSchema,
+    sources: z.array(TolerantSourceSchema),
+  }),
+);
 export const TolerantSignalsPageSchema = SignalsPageSchema.extend({ items: z.array(TolerantSignalSummarySchema) });
 
 /** Where the listener stands on the signals service: active, retrying (an
@@ -74,11 +114,15 @@ const TolerantListenerSchema = ListenerWireSchema.extend({
   error: TolerantMatchErrorSchema.nullable(),
   version: ListenerVersionWireSchema.extend({ filter: TolerantFundingFilterSchema }),
 });
-export const TolerantSignalDetailSchema = SignalDetailSchema.extend({
-  sheet: TolerantSheetSummarySchema,
-  status: TolerantSignalStatusSchema,
-  listener: TolerantListenerSchema.nullable(),
-});
+export const TolerantSignalDetailSchema = z.preprocess(
+  withSources,
+  SignalDetailSchema.extend({
+    sheet: TolerantSheetSummarySchema,
+    status: TolerantSignalStatusSchema,
+    sources: z.array(TolerantSourceSchema),
+    listener: TolerantListenerSchema.nullable(),
+  }),
+);
 /** One signal with its listener as the signals service has it now (null
  * once the listener is gone). */
 export type SignalDetail = z.output<typeof TolerantSignalDetailSchema>;

@@ -6,10 +6,9 @@ from openbower_kernel.models import AccountScopedModel
 
 
 class LogFeed(AccountScopedModel):
-    """What feeds a log (a sheet of kind log): the one listener whose
-    matches become its rows. One per
-    log, removed with it by the log's delete (no cascades), and the sheet
-    doors refuse a log so nothing else can delete it from under its feed."""
+    """RETIRED: read and written by nothing. Its rows were copied into
+    SignalSource; the table stays one release so a pod still on the code
+    before sources finds it mid-rollout, and the next release drops it."""
 
     sheet_id = models.CharField(_("sheet id"), max_length=26)
     listener_id = models.CharField(_("listener id"), max_length=26)

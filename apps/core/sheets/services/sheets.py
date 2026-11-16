@@ -937,15 +937,15 @@ class SheetService:
         cascades in this codebase, so anything left behind is orphaned
         forever and a live orphaned fill would hold one of the
         account's fill slots with nothing visible to cancel). A log is
-        refused (`SheetIsLog`): its feed (signals.LogFeed) is the signals
-        app's child, not this service's, so the log's own service deletes
-        its sheet (`delete_log`) and its feed together."""
+        refused (`SheetIsLog`): its sources (signals.SignalSource) are the
+        signals app's children, not this service's, so the log's own
+        service deletes its sheet (`delete_log`) and its sources together."""
         if target.kind == SheetKind.LOG:
             raise SheetIsLog(str(target.id))
         self._delete(target)
 
     def delete_log(self, target: Sheet) -> None:
-        """A log's sheet deleted, for the log's own service alone (its feed
+        """A log's sheet deleted, for the log's own service alone (its sources
         and listener go beside it)."""
         self._delete(target)
 

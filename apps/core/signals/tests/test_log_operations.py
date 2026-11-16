@@ -1,6 +1,6 @@
 """A log's lifecycle against the two services it talks to (fakes at their
 httpx seams): create makes the account's key (once), the listener, then the
-sheet and its feed, and undoes the listener when the local write fails;
+sheet and its source, and undoes the listener when the local write fails;
 edit splits the label and the setup to their owners; delete
 removes the listener first and keeps everything local if it cannot.
 
@@ -20,7 +20,7 @@ from auth_client.services.api_keys import ApiKeyRefused
 from sheets.constants import SheetKind
 from sheets.models import Sheet
 from signals.log_columns import FUNDING_COLUMNS
-from signals.models import LogFeed, SignalsSyncKey
+from signals.models import SignalSource, SignalsSyncKey
 from signals.operations.logs import CreateLogOperation, DeleteLogOperation, EditLogOperation, UnknownSignal
 from signals.services.logs import LogService
 from signals.services.signals_client import SignalsUpstreamUnavailable
@@ -62,21 +62,23 @@ class LogOperationTests(TestCase):
         self.assertEqual((sheet.kind, sheet.label), (SheetKind.LOG, "Robotics raises"))
         self.assertEqual([column.key for column in sheet.columns], [column.key for column in FUNDING_COLUMNS])
         self.assertTrue(all(column.immutable for column in sheet.columns))
-        feed = LogFeed.objects.get(sheet_id=str(sheet.id))
-        self.assertEqual((feed.listener_id, feed.signal, sheet.autofill), (log.listener.id, "funding", True))
+        source = SignalSource.objects.get(sheet_id=str(sheet.id))
+        self.assertEqual(
+            (source.config.listener_id, source.config.signal, sheet.autofill), (log.listener.id, "funding", True)
+        )
         self.assertEqual(SignalsSyncKey.objects.get().token, "obw_live_1")
 
     def test_a_second_log_reuses_the_accounts_key(self):
         self._create()
         self._create(label="Biotech raises")
         self.assertEqual(self.identity.minted, 1)
-        self.assertEqual(LogFeed.objects.count(), 2)
+        self.assertEqual(SignalSource.objects.count(), 2)
 
     def test_a_failed_local_write_deletes_the_listener(self):
         # FAILS if the create does not undo the listener: it would match
         # and judge for a log that does not exist.
         with (
-            patch("signals.services.logs.LogFeed.objects.create", side_effect=DatabaseError("down")),
+            patch("signals.services.logs.SignalSource.save", side_effect=DatabaseError("down")),
             self.assertRaises(DatabaseError),
         ):
             self._create()
@@ -88,7 +90,7 @@ class LogOperationTests(TestCase):
         # warning would name a listener that does not exist.
         self.signals.next["DELETE"] = httpx.Response(404, json={"error": "not_found", "detail": "no such listener"})
         with (
-            patch("signals.services.logs.LogFeed.objects.create", side_effect=DatabaseError("down")),
+            patch("signals.services.logs.SignalSource.save", side_effect=DatabaseError("down")),
             self.assertNoLogs("signals.operations.logs", level="WARNING"),
             self.assertRaises(DatabaseError),
         ):
@@ -103,7 +105,7 @@ class LogOperationTests(TestCase):
         with self.assertRaises(ApiKeyRefused):
             self._create()
         self.assertEqual(self._signals_calls("POST"), [])
-        self.assertFalse(LogFeed.objects.exists())
+        self.assertFalse(SignalSource.objects.exists())
 
     def test_a_signal_with_no_log_columns_is_refused(self):
         with self.assertRaises(UnknownSignal):
@@ -130,7 +132,7 @@ class LogOperationTests(TestCase):
         log = self._create()
         DeleteLogOperation(self.session, str(log.local_log.sheet.id)).run()
         self.assertEqual(self.signals.listeners, {})
-        self.assertFalse(LogFeed.objects.exists())
+        self.assertFalse(SignalSource.objects.exists())
         self.assertFalse(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_signals_outage_deletes_nothing(self):
@@ -138,7 +140,7 @@ class LogOperationTests(TestCase):
         self.signals.next["DELETE"] = httpx.Response(503)
         with self.assertRaises(SignalsUpstreamUnavailable):
             DeleteLogOperation(self.session, str(log.local_log.sheet.id)).run()
-        self.assertTrue(LogFeed.objects.exists())
+        self.assertTrue(SignalSource.objects.exists())
         self.assertTrue(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_listener_already_gone_still_deletes_the_log(self):
@@ -151,6 +153,6 @@ class LogOperationTests(TestCase):
         # FAILS if the index drops a feedless log: the page comes back short
         # and paging stops before the older logs.
         log = self._create()
-        LogFeed.objects.filter(sheet_id=str(log.local_log.sheet.id)).delete()
+        SignalSource.objects.filter(sheet_id=str(log.local_log.sheet.id)).delete()
         with self.assertRaises(KeyError):
             LogService(account_id=USER.account_id).page(after_id="", limit=10)

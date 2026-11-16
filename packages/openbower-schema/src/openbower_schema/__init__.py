@@ -25,7 +25,7 @@ from .fills import (
     FillRunPage,
     FillRunWire,
 )
-from .logs import SignalDetail, SignalsPage, SignalSummary, SyncKeyReconnected
+from .logs import HostedSourceSummary, SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
@@ -114,6 +114,7 @@ __all__ = [
     "FundingEvent",
     "FundingEventWire",
     "FundingFilter",
+    "HostedSourceSummary",
     "ImportResult",
     "IngestAccepted",
     "IngestColumn",
@@ -144,6 +145,7 @@ __all__ = [
     "SignalSummary",
     "SignalsCatalog",
     "SignalsPage",
+    "SourceSummary",
     "SyncKeyReconnected",
     "WebhookAttemptWire",
     "WebhookColumn",

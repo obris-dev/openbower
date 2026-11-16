@@ -1,5 +1,5 @@
 """A sheet's autofill decides whether arriving rows start its entry actions,
-whichever door brings them: a person's rows, a push, a signal's feed (the
+whichever door brings them: a person's rows, a push, a signal's source (the
 poller's own suite). Off, rows land blank and wait for a fill; switching it
 back on queues nothing for them.
 

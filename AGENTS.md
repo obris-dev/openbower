@@ -67,30 +67,35 @@ live in a separate private repo.
   `/v1/signal-types`, and a setup's trial `/v1/signal-previews`). HTTP
   and the wire say signal (views, route names, the contract's types, the
   web client); code below the HTTP layer keeps the sheet's name, a log
-  (`LogService`, `SheetKind.LOG`). A log has ONE listener on the signals
-  service (`signals.LogFeed` links them) and they live and die together
-  through `/v1/signals` (`signals.operations.logs`): create mints the
+  (`LogService`, `SheetKind.LOG`). What feeds a log is its SOURCES
+  (`signals.SignalSource`, one row per kind, its config typed by kind in
+  `signals.sources`, with the polling state a polled kind keeps beside
+  it). A HOSTED source is one listener on the signals service, and they
+  live and die together through `/v1/signals` (`signals.operations.logs`):
+  create mints the
   account's sync key first, then the listener, then the sheet and its
-  feed, undoing the listener if that write fails; delete removes the
+  source, undoing the listener if that write fails; delete removes the
   listener first and keeps everything local if it cannot. So the sheet
   service refuses a log's rename and delete (`SheetIsLog`, 409
   `log_route` at the sheet routes), and only `signals.services.logs.LogService` reaches
   its `rename_log` / `delete_log` (pinned); its base columns are
-  `signals.log_columns`, filled from each match. Its RUNS wait in arrival order instead,
+  `signals.log_columns`, filled from each match, and each row carries its
+  match's id as its `external_id`, so a page read twice lands once. Its
+  RUNS wait in arrival order instead,
   oldest first (`processors.base.queue_position` stamps a log's run with
   its row's id, a standard sheet's with its rank), so a backlog drains
   FIFO. The LOG POLLER (the `log-poller` service,
-  `signals.operations.log_poller`) fills a log: each log is due at its
+  `signals.operations.log_poller`) reads a log's polled sources: each is due at its
   own `next_poll_at`, served longest waiting first, and held by one
   poller through a compare-and-set lease that lapses if the poller dies,
   so any number run and a busy log never starves a quiet one; one that
   cannot fill (its key refused, or full) is parked, and a reconnect wakes
-  the account's. One claim is one page: the matches after the log's
+  the account's. One claim is one page: the matches after the source's
   cursor, read with the account's sync key, appended and the cursor moved
-  by compare-and-set in ONE transaction, sheet first and feed second
+  by compare-and-set in ONE transaction, sheet first and source second
   (the order a delete takes), so a page lands once.
   A log's STATUS (active, reconnect, listener_gone, full) is derived on
-  every read from its feed, the account's key and its row count, never
+  every read from its sources, the account's key and its row count, never
   stored.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
@@ -125,7 +130,12 @@ live in a separate private repo.
   class carrying its own kind (KIND, DISPLAY, identity()), so a consumer
   constructs an instance and works with it and the kind can never be
   mismatched with its values; a string-keyed lookup exists only for the
-  genuinely dynamic read (a stored row whose kind is a column).
+  genuinely dynamic read (a stored row whose kind is a column). Signals
+  source kinds are the same shape (KIND, POLLED, the kind riding in the
+  stored config), and every place a log's sources are walked is a SEAM
+  each kind answers (status, summary, tear_down, poll for a polled kind):
+  each default raises and register() refuses a kind that leaves one
+  unanswered, so a new kind decides every seam, a no-op included.
 - Scheduled work is a crontab line per job (apps/core/crontab, run
   by supercronic in the compose cron service) driving a management
   command over an operation (the reclaim_node_runs command over
@@ -209,8 +219,9 @@ live in a separate private repo.
   push, a person, an import, a snapshot) calls, and a pin holds that
   nothing else in production calls the primitive. Every caller names
   where its rows come from (`source`, a `RowSource`): a LOG takes rows
-  from its FEED only (a signal's matches today), a standard sheet from
-  anything but a feed (`SheetNotAppendable` otherwise; the push checks
+  from a SIGNAL only (any of its sources: a hosted listener's matches
+  today), a standard sheet from anything but a signal, each kind's set
+  declared in `APPENDS_FROM` (`SheetNotAppendable` otherwise; the push checks
   before the bus). A row naming an `external_id` the sheet already
   holds (a sender's own id for it, pushed in an envelope) is skipped
   under the sheet lock the append holds, and not counted; the partial

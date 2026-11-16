@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@bower/ui";
-import { isKnownSignal, type SignalDetail, type SignalsCatalog } from "@bower/api";
+import { hostedSource, isKnownSignal, type SignalDetail, type SignalsCatalog } from "@bower/api";
 
 import { ReconnectDialog, SignalBanner } from "../../_components/signals";
 import { DELETE_ACTION, noSetupNote } from "./copy";
@@ -40,10 +40,18 @@ export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: S
 
   // The catalog offers only the signals this bundle knows, so an offered
   // kind is the one test the form needs; the note says which part failed.
-  const offered = catalog.signals.find((each) => each.signal === log.signal);
+  const hosted = hostedSource(log);
+  // The settings edit a hosted signal's listener; a signal no hosted source
+  // feeds has no page here yet, so reaching one is a broken contract.
+  if (hosted === undefined) throw new Error(`signal ${log.sheet.id} has no hosted source`);
+  const offered = catalog.signals.find((each) => each.signal === hosted.signal);
   const listener = log.listener;
   if (offered === undefined || listener === null) {
-    const note = noSetupNote({ listenerGone: listener === null, signal: log.signal, known: isKnownSignal(log.signal) });
+    const note = noSetupNote({
+      listenerGone: listener === null,
+      signal: hosted.signal,
+      known: isKnownSignal(hosted.signal),
+    });
     return (
       <>
         <SignalHeader title={log.sheet.label} sheetId={log.sheet.id} />
