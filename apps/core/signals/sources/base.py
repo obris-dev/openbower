@@ -48,12 +48,18 @@ if TYPE_CHECKING:
 
 
 class StatusContext(Protocol):
-    """What a kind's status reads beyond its own row."""
+    """What a kind's status reads beyond its own row: its log's and its
+    account's facts."""
 
     @property
     def has_working_key(self) -> bool:
         """Whether the account holds a sync key the signals service has not
         refused (read at most once per log service)."""
+        ...
+
+    @property
+    def has_rows(self) -> bool:
+        """Whether anything has arrived in the source's log yet."""
         ...
 
 

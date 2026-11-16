@@ -18,6 +18,7 @@ export const STATUS_PILL: Record<SignalStatus, { label: string; tone: "quiet" | 
   [SIGNAL_STATUS.RECONNECT]: { label: "Reconnect needed", tone: "warning" },
   [SIGNAL_STATUS.LISTENER_GONE]: { label: "Listener gone", tone: "danger" },
   [SIGNAL_STATUS.FULL]: { label: "Full", tone: "warning" },
+  [SIGNAL_STATUS.WAITING]: { label: "Waiting", tone: "quiet" },
   [UNKNOWN_SIGNAL_STATUS]: null,
 };
 

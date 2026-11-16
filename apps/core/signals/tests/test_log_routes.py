@@ -414,6 +414,7 @@ class SignalPathsTests(SimpleTestCase):
         paths = {
             "/v1/signals": "signals_index",
             "/v1/signals/01X": "signals_detail",
+            "/v1/signals/01X/ingest": "signals_ingest",
             "/v1/signals/reconnect": "signals_reconnect",
             "/v1/signal-types": "signal_types_index",
             "/v1/signal-types/funding/events": "signal_types_events",

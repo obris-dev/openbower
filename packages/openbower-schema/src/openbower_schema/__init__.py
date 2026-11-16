@@ -25,7 +25,15 @@ from .fills import (
     FillRunPage,
     FillRunWire,
 )
-from .logs import HostedSourceSummary, SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
+from .logs import (
+    HostedSourceSummary,
+    SignalDetail,
+    SignalsPage,
+    SignalSummary,
+    SourceSummary,
+    SyncKeyReconnected,
+    WebhookSourceSummary,
+)
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
@@ -163,4 +171,5 @@ __all__ = [
     "WebhookPingData",
     "WebhookProbeResponse",
     "WebhookSheetRef",
+    "WebhookSourceSummary",
 ]

@@ -35,7 +35,8 @@ class UnknownSourceKind(ValueError):
 # because the gate must not import the module it is checking for, or it
 # could never fail.
 HOSTED = "hosted"
-SERVICE_WRITTEN_KINDS: tuple[str, ...] = (HOSTED,)
+WEBHOOK = "webhook"
+SERVICE_WRITTEN_KINDS: tuple[str, ...] = (HOSTED, WEBHOOK)
 
 
 def register(cls: type[SourceConfig]) -> None:

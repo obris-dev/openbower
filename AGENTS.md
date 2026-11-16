@@ -94,9 +94,16 @@ live in a separate private repo.
   cursor, read with the account's sync key, appended and the cursor moved
   by compare-and-set in ONE transaction, sheet first and source second
   (the order a delete takes), so a page lands once.
-  A log's STATUS (active, reconnect, listener_gone, full) is derived on
-  every read from its sources, the account's key and its row count, never
-  stored.
+  A CUSTOM signal is a log whose one source is a WEBHOOK: created with
+  the columns a person declares (each immutable, its values arriving with
+  its rows), touching the signals service at no step, never polled, and
+  filled by pushes to `POST /v1/signals/{id}/ingest` (the sheets push
+  endpoint's envelope and answers, through the same
+  `sheets.ingest.accept.accept_push`, the rows marked as a signal's).
+  A log's STATUS (active, reconnect, listener_gone, full, waiting) is
+  derived on every read from what each source says and its row count,
+  ranked in one declared order, never stored; its `last_received_at` is
+  its newest row's arrival, whichever source brought it.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,
@@ -219,8 +226,8 @@ live in a separate private repo.
   push, a person, an import, a snapshot) calls, and a pin holds that
   nothing else in production calls the primitive. Every caller names
   where its rows come from (`source`, a `RowSource`): a LOG takes rows
-  from a SIGNAL only (any of its sources: a hosted listener's matches
-  today), a standard sheet from anything but a signal, each kind's set
+  from a SIGNAL only (any of its sources: a hosted listener's matches, a
+  custom signal's pushes), a standard sheet from anything but a signal, each kind's set
   declared in `APPENDS_FROM` (`SheetNotAppendable` otherwise; the push checks
   before the bus). A row naming an `external_id` the sheet already
   holds (a sender's own id for it, pushed in an envelope) is skipped

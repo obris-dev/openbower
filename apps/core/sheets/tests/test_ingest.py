@@ -95,7 +95,7 @@ class IngestMachineTests(TestCase):
 
     def test_machine_key_push_is_accepted_and_published(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}, {"domain": "example.io"}]})
         self.assertEqual(resp.status_code, 202)
         body = resp.json()
@@ -116,7 +116,7 @@ class IngestMachineTests(TestCase):
         self.assertTrue(reverse("sheets_ingest", kwargs={"id": self.sheet_id}).startswith("/v1/sheets"))
         captured: list = []
         with (
-            patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)),
+            patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)),
             patch("resource_server.idp.transport.httpx.get", return_value=_FakeResponse(200, _claims())),
         ):
             listed = self.client.get("/v1/lists", HTTP_AUTHORIZATION="Bearer obw_live")
@@ -133,7 +133,7 @@ class IngestMachineTests(TestCase):
 
     def test_a_caller_supplied_event_id_is_used_as_the_idempotency_key(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": "caller-key-123"})
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.json()["event_id"], "caller-key-123")
@@ -141,7 +141,7 @@ class IngestMachineTests(TestCase):
 
     def test_a_minted_ulid_is_used_when_none_supplied(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}]})
         minted = resp.json()["event_id"]
         self.assertEqual(len(minted), 26)  # a ULID
@@ -190,7 +190,7 @@ class IngestMachineTests(TestCase):
             def publish(self, event):
                 raise IngestPublishError("bus down")
 
-        with patch("sheets.views.get_ingest_publisher", return_value=_Boom()):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Boom()):
             resp = self._ingest({"rows": [{"domain": "acme.com"}]})
         self.assertEqual(resp.status_code, 503)
 
@@ -206,7 +206,7 @@ class IngestSessionTests(TestCase):
 
     def test_session_push_is_accepted_and_published(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self.client.post(
                 reverse("sheets_ingest", kwargs={"id": self.sheet_id}),
                 {"rows": [{"domain": "acme.com"}]},
@@ -241,7 +241,9 @@ class IngestValidationTests(TestCase):
         )
 
     def _push(self, rows, capture=None):
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])):
+        with patch(
+            "sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])
+        ):
             return self.client.post(
                 reverse("sheets_ingest", kwargs={"id": self.sheet_id}),
                 {"rows": rows},

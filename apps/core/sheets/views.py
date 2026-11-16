@@ -19,14 +19,13 @@ from rest_framework.response import Response
 from agents.services import AgentNotFound
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
-from openbower_kernel.fields import min_ulid_at, new_ulid
+from openbower_kernel.fields import min_ulid_at
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.sheets import (
     FoldersList,
     ImportResult,
-    IngestAccepted,
     PlainColumn,
     RowsAdded,
     RowsDeleted,
@@ -46,14 +45,13 @@ from .constants import (
     MAX_INDEX_PAGE,
     MAX_ROWS_PAGE,
     FillErrorCode,
-    IngestErrorCode,
     RowSource,
     SheetKind,
     SheetOrigin,
 )
-from .ingest import IngestEvent, IngestPublishError, get_ingest_publisher
+from .ingest.accept import PushRefused, accept_push
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
+from .operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
 from .rows import rows_without_external_ids
@@ -65,7 +63,6 @@ from .serializers import (
     ColumnPromptRequest,
     ColumnRenameRequest,
     FolderRequest,
-    IngestRequest,
     RowCellsPatchRequest,
     RowsAddRequest,
     RowsDeleteRequest,
@@ -81,7 +78,6 @@ from .serializers import (
     row_wire,
     sheet_detail_wire,
     sheet_wire,
-    validate_ingest_rows,
 )
 from .services.ai_columns import AiColumnService
 from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
@@ -418,46 +414,14 @@ class SheetIngestView(_ScopedView):
 
     def post(self, request: Request, id: str) -> Response:
         target_sheet = self._sheet_or_404(id)
-        serializer = IngestRequest(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        # Refused BEFORE the bus: the append happens later, so the push is
-        # the only place a log can answer the producer with a 409.
+        user = self.request.user
         try:
-            require_appendable(target_sheet, source=RowSource.PUSH)
-        except SheetNotAppendable as e:
-            return Response({"error": e.code, "detail": str(e)}, status=409)
-        # Validate the push against the sheet's columns BEFORE accepting it:
-        # the append is async (202), so the POST is the only place a
-        # malformed value can reach the producer as a 400 it can fix, rather
-        # than being stored as sent. Tier-1 envelope ({error, detail}). The
-        # returned rows are run through the shared cells_for_storage (the
-        # writers' transform), so the bus carries exactly what add_rows will
-        # store (canonical form, clamped), not the raw push.
-        problems, rows = validate_ingest_rows(target_sheet, serializer.validated_data["rows"])
-        if problems:
-            return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
-        # The caller's idempotency key if they sent one, else a fresh ULID.
-        # Carried through the bus, so a retried push or a redelivery dedupes
-        # to one append in the worker's inbox (ProcessedIngestEvent).
-        event = IngestEvent(
-            event_id=serializer.validated_data.get("event_id") or new_ulid(),
-            sheet_id=str(target_sheet.id),
-            account_id=self.request.user.account_id,
-            user_id=self.request.user.id,
-            rows=rows,
-            received_at=timezone.now(),
-        )
-        try:
-            get_ingest_publisher().publish(event)
-        except IngestPublishError as e:
-            # The batch never reached the bus, so it was NOT accepted: 503
-            # (retryable), never a 202 that silently dropped it. Dedupe makes
-            # the caller's retry safe.
-            logger.warning("ingest publish failed for sheet %s: %s", event.sheet_id, e)
-            return Response(
-                {"error": IngestErrorCode.INGEST_UNAVAILABLE, "detail": "ingest bus unavailable; retry"}, status=503
+            accepted = accept_push(
+                target_sheet, request.data, account_id=user.account_id, user_id=user.id, source=RowSource.PUSH
             )
-        return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
+        except PushRefused as e:
+            return Response(e.body, status=e.status)
+        return Response(accepted.model_dump(), status=202)
 
 
 class ColumnsView(_ScopedView):

@@ -56,7 +56,9 @@ class EnvelopeDoorTests(TestCase):
 
     def _push(self, rows: list, sheet: Sheet | None = None, capture: list | None = None):
         target = sheet or self.sheet
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])):
+        with patch(
+            "sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])
+        ):
             return self.client.post(
                 reverse("sheets_ingest", kwargs={"id": str(target.id)}),
                 {"rows": rows},
@@ -207,6 +209,7 @@ class ExternalIdAppendTests(TestCase):
                 user_id=TEST_IDENTITY["id"],
                 rows=[IncomingRow(cells={"title": title}, external_id="x:1")],
                 received_at=timezone.now(),
+                source=RowSource.PUSH,
             )
             handle_ingest_event(from_wire(to_wire(event)))
         self.assertEqual(self._titles(), ["first"])
@@ -221,6 +224,7 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"}, external_id="x:1"), IncomingRow(cells={"title": "b"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self._append(("held", "x:1"))
         with self.assertLogs("sheets.ingest.consumer", level="INFO") as logs:
@@ -238,6 +242,7 @@ class ExternalIdAppendTests(TestCase):
                 user_id=TEST_IDENTITY["id"],
                 rows=[],
                 received_at=timezone.now(),
+                source=RowSource.PUSH,
             )
         )
         wire["rows"] = [{"title": "old"}, {"cells": "battery cells"}]
@@ -255,6 +260,7 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(to_wire(event)["rows"], [{"title": "a"}])
 
@@ -267,5 +273,6 @@ class ExternalIdAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=[IncomingRow(cells={"title": "a"}, external_id="x:1"), IncomingRow(cells={"title": "b"})],
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(from_wire(to_wire(event)).rows, event.rows)

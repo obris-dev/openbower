@@ -1,5 +1,6 @@
 """An account's logs as the app keeps them: a sheet of kind log and its
-sources (what feeds it: a hosted signal's listener today). This is the
+sources (what feeds it: a hosted signal's listener, a custom signal's
+webhook). This is the
 local half of a log, written together in one transaction;
 signals.operations.logs orders it against the listener on the signals
 service."""
@@ -14,8 +15,10 @@ from typing import TypeVar
 from django.db import models, transaction
 from django.utils import timezone
 
+from openbower_schema.sheets import PlainColumn
 from sheets.constants import MAX_SHEET_ROWS, SheetKind, SheetOrigin
 from sheets.models import Sheet
+from sheets.services.columns import new_column_key
 from sheets.services.sheets import SheetNotFound, SheetService
 
 from ..constants import LogStatus
@@ -23,6 +26,7 @@ from ..log_columns import LOG_SHAPES
 from ..models import SignalSource, SignalsSyncKey
 from ..sources.base import SourceConfig
 from ..sources.hosted import HostedSource
+from ..sources.webhook import WebhookSource
 from .sync_key import SyncKeyService
 
 C = TypeVar("C", bound=SourceConfig)
@@ -30,7 +34,12 @@ C = TypeVar("C", bound=SourceConfig)
 # Where a log stands when its sources and its sheet each have a word: the
 # first here that any of them says wins, and a log nothing speaks for is
 # active. A status a kind says that is not ranked here refuses loudly.
-_STATUS_ORDER: tuple[LogStatus, ...] = (LogStatus.LISTENER_GONE, LogStatus.RECONNECT, LogStatus.FULL)
+_STATUS_ORDER: tuple[LogStatus, ...] = (
+    LogStatus.LISTENER_GONE,
+    LogStatus.RECONNECT,
+    LogStatus.FULL,
+    LogStatus.WAITING,
+)
 
 
 class LogNotFound(Exception):
@@ -66,6 +75,9 @@ class LocalLog:
     sheet: Sheet
     sources: tuple[SignalSource, ...]
     status: LogStatus
+    # When its newest row arrived, whichever source brought it; None before
+    # the first, or where the caller had no need to read it.
+    last_received_at: datetime.datetime | None = None
 
     @property
     def sheet_id(self) -> str:
@@ -142,6 +154,31 @@ class SignalSourceGlobal:
         held.update(**fields)
 
 
+@dataclass(frozen=True)
+class DeclaredColumn:
+    """A column a person declares on a custom signal: its key derives from
+    its label, as every column's does."""
+
+    label: str
+    type: str
+
+
+@dataclass(frozen=True)
+class _LogContext:
+    """What a source's status reads beyond its own row (sources.base)."""
+
+    service: LogService
+    sheet: Sheet
+
+    @property
+    def has_working_key(self) -> bool:
+        return self.service.current_key is not None
+
+    @property
+    def has_rows(self) -> bool:
+        return self.sheet.row_count > 0
+
+
 class LogService:
     """One account's logs."""
 
@@ -162,10 +199,6 @@ class LogService:
         keys = SyncKeyService(account_id=self.account_id)
         return keys.current()
 
-    @property
-    def has_working_key(self) -> bool:
-        return self.current_key is not None
-
     def _sources(self, sheet_ids: list[str]) -> dict[str, tuple[SignalSource, ...]]:
         """Each log's sources, in one read. Every log has at least one (its
         create writes them with its sheet), so a log without is a broken
@@ -178,13 +211,17 @@ class LogService:
             sheet_sources.append(source)
         return {sheet_id: tuple(sources) for sheet_id, sources in grouped.items()}
 
-    def _local(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LocalLog:
-        return LocalLog(sheet=sheet, sources=sources, status=self.status_of(sheet, sources))
+    def _local(
+        self, sheet: Sheet, sources: tuple[SignalSource, ...], *, last_received_at: datetime.datetime | None = None
+    ) -> LocalLog:
+        status = self.status_of(sheet, sources)
+        return LocalLog(sheet=sheet, sources=sources, status=status, last_received_at=last_received_at)
 
     def status_of(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LogStatus:
         """What the sources say and what the sheet says, ranked by
         _STATUS_ORDER."""
-        said = {source.config.status(source, self) for source in sources}
+        context = _LogContext(service=self, sheet=sheet)
+        said = {source.config.status(source, context) for source in sources}
         said.discard(None)
         if sheet.row_count >= MAX_SHEET_ROWS:
             said.add(LogStatus.FULL)
@@ -202,7 +239,8 @@ class LogService:
         sources = found.get(sheet_id)
         if sheet.kind != SheetKind.LOG or sources is None:
             raise LogNotFound(sheet_id)
-        return self._local(sheet, sources)
+        arrivals = self.sheets.last_arrivals([sheet])
+        return self._local(sheet, sources, last_received_at=arrivals.get(sheet_id))
 
     def sheet_for(self, source: SignalSource) -> Sheet:
         """The sheet a source the poller just claimed fills: the claim hands
@@ -221,13 +259,16 @@ class LogService:
         raise SourceOrphaned(str(source.id), source.sheet_id)
 
     def page(self, *, after_id: str, limit: int) -> list[LocalLog]:
-        """Newest first, keyset paged: the logs index. One sources read for
-        the page, never one per log; a log without a source is a broken
-        invariant and raises."""
+        """Newest first, keyset paged: the logs index. One sources read and
+        one arrivals read for the page, never one per log; a log without a
+        source is a broken invariant and raises."""
         sheets = self.sheets.page(kind=SheetKind.LOG, after_id=after_id, limit=limit)
         sheet_ids = [str(sheet.id) for sheet in sheets]
         sources = self._sources(sheet_ids)
-        return [self._local(sheet, sources[str(sheet.id)]) for sheet in sheets]
+        arrivals = self.sheets.last_arrivals(sheets)
+        return [
+            self._local(sheet, sources[str(sheet.id)], last_received_at=arrivals.get(str(sheet.id))) for sheet in sheets
+        ]
 
     def create(self, *, owner_id: str, label: str, signal: str, listener_id: str, autofill: bool) -> LocalLog:
         """A hosted signal's log: its sheet, with the signal's base columns,
@@ -250,13 +291,35 @@ class LogService:
             source.save()
         return self._local(sheet, (source,))
 
+    def create_custom(self, *, owner_id: str, label: str, columns: list[DeclaredColumn], autofill: bool) -> LocalLog:
+        """A custom signal's log: a sheet with the declared columns (each
+        value arrives with its row, so each is immutable) and its webhook
+        source. Nothing to mint and no listener: rows arrive by push."""
+        declared: list[PlainColumn] = []
+        for column in columns:
+            taken = {each.key for each in declared}
+            key = new_column_key(column.label, taken=taken, count=len(declared))
+            declared.append(PlainColumn(key=key, label=column.label, type=column.type, immutable=True))
+        with transaction.atomic():
+            sheet = self.sheets.create(
+                owner_id=owner_id,
+                label=label,
+                columns=declared,
+                origin=SheetOrigin.MANUAL,
+                kind=SheetKind.LOG,
+                autofill=autofill,
+            )
+            source = SignalSource(account_id=self.account_id, sheet_id=str(sheet.id), config=WebhookSource())
+            source.save()
+        return self._local(sheet, (source,))
+
     def edit(self, local_log: LocalLog, *, label: str | None) -> LocalLog:
         """A new label on the sheet (its autofill is the sheet's own, set
         through the sheet doors like any sheet's)."""
         sheet = local_log.sheet
         if label is not None:
             sheet = self.sheets.rename_log(sheet, label=label)
-        return self._local(sheet, local_log.sources)
+        return self._local(sheet, local_log.sources, last_received_at=local_log.last_received_at)
 
     def advance(self, source: SignalSource, *, to_cursor: str) -> bool:
         """Move the source's cursor past the items just appended, from where

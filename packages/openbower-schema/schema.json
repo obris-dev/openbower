@@ -2155,6 +2155,18 @@
           "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
         },
+        "last_received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its newest row arrived (ISO), whichever source brought it; null before the first.",
+          "title": "Last Received At"
+        },
         "listener": {
           "anyOf": [
             {
@@ -2172,7 +2184,21 @@
         "sources": {
           "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
           "items": {
-            "$ref": "#/$defs/HostedSourceSummary"
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
           },
           "title": "Sources",
           "type": "array"
@@ -2183,7 +2209,8 @@
             "active",
             "listener_gone",
             "reconnect",
-            "full"
+            "full",
+            "waiting"
           ],
           "title": "Status",
           "type": "string"
@@ -2194,7 +2221,8 @@
         "sources",
         "listener",
         "status",
-        "last_polled_at"
+        "last_polled_at",
+        "last_received_at"
       ],
       "title": "SignalDetail",
       "type": "object"
@@ -2307,13 +2335,39 @@
           "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
         },
+        "last_received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When its newest row arrived (ISO), whichever source brought it; null before the first.",
+          "title": "Last Received At"
+        },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
         "sources": {
           "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
           "items": {
-            "$ref": "#/$defs/HostedSourceSummary"
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
           },
           "title": "Sources",
           "type": "array"
@@ -2324,7 +2378,8 @@
             "active",
             "listener_gone",
             "reconnect",
-            "full"
+            "full",
+            "waiting"
           ],
           "title": "Status",
           "type": "string"
@@ -2334,7 +2389,8 @@
         "sheet",
         "sources",
         "status",
-        "last_polled_at"
+        "last_polled_at",
+        "last_received_at"
       ],
       "title": "SignalSummary",
       "type": "object"
@@ -3080,6 +3136,21 @@
         "label"
       ],
       "title": "WebhookSheetRef",
+      "type": "object"
+    },
+    "WebhookSourceSummary": {
+      "description": "A custom signal's webhook: a sender pushes rows to it.",
+      "properties": {
+        "kind": {
+          "const": "webhook",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "WebhookSourceSummary",
       "type": "object"
     }
   },

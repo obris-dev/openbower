@@ -26,6 +26,7 @@ class SignalsErrorCode(StrEnum):
     UNKNOWN_SIGNAL = "unknown_signal"  # 400: a signal this app cannot log
     KEY_LIMIT_REACHED = "key_limit_reached"  # 409: the sync key would exceed the person's key limit
     LISTENER_GONE = "listener_gone"  # 409: the log's listener no longer exists; delete the log
+    SETUP_ON_CUSTOM_SIGNAL = "setup_on_custom_signal"  # 400: a listener setup sent to a signal with no listener
 
 
 # A source kind's name: the SignalSource.kind column bound and the
@@ -36,16 +37,18 @@ SOURCE_KIND_MAX_LENGTH = 16
 SOURCE_CURSOR_MAX_LENGTH = 512
 
 
-# Where a log stands, derived on every read and never stored: from its sources
-# (the listener gone), the account's sync key (none working), and its sheet
-# (at the row cap). The first that holds wins, in this order. The app's side
-# only: the listener's own state on the signals service (retrying, held) is
-# the listener's `status`, read live on the log's detail.
+# Where a log stands, derived on every read and never stored: from its
+# sources (a hosted listener gone, no working sync key for it, a webhook no
+# push has reached) and its sheet (at the row cap), ranked by the log
+# service. The app's side only: the listener's own state on the signals
+# service (retrying, held) is the listener's `status`, read live on the
+# log's detail.
 class LogStatus(StrEnum):
     ACTIVE = "active"
     LISTENER_GONE = "listener_gone"  # the signals service has no such listener: final
     RECONNECT = "reconnect"  # the account has no working sync key: a person reconnects
     FULL = "full"  # the sheet holds MAX_SHEET_ROWS rows: nothing more arrives
+    WAITING = "waiting"  # a custom signal no push has reached yet
 
 
 # The log poller (signals.operations.log_poller). Each polled source is due

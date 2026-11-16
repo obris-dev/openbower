@@ -6,16 +6,45 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from sheets.constants import LABEL_MAX_LENGTH
+from openbower_schema.sheets import COLUMN_LABEL_MAX_LENGTH
+from sheets.constants import LABEL_MAX_LENGTH, MAX_SHEET_COLUMNS, ColumnType
+
+from .sources.registry import HOSTED, WEBHOOK
+
+# What each kind's create takes beyond the label and autofill: a hosted
+# signal's listener setup, or a custom signal's declared columns.
+_HOSTED_FIELDS = frozenset({"signal", "filter", "prompt", "min_confidence"})
+_WEBHOOK_FIELDS = frozenset({"columns"})
+
+
+class LogColumnRequest(serializers.Serializer):
+    label = serializers.CharField(max_length=COLUMN_LABEL_MAX_LENGTH)
+    type = serializers.ChoiceField(choices=[column_type.value for column_type in ColumnType])
 
 
 class LogCreateRequest(serializers.Serializer):
+    """A hosted signal ({signal, filter, ...}) or a custom signal ({source:
+    webhook, columns}); each refuses the other's fields by name."""
+
+    source = serializers.ChoiceField(choices=[HOSTED, WEBHOOK], default=HOSTED)
     label = serializers.CharField(max_length=LABEL_MAX_LENGTH)
-    signal = serializers.CharField()
-    filter = serializers.DictField()
+    signal = serializers.CharField(required=False)
+    filter = serializers.DictField(required=False)
     prompt = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     min_confidence = serializers.FloatField(required=False, allow_null=True)
+    columns = LogColumnRequest(many=True, required=False, max_length=MAX_SHEET_COLUMNS)
     autofill = serializers.BooleanField(required=False, default=True)
+
+    def validate(self, attrs: dict) -> dict:
+        custom = attrs["source"] == WEBHOOK
+        foreign = sorted((_HOSTED_FIELDS if custom else _WEBHOOK_FIELDS) & set(self.initial_data))
+        if foreign:
+            raise serializers.ValidationError(f"a {attrs['source']} signal takes no {', '.join(foreign)}")
+        if custom and not attrs.get("columns"):
+            raise serializers.ValidationError("a custom signal declares at least one column")
+        if not custom and ("signal" not in attrs or "filter" not in attrs):
+            raise serializers.ValidationError("a hosted signal names its signal and filter")
+        return attrs
 
 
 class LogPatchRequest(serializers.Serializer):

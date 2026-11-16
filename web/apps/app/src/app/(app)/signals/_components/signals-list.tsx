@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
-import { deleteSignal, fetchSignalsPage, hostedSource, webRoutes, type SignalSummary } from "@bower/api";
+import { SOURCE_KIND, deleteSignal, fetchSignalsPage, hostedSource, webRoutes, type SignalSummary } from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
 import { LinkButton } from "../../../_components/link-button";
 import {
   CREATE_ACTION,
+  CUSTOM_TYPE,
   DELETE_QUESTION,
   DELETED_TOAST,
   EMPTY_SUBTITLE,
@@ -211,5 +212,6 @@ export function SignalsList({
 
 function signalTypeOf(signal: SignalSummary): string | null {
   const hosted = hostedSource(signal);
-  return hosted === undefined ? null : signalType(hosted.signal);
+  if (hosted !== undefined) return signalType(hosted.signal);
+  return signal.sources.some((source) => source.kind === SOURCE_KIND.WEBHOOK) ? CUSTOM_TYPE : null;
 }

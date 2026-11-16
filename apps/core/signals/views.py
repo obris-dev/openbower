@@ -15,6 +15,7 @@ from rest_framework.exceptions import APIException, AuthenticationFailed, NotFou
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from auth_client.authentication import AppSessionAuthentication
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from auth_client.downstream import DownstreamTokenRejected
 from auth_client.services.api_keys import ApiKeyRefused
@@ -22,11 +23,15 @@ from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailabl
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
-from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
+from resource_server import MachineTokenAuthentication
+from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE, IngestErrorCode, RowSource
+from sheets.ingest.accept import PushRefused, accept_push
 from sheets.serializers import sheet_summary
+from sheets.services.columns import ColumnRefused
 
 from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
 from .operations.logs import (
+    CreateCustomSignalOperation,
     CreateLogOperation,
     DeleteLogOperation,
     EditLogOperation,
@@ -34,6 +39,7 @@ from .operations.logs import (
     Log,
     ReadLogOperation,
     ReconnectLogsOperation,
+    SetupOnCustomSignal,
     UnknownSignal,
 )
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
@@ -47,6 +53,8 @@ from .services.signals_client import (
     SignalsUpstreamUnavailable,
     setup_payload,
 )
+from .sources.registry import WEBHOOK
+from .sources.webhook import WebhookSource
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +83,12 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, SetupOnCustomSignal):
+        return _Relayed({"error": SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, ColumnRefused):
+        # A custom signal's declared columns: the request's own labels
+        # collide or reserve a key, so it is the request to fix.
+        return _Relayed({"error": exc.code, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalsPreviewRunning):
         return _Relayed({**exc.body, "detail": PREVIEW_RUNNING_DETAIL}, status=exc.status)
     if isinstance(exc, SignalsClientRequestError):
@@ -116,6 +130,7 @@ def _summary(local_log: LocalLog) -> SignalSummary:
         sources=_sources(local_log),
         status=local_log.status,
         last_polled_at=_last_polled(local_log),
+        last_received_at=_iso(local_log.last_received_at),
     )
 
 
@@ -127,6 +142,7 @@ def _detail(log: Log) -> SignalDetail:
         listener=log.listener,
         status=log.local_log.status,
         last_polled_at=_last_polled(log.local_log),
+        last_received_at=_iso(log.local_log.last_received_at),
     )
 
 
@@ -162,9 +178,37 @@ class SignalsView(_SignalsScopedView):
     def post(self, request: Request) -> Response:
         body = LogCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
-        log = CreateLogOperation(request.auth, **body.validated_data).run()
+        fields = dict(body.validated_data)
+        if fields.pop("source") == WEBHOOK:
+            operation = CreateCustomSignalOperation(request.auth, **fields)
+        else:
+            operation = CreateLogOperation(request.auth, **fields)
+        log = operation.run()
         detail = _detail(log)
         return Response(detail.model_dump(), status=201)
+
+
+class SignalIngestView(_SignalsScopedView):
+    """POST /v1/signals/{id}/ingest: rows pushed to a custom signal, the
+    sheets push endpoint's envelope and answers (a 202 receipt; the rows
+    land off the bus), pushed with an account API key or a session. A
+    signal with no webhook source takes no push."""
+
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def post(self, request: Request, id: str) -> Response:
+        local_log = self.logs.get(id)
+        if local_log.find(WebhookSource) is None:
+            detail = "this signal takes no pushes; only a custom signal does"
+            return Response({"error": IngestErrorCode.NOT_APPENDABLE, "detail": detail}, status=409)
+        user = request.user
+        try:
+            accepted = accept_push(
+                local_log.sheet, request.data, account_id=user.account_id, user_id=user.id, source=RowSource.SIGNAL
+            )
+        except PushRefused as e:
+            return Response(e.body, status=e.status)
+        return Response(accepted.model_dump(), status=202)
 
 
 class SignalsReconnectView(_SignalsScopedView):

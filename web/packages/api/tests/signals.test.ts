@@ -39,7 +39,13 @@ const SHEET = {
 const HOSTED = { kind: "hosted", signal: "funding", listener_id: "01JQ" + "L".repeat(22) };
 
 function log(status: string) {
-  return { sheet: SHEET, sources: [HOSTED], status, last_polled_at: "2026-11-12T12:01:00+00:00" };
+  return {
+    sheet: SHEET,
+    sources: [HOSTED],
+    status,
+    last_polled_at: "2026-11-12T12:01:00+00:00",
+    last_received_at: "2026-11-12T12:01:00+00:00",
+  };
 }
 
 // A server from before sources: its hosted signal at the top level.
@@ -100,6 +106,17 @@ test("a hosted source reads with its own signal", async (t) => {
   if (res.status === "ok") assert.deepEqual(res.data.items[0]?.sources, [{ kind: SOURCE_KIND.HOSTED, signal: "funding" }]);
 });
 
+test("a custom signal reads as its webhook, waiting until a push arrives", async (t) => {
+  const custom = { ...log("waiting"), sources: [{ kind: "webhook" }], last_polled_at: null, last_received_at: null };
+  stubFetch(t, { items: [custom], next_cursor: null });
+  const res = await fetchSignalsPage();
+  assert.equal(res.status, "ok");
+  if (res.status === "ok") {
+    const item = res.data.items[0]!;
+    assert.deepEqual([item.sources, item.status, hostedSource(item)], [[{ kind: SOURCE_KIND.WEBHOOK }], SIGNAL_STATUS.WAITING, undefined]);
+  }
+});
+
 test("a server from before sources reads as its one hosted source", async (t) => {
   // FAILS if the hosted signal is read only off sources: every signal a
   // person has would lose its type against an older server.
@@ -126,7 +143,8 @@ test("a hosted source missing its own facts fails the parse", async (t) => {
 
 test("SOURCE_KIND names exactly the contract's kinds", () => {
   // FAILS when the server adds or drops a kind: the web names it here first.
-  const element: z.ZodType = SignalSummarySchema.shape.sources.element.unwrap();
+  const raw: z.ZodType = SignalSummarySchema.shape.sources.element;
+  const element = raw instanceof z.ZodLazy ? raw.unwrap() : raw;
   const members = (element instanceof z.ZodUnion ? element.options : [element]) as z.ZodObject<{
     kind: z.ZodLiteral<string>;
   }>[];
@@ -168,7 +186,7 @@ test("an edit PATCHes the signal with the body given, unknown stages and all", a
 });
 
 function detail(logStatus: string, listener: Record<string, unknown> | null) {
-  return { sheet: SHEET, sources: [HOSTED], listener, status: logStatus, last_polled_at: null };
+  return { sheet: SHEET, sources: [HOSTED], listener, status: logStatus, last_polled_at: null, last_received_at: null };
 }
 
 function listener(status: string) {

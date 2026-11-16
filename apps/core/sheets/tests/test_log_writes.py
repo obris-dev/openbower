@@ -163,6 +163,7 @@ class LogAppendTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=rows_without_external_ids([{"company": "acme.example"}]),
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         self.assertEqual(handle_ingest_event(event), "dropped")
 

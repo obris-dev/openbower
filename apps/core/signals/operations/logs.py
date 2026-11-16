@@ -1,12 +1,14 @@
-"""A log's lifecycle, as the person who asks: one listener per log, created,
-edited and deleted with it. The listener lives on the signals service (as
-the person, through their session); the sheet and its sources live here. No
-signals call runs inside a transaction. Create and delete order themselves
-so a failure leaves nothing half made: create makes the listener first and
-deletes it if the local write fails; delete removes the listener first and
-keeps everything local if it cannot. An edit writes the listener first and
-has no undo: a failed local write leaves the two labels apart until the
-edit is retried."""
+"""A log's lifecycle, as the person who asks. A hosted signal's log has one
+listener, created, edited and deleted with it; a custom signal's log is
+fed by its webhook and touches the signals service at no step. The
+listener lives on the signals service (as the person, through their
+session); the sheet and its sources live here. No signals call runs
+inside a transaction. Create and delete order themselves so a failure
+leaves nothing half made: create makes the listener first and deletes it
+if the local write fails; delete tears each source down first and keeps
+everything local if it cannot. An edit writes the listener first and has
+no undo: a failed local write leaves the two labels apart until the edit
+is retried."""
 
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from openbower_schema import ListenerWire
 
 from ..constants import LogStatus
 from ..log_columns import LOG_SHAPES
-from ..services.logs import LocalLog, LogService
+from ..services.logs import DeclaredColumn, LocalLog, LogService
 from ..services.signals_client import (
     SessionSignalsClient,
     SignalsClientError,
@@ -43,6 +45,15 @@ class UnknownSignal(Exception):
     def __init__(self, signal: str) -> None:
         super().__init__(f"{signal!r} cannot be logged; this app logs: {', '.join(sorted(LOG_SHAPES))}")
         self.signal = signal
+
+
+class SetupOnCustomSignal(Exception):
+    """A filter, prompt or threshold sent to a signal with no hosted source:
+    those set a listener, and it has none."""
+
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("this signal has no listener setup to edit; send a label only")
+        self.sheet_id = sheet_id
 
 
 class ListenerGone(Exception):
@@ -124,6 +135,24 @@ class CreateLogOperation(_LogOperation):
         return Log(local_log=local_log, listener=listener)
 
 
+class CreateCustomSignalOperation(_LogOperation):
+    def __init__(
+        self, session: AppSession, *, label: str, columns: list[dict[str, str]], autofill: bool = True
+    ) -> None:
+        self.session = session
+        self.label = label
+        self.columns = [DeclaredColumn(label=column["label"], type=column["type"]) for column in columns]
+        self.autofill = autofill
+
+    def run(self) -> Log:
+        """The sheet and its webhook source, in one transaction. No sync key
+        and no listener: nothing reads the signals service for it."""
+        local_log = self.logs.create_custom(
+            owner_id=self.session.user_id, label=self.label, columns=self.columns, autofill=self.autofill
+        )
+        return Log(local_log=local_log, listener=None)
+
+
 class ReconnectLogsOperation(_LogOperation):
     def __init__(self, session: AppSession) -> None:
         self.session = session
@@ -147,9 +176,10 @@ class ReadLogOperation(_LogOperation):
         longer has is recorded as gone (the log stops polling) and answered
         as None, so the log still opens to say so."""
         local_log = self.logs.get(self.sheet_id)
-        if local_log.status == LogStatus.LISTENER_GONE:
+        found = local_log.find(HostedSource)
+        if found is None or local_log.status == LogStatus.LISTENER_GONE:
             return Log(local_log=local_log, listener=None)
-        source, hosted = local_log.require(HostedSource)
+        source, hosted = found
         try:
             listener = self.signals.listener(listener_id=hosted.listener_id)
         except SignalsNotFound:
@@ -184,9 +214,15 @@ class EditLogOperation(_LogOperation):
         edit is retried. Raises ListenerGone for a log whose listener the
         service no longer has (recorded the first time it says so)."""
         local_log = self.logs.get(self.sheet_id)
+        found = local_log.find(HostedSource)
+        if found is None:
+            if self.setup is not None:
+                raise SetupOnCustomSignal(self.sheet_id)
+            edited = self.logs.edit(local_log, label=self.label)
+            return Log(local_log=edited, listener=None)
         if local_log.status == LogStatus.LISTENER_GONE:
             raise ListenerGone(self.sheet_id)
-        source, hosted = local_log.require(HostedSource)
+        source, hosted = found
         listener_id = hosted.listener_id
         payload: dict[str, Any] = {**(self.setup or {})}
         if self.label is not None:

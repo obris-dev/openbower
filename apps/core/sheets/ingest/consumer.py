@@ -19,7 +19,6 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import transaction
 
-from ..constants import RowSource
 from ..models import ProcessedIngestEvent
 from ..operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from ..services.sheets import ColumnNotWritable, SheetFull, SheetNotFound, SheetService
@@ -72,7 +71,7 @@ def _append_rows(event: IngestEvent) -> AppendResult:
             account_id=event.account_id,
             target_sheet=target,
             rows=event.rows,
-            source=RowSource.PUSH,
+            source=event.source,
         ).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,

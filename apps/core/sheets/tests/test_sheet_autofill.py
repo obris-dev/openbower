@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
 from openbower_kernel.fields import new_ulid
-from sheets.constants import SheetErrorCode, SheetKind
+from sheets.constants import RowSource, SheetErrorCode, SheetKind
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.ingest.events import IngestEvent
 from sheets.models import NodeRun
@@ -51,6 +51,7 @@ class SheetAutofillTests(TestCase):
             user_id=TEST_IDENTITY["id"],
             rows=rows_without_external_ids(rows),
             received_at=timezone.now(),
+            source=RowSource.PUSH,
         )
         return handle_ingest_event(event)
 

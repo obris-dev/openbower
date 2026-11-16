@@ -4,7 +4,7 @@ sheets contract's; these shapes add what feeds it."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,8 +15,9 @@ _SIGNAL = "The signal it logs, as the catalog names it (`SignalsCatalog.signals[
 
 # Where a log stands, derived on every read: listener_gone (final; delete
 # the log), reconnect (the account has no working sync key), full (the
-# sheet holds as many rows as it may), else active.
-SignalStatus = Literal["active", "listener_gone", "reconnect", "full"]
+# sheet holds as many rows as it may), waiting (a custom signal no push has
+# reached yet), else active.
+SignalStatus = Literal["active", "listener_gone", "reconnect", "full", "waiting"]
 _STATUS = (
     "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. "
     "The listener's own state on the signals service (retrying, held) is `listener.status` on the detail."
@@ -28,7 +29,8 @@ _LAST_POLLED = (
 _SOURCES = "What feeds it, at most one of each kind, each carrying its own kind's facts."
 
 # What can feed a signal.
-SourceKind = Literal["hosted"]
+SourceKind = Literal["hosted", "webhook"]
+_LAST_RECEIVED = "When its newest row arrived (ISO), whichever source brought it; null before the first."
 
 
 class HostedSourceSummary(BaseModel):
@@ -39,9 +41,13 @@ class HostedSourceSummary(BaseModel):
     listener_id: str = Field(description="The listener whose matches become the log's rows.")
 
 
-# One member today; each kind adds its own, and the union discriminates on
-# `kind`.
-SourceSummary = HostedSourceSummary
+class WebhookSourceSummary(BaseModel):
+    """A custom signal's webhook: a sender pushes rows to it."""
+
+    kind: Literal["webhook"]
+
+
+SourceSummary = Annotated[HostedSourceSummary | WebhookSourceSummary, Field(discriminator="kind")]
 
 
 class SignalSummary(BaseModel):
@@ -51,6 +57,7 @@ class SignalSummary(BaseModel):
     sources: list[SourceSummary] = Field(description=_SOURCES)
     status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
+    last_received_at: str | None = Field(description=_LAST_RECEIVED)
 
 
 class SignalsPage(BaseModel):
@@ -73,6 +80,7 @@ class SignalDetail(BaseModel):
     )
     status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
+    last_received_at: str | None = Field(description=_LAST_RECEIVED)
 
 
 class SyncKeyReconnected(BaseModel):

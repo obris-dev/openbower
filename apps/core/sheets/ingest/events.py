@@ -2,8 +2,9 @@
 nothing downstream (the publisher, the worker) handles a bare dict.
 
 Rows are IncomingRows, the shape every append takes; the worker appends
-them through AppendRowsOperation, the one append every door takes, so
-the row shape stays single.
+them through AppendRowsOperation, the one append every endpoint takes,
+as the source the push named (a sheet's push, a signal's), so the row
+shape stays single.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from ..constants import RowSource
 from ..rows import ENVELOPE_CELLS, ENVELOPE_EXTERNAL_ID, IncomingRow, is_envelope
 
 
@@ -27,6 +29,9 @@ class IngestEvent:
     user_id: str
     rows: list[IncomingRow]
     received_at: datetime
+    # Where the rows come from, as the append checks it: a sheet's own push
+    # endpoint, or a signal's (its webhook source).
+    source: RowSource
 
 
 def to_wire(event: IngestEvent) -> dict:
@@ -41,6 +46,7 @@ def to_wire(event: IngestEvent) -> dict:
         "user_id": event.user_id,
         "rows": [_row_to_wire(row) for row in event.rows],
         "received_at": event.received_at.isoformat(),
+        "source": event.source,
     }
 
 
@@ -53,6 +59,9 @@ def from_wire(data: dict) -> IngestEvent:
         user_id=data["user_id"],
         rows=[_row_from_wire(row) for row in data["rows"]],
         received_at=datetime.fromisoformat(data["received_at"]),
+        # A message from before sources rode the bus came from the sheets
+        # push endpoint, the only producer then.
+        source=RowSource(data.get("source", RowSource.PUSH)),
     )
 
 

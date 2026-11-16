@@ -4,6 +4,7 @@
 
 import {
   HostedSourceSummarySchema,
+  WebhookSourceSummarySchema,
   ListenerVersionWireSchema,
   ListenerWireSchema,
   SignalDetailSchema,
@@ -28,12 +29,14 @@ import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 /** Where a signal stands, as the server names it: active (it fills),
  * reconnect (the account's sync key was refused; a person reconnects),
  * listener_gone (the signals service no longer has it: final), full (its
- * sheet holds as many rows as it may). */
+ * sheet holds as many rows as it may), waiting (a custom signal nothing
+ * has been pushed to yet). */
 export const SIGNAL_STATUS = {
   ACTIVE: "active",
   RECONNECT: "reconnect",
   LISTENER_GONE: "listener_gone",
   FULL: "full",
+  WAITING: "waiting",
 } as const;
 // A status this bundle has not heard of reads as this client-only member,
 // which renders no status: every real one claims something (that it fills,
@@ -47,21 +50,27 @@ const TolerantSignalStatusSchema = z
   .transform((status): SignalStatus => (KNOWN_SIGNAL_STATUSES.has(status) ? (status as SignalStatus) : UNKNOWN_SIGNAL_STATUS));
 
 /** What feeds a signal: at most one source of each kind, each carrying its
- * own kind's facts (hosted: a signal's listener, which the app reads). A
+ * own kind's facts (hosted: a signal's listener, which the app reads;
+ * webhook: a custom signal's endpoint, which a sender pushes rows to). A
  * kind this bundle has not heard of reads as a client-only member that
  * claims nothing; a known kind that arrives malformed fails the parse. */
-export const SOURCE_KIND = { HOSTED: "hosted" } as const;
+export const SOURCE_KIND = { HOSTED: "hosted", WEBHOOK: "webhook" } as const;
 export const UNKNOWN_SOURCE_KIND = "unknown_kind" as const;
 // What the client reads of each kind; the rest is left unread, so a fact
 // the server adds to a kind never fails a parse.
 const HostedSourceSchema = HostedSourceSummarySchema.pick({ kind: true, signal: true });
+const WebhookSourceSchema = WebhookSourceSummarySchema.pick({ kind: true });
 export type HostedSource = z.output<typeof HostedSourceSchema>;
-export type SourceSummary = HostedSource | { kind: typeof UNKNOWN_SOURCE_KIND };
-export const KNOWN_SOURCE_KINDS: ReadonlySet<string> = new Set<string>([HostedSourceSummarySchema.shape.kind.value]);
+export type WebhookSource = z.output<typeof WebhookSourceSchema>;
+export type SourceSummary = HostedSource | WebhookSource | { kind: typeof UNKNOWN_SOURCE_KIND };
+export const KNOWN_SOURCE_KINDS: ReadonlySet<string> = new Set<string>([
+  HostedSourceSummarySchema.shape.kind.value,
+  WebhookSourceSummarySchema.shape.kind.value,
+]);
 const UnknownSourceSchema = z
   .looseObject({ kind: z.string().refine((kind) => !KNOWN_SOURCE_KINDS.has(kind)) })
   .transform((): SourceSummary => ({ kind: UNKNOWN_SOURCE_KIND }));
-const TolerantSourceSchema = z.union([HostedSourceSchema, UnknownSourceSchema]);
+const TolerantSourceSchema = z.union([HostedSourceSchema, WebhookSourceSchema, UnknownSourceSchema]);
 
 /** The signal's hosted source, if a hosted signal feeds it. */
 export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | undefined {
@@ -70,11 +79,12 @@ export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | 
 
 // A server from before sources sends no sources and its hosted signal at
 // the top level (the hosted web ships before the API it reads): read as
-// that one hosted source. Drop once the pinned API release sends sources.
+// that one hosted source, with nothing received. Drop once the pinned API
+// release sends sources.
 function withSources(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null || "sources" in raw) return raw;
   const { signal } = raw as { signal?: unknown };
-  return { ...raw, sources: [{ kind: SOURCE_KIND.HOSTED, signal }] };
+  return { ...raw, sources: [{ kind: SOURCE_KIND.HOSTED, signal }], last_received_at: null };
 }
 
 export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status" | "sources"> & {
