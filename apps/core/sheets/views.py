@@ -36,6 +36,7 @@ from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColum
 from resource_server import MachineTokenAuthentication
 from webhooks.serializers import delivery_model
 
+from .column_refusals import column_refusal_status
 from .constants import (
     DEFAULT_INDEX_PAGE,
     DEFAULT_ROWS_PAGE,
@@ -49,7 +50,8 @@ from .constants import (
     SheetKind,
     SheetOrigin,
 )
-from .ingest.accept import PushRefused, accept_push
+from .ingest.accept import accept_push
+from .ingest.refusals import PUSH_REFUSALS, push_refusal
 from .models import Folder, Sheet
 from .operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
@@ -63,6 +65,7 @@ from .serializers import (
     ColumnPromptRequest,
     ColumnRenameRequest,
     FolderRequest,
+    IngestRequest,
     RowCellsPatchRequest,
     RowsAddRequest,
     RowsDeleteRequest,
@@ -113,17 +116,11 @@ logger = logging.getLogger(__name__)
 # classifies by CODE and renders the detail verbatim (tier 1).
 _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
 
-# The same partition for the COLUMN vocabulary, kept separate because
-# the two sets are disjoint and neither endpoint should classify by
-# the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset(
-    {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
-)
-
 
 def _log_route(e: SheetIsLog) -> Response:
-    """A log's label and life are its listener's too: renaming or deleting
-    one here would leave its listener behind, so its own route does both."""
+    """A log's life is its sources' too: renaming or deleting one here
+    would leave them (and a hosted source's listener) behind, so its own
+    route does both."""
     return Response({"error": e.code, "detail": str(e)}, status=409)
 
 
@@ -164,12 +161,6 @@ def _fill_refusal_status(e: FillRefused) -> int:
     """One classifier for every fill refusal, so a code added to the
     conflict set reaches every endpoint that answers one."""
     return 409 if e.code in _FILL_CONFLICT_CODES else 400
-
-
-def _column_refusal_status(e: ColumnRefused) -> int:
-    """One classifier for every column write, so a status added to the
-    set reaches both endpoints and neither can drift from the other."""
-    return 409 if e.code in _COLUMN_CONFLICT_CODES else 400
 
 
 class _ScopedView(ScopedView):
@@ -414,13 +405,20 @@ class SheetIngestView(_ScopedView):
 
     def post(self, request: Request, id: str) -> Response:
         target_sheet = self._sheet_or_404(id)
+        body = IngestRequest(data=request.data)
+        body.is_valid(raise_exception=True)
         user = self.request.user
         try:
             accepted = accept_push(
-                target_sheet, request.data, account_id=user.account_id, user_id=user.id, source=RowSource.PUSH
+                target_sheet,
+                body.validated_data["rows"],
+                event_id=body.validated_data.get("event_id"),
+                account_id=user.account_id,
+                user_id=user.id,
+                source=RowSource.PUSH,
             )
-        except PushRefused as e:
-            return Response(e.body, status=e.status)
+        except PUSH_REFUSALS as e:
+            return push_refusal(e)
         return Response(accepted.model_dump(), status=202)
 
 
@@ -439,7 +437,7 @@ class ColumnsView(_ScopedView):
         try:
             target_sheet = self.columns.add_column(id, label=data["label"], column_type=data["type"])
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
@@ -462,7 +460,7 @@ class ColumnOrderView(_ScopedView):
             # the sibling column write above does it: a refusal added
             # to reorder() later gets a status here instead of escaping
             # as a 500.
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
@@ -578,7 +576,7 @@ class ColumnWebhookView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet), status=201)
@@ -651,7 +649,7 @@ class ColumnDetailView(_ScopedView):
         try:
             target_sheet = self.columns.delete(id, key=key)
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:

@@ -4,7 +4,7 @@ import { useState, type RefObject } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { Label, LocalTime, Select, Switch, TIME_FORMAT, cn, useToast } from "@bower/ui";
-import { SIGNAL_STATUS, type SignalDetail } from "@bower/api";
+import { SIGNAL_FEED, SIGNAL_STATUS, signalFeed, type SignalDetail } from "@bower/api";
 
 import { RECONNECT_ACTION, SignalStatusPill, isHeld } from "../../../../_components/signals";
 import { PERIODS, type Period } from "../lib/periods";
@@ -77,9 +77,10 @@ export function SignalBar({
         ) : (
           log && <SignalStatusPill status={log.status} held={held} />
         )}
-        {/* Only what the page knows: a signal it could not read says
-            nothing here, and one never read yet says so plainly. */}
-        {log && (
+        {/* Only what the page knows: a signal it could not read, or one
+            nothing reads (a custom signal is pushed to), says nothing here,
+            and one never read yet says so plainly. */}
+        {log && signalFeed(log) === SIGNAL_FEED.HOSTED && (
           <span className="text-muted">
             {log.last_polled_at ? (
               <>

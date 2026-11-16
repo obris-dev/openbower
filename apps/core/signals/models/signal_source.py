@@ -45,12 +45,12 @@ class SignalSource(AccountScopedModel):
         verbose_name = _("signal source")
         verbose_name_plural = _("signal sources")
         constraints = [
-            # One source of each kind per signal.
+            # One source of each kind per signal; its index also serves every
+            # read of a signal's sources by sheet_id alone.
             models.UniqueConstraint(fields=["sheet_id", "kind"], name="signals_source_sheet_kind_uniq"),
         ]
         indexes = [
             models.Index(fields=["account_id", "id"], name="signals_source_account_idx"),
-            models.Index(fields=["sheet_id"], name="signals_source_sheet_idx"),
             # The due list: live polled sources only, longest waiting first.
             models.Index(
                 fields=["next_poll_at", "id"],

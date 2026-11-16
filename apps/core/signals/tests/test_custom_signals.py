@@ -10,13 +10,13 @@ from __future__ import annotations
 import datetime
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, TestCase
+from django.core.cache import caches
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from common.testing import TEST_IDENTITY, login_session
 from sheets.constants import MAX_SHEET_ROWS, FillErrorCode, IngestErrorCode, RowSource
-from sheets.ingest import from_wire, to_wire
 from sheets.ingest.consumer import handle_ingest_event
 from sheets.models import Sheet, SheetRow
 from sheets.operations.append_rows import AppendRowsOperation, SheetNotAppendable
@@ -30,7 +30,7 @@ from .fakes import FakeIdentity, FakeSignals, install
 
 ACCOUNT = TEST_IDENTITY["account_id"]
 _COLUMNS = [{"label": "Title", "type": "text"}, {"label": "Link", "type": "url"}, {"label": "Score", "type": "number"}]
-_CUSTOM = {"source": "webhook", "label": "Forum mentions", "columns": _COLUMNS}
+_CUSTOM = {"source": WEBHOOK, "label": "Forum mentions", "columns": _COLUMNS}
 
 
 class _Capture:
@@ -75,24 +75,21 @@ class CustomSignalTests(TestCase):
         # it has no listener and needs no sync key.
         created = self._create()
         self.assertEqual(
-            (created["sources"], created["status"], created["listener"], created["last_received_at"]),
-            ([{"kind": WEBHOOK}], LogStatus.WAITING, None, None),
+            (created["sources"], created["status"], created["listener"]),
+            ([{"kind": WEBHOOK}], LogStatus.WAITING, None),
         )
         columns = [(c["key"], c["type"], c["immutable"]) for c in created["sheet"]["columns"]]
         self.assertEqual(columns, [("title", "text", True), ("link", "url", True), ("score", "number", True)])
         self.assertEqual((self.signals.calls, self.identity.calls), ([], []))
         self.assertFalse(SignalsSyncKey.objects.exists())
 
-    def test_a_push_fills_it_and_it_reads_active_with_its_last_arrival(self):
+    def test_a_push_fills_it_and_it_reads_active(self):
         log_id = self._create()["sheet"]["id"]
-        before = timezone.now()
         self._push(log_id, [{"external_id": "r:1", "cells": {"title": "first"}}, {"title": "second"}])
         detail = self._detail(log_id)
         self.assertEqual(detail["status"], LogStatus.ACTIVE)
-        self.assertGreaterEqual(datetime.datetime.fromisoformat(detail["last_received_at"]), before)
         listed = self.client.get(reverse("signals_index")).json()["items"]
         self.assertEqual([(item["sources"], item["status"]) for item in listed], [([{"kind": WEBHOOK}], "active")])
-        self.assertEqual(listed[0]["last_received_at"], detail["last_received_at"])
         self.assertEqual(SheetRow.objects.filter(sheet_id=log_id).count(), 2)
 
     def test_a_push_naming_an_id_it_already_holds_lands_once(self):
@@ -102,10 +99,46 @@ class CustomSignalTests(TestCase):
         self._push(log_id, [row])
         self.assertEqual(SheetRow.objects.filter(sheet_id=log_id).count(), 1)
 
+    def test_a_push_costs_its_session_and_one_read(self):
+        # FAILS if the push endpoint reads more than the signal it lands in
+        # (its status, its sync key, its listener): a webhook endpoint
+        # depends on as little as it can.
+        log_id = self._create()["sheet"]["id"]
+        with self.assertNumQueries(1):
+            sheet = LogService(account_id=ACCOUNT).push_target(log_id)
+        self.assertEqual(str(sheet.id), log_id)
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture([])), self.assertNumQueries(2):
+            resp = self.client.post(
+                reverse("signals_ingest", kwargs={"id": log_id}),
+                {"rows": [{"title": "x"}]},
+                content_type="application/json",
+            )
+        self.assertEqual(resp.status_code, 202, resp.content)
+
+    def test_its_push_schema_is_read_beside_its_push(self):
+        # FAILS if a sender must read a sheets path to learn what a custom
+        # signal takes, or if a hosted signal offers a schema it refuses.
+        log_id = self._create()["sheet"]["id"]
+        schema = self.client.get(reverse("signals_ingest", kwargs={"id": log_id}))
+        self.assertEqual(schema.status_code, 200, schema.content)
+        self.assertEqual(
+            [(column["key"], column["type"]) for column in schema.json()["columns"]],
+            [("title", "text"), ("link", "url"), ("score", "number")],
+        )
+        hosted = self._post({"label": "Raises", "signal": "funding", "filter": {}}).json()["sheet"]["id"]
+        refused = self.client.get(reverse("signals_ingest", kwargs={"id": hosted}))
+        self.assertEqual(refused.status_code, 409, refused.content)
+
     def test_a_push_off_its_columns_is_refused_before_the_bus(self):
         log_id = self._create()["sheet"]["id"]
         resp = self._push(log_id, [{"score": "not a number"}], status=400)
         self.assertEqual(resp.json()["error"], IngestErrorCode.INGEST_INVALID)
+
+    def test_a_push_it_has_no_room_for_is_refused_before_the_bus(self):
+        log_id = self._create()["sheet"]["id"]
+        Sheet.objects.filter(id=log_id).update(row_count=MAX_SHEET_ROWS)
+        refused = self._push(log_id, [{"title": "late"}], status=409)
+        self.assertEqual(refused.json()["error"], IngestErrorCode.SHEET_FULL)
 
     def test_it_reads_full_at_the_row_cap(self):
         log_id = self._create()["sheet"]["id"]
@@ -123,6 +156,7 @@ class CustomSignalTests(TestCase):
             reverse("sheets_ingest", kwargs={"id": log_id}), {"rows": [{"title": "x"}]}, content_type="application/json"
         )
         self.assertEqual(sheet_push.status_code, 409, sheet_push.content)
+        self.assertIn(f"/v1/signals/{log_id}/ingest", sheet_push.json()["detail"])
         sheet = Sheet.objects.get(id=log_id)
         rows = rows_without_external_ids([{"title": "x"}])
         with self.assertRaises(SheetNotAppendable):
@@ -131,12 +165,14 @@ class CustomSignalTests(TestCase):
     def test_the_poller_never_claims_it(self):
         # FAILS if a webhook source keeps a due time: the poller would claim
         # a source it has no read for.
-        source = SignalSource.objects.get(sheet_id=self._create()["sheet"]["id"])
+        log_id = self._create()["sheet"]["id"]
+        source = SignalSource.objects.get(sheet_id=log_id)
         now = timezone.now() + datetime.timedelta(days=1)
         self.assertIsNone(source.next_poll_at)
         self.assertEqual(LogService.Global.due(now, limit=8), [])
         self.assertIsNone(LogService.Global.claim(str(source.id), worker_id="w", now=now, lease_seconds=64))
-        self.assertEqual(LogService(account_id=ACCOUNT).wake(), 0)
+        logs = LogService(account_id=ACCOUNT)
+        self.assertEqual(logs.wake(), 0)
 
     def test_read_edit_and_delete_never_reach_the_signals_service(self):
         log_id = self._create()["sheet"]["id"]
@@ -148,7 +184,7 @@ class CustomSignalTests(TestCase):
         setup = self.client.patch(
             reverse("signals_detail", kwargs={"id": log_id}), {"filter": {}}, content_type="application/json"
         )
-        self.assertEqual((setup.status_code, setup.json()["error"]), (400, SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL))
+        self.assertEqual((setup.status_code, setup.json()["error"]), (409, SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL))
         deleted = self.client.delete(reverse("signals_detail", kwargs={"id": log_id}))
         self.assertEqual(deleted.status_code, 204)
         gone = Sheet.objects.filter(id=log_id).exists() or SignalSource.objects.filter(sheet_id=log_id).exists()
@@ -179,18 +215,74 @@ class CustomSignalTests(TestCase):
         self.assertFalse(SignalSource.objects.exists())
 
 
-class PushSourceOnTheBusTests(SimpleTestCase):
-    def test_an_event_names_its_source_and_an_old_one_reads_as_a_sheet_push(self):
-        # FAILS if the bus drops the source: a signal's rows would land as a
-        # sheet push, which a log refuses, and be dropped.
-        wire = {
-            "event_id": "e1",
-            "sheet_id": "s1",
-            "account_id": ACCOUNT,
-            "user_id": "u1",
-            "rows": [{"title": "x"}],
-            "received_at": timezone.now().isoformat(),
-        }
-        self.assertEqual(from_wire(wire).source, RowSource.PUSH)
-        signal_event = from_wire(wire | {"source": RowSource.SIGNAL})
-        self.assertEqual(from_wire(to_wire(signal_event)).source, RowSource.SIGNAL)
+_CORE_AUD = "openbower-core"
+
+
+class _TokenInfo:
+    """The hub's tokeninfo answer for an API key, at the identity fake's seam."""
+
+    def __init__(self, claims: dict) -> None:
+        self.status_code = 200
+        self._claims = claims
+
+    def json(self) -> dict:
+        return self._claims
+
+
+def _key_claims(**over) -> dict:
+    claims = {
+        "active": True,
+        "sub": TEST_IDENTITY["id"],
+        "account_id": ACCOUNT,
+        "username": "user@example.com",
+        "aud": [_CORE_AUD],
+        "scope": "profile",
+        "exp": 4102444800,
+    }
+    claims.update(over)
+    return claims
+
+
+@override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=100000)
+class ApiKeyPushTests(TestCase):
+    """The developer form: an account API key pushes to a custom signal, and
+    reaches nothing else of the signals routes."""
+
+    def setUp(self) -> None:
+        caches["default"].clear()
+        caches["tokeninfo"].clear()
+        login_session(self.client)
+        install(self, FakeSignals(), FakeIdentity())
+        created = self.client.post(reverse("signals_index"), _CUSTOM, content_type="application/json")
+        self.log_id = created.json()["sheet"]["id"]
+        self.key_client = Client()
+
+    def _as_key(self, method: str, url: str, body: dict | None = None, claims: dict | None = None):
+        tokeninfo = _TokenInfo(claims if claims is not None else _key_claims())
+        send = getattr(self.key_client, method)
+        with patch("resource_server.idp.transport.httpx.get", return_value=tokeninfo):
+            return send(url, body, content_type="application/json", HTTP_AUTHORIZATION="Bearer obw_live")
+
+    def test_a_key_pushes_as_its_account_and_user(self):
+        captured: list = []
+        url = reverse("signals_ingest", kwargs={"id": self.log_id})
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
+            resp = self._as_key("post", url, {"rows": [{"title": "x"}]})
+        self.assertEqual(resp.status_code, 202, resp.content)
+        event = captured[0]
+        self.assertEqual(
+            (event.source, event.account_id, event.user_id), (RowSource.SIGNAL, ACCOUNT, TEST_IDENTITY["id"])
+        )
+
+    def test_another_account_s_key_finds_no_signal(self):
+        # FAILS if the push reads a signal outside the key's account.
+        url = reverse("signals_ingest", kwargs={"id": self.log_id})
+        other = _key_claims(account_id="01JQ" + "Z" * 22)
+        resp = self._as_key("post", url, {"rows": [{"title": "x"}]}, claims=other)
+        self.assertEqual(resp.status_code, 404, resp.content)
+
+    def test_a_key_reaches_only_the_push(self):
+        # FAILS if the machine lane opens beyond the push: a key could read
+        # or delete an account's signals.
+        listed = self._as_key("get", reverse("signals_index"))
+        self.assertEqual(listed.status_code, 401, listed.content)

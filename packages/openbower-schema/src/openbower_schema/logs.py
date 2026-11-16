@@ -1,6 +1,7 @@
-"""Logs on the wire: a log is a sheet of kind log fed by its sources (a
-hosted signal's listener on the signals service). The sheet half is the
-sheets contract's; these shapes add what feeds it."""
+"""Signals on the wire: a signal is a sheet of kind log fed by its sources
+(a hosted signal's listener on the signals service, a custom signal's
+webhook). The sheet half is the sheets contract's; these shapes add what
+feeds it."""
 
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ _SIGNAL = "The signal it logs, as the catalog names it (`SignalsCatalog.signals[
 
 # Where a log stands, derived on every read: listener_gone (final; delete
 # the log), reconnect (the account has no working sync key), full (the
-# sheet holds as many rows as it may), waiting (a custom signal no push has
-# reached yet), else active.
+# sheet holds as many rows as it may), waiting (a custom signal whose sheet
+# holds no row), else active.
 SignalStatus = Literal["active", "listener_gone", "reconnect", "full", "waiting"]
 _STATUS = (
     "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. "
@@ -30,7 +31,6 @@ _SOURCES = "What feeds it, at most one of each kind, each carrying its own kind'
 
 # What can feed a signal.
 SourceKind = Literal["hosted", "webhook"]
-_LAST_RECEIVED = "When its newest row arrived (ISO), whichever source brought it; null before the first."
 
 
 class HostedSourceSummary(BaseModel):
@@ -57,7 +57,6 @@ class SignalSummary(BaseModel):
     sources: list[SourceSummary] = Field(description=_SOURCES)
     status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
-    last_received_at: str | None = Field(description=_LAST_RECEIVED)
 
 
 class SignalsPage(BaseModel):
@@ -68,19 +67,19 @@ class SignalsPage(BaseModel):
 
 
 class SignalDetail(BaseModel):
-    """One log with its listener as the signals service has it now."""
+    """One signal, with a hosted source's listener as the signals service
+    has it now."""
 
     sheet: SheetSummary
     sources: list[SourceSummary] = Field(description=_SOURCES)
     listener: ListenerWire | None = Field(
         description=(
-            "Its hosted source's listener, read live from the signals service; null once the listener is gone "
-            "(status listener_gone)."
+            "Its hosted source's listener, read live from the signals service; null for a signal with no "
+            "hosted source, and once the listener is gone (status listener_gone)."
         )
     )
     status: SignalStatus = Field(description=_STATUS)
     last_polled_at: str | None = Field(description=_LAST_POLLED)
-    last_received_at: str | None = Field(description=_LAST_RECEIVED)
 
 
 class SyncKeyReconnected(BaseModel):

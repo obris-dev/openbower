@@ -4,7 +4,6 @@ a missing row, so foreign ids are not an oracle)."""
 
 from __future__ import annotations
 
-import datetime
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -156,9 +155,10 @@ class CellWrittenTwice(Exception):
 
 
 class SheetIsLog(Exception):
-    """A rename or delete of a log as a plain sheet: a log's label and life
-    are its listener's too, so its own service renames and deletes it
-    (`rename_log`, `delete_log`) with the listener beside."""
+    """A rename or delete of a log as a plain sheet: a log's life is its
+    sources' too (and a hosted source's listener's label), so its own
+    service renames and deletes it (`rename_log`, `delete_log`) with them
+    beside."""
 
     code = SheetErrorCode.LOG_ROUTE
 
@@ -383,15 +383,6 @@ class SheetService:
             qs = qs.filter(id__lt=after_id)
         return list(qs[:limit])
 
-    def last_arrivals(self, logs: Sequence[Sheet]) -> dict[str, datetime.datetime]:
-        """When each log's newest row arrived, by sheet id, in one read; a
-        log with no row is absent. A log ranks each arrival before its
-        first row, so its newest row is its first in sheet order."""
-        log_ids = [str(log.id) for log in logs if log.kind == SheetKind.LOG]
-        mine = SheetRow.objects.filter(sheet_id__in=log_ids)
-        newest = mine.order_by("sheet_id", "rank").distinct("sheet_id")
-        return dict(newest.values_list("sheet_id", "created_at"))
-
     def get(self, sheet_id: str) -> Sheet:
         try:
             return Sheet.objects.get(id=sheet_id, account_id=self.account_id)
@@ -404,8 +395,8 @@ class SheetService:
         return self._rename(target, label=label)
 
     def rename_log(self, target: Sheet, *, label: str) -> Sheet:
-        """A log's sheet renamed, for the log's own service alone (its
-        listener is renamed beside it)."""
+        """A log's sheet renamed, for the log's own service alone (a hosted
+        source's listener is renamed beside it)."""
         return self._rename(target, label=label)
 
     def _rename(self, target: Sheet, *, label: str) -> Sheet:

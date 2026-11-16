@@ -75,10 +75,12 @@ def _append_rows(event: IngestEvent) -> AppendResult:
         ).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,
-        # a row carrying a column whose cells are recorded, and a push to
-        # a log (the view refuses those two at the door, so an event
-        # carrying one came from somewhere that skipped the door and will
-        # never become valid). Dropped and recorded, never retried, or
+        # a row carrying a column whose cells are recorded, and a source
+        # the sheet's kind does not take (APPENDS_FROM). accept_push
+        # refuses the last two before the bus, so an event carrying one
+        # came from a producer that skipped it, or from before a change
+        # (a worker on older code reads a signal's push as a sheet's), and
+        # will never become valid. Dropped and recorded, never retried, or
         # the bus would redeliver it forever.
         return AppendResult(applied=False, reason=str(e))
     return AppendResult(applied=True, added=report.added)

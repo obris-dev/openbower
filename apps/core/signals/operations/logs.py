@@ -137,11 +137,11 @@ class CreateLogOperation(_LogOperation):
 
 class CreateCustomSignalOperation(_LogOperation):
     def __init__(
-        self, session: AppSession, *, label: str, columns: list[dict[str, str]], autofill: bool = True
+        self, session: AppSession, *, label: str, columns: list[DeclaredColumn], autofill: bool = True
     ) -> None:
         self.session = session
         self.label = label
-        self.columns = [DeclaredColumn(label=column["label"], type=column["type"]) for column in columns]
+        self.columns = columns
         self.autofill = autofill
 
     def run(self) -> Log:

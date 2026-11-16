@@ -26,7 +26,7 @@ export const STATUS_PILL: Record<SignalStatus, { label: string; tone: "quiet" | 
 export const BANNER_LISTENER_GONE =
   "This signal's listener is gone from the signals service, so no new rounds will arrive. Its rows stay in its sheet.";
 export const BANNER_RECONNECT = "New rounds are paused: this account's connection to signals stopped working.";
-export const BANNER_FULL = "Its sheet holds as many rows as it may, so no new rounds arrive. Delete rows to make room.";
+export const BANNER_FULL = "Its sheet holds as many rows as it may, so no new rows arrive. Delete rows to make room.";
 export const BANNER_HELD = "This signal's setup no longer fits the signals service, so it is paused until it is edited.";
 export const RECONNECT_ACTION = "Reconnect";
 export const RECONNECT_QUESTION = "Reconnect signals?";

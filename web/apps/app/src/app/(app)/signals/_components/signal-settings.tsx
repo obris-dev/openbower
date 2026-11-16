@@ -3,18 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@bower/ui";
-import { hostedSource, isKnownSignal, type SignalDetail, type SignalsCatalog } from "@bower/api";
+import { SIGNAL_FEED, hostedSource, isKnownSignal, signalFeed, type SignalDetail, type SignalsCatalog } from "@bower/api";
 
 import { ReconnectDialog, SignalBanner } from "../../_components/signals";
-import { CUSTOM_NOTE, DELETE_ACTION, noSetupNote } from "./copy";
+import { CUSTOM_NOTE, DELETE_ACTION, UNKNOWN_FEED_NOTE, noSetupNote } from "./copy";
 import { DeleteSignalDialog } from "./delete-signal-dialog";
 import { SignalHeader } from "./signal-header";
 import { SignalForm } from "./signal-form";
 
 /** A signal's settings: what stops it (its banner, with Reconnect), then
- * the form editing its saved setup. A signal whose listener is gone, or one
- * this bundle has no form for, offers only its delete. */
-export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: SignalsCatalog }) {
+ * the form editing a hosted signal's saved setup. A custom signal, one fed
+ * by a kind this bundle cannot name, one whose listener is gone, and one
+ * this bundle has no form for offer only their delete. The catalog is read
+ * for a hosted signal alone (null otherwise), so a custom signal's page
+ * never waits on the signals service. */
+export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: SignalsCatalog | null }) {
   const router = useRouter();
   const [askingReconnect, setAskingReconnect] = useState(false);
   const [askingDelete, setAskingDelete] = useState(false);
@@ -40,15 +43,18 @@ export function SignalSettings({ log, catalog }: { log: SignalDetail; catalog: S
 
   // The catalog offers only the signals this bundle knows, so an offered
   // kind is the one test the form needs; the note says which part failed.
-  // The form edits a hosted signal's listener; a custom signal has none.
+  const feed = signalFeed(log);
   const hosted = hostedSource(log);
-  const offered = hosted && catalog.signals.find((each) => each.signal === hosted.signal);
+  if (hosted !== undefined && catalog === null) throw new Error("A hosted signal's settings need the catalog.");
+  const offered = hosted && catalog?.signals.find((each) => each.signal === hosted.signal);
   const listener = log.listener;
-  if (hosted === undefined || offered === undefined || listener === null) {
+  if (hosted === undefined || catalog === null || offered === undefined || listener === null) {
     const note =
-      hosted === undefined
+      feed === SIGNAL_FEED.CUSTOM
         ? CUSTOM_NOTE
-        : noSetupNote({ listenerGone: listener === null, signal: hosted.signal, known: isKnownSignal(hosted.signal) });
+        : hosted === undefined
+          ? UNKNOWN_FEED_NOTE
+          : noSetupNote({ listenerGone: listener === null, signal: hosted.signal, known: isKnownSignal(hosted.signal) });
     return (
       <>
         <SignalHeader title={log.sheet.label} sheetId={log.sheet.id} />

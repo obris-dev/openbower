@@ -59,7 +59,8 @@ class StatusContext(Protocol):
 
     @property
     def has_rows(self) -> bool:
-        """Whether anything has arrived in the source's log yet."""
+        """Whether the source's log holds any row now (rows a person
+        deleted count as never held)."""
         ...
 
 

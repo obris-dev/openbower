@@ -2141,7 +2141,7 @@
       "type": "object"
     },
     "SignalDetail": {
-      "description": "One log with its listener as the signals service has it now.",
+      "description": "One signal, with a hosted source's listener as the signals service\nhas it now.",
       "properties": {
         "last_polled_at": {
           "anyOf": [
@@ -2155,18 +2155,6 @@
           "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
         },
-        "last_received_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its newest row arrived (ISO), whichever source brought it; null before the first.",
-          "title": "Last Received At"
-        },
         "listener": {
           "anyOf": [
             {
@@ -2176,7 +2164,7 @@
               "type": "null"
             }
           ],
-          "description": "Its hosted source's listener, read live from the signals service; null once the listener is gone (status listener_gone)."
+          "description": "Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."
         },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
@@ -2221,8 +2209,7 @@
         "sources",
         "listener",
         "status",
-        "last_polled_at",
-        "last_received_at"
+        "last_polled_at"
       ],
       "title": "SignalDetail",
       "type": "object"
@@ -2335,18 +2322,6 @@
           "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
           "title": "Last Polled At"
         },
-        "last_received_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its newest row arrived (ISO), whichever source brought it; null before the first.",
-          "title": "Last Received At"
-        },
         "sheet": {
           "$ref": "#/$defs/SheetSummary"
         },
@@ -2389,8 +2364,7 @@
         "sheet",
         "sources",
         "status",
-        "last_polled_at",
-        "last_received_at"
+        "last_polled_at"
       ],
       "title": "SignalSummary",
       "type": "object"

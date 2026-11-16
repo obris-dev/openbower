@@ -47,6 +47,8 @@ export function deleteConsequence(rows: number): string {
 // A custom signal follows no hosted type: its rows are pushed to it.
 export const CUSTOM_TYPE = "Custom";
 export const CUSTOM_NOTE = "This signal fills from rows pushed to it, so it has no setup to edit.";
+// A signal fed by nothing this bundle can name.
+export const UNKNOWN_FEED_NOTE = "This version of the app can't edit this signal. You can still delete it.";
 
 /** A signal type as a person reads it: the catalog's key, title-cased
  * (funding reads Funding). */

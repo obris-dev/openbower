@@ -19,7 +19,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, SheetOrigin
+from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, MAX_SHEET_ROWS, IngestErrorCode, SheetOrigin
 from sheets.models import Sheet
 from sheets.serializers import ingest_schema_wire
 from sheets.services.sheets import SheetService
@@ -249,6 +249,18 @@ class IngestValidationTests(TestCase):
                 {"rows": rows},
                 content_type="application/json",
             )
+
+    def test_a_push_past_the_row_cap_is_refused_before_publish(self):
+        # FAILS if a push that cannot fit is accepted: the append refuses the
+        # whole batch off the bus, after a 202, and no one hears it.
+        Sheet.objects.filter(id=self.sheet_id).update(row_count=MAX_SHEET_ROWS - 1)
+        captured: list = []
+        refused = self._push([{"score": 1}, {"score": 2}], captured)
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, IngestErrorCode.SHEET_FULL))
+        self.assertIn("room for 1 more", refused.json()["detail"])
+        self.assertEqual(captured, [])
+        fits = self._push([{"score": 1}], captured)
+        self.assertEqual((fits.status_code, len(captured)), (202, 1))
 
     def test_a_bad_number_is_refused_before_publish(self):
         captured: list = []

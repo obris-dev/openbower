@@ -13,10 +13,11 @@ from functools import cached_property
 from typing import TypeVar
 
 from django.db import models, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from openbower_schema.sheets import PlainColumn
-from sheets.constants import MAX_SHEET_ROWS, SheetKind, SheetOrigin
+from sheets.constants import MAX_SHEET_ROWS, ColumnType, SheetKind, SheetOrigin
 from sheets.models import Sheet
 from sheets.services.columns import new_column_key
 from sheets.services.sheets import SheetNotFound, SheetService
@@ -26,6 +27,7 @@ from ..log_columns import LOG_SHAPES
 from ..models import SignalSource, SignalsSyncKey
 from ..sources.base import SourceConfig
 from ..sources.hosted import HostedSource
+from ..sources.registry import WEBHOOK
 from ..sources.webhook import WebhookSource
 from .sync_key import SyncKeyService
 
@@ -57,13 +59,13 @@ class SourceOrphaned(Exception):
         self.sheet_id = sheet_id
 
 
-class SourceMissing(Exception):
-    """The log has no source of the kind a caller needs."""
+class SignalTakesNoPush(Exception):
+    """A push to a signal no webhook source feeds (a hosted one): its rows
+    are its listener's."""
 
-    def __init__(self, sheet_id: str, kind: str) -> None:
-        super().__init__(f"log {sheet_id} has no {kind} source")
+    def __init__(self, sheet_id: str) -> None:
+        super().__init__("this signal takes no pushes; only a custom signal does")
         self.sheet_id = sheet_id
-        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,6 @@ class LocalLog:
     sheet: Sheet
     sources: tuple[SignalSource, ...]
     status: LogStatus
-    # When its newest row arrived, whichever source brought it; None before
-    # the first, or where the caller had no need to read it.
-    last_received_at: datetime.datetime | None = None
 
     @property
     def sheet_id(self) -> str:
@@ -92,14 +91,6 @@ class LocalLog:
             if isinstance(config, kind):
                 return source, config
         return None
-
-    def require(self, kind: type[C]) -> tuple[SignalSource, C]:
-        """As find, for a caller that cannot act without it: raises
-        SourceMissing."""
-        found = self.find(kind)
-        if found is None:
-            raise SourceMissing(self.sheet_id, kind.KIND)
-        return found
 
 
 def _free(now: datetime.datetime) -> models.Q:
@@ -160,7 +151,7 @@ class DeclaredColumn:
     its label, as every column's does."""
 
     label: str
-    type: str
+    type: ColumnType
 
 
 @dataclass(frozen=True)
@@ -211,11 +202,9 @@ class LogService:
             sheet_sources.append(source)
         return {sheet_id: tuple(sources) for sheet_id, sources in grouped.items()}
 
-    def _local(
-        self, sheet: Sheet, sources: tuple[SignalSource, ...], *, last_received_at: datetime.datetime | None = None
-    ) -> LocalLog:
+    def _local(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LocalLog:
         status = self.status_of(sheet, sources)
-        return LocalLog(sheet=sheet, sources=sources, status=status, last_received_at=last_received_at)
+        return LocalLog(sheet=sheet, sources=sources, status=status)
 
     def status_of(self, sheet: Sheet, sources: tuple[SignalSource, ...]) -> LogStatus:
         """What the sources say and what the sheet says, ranked by
@@ -239,8 +228,23 @@ class LogService:
         sources = found.get(sheet_id)
         if sheet.kind != SheetKind.LOG or sources is None:
             raise LogNotFound(sheet_id)
-        arrivals = self.sheets.last_arrivals([sheet])
-        return self._local(sheet, sources, last_received_at=arrivals.get(sheet_id))
+        return self._local(sheet, sources)
+
+    def push_target(self, sheet_id: str) -> Sheet:
+        """The sheet a push to a signal lands in, in one read: the signal's
+        sheet, with whether a webhook source feeds it (answered from the
+        unique (sheet_id, kind) index). Raises LogNotFound for no signal in
+        the account and SignalTakesNoPush for one no push may reach. Reads
+        no status, sync key or listener: a push needs none of them."""
+        webhook = SignalSource.objects.filter(sheet_id=OuterRef("id"), kind=WEBHOOK)
+        signals = Sheet.objects.filter(id=sheet_id, account_id=self.account_id, kind=SheetKind.LOG)
+        annotated = signals.annotate(pushable=Exists(webhook))
+        found = annotated.first()
+        if found is None:
+            raise LogNotFound(sheet_id)
+        if not found.pushable:
+            raise SignalTakesNoPush(sheet_id)
+        return found
 
     def sheet_for(self, source: SignalSource) -> Sheet:
         """The sheet a source the poller just claimed fills: the claim hands
@@ -259,16 +263,13 @@ class LogService:
         raise SourceOrphaned(str(source.id), source.sheet_id)
 
     def page(self, *, after_id: str, limit: int) -> list[LocalLog]:
-        """Newest first, keyset paged: the logs index. One sources read and
-        one arrivals read for the page, never one per log; a log without a
-        source is a broken invariant and raises."""
+        """Newest first, keyset paged: the logs index. One sources read for
+        the page, never one per log; a log without a source is a broken
+        invariant and raises."""
         sheets = self.sheets.page(kind=SheetKind.LOG, after_id=after_id, limit=limit)
         sheet_ids = [str(sheet.id) for sheet in sheets]
         sources = self._sources(sheet_ids)
-        arrivals = self.sheets.last_arrivals(sheets)
-        return [
-            self._local(sheet, sources[str(sheet.id)], last_received_at=arrivals.get(str(sheet.id))) for sheet in sheets
-        ]
+        return [self._local(sheet, sources[str(sheet.id)]) for sheet in sheets]
 
     def create(self, *, owner_id: str, label: str, signal: str, listener_id: str, autofill: bool) -> LocalLog:
         """A hosted signal's log: its sheet, with the signal's base columns,
@@ -319,7 +320,7 @@ class LogService:
         sheet = local_log.sheet
         if label is not None:
             sheet = self.sheets.rename_log(sheet, label=label)
-        return self._local(sheet, local_log.sources, last_received_at=local_log.last_received_at)
+        return self._local(sheet, local_log.sources)
 
     def advance(self, source: SignalSource, *, to_cursor: str) -> bool:
         """Move the source's cursor past the items just appended, from where

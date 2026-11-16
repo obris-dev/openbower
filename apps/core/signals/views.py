@@ -1,9 +1,10 @@
 """`/v1/signals` (an account's signals: a sheet of kind log fed by its
-sources), and what the Create-signal screen reads: `/v1/signal-types`
-(the catalog and a type's recent events) and `/v1/signal-previews` (a
-setup tried before it is saved). Session-authed; every signals call acts
-as the person, and every failure answers through one mapping so a
-refusal reads the same everywhere."""
+sources, and a custom signal's push at `/v1/signals/{id}/ingest`), and
+what the Create-signal screen reads: `/v1/signal-types` (the catalog and
+a type's recent events) and `/v1/signal-previews` (a setup tried before
+it is saved). Session-authed, but for the push, which an account API key
+may also make; every signals call acts as the person, and every failure
+answers through one mapping so a refusal reads the same everywhere."""
 
 from __future__ import annotations
 
@@ -24,9 +25,11 @@ from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema import SignalDetail, SignalsPage, SignalSummary, SourceSummary, SyncKeyReconnected
 from resource_server import MachineTokenAuthentication
+from sheets.column_refusals import column_refusal_status
 from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE, IngestErrorCode, RowSource
-from sheets.ingest.accept import PushRefused, accept_push
-from sheets.serializers import sheet_summary
+from sheets.ingest.accept import accept_push
+from sheets.ingest.refusals import PUSH_REFUSALS, push_refusal
+from sheets.serializers import IngestRequest, ingest_schema_wire, sheet_summary
 from sheets.services.columns import ColumnRefused
 
 from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
@@ -43,7 +46,7 @@ from .operations.logs import (
     UnknownSignal,
 )
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
-from .services.logs import LocalLog, LogNotFound, LogService
+from .services.logs import LocalLog, LogNotFound, LogService, SignalTakesNoPush
 from .services.signals_client import (
     SignalsAccessDenied,
     SignalsClientRequestError,
@@ -54,7 +57,6 @@ from .services.signals_client import (
     setup_payload,
 )
 from .sources.registry import WEBHOOK
-from .sources.webhook import WebhookSource
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +85,14 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, SignalTakesNoPush):
+        return _Relayed({"error": IngestErrorCode.NOT_APPENDABLE, "detail": str(exc)}, status=409)
     if isinstance(exc, SetupOnCustomSignal):
-        return _Relayed({"error": SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL, "detail": str(exc)}, status=400)
+        return _Relayed({"error": SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL, "detail": str(exc)}, status=409)
     if isinstance(exc, ColumnRefused):
-        # A custom signal's declared columns: the request's own labels
-        # collide or reserve a key, so it is the request to fix.
-        return _Relayed({"error": exc.code, "detail": str(exc)}, status=400)
+        # A custom signal's declared columns, classified as every column
+        # write is.
+        return _Relayed({"error": exc.code, "detail": str(exc)}, status=column_refusal_status(exc))
     if isinstance(exc, SignalsPreviewRunning):
         return _Relayed({**exc.body, "detail": PREVIEW_RUNNING_DETAIL}, status=exc.status)
     if isinstance(exc, SignalsClientRequestError):
@@ -120,7 +124,8 @@ def _sources(local_log: LocalLog) -> list[SourceSummary]:
 def _last_polled(local_log: LocalLog) -> str | None:
     """The latest read through by any of the log's polled sources."""
     reads = [source.last_polled_at for source in local_log.sources if source.last_polled_at is not None]
-    return _iso(max(reads, default=None))
+    latest = max(reads, default=None)
+    return _iso(latest)
 
 
 def _summary(local_log: LocalLog) -> SignalSummary:
@@ -130,7 +135,6 @@ def _summary(local_log: LocalLog) -> SignalSummary:
         sources=_sources(local_log),
         status=local_log.status,
         last_polled_at=_last_polled(local_log),
-        last_received_at=_iso(local_log.last_received_at),
     )
 
 
@@ -142,7 +146,6 @@ def _detail(log: Log) -> SignalDetail:
         listener=log.listener,
         status=log.local_log.status,
         last_polled_at=_last_polled(log.local_log),
-        last_received_at=_iso(log.local_log.last_received_at),
     )
 
 
@@ -196,18 +199,29 @@ class SignalIngestView(_SignalsScopedView):
 
     authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
 
+    def get(self, request: Request, id: str) -> Response:
+        """GET /v1/signals/{id}/ingest: the pushable row schema, the
+        columns a sender owns with their keys and types (the sheets push
+        endpoint's own), so a push can be built without guessing."""
+        sheet = self.logs.push_target(id)
+        return Response(ingest_schema_wire(sheet))
+
     def post(self, request: Request, id: str) -> Response:
-        local_log = self.logs.get(id)
-        if local_log.find(WebhookSource) is None:
-            detail = "this signal takes no pushes; only a custom signal does"
-            return Response({"error": IngestErrorCode.NOT_APPENDABLE, "detail": detail}, status=409)
+        sheet = self.logs.push_target(id)
+        body = IngestRequest(data=request.data)
+        body.is_valid(raise_exception=True)
         user = request.user
         try:
             accepted = accept_push(
-                local_log.sheet, request.data, account_id=user.account_id, user_id=user.id, source=RowSource.SIGNAL
+                sheet,
+                body.validated_data["rows"],
+                event_id=body.validated_data.get("event_id"),
+                account_id=user.account_id,
+                user_id=user.id,
+                source=RowSource.SIGNAL,
             )
-        except PushRefused as e:
-            return Response(e.body, status=e.status)
+        except PUSH_REFUSALS as e:
+            return push_refusal(e)
         return Response(accepted.model_dump(), status=202)
 
 

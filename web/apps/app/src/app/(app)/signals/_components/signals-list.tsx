@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, ConfirmDialog, EmptyState, LocalTime, TIME_FORMAT, useToast } from "@bower/ui";
-import { SOURCE_KIND, deleteSignal, fetchSignalsPage, hostedSource, webRoutes, type SignalSummary } from "@bower/api";
+import {
+  SIGNAL_FEED,
+  deleteSignal,
+  fetchSignalsPage,
+  hostedSource,
+  signalFeed,
+  webRoutes,
+  type SignalSummary,
+} from "@bower/api";
 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
@@ -164,7 +172,8 @@ export function SignalsList({
                     {signal.sheet.row_count.toLocaleString("en-US")}
                   </td>
                   <td className="hidden whitespace-nowrap px-4 py-2.5 text-muted md:table-cell">
-                    {signal.last_polled_at ? (
+                    {/* Only a hosted signal is read; a custom one is pushed to. */}
+                    {signalFeed(signal) !== SIGNAL_FEED.HOSTED ? null : signal.last_polled_at ? (
                       <LocalTime iso={signal.last_polled_at} format={TIME_FORMAT.MINUTE} />
                     ) : (
                       NOT_YET_READ
@@ -213,5 +222,5 @@ export function SignalsList({
 function signalTypeOf(signal: SignalSummary): string | null {
   const hosted = hostedSource(signal);
   if (hosted !== undefined) return signalType(hosted.signal);
-  return signal.sources.some((source) => source.kind === SOURCE_KIND.WEBHOOK) ? CUSTOM_TYPE : null;
+  return signalFeed(signal) === SIGNAL_FEED.CUSTOM ? CUSTOM_TYPE : null;
 }

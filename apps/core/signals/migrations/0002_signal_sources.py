@@ -68,7 +68,7 @@ class Migration(migrations.Migration):
             options={
                 'verbose_name': 'signal source',
                 'verbose_name_plural': 'signal sources',
-                'indexes': [models.Index(fields=['account_id', 'id'], name='signals_source_account_idx'), models.Index(fields=['sheet_id'], name='signals_source_sheet_idx'), models.Index(condition=models.Q(('gone_at__isnull', True), ('next_poll_at__isnull', False)), fields=['next_poll_at', 'id'], name='signals_source_due_idx')],
+                'indexes': [models.Index(fields=['account_id', 'id'], name='signals_source_account_idx'), models.Index(condition=models.Q(('gone_at__isnull', True), ('next_poll_at__isnull', False)), fields=['next_poll_at', 'id'], name='signals_source_due_idx')],
                 'constraints': [models.UniqueConstraint(fields=('sheet_id', 'kind'), name='signals_source_sheet_kind_uniq')],
             },
         ),

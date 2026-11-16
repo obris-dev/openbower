@@ -89,7 +89,7 @@ class PollPageTests(_PollTests):
         self.assertEqual(later.rows, 1)
         self.assertEqual(self._companies(source), ["Globex", "Acme"])
 
-    def test_a_poll_reads_the_claimed_feed_once(self):
+    def test_a_poll_reads_the_claimed_source_once(self):
         # FAILS if the poll reads its source again: the claim hands it back
         # fresh, so only the sheet and the account's key are read before the
         # signals call, and nothing is written when nothing is new.
@@ -231,7 +231,7 @@ class PollFailureTests(_PollTests):
         self.assertEqual(outcome.result, PollResult.BACKOFF)
         self.assertEqual(SignalSource.objects.get(id=source.id).cursor, "01MAT" + "9" * 21)
 
-    def test_a_feed_whose_sheet_is_gone_is_said_loudly(self):
+    def test_a_source_whose_sheet_is_gone_is_said_loudly(self):
         # FAILS if an orphan source reads as a deleted log: it would be claimed
         # again every lease, silently, forever.
         source = self._log()

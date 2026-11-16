@@ -1,6 +1,6 @@
 """The webhook kind: a custom signal's own endpoint, which a sender pushes
-rows to. Nothing polls it and nothing lives elsewhere for it; the token a
-push carries (step 3) is a child row of the source, never its config."""
+rows to. Nothing polls it and nothing lives elsewhere for it; a token a
+push carries is a child row of the source, never its config."""
 
 from __future__ import annotations
 

@@ -29,8 +29,8 @@ import { TolerantSheetSummarySchema, type SheetSummary } from "./sheets.ts";
 /** Where a signal stands, as the server names it: active (it fills),
  * reconnect (the account's sync key was refused; a person reconnects),
  * listener_gone (the signals service no longer has it: final), full (its
- * sheet holds as many rows as it may), waiting (a custom signal nothing
- * has been pushed to yet). */
+ * sheet holds as many rows as it may), waiting (a custom signal whose
+ * sheet holds no row). */
 export const SIGNAL_STATUS = {
   ACTIVE: "active",
   RECONNECT: "reconnect",
@@ -77,14 +77,17 @@ export function hostedSource(log: { sources: SourceSummary[] }): HostedSource | 
   return log.sources.find((source): source is HostedSource => source.kind === SOURCE_KIND.HOSTED);
 }
 
-// A server from before sources sends no sources and its hosted signal at
-// the top level (the hosted web ships before the API it reads): read as
-// that one hosted source, with nothing received. Drop once the pinned API
-// release sends sources.
-function withSources(raw: unknown): unknown {
-  if (typeof raw !== "object" || raw === null || "sources" in raw) return raw;
-  const { signal } = raw as { signal?: unknown };
-  return { ...raw, sources: [{ kind: SOURCE_KIND.HOSTED, signal }], last_received_at: null };
+/** What feeds a signal, as a page tells them apart: a hosted signal (its
+ * listener, which the app reads and edits), a custom one (rows pushed to
+ * its webhook), or neither, which this bundle cannot name and so claims
+ * nothing about. */
+export const SIGNAL_FEED = { HOSTED: "hosted", CUSTOM: "custom", UNKNOWN: "unknown" } as const;
+export type SignalFeed = (typeof SIGNAL_FEED)[keyof typeof SIGNAL_FEED];
+
+export function signalFeed(signal: { sources: SourceSummary[] }): SignalFeed {
+  if (hostedSource(signal) !== undefined) return SIGNAL_FEED.HOSTED;
+  const pushed = signal.sources.some((source) => source.kind === SOURCE_KIND.WEBHOOK);
+  return pushed ? SIGNAL_FEED.CUSTOM : SIGNAL_FEED.UNKNOWN;
 }
 
 export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status" | "sources"> & {
@@ -94,14 +97,11 @@ export type SignalSummary = Omit<WireSignalSummary, "sheet" | "status" | "source
 };
 export type SignalsPage = { items: SignalSummary[]; next_cursor: string | null };
 
-export const TolerantSignalSummarySchema = z.preprocess(
-  withSources,
-  SignalSummarySchema.extend({
-    sheet: TolerantSheetSummarySchema,
-    status: TolerantSignalStatusSchema,
-    sources: z.array(TolerantSourceSchema),
-  }),
-);
+export const TolerantSignalSummarySchema = SignalSummarySchema.extend({
+  sheet: TolerantSheetSummarySchema,
+  status: TolerantSignalStatusSchema,
+  sources: z.array(TolerantSourceSchema),
+});
 export const TolerantSignalsPageSchema = SignalsPageSchema.extend({ items: z.array(TolerantSignalSummarySchema) });
 
 /** Where the listener stands on the signals service: active, retrying (an
@@ -124,15 +124,12 @@ const TolerantListenerSchema = ListenerWireSchema.extend({
   error: TolerantMatchErrorSchema.nullable(),
   version: ListenerVersionWireSchema.extend({ filter: TolerantFundingFilterSchema }),
 });
-export const TolerantSignalDetailSchema = z.preprocess(
-  withSources,
-  SignalDetailSchema.extend({
-    sheet: TolerantSheetSummarySchema,
-    status: TolerantSignalStatusSchema,
-    sources: z.array(TolerantSourceSchema),
-    listener: TolerantListenerSchema.nullable(),
-  }),
-);
+export const TolerantSignalDetailSchema = SignalDetailSchema.extend({
+  sheet: TolerantSheetSummarySchema,
+  status: TolerantSignalStatusSchema,
+  sources: z.array(TolerantSourceSchema),
+  listener: TolerantListenerSchema.nullable(),
+});
 /** One signal with its listener as the signals service has it now (null
  * once the listener is gone). */
 export type SignalDetail = z.output<typeof TolerantSignalDetailSchema>;
@@ -188,8 +185,9 @@ export async function editSignal(id: string, body: SignalEdit): Promise<ApiResul
   return http.patch(apiRoutes.signals.detail(id), TolerantSignalDetailSchema, body);
 }
 
-/** Delete a signal: its listener stops, then its sheet and rows go (204).
- * The signals service unreachable deletes nothing, so it can be retried. */
+/** Delete a signal: a hosted signal's listener stops first, then its sheet
+ * and rows go (204). The signals service unreachable deletes nothing, so
+ * it can be retried. */
 export async function deleteSignal(id: string): Promise<ApiResult<null>> {
   return http.delete(apiRoutes.signals.detail(id));
 }

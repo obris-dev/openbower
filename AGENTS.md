@@ -97,13 +97,13 @@ live in a separate private repo.
   A CUSTOM signal is a log whose one source is a WEBHOOK: created with
   the columns a person declares (each immutable, its values arriving with
   its rows), touching the signals service at no step, never polled, and
-  filled by pushes to `POST /v1/signals/{id}/ingest` (the sheets push
-  endpoint's envelope and answers, through the same
-  `sheets.ingest.accept.accept_push`, the rows marked as a signal's).
+  filled by pushes to `POST /v1/signals/{id}/ingest` (its `GET` the
+  pushable row schema): the sheets push endpoint's envelope and answers,
+  through the same `sheets.ingest.accept.accept_push` and its refusal map
+  (`sheets.ingest.refusals`), the rows marked as a signal's.
   A log's STATUS (active, reconnect, listener_gone, full, waiting) is
   derived on every read from what each source says and its row count,
-  ranked in one declared order, never stored; its `last_received_at` is
-  its newest row's arrival, whichever source brought it.
+  ranked in one declared order, never stored.
 - No streaming or server-built file responses. Exports are built
   CLIENT-SIDE from the same paged JSON the views already serve (see the
   sheet CSV export), so the request path stays small, fast,

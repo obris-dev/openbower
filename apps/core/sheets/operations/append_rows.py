@@ -58,7 +58,9 @@ class SheetNotAppendable(Exception):
     code = IngestErrorCode.NOT_APPENDABLE
 
     def __init__(self, sheet_id: str, *, kind: SheetKind, source: RowSource) -> None:
-        if kind == SheetKind.LOG:
+        if kind == SheetKind.LOG and source == RowSource.PUSH:
+            detail = f"a signal's rows arrive from its sources; a custom signal takes pushes at /v1/signals/{sheet_id}/ingest"
+        elif kind == SheetKind.LOG:
             detail = "a signal's rows arrive from its sources; add rows to a sheet instead"
         else:
             detail = f"this sheet does not take rows from {source}"
@@ -70,7 +72,7 @@ class SheetNotAppendable(Exception):
 
 def require_appendable(target_sheet: Sheet, *, source: RowSource) -> None:
     """The one rule for who may append (APPENDS_FROM). The operation checks
-    it, and a door whose append happens later (the ingest push) checks it
+    it, and an endpoint whose append happens later (a push) checks it
     first too."""
     kind = SheetKind(target_sheet.kind)
     if source not in APPENDS_FROM[kind]:

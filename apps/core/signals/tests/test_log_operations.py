@@ -150,7 +150,7 @@ class LogOperationTests(TestCase):
         self.assertFalse(Sheet.objects.filter(id=log.local_log.sheet.id).exists())
 
     def test_a_log_without_its_feed_is_a_broken_invariant(self):
-        # FAILS if the index drops a feedless log: the page comes back short
+        # FAILS if the index drops a sourceless log: the page comes back short
         # and paging stops before the older logs.
         log = self._create()
         SignalSource.objects.filter(sheet_id=str(log.local_log.sheet.id)).delete()

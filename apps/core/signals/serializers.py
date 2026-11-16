@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from openbower_schema.sheets import COLUMN_LABEL_MAX_LENGTH
-from sheets.constants import LABEL_MAX_LENGTH, MAX_SHEET_COLUMNS, ColumnType
+from sheets.constants import COLUMN_LABEL_MAX_LENGTH, LABEL_MAX_LENGTH, MAX_SHEET_COLUMNS, ColumnType
 
+from .services.logs import DeclaredColumn
 from .sources.registry import HOSTED, WEBHOOK
 
 # What each kind's create takes beyond the label and autofill: a hosted
@@ -37,13 +37,18 @@ class LogCreateRequest(serializers.Serializer):
 
     def validate(self, attrs: dict) -> dict:
         custom = attrs["source"] == WEBHOOK
-        foreign = sorted((_HOSTED_FIELDS if custom else _WEBHOOK_FIELDS) & set(self.initial_data))
+        others = _HOSTED_FIELDS if custom else _WEBHOOK_FIELDS
+        sent = set(self.initial_data)
+        foreign = sorted(others & sent)
         if foreign:
             raise serializers.ValidationError(f"a {attrs['source']} signal takes no {', '.join(foreign)}")
         if custom and not attrs.get("columns"):
             raise serializers.ValidationError("a custom signal declares at least one column")
         if not custom and ("signal" not in attrs or "filter" not in attrs):
             raise serializers.ValidationError("a hosted signal names its signal and filter")
+        if custom:
+            declared = attrs["columns"]
+            attrs["columns"] = [DeclaredColumn(label=each["label"], type=ColumnType(each["type"])) for each in declared]
         return attrs
 
 

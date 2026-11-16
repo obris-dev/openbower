@@ -49,6 +49,8 @@ test("a signal that fills, retries on its own, or reads unknown shows none", () 
   assert.equal(signalBanner(null), null);
   assert.equal(signalBanner(log(SIGNAL_STATUS.ACTIVE, LISTENER_STATUS.ACTIVE)), null);
   assert.equal(signalBanner(log(SIGNAL_STATUS.ACTIVE, LISTENER_STATUS.RETRYING)), null);
+  // A custom signal waiting for its first row has nothing for a person to do.
+  assert.equal(signalBanner(log(SIGNAL_STATUS.WAITING, null)), null);
   assert.equal(signalBanner(log(UNKNOWN_SIGNAL_STATUS, UNKNOWN_LISTENER_STATUS)), null);
 });
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -276,3 +276,20 @@ class ExternalIdAppendTests(TestCase):
             source=RowSource.PUSH,
         )
         self.assertEqual(from_wire(to_wire(event)).rows, event.rows)
+
+
+class PushSourceOnTheBusTests(SimpleTestCase):
+    def test_an_event_names_its_source_and_an_old_one_reads_as_a_sheet_push(self):
+        # FAILS if the bus drops the source: a signal's rows would land as a
+        # sheet push, which a log refuses, and be dropped.
+        wire = {
+            "event_id": "e1",
+            "sheet_id": "s1",
+            "account_id": "01JQ" + "B" * 22,
+            "user_id": "u1",
+            "rows": [{"title": "x"}],
+            "received_at": timezone.now().isoformat(),
+        }
+        self.assertEqual(from_wire(wire).source, RowSource.PUSH)
+        signal_event = from_wire(wire | {"source": RowSource.SIGNAL})
+        self.assertEqual(from_wire(to_wire(signal_event)).source, RowSource.SIGNAL)

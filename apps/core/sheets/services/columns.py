@@ -142,8 +142,9 @@ def locked_sheet(account_id: str, sheet_id: str) -> Sheet:
 def new_column_key(label: str, *, taken: Collection[str], count: int) -> str:
     """The key a column labelled `label` takes beside `count` columns whose
     keys (and any held) are `taken`: through the ONE derivation rule,
-    refused when reserved, taken, or over the cap. What every column a
-    sheet gains goes through, added to a sheet or declared with a new one."""
+    refused when reserved, taken, or over the cap. What every column
+    keyed from its label goes through: a column added to a sheet, and one
+    declared on a custom signal."""
     key = derive_column_key(label)
     if not key or reserved_output_key(key) or key in RESERVED_COLUMN_KEYS:
         raise ReservedColumnKey(label=label)
