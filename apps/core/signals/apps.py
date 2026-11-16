@@ -15,3 +15,7 @@ class SignalsConfig(AppConfig):
         from .sources.registry import validate_source_kinds
 
         validate_source_kinds()
+        # A webhook URL's token is in its path: Django's request logs mask it.
+        from .log_masking import install
+
+        install()
