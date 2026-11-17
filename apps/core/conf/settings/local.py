@@ -35,7 +35,10 @@ DEBUG = env_bool("DEBUG", "true")
 # "core" is this service's docker-compose name: in the containerized local
 # stack, sibling containers (the web dev server's SSR fetches) reach it by
 # that name, and Django rejects any Host it isn't told about.
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "core"]
+# "host.docker.internal" is how a container from ANOTHER compose project
+# reaches this machine (a sender running in its own stack, creating a
+# signal or pushing rows), since localhost inside it is itself.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "core", "host.docker.internal"]
 
 # No inference seeding here: config/providers.toml is the ONE custody
 # for sources (bower-admin setup seeds it from the template when absent),
