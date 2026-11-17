@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.12](https://github.com/obris-dev/openbower/compare/v0.0.11...v0.0.12) (2026-11-17)
+
+
+### Features
+
+* **signals:** custom signals, fed by your own sender ([#168](https://github.com/obris-dev/openbower/issues/168)) ([840fe7e](https://github.com/obris-dev/openbower/commit/840fe7e18ceceb10497f3557c35de209106f8cdc))
+
+
+### Bug fixes
+
+* **sheets:** a push rides the bus as sent, and one too big is a 413 ([#160](https://github.com/obris-dev/openbower/issues/160)) ([c5ba782](https://github.com/obris-dev/openbower/commit/c5ba782215adc46e53be3f7178d178dcb94a9136))
+* **sheets:** prune the ingest inbox by age, as its model promised ([#155](https://github.com/obris-dev/openbower/issues/155)) ([d13ac18](https://github.com/obris-dev/openbower/commit/d13ac1805cef42c8b70a771a21fe9af7b4a329e8))
+
 ## [0.0.11](https://github.com/obris-dev/openbower/compare/v0.0.10...v0.0.11) (2026-11-13)
 
 
