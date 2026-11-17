@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { cellMoment } from "../../cell-moment.ts";
 import { PUSH_CREDENTIAL, curlFor, samplePush, sampleRow, sampleValue, type Pick } from "./push-command.ts";
 
 const url = "https://api.example.io/v1/sheets/01ABC/ingest";
@@ -38,6 +39,9 @@ test("the typed samples are the ones the server's shape rules accept", () => {
     const pick: Pick = () => at;
     assert.match(sampleValue({ key: "d", label: "D", type: "date" }, pick), /^\d{4}-\d{2}-\d{2}$/);
     assert.match(sampleValue({ key: "n", label: "N", type: "number" }, pick), /^\d+$/);
+    // FAILS if a datetime sample leaves the stored form the server's rule
+    // writes: a pasted command would land a different value than it shows.
+    assert.notEqual(cellMoment("datetime", sampleValue({ key: "t", label: "T", type: "datetime" }, pick)), null);
   }
 });
 

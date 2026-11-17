@@ -12,10 +12,12 @@ from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# A CLOSED union on purpose: codegen emits a zod enum, so an unknown
-# type is a parse error, never a silently unstyled column. Types drive
-# RENDERING only.
-ColumnType = Literal["text", "number", "currency", "date", "url", "email"]
+# A CLOSED union on purpose: codegen emits a zod enum, so the contract
+# names every type (a client reading a newer server's columns maps a type
+# it has not heard of to text). Types drive rendering and gate landing:
+# the shape-ruled ones (cell_types) refuse a value that does not fit and
+# store the one that does in its canonical form.
+ColumnType = Literal["text", "number", "currency", "date", "datetime", "url", "email"]
 # The types as DATA (the SEARCH_PROVIDER_CHOICES idiom), and the type
 # an unrecognized declaration coerces to: shared vocabulary both apps
 # read off the contract instead of a sibling app's enum.
@@ -160,7 +162,7 @@ class IngestColumn(BaseModel):
     label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
     type: ColumnType = Field(
         description="The value's type: drives rendering, and the push is refused (400) when a sent "
-        "value does not satisfy it (number, currency, and date carry shape rules), so send values "
+        "value does not satisfy it (number, currency, date, and datetime carry shape rules), so send values "
         "of this type."
     )
 

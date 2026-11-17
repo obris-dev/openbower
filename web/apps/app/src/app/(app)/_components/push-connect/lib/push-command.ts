@@ -2,8 +2,8 @@ import type { ColumnType, IngestColumn } from "@bower/api";
 
 /** Values per column type that the server's shape rule accepts, so a
  * pasted command is accepted as is. Mirrors the shape rules the
- * contract's cell_types module enforces (number, currency and date
- * carry rules; text, url and email pass through). Keyed by the
+ * contract's cell_types module enforces (number, currency, date and
+ * datetime carry rules; text, url and email pass through). Keyed by the
  * generated type, so a type added server-side is a compile error here
  * rather than a sample its rule may refuse. The first of each is the
  * one a column's example shows. */
@@ -12,6 +12,7 @@ const SAMPLE_VALUES: Record<ColumnType, readonly string[]> = {
   number: ["42", "7", "128", "3"],
   currency: ["1200", "4500", "99", "25000"],
   date: ["2026-01-15", "2026-03-02", "2025-11-20", "2026-06-30"],
+  datetime: ["2026-01-15T09:30:00Z", "2026-03-02T14:05:00Z", "2025-11-20T18:45:00Z", "2026-06-30T07:15:00Z"],
   url: ["https://acme.com", "https://globex.io", "https://initech.example", "https://hooli.example"],
   email: ["hello@acme.com", "team@globex.io", "ops@initech.example", "sales@hooli.example"],
 };

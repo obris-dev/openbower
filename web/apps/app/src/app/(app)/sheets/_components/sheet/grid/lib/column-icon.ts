@@ -25,6 +25,7 @@ export const COLUMN_ICONS: Record<ColumnIconName, LucideIcon> = {
   number: COLUMN_TYPE_META.number.icon,
   currency: COLUMN_TYPE_META.currency.icon,
   date: COLUMN_TYPE_META.date.icon,
+  datetime: COLUMN_TYPE_META.datetime.icon,
   url: COLUMN_TYPE_META.url.icon,
   email: COLUMN_TYPE_META.email.icon,
 };

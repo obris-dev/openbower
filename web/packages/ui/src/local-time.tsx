@@ -11,7 +11,18 @@ const neverChanges = () => () => {};
  * reads in UTC, named so, and the browser renders the local reading
  * straight after: a hand-written local format would disagree between
  * the two, which is a hydration error. */
-export function LocalTime({ iso, format, className }: { iso: string; format: TimeFormat; className?: string }) {
+export function LocalTime({
+  iso,
+  format,
+  className,
+  title,
+}: {
+  iso: string;
+  format: TimeFormat;
+  className?: string;
+  /** What a hover shows, such as the stored value behind the reading. */
+  title?: string;
+}) {
   const hydrated = useSyncExternalStore(
     neverChanges,
     () => true,
@@ -19,7 +30,7 @@ export function LocalTime({ iso, format, className }: { iso: string; format: Tim
   );
   const text = formatMoment(iso, format, hydrated ? undefined : "UTC");
   return (
-    <time dateTime={iso} className={className}>
+    <time dateTime={iso} className={className} title={title}>
       {text}
     </time>
   );

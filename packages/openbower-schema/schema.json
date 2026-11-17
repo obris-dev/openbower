@@ -177,6 +177,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -310,6 +311,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -1385,12 +1387,13 @@
           "type": "string"
         },
         "type": {
-          "description": "The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, and date carry shape rules), so send values of this type.",
+          "description": "The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, date, and datetime carry shape rules), so send values of this type.",
           "enum": [
             "text",
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -1641,6 +1644,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -2666,6 +2670,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
