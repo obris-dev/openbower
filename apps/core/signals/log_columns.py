@@ -27,7 +27,7 @@ FUNDING_COLUMNS: tuple[PlainColumn, ...] = (
     _column("other_investors", "Other investors", "text"),
     _column("hq", "HQ", "text"),
     _column("source", "Source", "url"),
-    _column("published", "Published", "date"),
+    _column("published", "Published", "datetime"),
     _column("confidence", "Confidence", "number"),
     _column("reason", "Reason", "text"),
 )
@@ -55,7 +55,7 @@ def funding_cells(match: MatchWire) -> dict[str, str]:
         "other_investors": ", ".join(event.other_investors),
         "hq": event.company.hq or "",
         "source": source.url,
-        "published": (source.published or "")[:10],
+        "published": source.published or "",
         "confidence": "" if match.confidence is None else str(match.confidence),
         "reason": match.reason,
     }
