@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FlaskConical, X } from "lucide-react";
-import { Button, Input, Label, Spinner, useToast } from "@bower/ui";
+import { Button, Input, Label, LocalTime, Spinner, TIME_FORMAT, useToast } from "@bower/ui";
 import {
   fetchSheetRows,
   TEST_KEY_MAX_LENGTH,
@@ -15,6 +15,7 @@ import {
 
 import { ensureOk } from "@/lib/ensure-ok";
 import { cellHref, cellLinkIsExternal } from "../../../_components/cell-link";
+import { cellMoment } from "../../../_components/cell-moment";
 import { CompactSelect } from "../../../_components/compact-select";
 import { sheetsTruncatedNote } from "../../../_components/agent-config/copy";
 import { outputKey } from "../../../_components/agent-config";
@@ -232,6 +233,7 @@ export function TestPreview({
               {Object.entries(result.cells ?? {}).map(([key, value]) => {
                 const type = typeByKey.get(key) ?? "text";
                 const href = cellHref(type, value);
+                const moment = cellMoment(type, value);
                 return (
                   <div
                     key={key}
@@ -246,6 +248,13 @@ export function TestPreview({
                       >
                         {value}
                       </a>
+                    ) : moment ? (
+                      <LocalTime
+                        iso={moment}
+                        format={TIME_FORMAT.STAMP}
+                        className="min-w-0 font-medium text-foreground"
+                        title={moment}
+                      />
                     ) : (
                       <span
                         className="line-clamp-3 min-w-0 font-medium text-foreground [overflow-wrap:anywhere]"

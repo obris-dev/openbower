@@ -19,10 +19,22 @@ test("a day reads in the zone it is shown in, which can be a different day", () 
 });
 
 test("the reader's own zone is used when none is named, and no zone is printed", () => {
-  const local = formatMoment(NOON_UTC, TIME_FORMAT.MINUTE);
-  assert.doesNotMatch(local, /UTC|PST|GMT/);
+  for (const format of [TIME_FORMAT.MINUTE, TIME_FORMAT.STAMP]) {
+    assert.doesNotMatch(formatMoment(NOON_UTC, format), /UTC|PST|GMT/);
+  }
+});
+
+test("a day names no zone even in a named one: it shows no time of day", () => {
+  // FAILS if the zone is named by format rather than by whether a time
+  // of day shows.
+  assert.doesNotMatch(formatMoment(NOON_UTC, TIME_FORMAT.DAY, "UTC"), /UTC/);
 });
 
 test("a value that is not a time reads as nothing", () => {
   assert.equal(formatMoment("not a time", TIME_FORMAT.DAY), "");
+});
+
+test("a stamp carries the year and, in a named zone, the zone", () => {
+  assert.equal(formatMoment(NOON_UTC, TIME_FORMAT.STAMP, "UTC"), "Nov 12, 2026, 12:01 PM UTC");
+  assert.equal(formatMoment(NOON_UTC, TIME_FORMAT.STAMP, "America/Los_Angeles"), "Nov 12, 2026, 4:01 AM PST");
 });

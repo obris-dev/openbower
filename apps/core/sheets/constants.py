@@ -126,6 +126,7 @@ class ColumnType(StrEnum):
     NUMBER = "number"
     CURRENCY = "currency"
     DATE = "date"
+    DATETIME = "datetime"
     URL = "url"
     EMAIL = "email"
 

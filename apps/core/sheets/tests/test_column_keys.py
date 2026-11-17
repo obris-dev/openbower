@@ -96,3 +96,14 @@ class ShapeHintTests(SimpleTestCase):
         described = answer_type.model_json_schema()["properties"]["founded"]["description"]
         self.assertIn("Year founded", described)
         self.assertIn("YYYY-MM-DD", described)
+
+    def test_a_datetime_output_tells_the_model_to_give_its_offset(self):
+        from agents.runtime.answer.schema import construct_answer_schema
+        from openbower_schema.agents import AgentOutput
+
+        answer_type = construct_answer_schema(
+            [AgentOutput(key="raised_at", label="Raised at", type="datetime", description="When it closed")]
+        )
+        described = answer_type.model_json_schema()["properties"]["raised_at"]["description"]
+        self.assertIn("When it closed", described)
+        self.assertIn("UTC offset", described)

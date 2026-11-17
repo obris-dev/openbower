@@ -549,6 +549,29 @@ test("a column kind from the future reads as the unknown member; the known kinds
   assert.deepEqual(later, { kind: UNKNOWN_COLUMN_KIND, key: "later", label: "Later", type: "text" });
 });
 
+test("a display type from the future reads as text on a column of any kind", async (t) => {
+  // FAILS if only the unknown-kind member is tolerant: a plain or AI
+  // column with a type this bundle has not heard of would fail the
+  // whole sheet's parse in a tab opened before the deploy.
+  const columns = [
+    { kind: "plain", key: "at", label: "At", type: "duration" },
+    { kind: "ai", key: "answer", label: "Answer", type: "duration", node_id: "01NODE" },
+    { kind: "formula", key: "later", label: "Later", type: "duration" },
+  ];
+  stubFetch(t, { ...SUMMARY, columns });
+  const res = await fetchSheet("01AAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.deepEqual(
+    res.data.columns.map((column) => [column.kind, column.type]),
+    [
+      ["plain", "text"],
+      ["ai", "text"],
+      [UNKNOWN_COLUMN_KIND, "text"],
+    ],
+  );
+});
+
 test("a known kind with a broken body refuses instead of reading as unknown", async (t) => {
   // The catch-all exists for a kind this bundle has not heard of. A
   // kind it HAS heard of, arriving without the fields the contract
