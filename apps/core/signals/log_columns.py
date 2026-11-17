@@ -1,6 +1,6 @@
 """A log's base columns, per signal, and the cells a match fills them
 with. The columns are immutable plain columns (a person never edits what
-the signal brought); a log gets them at create, and its feed appends the
+the signal brought); a log gets them at create, and its hosted source appends the
 row `LOG_SHAPES[signal].cells(match)` gives for every match. Keyed by signal
 kind, so a second signal adds its own entry."""
 
@@ -27,7 +27,7 @@ FUNDING_COLUMNS: tuple[PlainColumn, ...] = (
     _column("other_investors", "Other investors", "text"),
     _column("hq", "HQ", "text"),
     _column("source", "Source", "url"),
-    _column("published", "Published", "date"),
+    _column("published", "Published", "datetime"),
     _column("confidence", "Confidence", "number"),
     _column("reason", "Reason", "text"),
 )
@@ -55,7 +55,7 @@ def funding_cells(match: MatchWire) -> dict[str, str]:
         "other_investors": ", ".join(event.other_investors),
         "hq": event.company.hq or "",
         "source": source.url,
-        "published": (source.published or "")[:10],
+        "published": source.published or "",
         "confidence": "" if match.confidence is None else str(match.confidence),
         "reason": match.reason,
     }
@@ -72,3 +72,8 @@ class LogShape:
 
 # Each signal this app can log, by its catalog name.
 LOG_SHAPES: dict[str, LogShape] = {"funding": LogShape(columns=FUNDING_COLUMNS, cells=funding_cells)}
+
+
+def hosted_types() -> list[str]:
+    """Every hosted type this app can log, in a stable order."""
+    return sorted(LOG_SHAPES)

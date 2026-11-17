@@ -6,12 +6,12 @@ import { Card, CheckboxField, FieldError, Input, Label, Select, Slider, Textarea
 import {
   FUNDING_STAGES,
   LISTENER_GONE_CODE,
-  createLog,
-  editLog,
+  createSignal,
+  editSignal,
   webRoutes,
   type FundingStage,
-  type KnownSignal,
-  type LogDetail,
+  type KnownSignalType,
+  type SignalDetail,
   type SignalsCatalog,
 } from "@bower/api";
 
@@ -23,14 +23,11 @@ import {
   AMOUNT_HINT,
   AMOUNT_LABEL,
   AMOUNT_TO,
-  CREATED_TOAST,
   INTRO,
   MAX_AMOUNT_LABEL,
   MIN_AMOUNT_LABEL,
-  NAME_GAP,
   NAME_HINT,
   NAME_SAVE_GAP,
-  NAME_TITLE,
   OPTIONAL,
   PROMPT_HINT,
   PROMPT_LABEL,
@@ -41,14 +38,12 @@ import {
   STAGE_LABEL,
   THRESHOLD_HINT,
   THRESHOLD_LABEL,
-  TITLE,
   TYPE_LABEL,
   UNSAVED,
   WHAT_FITS_TITLE,
   WHICH_ROUNDS_TITLE,
   percent,
 } from "./copy";
-import { SignalFormFooter } from "./footer";
 import {
   AMOUNT_ID,
   ATTEMPT,
@@ -73,6 +68,7 @@ import {
   type SignalFormState,
 } from "./setup";
 import { TestResults } from "./test-results";
+import { CREATE_TITLE, CREATED_TOAST, NAME_GAP, NameField, Section, SignalFormFooter } from "../form-parts";
 import { useSignalTest } from "./use-signal-test";
 
 const TYPE_ID = "signal-type";
@@ -83,13 +79,11 @@ const AMOUNT_GAP_ID = "signal-amount-gap";
 const AMOUNT_HINT_ID = "signal-amount-hint";
 const STAGES_HINT_ID = "signal-stages-hint";
 const PROMPT_HINT_ID = "signal-prompt-hint";
-const NAME_HINT_ID = "signal-label-hint";
-const NAME_GAP_ID = "signal-label-gap";
 // How long a filter change settles before the preview follows it: one
 // request per pause in editing, not one per keystroke.
 const AUTO_PREVIEW_DELAY_MS = 500;
 
-type Listener = NonNullable<LogDetail["listener"]>;
+type Listener = NonNullable<SignalDetail["listener"]>;
 
 /** A signal as its settings page edits it: the sheet it fills (its id is
  * the signal's), and its listener's saved setup. */
@@ -97,7 +91,7 @@ export type SavedSignal = {
   id: string;
   label: string;
   rowCount: number;
-  signal: KnownSignal;
+  type: KnownSignalType;
   listener: Listener;
 };
 
@@ -120,9 +114,9 @@ export function SignalForm({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const { limits, signals } = catalog;
-  const [signal, setSignal] = useState<KnownSignal>(saved?.signal ?? signals[0]!.signal);
-  const kind = signals.find((each) => each.signal === signal) ?? signals[0]!;
+  const { limits, types } = catalog;
+  const [type, setType] = useState<KnownSignalType>(saved?.type ?? types[0]!.type);
+  const kind = types.find((each) => each.type === type) ?? types[0]!;
   // What Save compares against: the setup as last saved.
   const [baseline, setBaseline] = useState<SignalFormState | null>(() =>
     saved ? formFromSaved(saved.label, saved.listener) : null,
@@ -189,7 +183,7 @@ export function SignalForm({
     amountInvalid: gaps.amount !== null,
   });
   const preview = useEffectEvent(() => {
-    void test.runTest(signal, setup, limits.preview_max_events);
+    void test.runTest(type, setup, limits.preview_max_events);
   });
   useEffect(() => {
     if (autoKey === null) return;
@@ -209,7 +203,7 @@ export function SignalForm({
 
   function runTest() {
     if (blockOn(ATTEMPT.TEST)) return;
-    void test.runTest(signal, setup, limits.preview_max_events);
+    void test.runTest(type, setup, limits.preview_max_events);
   }
 
   async function create() {
@@ -217,13 +211,15 @@ export function SignalForm({
     setRefusal(null);
     setBusy(true);
     const label = nameOf(form);
-    const res = await createLog({ label, signal, ...setup });
-    setBusy(false);
+    const res = await createSignal({ label, type, ...setup });
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
+      setBusy(false);
       setRefusal(res.message);
       return;
     }
+    // Busy until the page changes: the signal exists, and a second click
+    // would create another.
     toast.success(CREATED_TOAST, label);
     router.push(webRoutes.sheet(res.data.sheet.id));
     router.refresh();
@@ -233,7 +229,7 @@ export function SignalForm({
     if (!saved || busy || blockOn(ATTEMPT.SAVE) || changes === null) return;
     setRefusal(null);
     setBusy(true);
-    const res = await editLog(saved.id, changes);
+    const res = await editSignal(saved.id, changes);
     setBusy(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {
@@ -258,7 +254,11 @@ export function SignalForm({
 
   return (
     <>
-      <SignalHeader title={saved ? (baseline?.label ?? saved.label) : TITLE} sheetId={saved?.id}>
+      <SignalHeader
+        title={saved ? (baseline?.label ?? saved.label) : CREATE_TITLE}
+        sheetId={saved?.id}
+        parents={saved ? [] : [{ label: CREATE_TITLE, href: webRoutes.signalNew }]}
+      >
         {saved ? (
           changes !== null && <p className="mt-0.5 text-xs text-warning">{UNSAVED}</p>
         ) : (
@@ -269,50 +269,34 @@ export function SignalForm({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:items-start">
         <Card className="min-w-0 divide-y divide-hairline p-0">
-          <Section title={NAME_TITLE} titleFor={NAME_ID}>
-            {!saved && (
-              <p id={NAME_HINT_ID} className="-mt-2 text-xs text-muted">
-                {NAME_HINT}
-              </p>
-            )}
-            <div>
-              <Input
-                id={NAME_ID}
-                maxLength={limits.label_max_length}
-                warned={nameGap}
-                aria-describedby={
-                  [saved ? null : NAME_HINT_ID, nameGap ? NAME_GAP_ID : null].filter(Boolean).join(" ") || undefined
-                }
-                value={form.labelEdited ? form.label : suggestedName(form)}
-                onChange={(event) => update({ label: event.target.value, labelEdited: true })}
-                placeholder={suggestedName(form)}
-              />
-              {nameGap && (
-                <FieldError id={NAME_GAP_ID} tone="warning">
-                  {saved ? NAME_SAVE_GAP : NAME_GAP}
-                </FieldError>
-              )}
-            </div>
-          </Section>
+          <NameField
+            id={NAME_ID}
+            hint={saved ? undefined : NAME_HINT}
+            gap={nameGap ? (saved ? NAME_SAVE_GAP : NAME_GAP) : null}
+            value={form.labelEdited ? form.label : suggestedName(form)}
+            placeholder={suggestedName(form)}
+            maxLength={limits.label_max_length}
+            onChange={(label) => update({ label, labelEdited: true })}
+          />
 
           <Section title={WHICH_ROUNDS_TITLE}>
             {saved ? (
               <p className="text-sm text-muted">
-                {TYPE_LABEL}: <span className="text-foreground">{signalType(saved.signal)}</span>
+                {TYPE_LABEL}: <span className="text-foreground">{signalType(saved.type)}</span>
               </p>
             ) : (
-              signals.length > 1 && (
+              types.length > 1 && (
                 <div>
                   <Label htmlFor={TYPE_ID}>{TYPE_LABEL}</Label>
                   <Select
                     id={TYPE_ID}
-                    value={signal}
-                    onChange={(event) => setSignal(event.target.value as KnownSignal)}
+                    value={type}
+                    onChange={(event) => setType(event.target.value as KnownSignalType)}
                     className="mt-1"
                   >
-                    {signals.map((each) => (
-                      <option key={each.signal} value={each.signal}>
-                        {signalType(each.signal)}
+                    {types.map((each) => (
+                      <option key={each.type} value={each.type}>
+                        {signalType(each.type)}
                       </option>
                     ))}
                   </Select>
@@ -449,29 +433,5 @@ export function SignalForm({
 
 
     </>
-  );
-}
-
-/** One part of the setup, titled as the signal works. A title naming a
- * single field labels it. */
-function Section({
-  title,
-  aside,
-  titleFor,
-  children,
-}: {
-  title: string;
-  aside?: string;
-  titleFor?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-4 p-6">
-      <h2 className="flex items-baseline gap-2 text-base font-semibold text-foreground">
-        {titleFor ? <label htmlFor={titleFor}>{title}</label> : title}
-        {aside && <span className="text-xs font-normal text-muted">{aside}</span>}
-      </h2>
-      {children}
-    </section>
   );
 }

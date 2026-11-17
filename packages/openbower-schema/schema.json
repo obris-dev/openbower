@@ -177,6 +177,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -310,6 +311,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -687,6 +689,92 @@
         "source"
       ],
       "title": "ColumnPromptWire",
+      "type": "object"
+    },
+    "CustomSignalCreated": {
+      "description": "A custom signal's create and its webhook rotate: the signal as its\ndetail reads, plus its webhook URL (a signed-in person reads it again\nany time from `GET /v1/signals/{id}/webhook`; a rotate replaces a leaked\none and stops the old one at once). The detail is extended rather than\nnested: a nested signal would be a `signal` key, which the contract\nkeeps for no field, and a reader of the detail reads this response\nunchanged.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
+          "title": "Last Polled At"
+        },
+        "listener": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full",
+            "waiting"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
+        },
+        "webhook_url": {
+          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
+          "title": "Webhook Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "type",
+        "sources",
+        "listener",
+        "status",
+        "last_polled_at",
+        "webhook_url"
+      ],
+      "title": "CustomSignalCreated",
       "type": "object"
     },
     "EventSource": {
@@ -1128,18 +1216,19 @@
           "title": "Logged At",
           "type": "string"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "source": {
           "$ref": "#/$defs/EventSource"
+        },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
+          "type": "string"
         }
       },
       "required": [
         "id",
-        "signal",
+        "type",
         "data",
         "logged_at",
         "source"
@@ -1215,6 +1304,27 @@
       "title": "FundingFilter",
       "type": "object"
     },
+    "HostedSourceSummary": {
+      "description": "A hosted signal: a listener on the signals service, which the app reads.",
+      "properties": {
+        "kind": {
+          "const": "hosted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "listener_id": {
+          "description": "The listener whose matches become the log's rows.",
+          "title": "Listener Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "listener_id"
+      ],
+      "title": "HostedSourceSummary",
+      "type": "object"
+    },
     "ImportResult": {
       "description": "What a CSV upload produced.",
       "properties": {
@@ -1241,21 +1351,21 @@
       "type": "object"
     },
     "IngestAccepted": {
-      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `event_id` correlates them.",
+      "description": "The webhook accept receipt. Rows are accepted for asynchronous\nappend, not applied on the response; `request_id` correlates them.",
       "properties": {
         "accepted": {
           "description": "Number of rows accepted.",
           "title": "Accepted",
           "type": "integer"
         },
-        "event_id": {
+        "request_id": {
           "description": "The push's idempotency key (caller-supplied, else a minted ULID).",
-          "title": "Event Id",
+          "title": "Request Id",
           "type": "string"
         }
       },
       "required": [
-        "event_id",
+        "request_id",
         "accepted"
       ],
       "title": "IngestAccepted",
@@ -1277,12 +1387,13 @@
           "type": "string"
         },
         "type": {
-          "description": "The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, and date carry shape rules), so send values of this type.",
+          "description": "The value's type: drives rendering, and the push is refused (400) when a sent value does not satisfy it (number, currency, date, and datetime carry shape rules), so send values of this type.",
           "enum": [
             "text",
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -1299,7 +1410,7 @@
       "type": "object"
     },
     "IngestSchema": {
-      "description": "The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the\npush is a dict keyed by these columns' keys, each value validated\nagainst the column's type on append. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
+      "description": "The pushable row shape for POST /v1/sheets/{id}/ingest: a row's\ncells are keyed by these columns' keys, each value validated against\nthe column's type on append. A row is an envelope,\n{external_id?, cells}, or a plain map of cells; a row whose\nexternal_id the sheet already holds is skipped. These are the columns a\nproducer owns; the ones the system fills are not here and are\nrefused if sent, because their values arrive with the record of\nwhat filled them. A client builds a push off this without guessing\nkeys.",
       "properties": {
         "columns": {
           "default": [],
@@ -1381,11 +1492,6 @@
           "title": "Label",
           "type": "string"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "status": {
           "enum": [
             "active",
@@ -1393,6 +1499,12 @@
             "held"
           ],
           "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
           "type": "string"
         },
         "updated_at": {
@@ -1411,7 +1523,7 @@
       "required": [
         "id",
         "label",
-        "signal",
+        "type",
         "user_id",
         "status",
         "error",
@@ -1420,142 +1532,6 @@
         "updated_at"
       ],
       "title": "ListenerWire",
-      "type": "object"
-    },
-    "LogDetail": {
-      "description": "One log with its listener as the signals service has it now.",
-      "properties": {
-        "last_polled_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
-          "title": "Last Polled At"
-        },
-        "listener": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ListenerWire"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Read live from the signals service; null once the listener is gone (status listener_gone)."
-        },
-        "sheet": {
-          "$ref": "#/$defs/SheetSummary"
-        },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
-        },
-        "status": {
-          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
-          "enum": [
-            "active",
-            "listener_gone",
-            "reconnect",
-            "full"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "sheet",
-        "listener",
-        "signal",
-        "status",
-        "last_polled_at"
-      ],
-      "title": "LogDetail",
-      "type": "object"
-    },
-    "LogSummary": {
-      "description": "One log as the logs index shows it: no signals call behind it.",
-      "properties": {
-        "last_polled_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When its listener's matches were last read through (ISO); null before the first read.",
-          "title": "Last Polled At"
-        },
-        "listener_id": {
-          "description": "The listener whose matches become the log's rows.",
-          "title": "Listener Id",
-          "type": "string"
-        },
-        "sheet": {
-          "$ref": "#/$defs/SheetSummary"
-        },
-        "signal": {
-          "description": "The signal it logs, as the catalog names it (`SignalsCatalog.signals[].signal`).",
-          "title": "Signal",
-          "type": "string"
-        },
-        "status": {
-          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
-          "enum": [
-            "active",
-            "listener_gone",
-            "reconnect",
-            "full"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "sheet",
-        "listener_id",
-        "signal",
-        "status",
-        "last_polled_at"
-      ],
-      "title": "LogSummary",
-      "type": "object"
-    },
-    "LogsPage": {
-      "description": "`GET /v1/logs`: newest first.",
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/LogSummary"
-          },
-          "title": "Items",
-          "type": "array"
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Hand back as ?after= for the next page.",
-          "title": "Next Cursor"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "title": "LogsPage",
       "type": "object"
     },
     "MatchErrorWire": {
@@ -1668,6 +1644,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -1823,11 +1800,6 @@
           "title": "Rows",
           "type": "array"
         },
-        "signal": {
-          "const": "funding",
-          "title": "Signal",
-          "type": "string"
-        },
         "status": {
           "enum": [
             "pending",
@@ -1839,6 +1811,12 @@
           "title": "Status",
           "type": "string"
         },
+        "type": {
+          "const": "funding",
+          "description": "The signal's type, as the catalog names it (`SignalsCatalog.types[].type`).",
+          "title": "Type",
+          "type": "string"
+        },
         "user_id": {
           "title": "User Id",
           "type": "string"
@@ -1846,7 +1824,7 @@
       },
       "required": [
         "id",
-        "signal",
+        "type",
         "filter",
         "prompt",
         "min_confidence",
@@ -2249,8 +2227,88 @@
       "title": "SheetsPage",
       "type": "object"
     },
+    "SignalDetail": {
+      "description": "One signal, with a hosted source's listener as the signals service\nhas it now.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
+          "title": "Last Polled At"
+        },
+        "listener": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its hosted source's listener, read live from the signals service; null for a signal with no hosted source, and once the listener is gone (status listener_gone)."
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full",
+            "waiting"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "type",
+        "sources",
+        "listener",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "SignalDetail",
+      "type": "object"
+    },
     "SignalEventsPage": {
-      "description": "`GET /v1/signals/{signal}/events`: newest first, to choose from.",
+      "description": "The app's `GET /v1/signal-types/{type}/events` (the service's\n`GET /v1/signals/{signal}/events`): newest first, to choose from.",
       "properties": {
         "items": {
           "items": {
@@ -2279,7 +2337,7 @@
       "type": "object"
     },
     "SignalKind": {
-      "description": "One signal a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
+      "description": "One signal type a listener can follow. Its filter and event are given as\nJSON Schemas, so a form can be built from the catalog alone.",
       "properties": {
         "event": {
           "additionalProperties": true,
@@ -2298,13 +2356,14 @@
           "title": "Min Confidence Default",
           "type": "number"
         },
-        "signal": {
-          "title": "Signal",
+        "type": {
+          "description": "The type's key, as listeners, events and previews name it.",
+          "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "signal",
+        "type",
         "filter",
         "event",
         "min_confidence_default"
@@ -2342,29 +2401,142 @@
       "title": "SignalLimits",
       "type": "object"
     },
+    "SignalSummary": {
+      "description": "One log as the logs index shows it: no signals call behind it.",
+      "properties": {
+        "last_polled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When a source the app reads (a hosted signal's listener) was last read through (ISO); null before the first read, and for a signal nothing is read for.",
+          "title": "Last Polled At"
+        },
+        "sheet": {
+          "$ref": "#/$defs/SheetSummary"
+        },
+        "sources": {
+          "description": "What feeds it, at most one of each kind, each carrying its own kind's facts.",
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "hosted": "#/$defs/HostedSourceSummary",
+                "webhook": "#/$defs/WebhookSourceSummary"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HostedSourceSummary"
+              },
+              {
+                "$ref": "#/$defs/WebhookSourceSummary"
+              }
+            ]
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "description": "Where it stands on the app's side: what fills it next, or why nothing will until someone acts. The listener's own state on the signals service (retrying, held) is `listener.status` on the detail.",
+          "enum": [
+            "active",
+            "listener_gone",
+            "reconnect",
+            "full",
+            "waiting"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "description": "What the signal is: a hosted type as the catalog names it (`SignalsCatalog.types[].type`), or `custom` for one a sender pushes rows to.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "type",
+        "sources",
+        "status",
+        "last_polled_at"
+      ],
+      "title": "SignalSummary",
+      "type": "object"
+    },
+    "SignalWebhook": {
+      "description": "`GET /v1/signals/{id}/webhook`: a custom signal's webhook URL, for a\nsigned-in person to copy any time. The URL is not a credential for this\nroute; only a session reads it.",
+      "properties": {
+        "webhook_url": {
+          "description": "Where a sender POSTs rows to this signal, with no API key: the sheets push envelope ({request_id?, rows: [{external_id?, cells}]}). A GET returns the pushable row schema.",
+          "title": "Webhook Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_url"
+      ],
+      "title": "SignalWebhook",
+      "type": "object"
+    },
     "SignalsCatalog": {
-      "description": "`GET /v1/signals`: every signal, and the limits a setup is held to.",
+      "description": "The app's `GET /v1/signal-types` (the service's `GET /v1/signals`):\nevery signal type, and the limits a setup is held to.",
       "properties": {
         "limits": {
           "$ref": "#/$defs/SignalLimits"
         },
-        "signals": {
+        "types": {
           "items": {
             "$ref": "#/$defs/SignalKind"
           },
-          "title": "Signals",
+          "title": "Types",
           "type": "array"
         }
       },
       "required": [
-        "signals",
+        "types",
         "limits"
       ],
       "title": "SignalsCatalog",
       "type": "object"
     },
+    "SignalsPage": {
+      "description": "`GET /v1/signals`: newest first.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SignalSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hand back as ?after= for the next page.",
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "SignalsPage",
+      "type": "object"
+    },
     "SyncKeyReconnected": {
-      "description": "`POST /v1/logs/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
+      "description": "`POST /v1/signals/reconnect`: the account's logs fill again from where\nthey stopped. The replaced key is revoked when the person reconnecting\nminted it and the revoke succeeds; otherwise it stays live in its\nminter's API keys list until they revoke it. A key still working is\nleft as it is, and both fields are empty.",
       "properties": {
         "left_live_key_id": {
           "description": "The replaced key while it is still live (another member minted it, or its revoke failed).",
@@ -2498,6 +2670,7 @@
             "number",
             "currency",
             "date",
+            "datetime",
             "url",
             "email"
           ],
@@ -3054,15 +3227,32 @@
       ],
       "title": "WebhookSheetRef",
       "type": "object"
+    },
+    "WebhookSourceSummary": {
+      "description": "A custom signal's webhook: a sender pushes rows to it.",
+      "properties": {
+        "kind": {
+          "const": "webhook",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "WebhookSourceSummary",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OpenBower contract",
   "x-constants": {
     "API_KEY_NAME_MAX_LENGTH": 80,
+    "CUSTOM_SIGNAL_TYPE": "custom",
     "DEFAULT_WEBHOOK_CADENCE_SECONDS": 900,
     "FREE_SEARCH_FILL_BUDGET": 768,
     "MAX_API_KEYS": 50,
+    "MAX_SHEET_COLUMNS": 70,
     "MAX_TOOL_CALLS": 6,
     "MAX_WEBHOOK_DESTINATIONS": 32,
     "MAX_WEBHOOK_HEADERS": 8,
@@ -3073,6 +3263,10 @@
       "queued",
       "processing",
       "deferred"
+    ],
+    "RESERVED_COLUMN_KEYS": [
+      "ai",
+      "webhook"
     ],
     "RESERVED_OUTPUT_MARKER": "_bwr_",
     "RESERVED_WEBHOOK_HEADER_NAMES": [
@@ -3100,6 +3294,7 @@
       "unparseable",
       "type_mismatch"
     ],
+    "SHEET_LABEL_MAX_LENGTH": 120,
     "TEST_KEY_MAX_LENGTH": 64,
     "TEST_ROW_MAX_KEYS": 16,
     "TEST_VALUE_MAX_LENGTH": 512,

@@ -27,6 +27,7 @@ from jobs.services import JobRunner
 from openbower_schema.agents import MAX_TOOL_CALLS, AgentConfig, AgentOutput, AgentTools
 from openbower_schema.fills import ColumnFillSummary, FillRunPage, FillRunWire
 from openbower_schema.sheets import AiColumn, SheetDetail, SheetRowsPage
+from sheets.rows import rows_without_external_ids
 
 from ..constants import FREE_SEARCH_FILL_BUDGET, JOB_FAILURE_COPY, StoredCellState
 from ..models import NodeRun
@@ -103,7 +104,9 @@ class FillViewsTestCase(TestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         patcher = patch("sheets.services.runnable.model_for")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -189,7 +192,7 @@ class AiColumnPostTests(FillViewsTestCase):
         # column is created either way; only the fill is refused.
         rows = FREE_SEARCH_FILL_BUDGET // MAX_TOOL_CALLS + 1
         wide = self.sheets.create(owner_id=TEST_IDENTITY["id"], label="Wide", columns=[], origin="manual")
-        self.sheets.add_rows(wide, [{"company": f"a{n}.com"} for n in range(rows)])
+        self.sheets.add_rows(wide, rows_without_external_ids([{"company": f"a{n}.com"} for n in range(rows)]))
         resp = self.add_and_fill(sheet_id=str(wide.id), config={**CONFIG, "tools": {"web_search": True}})
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
@@ -219,7 +222,7 @@ class AiColumnPostTests(FillViewsTestCase):
         foreign_sheet = foreign_sheets.create(
             owner_id=TEST_IDENTITY["id"], label="Not yours", columns=[], origin="manual"
         )
-        foreign_sheets.add_rows(foreign_sheet, [{"company": "acme.com"}])
+        foreign_sheets.add_rows(foreign_sheet, rows_without_external_ids([{"company": "acme.com"}]))
         self.assertEqual(self.post_ai(sheet_id=str(foreign_sheet.id)).status_code, 404)
         foreign_agent = AgentService(account_id="01AC" + "Z" * 22).create(
             owner_id=TEST_IDENTITY["id"], label="Theirs", config=wire_config()
@@ -543,7 +546,7 @@ class CellStatesTests(FillViewsTestCase):
         self.assertEqual(words(page.items[1].states), {first_key: "pending", second_key: "pending"})
 
     def test_pages_on_the_rows_keyset_by_row_id(self) -> None:
-        self.sheets.add_rows(self.sheet, [{"company": "initech.com"}])
+        self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "initech.com"}]))
         self.add_and_fill()
         rows = self.sheets.rows_page(self.sheet, limit=10)
         first = self._states_page(limit=2)

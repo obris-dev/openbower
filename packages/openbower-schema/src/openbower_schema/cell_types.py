@@ -3,20 +3,20 @@ fence between a model's parsed answer and a typed column. They live
 IN the contract package because what values fit a type IS the type's
 meaning: the sheet's write path enforces these rules and the runtime's
 prompt hints state them, and both must read ONE declaration or the
-model is punished for a rule it was never told. A wrong-shape value refuses
-with its why so the caller can diagnose it as a type mismatch,
+model is punished for a rule it was never told. A wrong-shape value
+refuses with its why so the caller can diagnose it as a type mismatch,
 distinct from unparseable (the user's next step differs: fix the
 output's description versus fix the model). Refusal beats coercion
 wherever a value reads two ways: storing one reading of an ambiguous
-date is a guess. text, url, and email columns pass through untouched
-here; URL integrity is grounding custody at the runtime, not a shape
-rule."""
+date, or of a time with no zone, is a guess. text, url, and email
+columns pass through untouched here; URL integrity is grounding custody
+at the runtime, not a shape rule."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from datetime import date
+from datetime import UTC, date, datetime
 
 from .sheets import ColumnType
 
@@ -41,9 +41,15 @@ _NUMBER = re.compile(r"^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$")
 # USD") refuse: normalizing them means deciding what they meant.
 _CURRENCY_SYMBOLS = frozenset("$€£¥")
 
-# Year-first with one separator style throughout. Anything else is
-# either ambiguous (03/04/2026 reads two ways) or not a date.
+# Year-first with one separator style throughout, or any ISO 8601 date or
+# date and time the standard parser reads (its day kept as written).
+# Anything else is either ambiguous (03/04/2026 reads two ways) or not a
+# date.
 _DATE = re.compile(r"^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})$")
+
+# The stored form: UTC, to the second, fixed width, so stored values sort
+# in time order as text.
+_DATETIME_STORED = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _number(value: str, key: str) -> str:
@@ -67,7 +73,7 @@ def _date(value: str, key: str) -> str:
     text = value.strip()
     match = _DATE.match(text)
     if not match:
-        raise CellTypeMismatch(key, f'"{value}" is not an unambiguous date; write it year-first as YYYY-MM-DD')
+        return _written_day(value, text, key)
     year, _, month, day = match.groups()
     try:
         parsed = date(int(year), int(month), int(day))
@@ -76,10 +82,63 @@ def _date(value: str, key: str) -> str:
     return parsed.isoformat()
 
 
+def _datetime(value: str, key: str) -> str:
+    """An ISO 8601 date and time with its UTC offset, as
+    datetime.fromisoformat reads it, stored in UTC. The offset is
+    required: a time with no zone names a different moment in every zone
+    it is read in."""
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as e:
+        raise CellTypeMismatch(key, f'"{value}" is not an ISO 8601 date and time, like 2026-01-15T09:30:00Z') from e
+    if parsed.tzinfo is None:
+        if _reads_as_date(text):
+            raise CellTypeMismatch(
+                key,
+                f'"{value}" is a date; this column holds a date and a time, so add a time and zone, '
+                "like 2026-01-15T09:30:00Z (or use a date column)",
+            )
+        raise CellTypeMismatch(
+            key, f'"{value}" has no time zone; write it with Z or an offset, like 2026-01-15T09:30:00Z'
+        )
+    # A moment within a day of the calendar's ends can fall outside it once
+    # moved to UTC.
+    try:
+        moment = parsed.astimezone(UTC)
+    except OverflowError as e:
+        raise CellTypeMismatch(key, f'"{value}" is outside the years 0001 to 9999 in UTC') from e
+    return moment.strftime(_DATETIME_STORED)
+
+
+def _written_day(value: str, text: str, key: str) -> str:
+    """The day an ISO 8601 value states, as written: a date and time keeps
+    its own day, never moved to UTC, since the day is in the value and a
+    conversion is what would shift it. Only the time is dropped, which a
+    date column does not hold."""
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as e:
+        raise CellTypeMismatch(key, f'"{value}" is not an unambiguous date; write it year-first as YYYY-MM-DD') from e
+    day = parsed.date()
+    return day.isoformat()
+
+
+# A bare date is the datetime type's near miss: it has neither the time nor
+# the zone a moment needs, so it is refused with the type it belongs in.
+def _reads_as_date(text: str) -> bool:
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
 _VALIDATORS = {
     "number": _number,
     "currency": _currency,
     "date": _date,
+    "datetime": _datetime,
 }
 
 
@@ -95,6 +154,10 @@ _SHAPE_HINTS = {
         "Write it as an amount: digits with at most one leading currency symbol, and no trailing code like USD."
     ),
     "date": "Write it year-first as YYYY-MM-DD; any other order is ambiguous and will be discarded.",
+    "datetime": (
+        "Write it as an ISO 8601 date and time with its UTC offset, like 2026-01-15T09:30:00Z; "
+        "a time with no offset is ambiguous and will be discarded."
+    ),
 }
 
 
@@ -105,10 +168,10 @@ def shape_hint(column_type: ColumnType | str) -> str:
 
 
 def validate_cell(column_type: ColumnType | str, value: str, *, key: str = "") -> str:
-    """The normalized string to store, or CellTypeMismatch. Only
-    number, currency, and date carry shape rules; every other type
-    returns the value untouched. `key` rides any refusal so the
-    diagnosis names the column."""
+    """The normalized string to store, or CellTypeMismatch. Only number,
+    currency, date, and datetime carry shape rules; every other type
+    returns the value untouched. `key` rides any refusal so the diagnosis
+    names the column."""
     validator = _VALIDATORS.get(column_type)
     if validator is None:
         return value

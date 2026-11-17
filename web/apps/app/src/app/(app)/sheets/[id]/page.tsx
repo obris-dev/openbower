@@ -21,7 +21,7 @@ export default async function SheetDetailPage({
   const { id } = await params;
   const query = await searchParams;
   const cookieHeader = (await cookies()).toString();
-  const { fetchLogWithCookie, fetchSheetRowsWithCookie, fetchSheetWithCookie } = await import("@bower/api/server");
+  const { fetchSignalWithCookie, fetchSheetRowsWithCookie, fetchSheetWithCookie } = await import("@bower/api/server");
   // The detail comes first: a log's rows read one period, which only its
   // kind says applies.
   const detail = await fetchSheetWithCookie(cookieHeader, id);
@@ -34,7 +34,7 @@ export default async function SheetDetailPage({
   const period = isLog ? periodFrom(query.period) : null;
   const [rows, log] = await Promise.all([
     fetchSheetRowsWithCookie(cookieHeader, id, ROWS_FIRST_PAGE, { since: periodStart(period) }),
-    isLog ? fetchLogWithCookie(cookieHeader, id) : null,
+    isLog ? fetchSignalWithCookie(cookieHeader, id) : null,
   ]);
   // The rows leg gets the same honesty as the detail leg: a fetch
   // failure must not render a zero-row sheet that looks real.

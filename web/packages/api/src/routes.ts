@@ -65,26 +65,34 @@ export const apiRoutes = {
     // POST: abandon an unclaimed preview run; a running or terminal run no-ops.
     cancel: (id: string) => `/${API_VERSION}/runs/${id}/cancel`,
   },
-  // A signal is a listener on the signals service and the sheet it fills
-  // (the API calls it a log); the UI says Signal.
-  logs: {
+  // A signal: a sheet of kind log fed by a hosted signal's listener (the
+  // code calls the sheet a log).
+  signals: {
     // GET: keyset index (?after=), newest first. POST: create.
-    index: `/${API_VERSION}/logs`,
+    index: `/${API_VERSION}/signals`,
     // GET / PATCH / DELETE: one, with its listener read live.
-    detail: (id: string) => `/${API_VERSION}/logs/${id}`,
+    detail: (id: string) => `/${API_VERSION}/signals/${id}`,
     // POST: a fresh sync key in place of a refused one; the signals resume.
-    reconnect: `/${API_VERSION}/logs/reconnect`,
+    reconnect: `/${API_VERSION}/signals/reconnect`,
+    // GET: the row schema a push to a custom signal is held to.
+    ingest: (id: string) => `/${API_VERSION}/signals/${id}/ingest`,
+    // GET: a custom signal's webhook URL, to copy any time (session only).
+    webhook: (id: string) => `/${API_VERSION}/signals/${id}/webhook`,
+    // POST: a new webhook URL; the old one stops at once.
+    webhookRotate: (id: string) => `/${API_VERSION}/signals/${id}/webhook/rotate`,
   },
   // What creating a signal reads, passed through to the signals service.
-  signals: {
-    // GET: every signal, and the limits a setup is held to.
-    catalog: `/${API_VERSION}/signals`,
-    // GET: a signal's recent events, newest first (?limit=).
-    events: (signal: string) => `/${API_VERSION}/signals/${encodeURIComponent(signal)}/events`,
+  signalTypes: {
+    // GET: every signal type, and the limits a setup is held to.
+    index: `/${API_VERSION}/signal-types`,
+    // GET: a type's recent events, newest first (?limit=).
+    events: (type: string) => `/${API_VERSION}/signal-types/${encodeURIComponent(type)}/events`,
+  },
+  signalPreviews: {
     // POST: a setup tried on chosen events; 202 + a preview to poll.
-    previews: `/${API_VERSION}/signals/previews`,
+    index: `/${API_VERSION}/signal-previews`,
     // GET: one preview. DELETE: cancel it (a finished one is left as it is).
-    preview: (id: string) => `/${API_VERSION}/signals/previews/${id}`,
+    detail: (id: string) => `/${API_VERSION}/signal-previews/${id}`,
   },
   sheets: {
     // GET: keyset index (?after=), every kind. POST: create.
@@ -103,7 +111,7 @@ export const apiRoutes = {
     // there; 200 with the row. DELETE: the row, its cell states and its
     // webhook runs; 204.
     row: (id: string, rowId: string) => `/${API_VERSION}/sheets/${id}/rows/${rowId}`,
-    // GET: the push schema (the columns a producer may send). POST {rows, event_id?}
+    // GET: the push schema (the columns a producer may send). POST {rows, request_id?}
     // with a machine API key: the webhook push; 202, rows land off the bus.
     ingest: (id: string) => `/${API_VERSION}/sheets/${id}/ingest`,
     // POST: append one blank column (no fill attached).
@@ -162,6 +170,8 @@ export const webRoutes = {
   // The signals a person set up; a signal's id is its sheet's.
   signals: SIGNAL_PREFIX,
   signalNew: `${SIGNAL_PREFIX}/new`,
+  // Create a signal of one type: a hosted type's key, or custom.
+  signalNewOf: (type: string) => `${SIGNAL_PREFIX}/new/${encodeURIComponent(type)}`,
   signal: (id: string) => `${SIGNAL_PREFIX}/${id}`,
   agents: "/agents",
   agentNew: "/agents/new",

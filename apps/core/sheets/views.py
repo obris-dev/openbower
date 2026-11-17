@@ -19,14 +19,13 @@ from rest_framework.response import Response
 from agents.services import AgentNotFound
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
-from openbower_kernel.fields import min_ulid_at, new_ulid
+from openbower_kernel.fields import min_ulid_at
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import ColumnPromptWire, FillRunPage
 from openbower_schema.sheets import (
     FoldersList,
     ImportResult,
-    IngestAccepted,
     PlainColumn,
     RowsAdded,
     RowsDeleted,
@@ -37,6 +36,7 @@ from openbower_schema.webhooks import WebhookColumnPreviewResponse, WebhookColum
 from resource_server import MachineTokenAuthentication
 from webhooks.serializers import delivery_model
 
+from .column_refusals import column_refusal_status
 from .constants import (
     DEFAULT_INDEX_PAGE,
     DEFAULT_ROWS_PAGE,
@@ -46,16 +46,17 @@ from .constants import (
     MAX_INDEX_PAGE,
     MAX_ROWS_PAGE,
     FillErrorCode,
-    IngestErrorCode,
     RowSource,
     SheetKind,
     SheetOrigin,
 )
-from .ingest import IngestEvent, IngestPublishError, IngestTooLarge, get_ingest_publisher
+from .ingest.accept import accept_push
+from .ingest.refusals import PUSH_REFUSALS, push_refusal
 from .models import Folder, Sheet
-from .operations.append_rows import AppendRowsOperation, SheetNotAppendable, require_appendable
+from .operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from .operations.import_csv import CsvTooLarge, CsvUnusable, ImportCsvOperation
 from .operations.set_cells import SetCellsOperation
+from .rows import rows_without_external_ids
 from .serializers import (
     AiColumnRequest,
     ColumnAddRequest,
@@ -80,7 +81,6 @@ from .serializers import (
     row_wire,
     sheet_detail_wire,
     sheet_wire,
-    validate_ingest_rows,
 )
 from .services.ai_columns import AiColumnService
 from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
@@ -116,17 +116,11 @@ logger = logging.getLogger(__name__)
 # classifies by CODE and renders the detail verbatim (tier 1).
 _FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
 
-# The same partition for the COLUMN vocabulary, kept separate because
-# the two sets are disjoint and neither endpoint should classify by
-# the other's codes.
-_COLUMN_CONFLICT_CODES = frozenset(
-    {FillErrorCode.COLUMN_ORDER_STALE, FillErrorCode.COLUMN_WAITED_ON, FillErrorCode.COLUMN_IMMUTABLE}
-)
-
 
 def _log_route(e: SheetIsLog) -> Response:
-    """A log's label and life are its listener's too: renaming or deleting
-    one here would leave its listener behind, so its own route does both."""
+    """A log's life is its sources' too: renaming or deleting one here
+    would leave them (and a hosted source's listener) behind, so its own
+    route does both."""
     return Response({"error": e.code, "detail": str(e)}, status=409)
 
 
@@ -167,12 +161,6 @@ def _fill_refusal_status(e: FillRefused) -> int:
     """One classifier for every fill refusal, so a code added to the
     conflict set reaches every endpoint that answers one."""
     return 409 if e.code in _FILL_CONFLICT_CODES else 400
-
-
-def _column_refusal_status(e: ColumnRefused) -> int:
-    """One classifier for every column write, so a status added to the
-    set reaches both endpoints and neither can drift from the other."""
-    return 409 if e.code in _COLUMN_CONFLICT_CODES else 400
 
 
 class _ScopedView(ScopedView):
@@ -318,7 +306,7 @@ class SheetRowsView(_ScopedView):
             report = AppendRowsOperation(
                 account_id=self.request.user.account_id,
                 target_sheet=target_sheet,
-                rows=serializer.validated_data["rows"],
+                rows=rows_without_external_ids(serializer.validated_data["rows"]),
                 source=RowSource.MANUAL,
             ).run()
         except SheetNotAppendable as e:
@@ -397,8 +385,9 @@ class SheetIngestView(_ScopedView):
     the target sheet (account-scoped, so a key only reaches its owner's
     sheets), publish the batch to the ingest bus, and return 202 once the
     broker acked it. The rows are NOT in the sheet on return: the ingest
-    worker appends them off the bus, deduped on `event_id`, and the append
-    starts the sheet's workflow for them. A deployment with no bus
+    worker appends them off the bus, deduped on the request's `request_id`, skipping a row
+    whose `external_id` the sheet already holds, and the append starts the
+    sheet's workflow for them. A deployment with no bus
     configured logs and drops the batch (sheets.ingest.publisher). Same
     auth pair and order as the sheets collection.
     """
@@ -416,48 +405,21 @@ class SheetIngestView(_ScopedView):
 
     def post(self, request: Request, id: str) -> Response:
         target_sheet = self._sheet_or_404(id)
-        serializer = IngestRequest(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        # Refused BEFORE the bus: the append happens later, so the push is
-        # the only place a log can answer the producer with a 409.
+        body = IngestRequest(data=request.data)
+        body.is_valid(raise_exception=True)
+        user = self.request.user
         try:
-            require_appendable(target_sheet, source=RowSource.PUSH)
-        except SheetNotAppendable as e:
-            return Response({"error": e.code, "detail": str(e)}, status=409)
-        # Validate the push against the sheet's columns BEFORE accepting it:
-        # the append is async (202), so the POST is the only place a
-        # malformed value can reach the producer as a 400 it can fix, rather
-        # than being stored as sent. Tier-1 envelope ({error, detail}). The
-        # returned rows are run through the shared cells_for_storage (the
-        # writers' transform), so the bus carries exactly what add_rows will
-        # store (canonical form, clamped), not the raw push.
-        problems, rows = validate_ingest_rows(target_sheet, serializer.validated_data["rows"])
-        if problems:
-            return Response({"error": IngestErrorCode.INGEST_INVALID, "detail": "; ".join(problems)}, status=400)
-        # The caller's idempotency key if they sent one, else a fresh ULID.
-        # Carried through the bus, so a retried push or a redelivery dedupes
-        # to one append in the worker's inbox (ProcessedIngestEvent).
-        event = IngestEvent(
-            event_id=serializer.validated_data.get("event_id") or new_ulid(),
-            sheet_id=str(target_sheet.id),
-            account_id=self.request.user.account_id,
-            user_id=self.request.user.id,
-            rows=rows,
-            received_at=timezone.now(),
-        )
-        try:
-            get_ingest_publisher().publish(event)
-        except IngestTooLarge as e:
-            return Response({"error": IngestErrorCode.INGEST_TOO_LARGE, "detail": str(e)}, status=413)
-        except IngestPublishError as e:
-            # The batch never reached the bus, so it was NOT accepted: 503
-            # (retryable), never a 202 that silently dropped it. Dedupe makes
-            # the caller's retry safe.
-            logger.warning("ingest publish failed for sheet %s: %s", event.sheet_id, e)
-            return Response(
-                {"error": IngestErrorCode.INGEST_UNAVAILABLE, "detail": "ingest bus unavailable; retry"}, status=503
+            accepted = accept_push(
+                target_sheet,
+                body.validated_data["rows"],
+                request_id=body.validated_data.get("request_id"),
+                account_id=user.account_id,
+                user_id=user.id,
+                source=RowSource.PUSH,
             )
-        return Response(IngestAccepted(event_id=event.event_id, accepted=len(rows)).model_dump(), status=202)
+        except PUSH_REFUSALS as e:
+            return push_refusal(e)
+        return Response(accepted.model_dump(), status=202)
 
 
 class ColumnsView(_ScopedView):
@@ -475,7 +437,7 @@ class ColumnsView(_ScopedView):
         try:
             target_sheet = self.columns.add_column(id, label=data["label"], column_type=data["type"])
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
@@ -498,7 +460,7 @@ class ColumnOrderView(_ScopedView):
             # the sibling column write above does it: a refusal added
             # to reorder() later gets a status here instead of escaping
             # as a 500.
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet))
@@ -614,7 +576,7 @@ class ColumnWebhookView(_ScopedView):
             logger.warning("webhook column read: node gone (%s)", e)
             raise NotFound("no column with that key") from e
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(sheet_detail_wire(target_sheet), status=201)
@@ -687,7 +649,7 @@ class ColumnDetailView(_ScopedView):
         try:
             target_sheet = self.columns.delete(id, key=key)
         except ColumnRefused as e:
-            return Response({"error": e.code, "detail": str(e)}, status=_column_refusal_status(e))
+            return Response({"error": e.code, "detail": str(e)}, status=column_refusal_status(e))
         except ColumnNotFound as e:
             raise NotFound("no column with that key") from e
         except SheetNotFound as e:

@@ -11,6 +11,7 @@ from django.test import TestCase
 from common.testing import TEST_IDENTITY
 from sheets.constants import CellSource, StoredCellState
 from sheets.models import SheetCellState
+from sheets.rows import rows_without_external_ids
 from sheets.services import cell_truth
 from sheets.services.cell_states import CellStateService
 from sheets.services.sheets import SheetService
@@ -23,7 +24,7 @@ class CellStateScopingTests(TestCase):
         self.account_id = TEST_IDENTITY["account_id"]
         sheets = SheetService(account_id=self.account_id)
         self.sheet = sheets.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual")
-        [self.row] = sheets.add_rows(self.sheet, [{"company": "acme.com"}])
+        [self.row] = sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "acme.com"}]))
         cell_truth.write(
             account_id=self.account_id,
             sheet_id=str(self.sheet.id),
@@ -58,7 +59,7 @@ class CellSourceTests(TestCase):
     def test_a_fill_lands_as_the_fill_source_and_a_later_writer_re_attributes(self):
         sheets = SheetService(account_id=TEST_IDENTITY["account_id"])
         sheet = sheets.create(owner_id=TEST_IDENTITY["id"], label="Prospects", columns=COLUMNS, origin="manual")
-        [row] = sheets.add_rows(sheet, [{"company": "acme.com"}])
+        [row] = sheets.add_rows(sheet, rows_without_external_ids([{"company": "acme.com"}]))
         write = {"account_id": TEST_IDENTITY["account_id"], "sheet_id": str(sheet.id), "row_id": str(row.id)}
         cell_truth.write(
             **write,

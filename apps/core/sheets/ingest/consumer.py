@@ -19,7 +19,6 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import transaction
 
-from ..constants import RowSource
 from ..models import ProcessedIngestEvent
 from ..operations.append_rows import AppendRowsOperation, SheetNotAppendable
 from ..services.sheets import ColumnNotWritable, SheetFull, SheetNotFound, SheetService
@@ -69,14 +68,19 @@ def _append_rows(event: IngestEvent) -> AppendResult:
     try:
         target = sheets.get(event.sheet_id)
         report = AppendRowsOperation(
-            account_id=event.account_id, target_sheet=target, rows=event.rows, source=RowSource.PUSH
+            account_id=event.account_id,
+            target_sheet=target,
+            rows=event.rows,
+            source=event.source,
         ).run()
     except (SheetNotFound, SheetFull, ColumnNotWritable, SheetNotAppendable) as e:
         # All four are TERMINAL for this event: a deleted or full sheet,
-        # a row carrying a column whose cells are recorded, and a push to
-        # a log (the view refuses those two at the door, so an event
-        # carrying one came from somewhere that skipped the door and will
-        # never become valid). Dropped and recorded, never retried, or
+        # a row carrying a column whose cells are recorded, and a source
+        # the sheet's kind does not take (APPENDS_FROM). accept_push
+        # refuses the last two before the bus, so an event carrying one
+        # came from a producer that skipped it, or from before a change
+        # (a worker on older code reads a signal's push as a sheet's), and
+        # will never become valid. Dropped and recorded, never retried, or
         # the bus would redeliver it forever.
         return AppendResult(applied=False, reason=str(e))
     return AppendResult(applied=True, added=report.added)
@@ -102,12 +106,16 @@ def handle_ingest_event(event: IngestEvent) -> str:
         if not result.applied:
             logger.warning("ingest dropped event=%s sheet=%s: %s", event.event_id, event.sheet_id, result.reason)
             return "dropped"
+        # A row whose external_id the sheet already holds is skipped, so a
+        # push that landed nothing says why.
+        skipped = len(event.rows) - result.added
         logger.info(
-            "ingest applied event=%s sheet=%s account=%s rows=%d",
+            "ingest applied event=%s sheet=%s account=%s rows=%d skipped=%d",
             event.event_id,
             event.sheet_id,
             event.account_id,
             result.added,
+            skipped,
         )
         return "applied"
 

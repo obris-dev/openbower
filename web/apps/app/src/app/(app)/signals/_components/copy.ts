@@ -30,10 +30,10 @@ export function notOfferedNote(type: string): string {
 /** Why a signal's settings have no setup to edit: its listener is gone, or
  * its type is one this app version has no form for, or one the service is
  * not offering now. Never blames the app for what the service decided. */
-export function noSetupNote(facts: { listenerGone: boolean; signal: string; known: boolean }): string {
+export function noSetupNote(facts: { listenerGone: boolean; type: string; known: boolean }): string {
   if (facts.listenerGone) return GONE_NOTE;
-  const type = signalType(facts.signal);
-  return facts.known ? notOfferedNote(type) : unknownTypeNote(type);
+  const name = signalType(facts.type);
+  return facts.known ? notOfferedNote(name) : unknownTypeNote(name);
 }
 
 /** What a delete takes with it, said once: the signal stops, and its
@@ -44,10 +44,26 @@ export function deleteConsequence(rows: number): string {
   return `It stops collecting events, and its sheet and ${counted} are deleted. This can't be undone.`;
 }
 
+// A custom signal follows no hosted type: its rows are pushed to it.
+export const CUSTOM_TYPE_LABEL = "Custom";
+// Create signal's first question, and how each answer reads.
+export const CHOOSE_TYPE = "What should this signal collect?";
+export const CUSTOM_CHOICE_DESCRIPTION = "Rows from your own tool, in the columns you choose.";
+
+// A custom signal's webhook URL: where its sender pushes rows.
+export const WEBHOOK_TITLE = "Webhook URL";
+export const WEBHOOK_LEDE = "Send rows to this URL from any tool or script.";
+export const ROTATE_URL = "Rotate URL";
+export const ROTATE_URL_QUESTION = "Rotate the webhook URL?";
+export const ROTATE_URL_CONSEQUENCE = "The current URL stops working at once, so update your sender with the new one.";
+export const ROTATED_TOAST = "Webhook URL rotated.";
+// A signal fed by nothing this bundle can name.
+export const UNKNOWN_FEED_NOTE = "This version of the app can't edit this signal. You can still delete it.";
+
 /** A signal type as a person reads it: the catalog's key, title-cased
  * (funding reads Funding). */
-export function signalType(signal: string): string {
-  return signal
+export function signalType(type: string): string {
+  return type
     .split("_")
     .map((word) => (word ? word[0]!.toUpperCase() + word.slice(1) : word))
     .join(" ");

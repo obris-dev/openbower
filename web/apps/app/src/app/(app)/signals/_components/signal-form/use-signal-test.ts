@@ -11,7 +11,7 @@ import {
   fetchSignalPreview,
   isPreviewOpen,
   type ApiResult,
-  type KnownSignal,
+  type KnownSignalType,
   type PreviewRun,
   type SignalSetup,
 } from "@bower/api";
@@ -44,7 +44,7 @@ export function useSignalTest(): {
   run: PreviewRun | null;
   testedKey: string | null;
   notice: TestNotice | null;
-  runTest: (signal: KnownSignal, setup: SignalSetup, events: number) => Promise<void>;
+  runTest: (type: KnownSignalType, setup: SignalSetup, events: number) => Promise<void>;
 } {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<PreviewRun | null>(null);
@@ -122,14 +122,14 @@ export function useSignalTest(): {
     settle(current);
   }
 
-  async function runTest(signal: KnownSignal, setup: SignalSetup, events: number) {
+  async function runTest(type: KnownSignalType, setup: SignalSetup, events: number) {
     const generation = ++generationRef.current;
     setBusy(true);
     setNotice(null);
     // The last results stay up while the next load, so a changed filter
     // reads as the list updating, not emptying.
     slot.release();
-    const recent = await fetchSignalEvents(signal, events);
+    const recent = await fetchSignalEvents(type, events);
     if (generationRef.current !== generation) return;
     if (redirectIfUnauthenticated(recent)) return;
     if (recent.status === "error") {
@@ -143,7 +143,7 @@ export function useSignalTest(): {
     const eventIds = recent.data.items.map((event) => event.id);
     await slot.free();
     if (generationRef.current !== generation) return;
-    const creating = createSignalPreview(signal, setup, eventIds);
+    const creating = createSignalPreview(type, setup, eventIds);
     slot.track(createdId(creating), () => generationRef.current !== generation);
     const started = await creating;
     if (generationRef.current !== generation) return;

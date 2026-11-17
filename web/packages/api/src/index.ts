@@ -26,6 +26,6 @@ export * from "./auth.ts";
 export * from "./api-keys.ts";
 export * from "./sheets.ts";
 export * from "./sheet-verbs.ts";
-export * from "./logs.ts";
 export * from "./signals.ts";
+export * from "./signal-types.ts";
 export * from "./webhooks.ts";

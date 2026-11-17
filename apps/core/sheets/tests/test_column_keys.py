@@ -1,15 +1,15 @@
 """The label-to-key derivation, pinned by vector.
 
 Every path that puts a column on a sheet goes through this one
-function: a CSV header, a blank column add, an agent output a fill
-maps down. It matters because a fill decides what an output key MEANS
+function: a CSV header, a blank column add, a custom signal's declared
+columns, an agent output a fill maps down. It matters because a fill decides what an output key MEANS
 by matching it against the sheet's keys, so a second rule anywhere
 does not produce a second key, it changes which column an output is
 judged against. What that match then does is
 FillAdmissionService._resolve_columns's rule, not this module's.
 
 THE SAME VECTORS live in the web's mirror,
-web/apps/app/src/app/(app)/_components/agent-config/lib/output-key.test.ts.
+web/apps/app/src/app/(app)/_components/column-key.test.ts.
 Changing one list without the other is the drift these exist to catch.
 
 Run: DJANGO_ENV=test uv run python manage.py test sheets
@@ -96,3 +96,14 @@ class ShapeHintTests(SimpleTestCase):
         described = answer_type.model_json_schema()["properties"]["founded"]["description"]
         self.assertIn("Year founded", described)
         self.assertIn("YYYY-MM-DD", described)
+
+    def test_a_datetime_output_tells_the_model_to_give_its_offset(self):
+        from agents.runtime.answer.schema import construct_answer_schema
+        from openbower_schema.agents import AgentOutput
+
+        answer_type = construct_answer_schema(
+            [AgentOutput(key="raised_at", label="Raised at", type="datetime", description="When it closed")]
+        )
+        described = answer_type.model_json_schema()["properties"]["raised_at"]["description"]
+        self.assertIn("When it closed", described)
+        self.assertIn("UTC offset", described)

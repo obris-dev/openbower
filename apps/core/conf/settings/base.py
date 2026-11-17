@@ -274,12 +274,13 @@ if AUTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS < 1 or AUTH_REFRESH_COOLDOWN_SECONDS <
 # revoked AppSession row.
 APP_SESSION_PRUNE_DAYS = int(os.environ.get("APP_SESSION_PRUNE_DAYS", "30"))
 
-# Fernet key for encrypting the IdP tokens stored on AppSession (see
-# auth_client.fields.EncryptedTextField). Falls back to SECRET_KEY so dev needs
-# no extra config; set a dedicated secret in cloud so token ciphertext does
-# not share a fate with the signing key. Rotating it makes existing
-# ciphertext undecryptable (those sessions just re-login), so rotate
-# deliberately.
+# Fernet key for every EncryptedTextField (auth_client.fields): the IdP tokens
+# on AppSession, the signals sync key, and a custom signal's webhook URL
+# token. Falls back to SECRET_KEY so dev needs no extra config; set a
+# dedicated secret in cloud so token ciphertext does not share a fate with the
+# signing key. Rotating it makes existing ciphertext undecryptable: sessions
+# re-login, the sync key needs a Reconnect, and a webhook URL keeps pushing
+# but can't be shown until it is rotated. Rotate deliberately.
 AUTH_TOKEN_ENCRYPTION_KEY = os.environ.get("AUTH_TOKEN_ENCRYPTION_KEY", "")
 
 # `bwr_session` browser cookie (set by auth_client.cookies). Secure by

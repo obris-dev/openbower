@@ -1,10 +1,12 @@
 "use client";
 
 import type { SheetColumn, RenderableSheetRow } from "@bower/api";
+import { LocalTime, TIME_FORMAT } from "@bower/ui";
 
 import type { KeyboardEvent, MouseEvent, PointerEvent } from "react";
 
 import { cellHref, cellLinkIsExternal } from "../../../../_components/cell-link";
+import { cellMoment } from "../../../../_components/cell-moment";
 import { AiCellState, DegradedToolMark, isDegradedFill, type SearchProviderChoice } from "../fill";
 import { WebhookCellState } from "../send-webhook";
 import { useCellActions } from "./cell-actions";
@@ -33,6 +35,10 @@ function Value({ column, value }: { column: SheetColumn; value: string }) {
         {value}
       </a>
     );
+  }
+  const moment = cellMoment(column.type, value);
+  if (moment) {
+    return <LocalTime iso={moment} format={TIME_FORMAT.STAMP} className="truncate text-foreground" title={moment} />;
   }
   return <span className="truncate text-foreground">{value}</span>;
 }

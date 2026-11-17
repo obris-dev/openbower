@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog, useToast } from "@bower/ui";
-import { deleteLog, webRoutes } from "@bower/api";
+import { deleteSignal, webRoutes } from "@bower/api";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ConfirmDelete } from "../../_components/confirm-delete";
@@ -37,7 +37,7 @@ export function DeleteSignalDialog({
     if (busy) return;
     setBusy(true);
     setRefusal(null);
-    const res = await deleteLog(signal.id);
+    const res = await deleteSignal(signal.id);
     setBusy(false);
     if (redirectIfUnauthenticated(res)) return;
     if (res.status === "error") {

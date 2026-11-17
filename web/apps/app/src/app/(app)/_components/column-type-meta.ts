@@ -1,4 +1,4 @@
-import { Banknote, Calendar, Hash, Link2, Mail, Type, type LucideIcon } from "lucide-react";
+import { Banknote, Calendar, CalendarClock, Hash, Link2, Mail, Type, type LucideIcon } from "lucide-react";
 import type { ColumnType } from "@bower/api";
 
 /** The ONE display home for the sheet's column types: labels and
@@ -12,6 +12,7 @@ export const COLUMN_TYPE_META: Record<ColumnType, { label: string; icon: LucideI
   number: { label: "Number", icon: Hash },
   currency: { label: "Currency", icon: Banknote },
   date: { label: "Date", icon: Calendar },
+  datetime: { label: "Date and time", icon: CalendarClock },
   url: { label: "URL", icon: Link2 },
   email: { label: "Email", icon: Mail },
 };

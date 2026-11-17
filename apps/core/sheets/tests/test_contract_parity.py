@@ -83,7 +83,7 @@ class RowDoorPins(SimpleTestCase):
     def test_a_log_is_renamed_and_deleted_by_its_own_service(self):
         # SheetService.rename_log / delete_log skip the refusal a log meets
         # at rename / delete, because the log's own service renames and
-        # deletes its listener and feed beside them. FAILS if any other
+        # deletes its listener and sources beside them. FAILS if any other
         # production module calls them.
         import re
         from pathlib import Path

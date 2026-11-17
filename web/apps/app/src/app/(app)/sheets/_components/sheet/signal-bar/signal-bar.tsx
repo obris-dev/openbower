@@ -4,9 +4,9 @@ import { useState, type RefObject } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { Label, LocalTime, Select, Switch, TIME_FORMAT, cn, useToast } from "@bower/ui";
-import { LOG_STATUS, type LogDetail } from "@bower/api";
+import { SIGNAL_FEED, SIGNAL_STATUS, signalFeed, type SignalDetail } from "@bower/api";
 
-import { RECONNECT_ACTION, SignalStatus, isHeld } from "../../../../_components/signals";
+import { RECONNECT_ACTION, SignalStatusPill, isHeld } from "../../../../_components/signals";
 import { PERIODS, type Period } from "../lib/periods";
 import { LAST_READ, LIVE_LABEL, REFRESH_FAILED, NOT_YET_READ, PERIOD_NAMES, PERIOD_PICKER_LABEL, REFRESH_ACTION } from "./copy";
 
@@ -24,7 +24,7 @@ export function SignalBar({
   live,
   onLiveChange,
 }: {
-  log: LogDetail | null;
+  log: SignalDetail | null;
   period: Period;
   /** Re-read the loaded rows and the signal; answers whether both read. */
   refresh: () => Promise<boolean>;
@@ -65,21 +65,22 @@ export function SignalBar({
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-hairline px-4 py-2 text-sm">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        {log && log.status === LOG_STATUS.RECONNECT ? (
+        {log && log.status === SIGNAL_STATUS.RECONNECT ? (
           <button
             type="button"
             onClick={onReconnect}
             title={RECONNECT_ACTION}
             className="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-600 hover:opacity-80"
           >
-            <SignalStatus status={log.status} held={held} />
+            <SignalStatusPill status={log.status} held={held} />
           </button>
         ) : (
-          log && <SignalStatus status={log.status} held={held} />
+          log && <SignalStatusPill status={log.status} held={held} />
         )}
-        {/* Only what the page knows: a signal it could not read says
-            nothing here, and one never read yet says so plainly. */}
-        {log && (
+        {/* Only what the page knows: a signal it could not read, or one
+            nothing reads (a custom signal is pushed to), says nothing here,
+            and one never read yet says so plainly. */}
+        {log && signalFeed(log) === SIGNAL_FEED.HOSTED && (
           <span className="text-muted">
             {log.last_polled_at ? (
               <>

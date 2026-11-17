@@ -126,9 +126,9 @@ export type ImportResult = Omit<WireImportResult, "sheet"> & { sheet: SheetSumma
 // The catch-all admits only a tag the contract does not know: a known
 // kind whose body fails its own member is a broken column, refused
 // like any other bad response rather than hidden as unknown. It reads
-// the base fields with the same skew tolerance: a display type this
-// bundle has not heard of renders as text (type drives rendering
-// only), and the label bound is the server's to enforce.
+// the base fields, and the label bound is the server's to enforce.
+// A display type this bundle has not heard of renders as text on a
+// column of ANY kind, so a type added server-side never fails the sheet.
 const KNOWN_COLUMN_KINDS = new Set<string>(SheetColumnSchema.options.map((member) => member.shape.kind.unwrap().value));
 const KNOWN_COLUMN_TYPES = new Set<string>(PlainColumnSchema.shape.type.options);
 const UnknownColumnSchema = z
@@ -136,10 +136,18 @@ const UnknownColumnSchema = z
     kind: z.string().refine((kind) => !KNOWN_COLUMN_KINDS.has(kind)),
     key: z.string(),
     label: z.string(),
-    type: z.string().transform((type) => (KNOWN_COLUMN_TYPES.has(type) ? type : "text") as ColumnType),
+    type: PlainColumnSchema.shape.type,
   })
   .transform((column): UnknownColumn => ({ ...column, kind: UNKNOWN_COLUMN_KIND }));
-const TolerantSheetColumnSchema = z.union([SheetColumnSchema, UnknownColumnSchema]);
+
+function withKnownType(column: unknown): unknown {
+  if (typeof column !== "object" || column === null) return column;
+  const type = (column as { type?: unknown }).type;
+  if (typeof type !== "string" || KNOWN_COLUMN_TYPES.has(type)) return column;
+  return { ...column, type: "text" satisfies ColumnType };
+}
+
+const TolerantSheetColumnSchema = z.preprocess(withKnownType, z.union([SheetColumnSchema, UnknownColumnSchema]));
 const KNOWN_SHEET_KINDS = new Set<string>(SheetSummarySchema.shape.kind.options);
 const TolerantSheetKindSchema = z.string().transform((kind): SheetKind => {
   if (KNOWN_SHEET_KINDS.has(kind)) return kind as SheetKind;
@@ -230,6 +238,11 @@ export type AiColumnBody = {
 // kind's projection is the base's; plain is the kind with nothing else.
 export const COLUMN_TYPES = PlainColumnSchema.shape.type.options;
 export const COLUMN_LABEL_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.label.maxLength;
+export const COLUMN_KEY_MAX_LENGTH: number = WIRE_BOUNDS.PlainColumn.key.maxLength;
+/** Keys no column may take (they shadow a route): the server's set. */
+export const RESERVED_COLUMN_KEYS: readonly string[] = WIRE_CONSTANTS.RESERVED_COLUMN_KEYS;
+/** A sheet's label at most (and so a signal's name), the server's bound. */
+export const SHEET_LABEL_MAX_LENGTH: number = WIRE_CONSTANTS.SHEET_LABEL_MAX_LENGTH;
 export type ColumnType = SheetColumn["type"];
 
 /** One definition of a column's numeric-ness: right-alignment in the
@@ -712,7 +725,7 @@ export type { IngestColumn, IngestSchema };
 // The server owns the type enum, so the read is tolerant like the
 // sheet's: a type this bundle has not heard of renders as text.
 const KNOWN_INGEST_TYPES = new Set<string>(IngestColumnSchema.shape.type.options);
-const TolerantIngestSchemaSchema = z.object({
+export const TolerantIngestSchemaSchema = z.object({
   columns: z.array(
     z.object({
       key: z.string(),

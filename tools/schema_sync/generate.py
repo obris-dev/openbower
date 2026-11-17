@@ -28,6 +28,7 @@ from pydantic.json_schema import models_json_schema
 
 from openbower_schema import (
     API_KEY_NAME_MAX_LENGTH,
+    CUSTOM_SIGNAL_TYPE,
     MAX_API_KEYS,
     AgentCatalog,
     AgentsList,
@@ -36,6 +37,7 @@ from openbower_schema import (
     ApiKeysList,
     AuthUser,
     ColumnPromptWire,
+    CustomSignalCreated,
     FillRunPage,
     FillRunWire,
     FoldersList,
@@ -43,8 +45,6 @@ from openbower_schema import (
     ImportResult,
     IngestAccepted,
     IngestSchema,
-    LogDetail,
-    LogsPage,
     NodeRunWire,
     PreviewRunWire,
     RowsAdded,
@@ -53,8 +53,11 @@ from openbower_schema import (
     SheetRowsPage,
     SheetsPage,
     SheetSummary,
+    SignalDetail,
     SignalEventsPage,
     SignalsCatalog,
+    SignalsPage,
+    SignalWebhook,
     SyncKeyReconnected,
     WebhookAttemptWire,
     WebhookColumnConfigWire,
@@ -85,6 +88,7 @@ from openbower_schema.fills import (
     SETTLED_CELL_STATES,
 )
 from openbower_schema.runs import NODE_RUN_STALE_SECONDS, OPEN_NODE_RUN_STATES
+from openbower_schema.sheets import MAX_SHEET_COLUMNS, RESERVED_COLUMN_KEYS, SHEET_LABEL_MAX_LENGTH
 from openbower_schema.webhooks import (
     DEFAULT_WEBHOOK_CADENCE_SECONDS,
     MAX_WEBHOOK_DESTINATIONS,
@@ -129,8 +133,10 @@ CONTRACT_MODELS: list[type[Any]] = [
     SheetSummary,
     SignalEventsPage,
     SignalsCatalog,
-    LogDetail,
-    LogsPage,
+    SignalDetail,
+    SignalsPage,
+    CustomSignalCreated,
+    SignalWebhook,
     SyncKeyReconnected,
     PreviewRunWire,
     NodeRunWire,
@@ -185,6 +191,12 @@ def build_schema() -> dict[str, Any]:
         # CellState so the client derives it instead of retyping it.
         "x-constants": {
             "API_KEY_NAME_MAX_LENGTH": API_KEY_NAME_MAX_LENGTH,
+            "MAX_SHEET_COLUMNS": MAX_SHEET_COLUMNS,
+            "SHEET_LABEL_MAX_LENGTH": SHEET_LABEL_MAX_LENGTH,
+            "RESERVED_COLUMN_KEYS": sorted(RESERVED_COLUMN_KEYS),
+            # The one signal type that is not a hosted type key: `type` is a
+            # plain string on the wire, so nothing else names it.
+            "CUSTOM_SIGNAL_TYPE": CUSTOM_SIGNAL_TYPE,
             "MAX_API_KEYS": MAX_API_KEYS,
             "NODE_RUN_ATTEMPTS": NODE_RUN_ATTEMPTS,
             "FREE_SEARCH_FILL_BUDGET": FREE_SEARCH_FILL_BUDGET,

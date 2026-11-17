@@ -16,7 +16,7 @@ from .errors import (
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
 )
-from .payloads import setup_payload
+from .payloads import listener_payload, preview_payload, setup_payload
 
 __all__ = [
     "KeySignalsClient",
@@ -31,5 +31,7 @@ __all__ = [
     "SignalsPreviewRunning",
     "SignalsUpstreamError",
     "SignalsUpstreamUnavailable",
+    "listener_payload",
+    "preview_payload",
     "setup_payload",
 ]

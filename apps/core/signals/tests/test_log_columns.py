@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from openbower_schema import MatchWire
+from openbower_schema import CUSTOM_SIGNAL_TYPE, MatchWire
 from sheets.services.sheets import cells_for_storage
 from signals.log_columns import FUNDING_COLUMNS, LOG_SHAPES, funding_cells
 
@@ -67,7 +67,8 @@ class FundingCellsTests(SimpleTestCase):
                 "other_investors": "Sample Capital, Demo Partners",
                 "hq": "Austin, Texas",
                 "source": "https://news.example.com/acme-series-a",
-                "published": "2026-11-09",
+                # FAILS if the moment is cut to its day.
+                "published": _AT,
                 "confidence": "0.93",
                 "reason": "A US robotics company raising a Series A.",
             },
@@ -76,8 +77,19 @@ class FundingCellsTests(SimpleTestCase):
     def test_every_value_fits_its_column_type(self):
         # What the append stores: no value the type would refuse.
         types = {column.key: column.type for column in FUNDING_COLUMNS}
-        _stored, mismatches = cells_for_storage(types, funding_cells(_match()), where="test")
+        stored, mismatches = cells_for_storage(types, funding_cells(_match()), where="test")
         self.assertEqual(mismatches, [])
+        # FAILS if Published is a date column again.
+        self.assertEqual(stored["published"], "2026-11-09T16:29:02Z")
+
+    def test_a_log_made_with_a_date_column_still_stores_the_day(self):
+        # Logs keep the columns they were created with: one made when
+        # Published was a date still takes the full moment, as its day.
+        types = {column.key: column.type for column in FUNDING_COLUMNS}
+        types["published"] = "date"
+        stored, mismatches = cells_for_storage(types, funding_cells(_match()), where="test")
+        self.assertEqual(mismatches, [])
+        self.assertEqual(stored["published"], "2026-11-09")
 
     def test_what_the_article_left_out_is_blank(self):
         cells = funding_cells(
@@ -97,3 +109,10 @@ class FundingCellsTests(SimpleTestCase):
         self.assertTrue(all(column.immutable for column in FUNDING_COLUMNS))
         self.assertEqual(len(FUNDING_COLUMNS), 12)
         self.assertEqual(LOG_SHAPES["funding"].columns, FUNDING_COLUMNS)
+
+
+class LogShapesTests(SimpleTestCase):
+    def test_no_log_shape_is_keyed_custom(self):
+        # FAILS if a hosted type is ever logged as custom: the create would
+        # route it to a custom signal instead.
+        self.assertNotIn(CUSTOM_SIGNAL_TYPE, LOG_SHAPES)

@@ -1,12 +1,13 @@
-"""The log poller PROCESS: CLI plumbing over PollLogsOperation (one log per
-step, signals/operations/log_poller.py), run as a kernel Daemon.
+"""The log poller PROCESS: CLI plumbing over PollLogsOperation (one polled
+source per step, signals/operations/log_poller.py), run as a kernel
+Daemon.
 
-Runs forever as the compose `log-poller` service: a log is polled the
+Runs forever as the compose `log-poller` service: a source is polled the
 moment it is due, and the idle (4 s) only follows a step that found none,
 so a match the signals service records reaches its log within seconds of
-the log's turn. Any number may run: a claim is a compare-and-set lease on
-the log. SIGTERM and SIGINT stop after the log in hand. `--once` polls
-until no log is due, then exits."""
+the source's turn. Any number may run: a claim is a compare-and-set lease
+on the source. SIGTERM and SIGINT stop after the source in hand. `--once`
+polls until no source is due, then exits."""
 
 from __future__ import annotations
 
@@ -26,10 +27,10 @@ HEARTBEAT_PATH = Path("/tmp/log_poller.heartbeat")
 
 
 class Command(BaseCommand):
-    help = "Fill every log from its listener's matches as they arrive (the compose log-poller; --once to drain)."
+    help = "Read every polled source into its log as matches arrive (the compose log-poller; --once to drain)."
 
     def add_arguments(self, parser) -> None:
-        parser.add_argument("--once", action="store_true", help="Poll until no log is due, then exit.")
+        parser.add_argument("--once", action="store_true", help="Poll until no source is due, then exit.")
 
     def handle(self, *args, **options) -> None:
         worker_id = f"{socket.gethostname()}:{os.getpid()}"

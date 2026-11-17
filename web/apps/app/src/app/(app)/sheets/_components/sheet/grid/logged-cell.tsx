@@ -1,14 +1,16 @@
 import type { ReactNode } from "react";
-import { CalendarClock } from "lucide-react";
 import { LocalTime, TIME_FORMAT, cn } from "@bower/ui";
 
+import { COLUMN_TYPE_META } from "../../../../_components/column-type-meta";
 import { LOGGED_WIDTH } from "./lib/column-sizing";
 
 // A log's own fact about each row, not a cell: when the row arrived. It
 // sits beside the gutter in every band, outside the columns, so cell
 // navigation, widths and the clipboard never see it; a press on it is
-// the row's, as on the gutter.
+// the row's, as on the gutter. It reads as a datetime column does: that
+// type's glyph and the same moment format.
 export const LOGGED_LABEL = "Logged";
+const LoggedIcon = COLUMN_TYPE_META.datetime.icon;
 
 function LoggedFrame({ className, rowId, children }: { className?: string; rowId?: string; children?: ReactNode }) {
   return (
@@ -22,12 +24,11 @@ function LoggedFrame({ className, rowId, children }: { className?: string; rowId
   );
 }
 
-/** The header's Logged cell, dressed as a column's head: a date and time,
- * so the date-time glyph beside the label. */
+/** The header's Logged cell, dressed as a datetime column's head. */
 export function LoggedHeader() {
   return (
     <LoggedFrame className="font-medium text-foreground">
-      <CalendarClock aria-hidden className="h-4 w-4 shrink-0 text-muted" />
+      <LoggedIcon aria-hidden className="h-4 w-4 shrink-0 text-muted" />
       <span className="min-w-0 truncate">{LOGGED_LABEL}</span>
     </LoggedFrame>
   );
@@ -42,7 +43,7 @@ export function LoggedTrackerCell() {
 export function LoggedCell({ rowId, at }: { rowId: string; at: string }) {
   return (
     <LoggedFrame rowId={rowId} className="whitespace-nowrap tabular-nums text-foreground">
-      <LocalTime iso={at} format={TIME_FORMAT.MINUTE} />
+      <LocalTime iso={at} format={TIME_FORMAT.STAMP} className="min-w-0 truncate" />
     </LoggedFrame>
   );
 }

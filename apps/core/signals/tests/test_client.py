@@ -186,7 +186,7 @@ class ClientCallsTests(_ClientTests):
     def test_catalog(self):
         catalog, sent = self._call((200, _CATALOG), "catalog")
         self.assertEqual((sent["method"], sent["url"]), ("GET", "http://localhost:8004/v1/signals"))
-        self.assertEqual(catalog.signals[0].signal, "funding")
+        self.assertEqual(catalog.types[0].type, "funding")
         self.assertEqual(catalog.limits.prompt_max_length, 8000)
 
     def test_signal_events_pages_by_cursor(self):

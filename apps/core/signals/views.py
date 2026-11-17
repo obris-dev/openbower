@@ -1,7 +1,13 @@
-"""`/v1/logs` (an account's logs: a sheet fed by one listener) and
-`/v1/signals` (the catalog, recent events and previews the Create-log
-screen reads). Session-authed; every signals call acts as the person, and
-every failure answers through one mapping so a refusal reads the same everywhere."""
+"""`/v1/signals` (an account's signals: a sheet of kind log fed by its
+sources; a custom signal's push at `/v1/signals/{id}/ingest`, its webhook
+URL at `/v1/signals/{id}/ingest/{token}`, that URL read back at
+`/v1/signals/{id}/webhook` and its rotate), and what
+the Create-signal screen reads: `/v1/signal-types` (the catalog and a
+type's recent events) and `/v1/signal-previews` (a setup tried before it
+is saved). Session-authed, but for the push, which an account API key may
+also make, and the webhook URL, whose token is its only credential; every
+signals call acts as a person, and every failure answers through one
+mapping so a refusal reads the same everywhere."""
 
 from __future__ import annotations
 
@@ -9,33 +15,60 @@ import datetime
 import logging
 from functools import cached_property
 
+from django.conf import settings
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotFound, PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from auth_client.authentication import AppSessionAuthentication
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from auth_client.downstream import DownstreamTokenRejected
+from auth_client.models import AppSession
 from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
 from openbower_kernel.pagination import next_cursor_from, parse_limit
-from openbower_schema import LogDetail, LogsPage, LogSummary, SyncKeyReconnected
-from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE
-from sheets.serializers import sheet_summary
+from openbower_schema import (
+    CUSTOM_SIGNAL_TYPE,
+    CustomSignalCreated,
+    SignalDetail,
+    SignalsPage,
+    SignalSummary,
+    SignalWebhook,
+    SourceSummary,
+    SyncKeyReconnected,
+)
+from resource_server import MachineTokenAuthentication
+from sheets.column_refusals import column_refusal_status
+from sheets.constants import DEFAULT_INDEX_PAGE, LABEL_MAX_LENGTH, MAX_INDEX_PAGE, IngestErrorCode, RowSource
+from sheets.ingest.accept import accept_push
+from sheets.ingest.refusals import PUSH_REFUSALS, push_refusal
+from sheets.models import Sheet
+from sheets.serializers import IngestRequest, ingest_schema_wire, sheet_summary
+from sheets.services.columns import ColumnRefused
 
+from .authentication import WebhookTokenAuthentication
 from .constants import KEY_LIMIT_DETAIL, PREVIEW_RUNNING_DETAIL, SignalsErrorCode
 from .operations.logs import (
+    CreateCustomSignalOperation,
     CreateLogOperation,
     DeleteLogOperation,
     EditLogOperation,
+    HostedNeedsSession,
+    IssuedWebhook,
     ListenerGone,
     Log,
+    NoWebhook,
     ReadLogOperation,
+    ReadWebhookOperation,
     ReconnectLogsOperation,
+    RotateWebhookOperation,
+    SetupOnCustomSignal,
     UnknownSignal,
+    require_hosted_type,
 )
 from .serializers import LogCreateRequest, LogPatchRequest, PreviewCreateRequest
-from .services.logs import LocalLog, LogNotFound, LogService
+from .services.logs import LocalLog, LogNotFound, LogService, SignalTakesNoPush, signal_type_of
 from .services.signals_client import (
     SignalsAccessDenied,
     SignalsClientRequestError,
@@ -43,8 +76,10 @@ from .services.signals_client import (
     SignalsPreviewRunning,
     SignalsUpstreamError,
     SignalsUpstreamUnavailable,
+    preview_payload,
     setup_payload,
 )
+from .services.webhook_tokens import WebhookTokenUnreadable
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +103,25 @@ def _as_api_error(exc: Exception) -> Exception:
     service (the sync key's mint) or the signals service. Anything else is
     left as raised."""
     if isinstance(exc, LogNotFound):
-        return NotFound("no log with that id")
+        return NotFound("no signal with that id")
     if isinstance(exc, ListenerGone):
         return _Relayed({"error": SignalsErrorCode.LISTENER_GONE, "detail": str(exc)}, status=409)
     if isinstance(exc, UnknownSignal):
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
+    if isinstance(exc, SignalTakesNoPush):
+        return _Relayed({"error": IngestErrorCode.NOT_APPENDABLE, "detail": str(exc)}, status=409)
+    if isinstance(exc, HostedNeedsSession):
+        return _Relayed({"error": SignalsErrorCode.HOSTED_NEEDS_SESSION, "detail": str(exc)}, status=400)
+    if isinstance(exc, WebhookTokenUnreadable):
+        return _Relayed({"error": SignalsErrorCode.WEBHOOK_UNREADABLE, "detail": str(exc)}, status=409)
+    if isinstance(exc, NoWebhook):
+        return _Relayed({"error": SignalsErrorCode.NO_WEBHOOK, "detail": str(exc)}, status=409)
+    if isinstance(exc, SetupOnCustomSignal):
+        return _Relayed({"error": SignalsErrorCode.SETUP_ON_CUSTOM_SIGNAL, "detail": str(exc)}, status=409)
+    if isinstance(exc, ColumnRefused):
+        # A custom signal's declared columns, classified as every column
+        # write is.
+        return _Relayed({"error": exc.code, "detail": str(exc)}, status=column_refusal_status(exc))
     if isinstance(exc, SignalsPreviewRunning):
         return _Relayed({**exc.body, "detail": PREVIEW_RUNNING_DETAIL}, status=exc.status)
     if isinstance(exc, SignalsClientRequestError):
@@ -97,27 +146,37 @@ def _as_api_error(exc: Exception) -> Exception:
     return exc
 
 
-def _summary(local_log: LocalLog) -> LogSummary:
+def _sources(local_log: LocalLog) -> list[SourceSummary]:
+    return [source.config.summary(source) for source in local_log.sources]
+
+
+def _last_polled(local_log: LocalLog) -> str | None:
+    """The latest read through by any of the log's polled sources."""
+    reads = [source.last_polled_at for source in local_log.sources if source.last_polled_at is not None]
+    latest = max(reads, default=None)
+    return _iso(latest)
+
+
+def _summary(local_log: LocalLog) -> SignalSummary:
     sheet = sheet_summary(local_log.sheet)
-    feed = local_log.feed
-    return LogSummary(
+    return SignalSummary(
         sheet=sheet,
-        listener_id=feed.listener_id,
-        signal=feed.signal,
+        type=signal_type_of(local_log),
+        sources=_sources(local_log),
         status=local_log.status,
-        last_polled_at=_iso(feed.last_polled_at),
+        last_polled_at=_last_polled(local_log),
     )
 
 
-def _detail(log: Log) -> LogDetail:
+def _detail(log: Log) -> SignalDetail:
     sheet = sheet_summary(log.local_log.sheet)
-    feed = log.local_log.feed
-    return LogDetail(
+    return SignalDetail(
         sheet=sheet,
+        type=signal_type_of(log.local_log),
+        sources=_sources(log.local_log),
         listener=log.listener,
-        signal=feed.signal,
         status=log.local_log.status,
-        last_polled_at=_iso(feed.last_polled_at),
+        last_polled_at=_last_polled(log.local_log),
     )
 
 
@@ -125,7 +184,44 @@ def _iso(at: datetime.datetime | None) -> str | None:
     return None if at is None else at.isoformat()
 
 
-class _SignalsView(ScopedView):
+def _webhook_url(sheet_id: str, token: str) -> str:
+    """The URL a sender is given. Spelled out: the routes' optional-slash
+    include reverses without the slash after the prefix."""
+    return f"{settings.BASE_URL}/{settings.API_VERSION_PREFIX}/signals/{sheet_id}/ingest/{token}"
+
+
+def _issued(issued: IssuedWebhook) -> CustomSignalCreated:
+    """The signal's detail plus its webhook URL (the create and a rotate)."""
+    sheet_id = issued.log.local_log.sheet_id
+    url = _webhook_url(sheet_id, issued.token)
+    detail = _detail(issued.log)
+    fields = detail.model_dump()
+    return CustomSignalCreated(**fields, webhook_url=url)
+
+
+def _accept_push(sheet: Sheet, request: Request) -> Response:
+    """A push to a custom signal, by whichever lane let it in: the sheets
+    push envelope validated, accepted onto the bus as the request's user,
+    and answered with the receipt or the push's refusal. Every push route
+    calls this, so a step a push takes is taken on each."""
+    body = IngestRequest(data=request.data)
+    body.is_valid(raise_exception=True)
+    user = request.user
+    try:
+        accepted = accept_push(
+            sheet,
+            body.validated_data["rows"],
+            request_id=body.validated_data.get("request_id"),
+            account_id=user.account_id,
+            user_id=user.id,
+            source=RowSource.SIGNAL,
+        )
+    except PUSH_REFUSALS as e:
+        return push_refusal(e)
+    return Response(accepted.model_dump(), status=202)
+
+
+class _SignalsScopedView(ScopedView):
     """Every signals and identity failure answers through `_as_api_error`,
     so a refusal reads the same on every route."""
 
@@ -141,24 +237,102 @@ class _SignalsView(ScopedView):
         return SignalsClientService.for_session(self.request.auth)
 
 
-class LogsView(_SignalsView):
+class SignalsView(_SignalsScopedView):
     def get(self, request: Request) -> Response:
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
         logs = self.logs.page(after_id=request.query_params.get("after", ""), limit=limit)
         items = [_summary(log) for log in logs]
         next_cursor = next_cursor_from(logs, limit=limit, cursor=lambda log: log.sheet_id)
-        page = LogsPage(items=items, next_cursor=next_cursor)
+        page = SignalsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
+
+    def get_authenticators(self):
+        # A create also takes an API key, so a sender can provision its own
+        # custom signal; reading the account's signals stays a person's.
+        if self.request.method == "POST":
+            return [AppSessionAuthentication(), MachineTokenAuthentication()]
+        return super().get_authenticators()
 
     def post(self, request: Request) -> Response:
         body = LogCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
-        log = CreateLogOperation(request.auth, **body.validated_data).run()
+        fields = dict(body.validated_data)
+        signal_type = fields.pop("type")
+        user = request.user
+        if signal_type == CUSTOM_SIGNAL_TYPE:
+            operation = CreateCustomSignalOperation(account_id=user.account_id, user_id=user.id, **fields)
+            issued = operation.run()
+            created = _issued(issued)
+            return Response(created.model_dump(), status=201)
+        if not isinstance(request.auth, AppSession):
+            raise HostedNeedsSession(signal_type)
+        log = CreateLogOperation(request.auth, signal_type=signal_type, **fields).run()
         detail = _detail(log)
         return Response(detail.model_dump(), status=201)
 
 
-class LogsReconnectView(_SignalsView):
+class SignalIngestView(_SignalsScopedView):
+    """POST /v1/signals/{id}/ingest: rows pushed to a custom signal, the
+    sheets push endpoint's envelope and answers (a 202 receipt; the rows
+    land off the bus), pushed with an account API key or a session. A
+    signal with no webhook source takes no push."""
+
+    authentication_classes = [AppSessionAuthentication, MachineTokenAuthentication]
+
+    def get(self, request: Request, id: str) -> Response:
+        """GET /v1/signals/{id}/ingest: the pushable row schema, the
+        columns a sender owns with their keys and types (the sheets push
+        endpoint's own), so a push can be built without guessing."""
+        sheet = self.logs.push_target(id)
+        return Response(ingest_schema_wire(sheet))
+
+    def post(self, request: Request, id: str) -> Response:
+        sheet = self.logs.push_target(id)
+        return _accept_push(sheet, request)
+
+
+class SignalWebhookIngestView(_SignalsScopedView):
+    """POST /v1/signals/{id}/ingest/{token}: the webhook URL a sender is
+    given. The same envelope, answers and refusals as /ingest, with no
+    session and no API key: the token in the path is the credential
+    (WebhookTokenAuthentication), and the push is the signal's creator's.
+    Resolved in one read, so a push touches only the database and the bus."""
+
+    authentication_classes = [WebhookTokenAuthentication]
+
+    def get(self, request: Request, id: str, token: str) -> Response:
+        """The pushable row schema, as GET /ingest serves it."""
+        grant = request.auth
+        return Response(ingest_schema_wire(grant.sheet))
+
+    def post(self, request: Request, id: str, token: str) -> Response:
+        grant = request.auth
+        return _accept_push(grant.sheet, request)
+
+
+class SignalWebhookView(_SignalsScopedView):
+    """GET /v1/signals/{id}/webhook: a custom signal's webhook URL, for a
+    signed-in person to copy any time (the token is kept encrypted beside
+    its hash). Session only: the URL is not a credential for this route."""
+
+    def get(self, request: Request, id: str) -> Response:
+        issued = ReadWebhookOperation(request.auth, id).run()
+        url = _webhook_url(issued.log.local_log.sheet_id, issued.token)
+        body = SignalWebhook(webhook_url=url)
+        return Response(body.model_dump())
+
+
+class SignalWebhookRotateView(_SignalsScopedView):
+    """POST /v1/signals/{id}/webhook/rotate: a new webhook URL for a custom
+    signal; the old one stops working at once."""
+
+    def post(self, request: Request, id: str) -> Response:
+        issued = RotateWebhookOperation(request.auth, id).run()
+        rotated = _issued(issued)
+        return Response(rotated.model_dump())
+
+
+class SignalsReconnectView(_SignalsScopedView):
     def post(self, request: Request) -> Response:
         replaced = ReconnectLogsOperation(request.auth).run()
         body = SyncKeyReconnected(
@@ -167,7 +341,7 @@ class LogsReconnectView(_SignalsView):
         return Response(body.model_dump())
 
 
-class LogDetailView(_SignalsView):
+class SignalDetailView(_SignalsScopedView):
     def get(self, request: Request, id: str) -> Response:
         log = ReadLogOperation(request.auth, id).run()
         detail = _detail(log)
@@ -185,38 +359,47 @@ class LogDetailView(_SignalsView):
         return Response(status=204)
 
 
-class SignalsCatalogView(_SignalsView):
+class SignalTypesView(_SignalsScopedView):
     def get(self, request: Request) -> Response:
         catalog = self.signals.catalog()
         # A signal's name is its sheet's label too, so the limit a form
         # holds it to is the tighter of the two.
         limits = catalog.limits
         limits.label_max_length = min(limits.label_max_length, LABEL_MAX_LENGTH)
+        # `custom` is the app's own type (a signal a sender pushes to): a
+        # hosted type by that name would be created as a custom signal, so
+        # it is never offered.
+        offered = [kind for kind in catalog.types if kind.type != CUSTOM_SIGNAL_TYPE]
+        if len(offered) != len(catalog.types):
+            logger.warning("signals: the catalog names a hosted type %r; not offered", CUSTOM_SIGNAL_TYPE)
+        catalog.types = offered
         return Response(catalog.model_dump())
 
 
-class SignalEventsView(_SignalsView):
-    def get(self, request: Request, signal: str) -> Response:
+class SignalTypeEventsView(_SignalsScopedView):
+    def get(self, request: Request, signal_type: str) -> Response:
+        require_hosted_type(signal_type)
         after = request.query_params.get("after") or None
         limit = parse_limit(request, default=DEFAULT_INDEX_PAGE, maximum=MAX_INDEX_PAGE)
-        page = self.signals.signal_events(signal=signal, after=after, limit=limit)
+        page = self.signals.signal_events(signal=signal_type, after=after, limit=limit)
         return Response(page.model_dump())
 
 
-class PreviewsView(_SignalsView):
+class SignalPreviewsView(_SignalsScopedView):
     def post(self, request: Request) -> Response:
         body = PreviewCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
         data = body.validated_data
+        require_hosted_type(data["type"])
         setup = setup_payload(
             filter=data["filter"], prompt=data.get("prompt"), min_confidence=data.get("min_confidence")
         )
-        payload = {"signal": data["signal"], "event_ids": data["event_ids"], **setup}
+        payload = preview_payload(signal_type=data["type"], event_ids=data["event_ids"], setup=setup)
         preview = self.signals.create_preview(payload=payload)
         return Response(preview.model_dump(), status=202)
 
 
-class PreviewDetailView(_SignalsView):
+class SignalPreviewView(_SignalsScopedView):
     def get(self, request: Request, id: str) -> Response:
         preview = self.signals.preview(preview_id=id)
         return Response(preview.model_dump())

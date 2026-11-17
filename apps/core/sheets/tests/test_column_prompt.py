@@ -17,6 +17,7 @@ from agents.models import Agent
 from agents.services import AgentService
 from common.testing import TEST_IDENTITY, login_session
 from openbower_schema.agents import PROMPT_MAX_LENGTH, AgentConfig, AgentOutput, AgentTools
+from sheets.rows import rows_without_external_ids
 
 from ..services.sheets import SheetService
 from .fill_helpers import post_ai_column
@@ -43,7 +44,9 @@ class ColumnPromptTestCase(TestCase):
             columns=[{"kind": "plain", "key": "company", "label": "Company", "type": "text"}],
             origin="manual",
         )
-        self.sheets.add_rows(self.sheet, [{"company": "acme.com"}, {"company": "example.io"}])
+        self.sheets.add_rows(
+            self.sheet, rows_without_external_ids([{"company": "acme.com"}, {"company": "example.io"}])
+        )
         patcher = patch("sheets.services.runnable.model_for")
         patcher.start()
         self.addCleanup(patcher.stop)

@@ -16,6 +16,7 @@ from openbower_schema.cell_types import CellTypeMismatch, normalize_row, validat
 from sheets.cells import AnsweredWrite, CellWrite, LandingContext, RowLanding, TypedWrite
 from sheets.constants import CELL_MAX_LENGTH, CellSource, ColumnType, SheetOrigin, StoredCellState
 from sheets.models import SheetCellState, SheetRow
+from sheets.rows import rows_without_external_ids
 from sheets.services.sheets import CellWrittenTwice, RowNotFound, SheetNotFound, SheetService
 
 _COLUMNS = [
@@ -60,7 +61,7 @@ def _recorded_sheet(service: SheetService, rows: list[dict[str, str]]):
     target = service.create(
         owner_id="01US" + "A" * 22, label="Recorded", columns=_RECORDED_COLUMNS, origin=SheetOrigin.CSV
     )
-    created = service.add_rows(target, [{} for _ in rows])
+    created = service.add_rows(target, rows_without_external_ids([{} for _ in rows]))
     for row, data in zip(created, rows, strict=True):
         SheetRow.objects.filter(id=str(row.id)).update(data=data)
     return target, service.rows_page(target, limit=len(rows))
@@ -68,7 +69,7 @@ def _recorded_sheet(service: SheetService, rows: list[dict[str, str]]):
 
 def _sheet(service: SheetService, rows: list[dict[str, str]]):
     target = service.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.CSV)
-    service.add_rows(target, rows)
+    service.add_rows(target, rows_without_external_ids(rows))
     return target, service.rows_page(target, limit=len(rows))
 
 
@@ -558,10 +559,67 @@ class DateValidatorTests(TestCase):
             with self.assertRaises(CellTypeMismatch):
                 validate_cell(ColumnType.DATE, raw)
 
+    def test_a_date_and_time_keeps_the_day_it_states(self):
+        # FAILS if the moment is refused (a sender with a timestamp means
+        # its day) or moved to UTC first: Friday evening in LA is Friday.
+        for raw, stored in [
+            ("2026-11-16T09:30:00Z", "2026-11-16"),
+            ("2026-11-16T23:30-08:00", "2026-11-16"),
+            ("2026-11-16 09:30", "2026-11-16"),
+        ]:
+            with self.subTest(raw=raw):
+                self.assertEqual(validate_cell(ColumnType.DATE, raw), stored)
+
     def test_refuses_impossible_calendar_dates(self):
         for raw in ["2024-13-01", "2024-02-30"]:
             with self.assertRaises(CellTypeMismatch):
                 validate_cell(ColumnType.DATE, raw)
+
+
+class DatetimeValidatorTests(TestCase):
+    def test_accepts_iso_moments_with_an_offset_and_stores_them_in_utc(self):
+        # FAILS if the offset is dropped instead of applied: the stored
+        # moment would be hours off the one sent.
+        for raw, stored in [
+            ("2026-11-16T12:00:00Z", "2026-11-16T12:00:00Z"),
+            ("2026-11-16T14:00+02:00", "2026-11-16T12:00:00Z"),
+            ("2026-11-16 12:00:00.250-05:00", "2026-11-16T17:00:00Z"),
+            ("2026-11-16t09:30-0500", "2026-11-16T14:30:00Z"),
+            ("2026-12-31T23:30:00-01:00", "2027-01-01T00:30:00Z"),
+        ]:
+            with self.subTest(raw=raw):
+                self.assertEqual(validate_cell(ColumnType.DATETIME, raw), stored)
+
+    def test_refuses_a_time_with_no_zone_by_name(self):
+        # A zoneless time names a different moment in every zone it is
+        # read in; refusing beats storing a guess.
+        with self.assertRaises(CellTypeMismatch) as caught:
+            validate_cell(ColumnType.DATETIME, "2026-11-16T12:00:00")
+        self.assertIn("no time zone", caught.exception.why)
+
+    def test_refuses_a_bare_date_and_other_shapes(self):
+        # FAILS if a date is told it lacks only a zone: adding Z to a bare
+        # date still fails, so the sender is pointed to the date type.
+        with self.assertRaises(CellTypeMismatch) as caught:
+            validate_cell(ColumnType.DATETIME, "2026-11-16")
+        self.assertIn("is a date", caught.exception.why)
+        self.assertIn("date column", caught.exception.why)
+        for raw in ["11/16/2026 12:00 PM", "Nov 16, 2026 12:00 UTC", "1763294400", "soon"]:
+            with self.subTest(raw=raw), self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.DATETIME, raw)
+
+    def test_refuses_impossible_moments(self):
+        for raw in ["2026-02-30T10:00Z", "2026-11-16T25:00Z", "2026-11-16T12:61:00Z"]:
+            with self.subTest(raw=raw), self.assertRaises(CellTypeMismatch):
+                validate_cell(ColumnType.DATETIME, raw)
+
+    def test_refuses_a_moment_that_leaves_the_calendar_in_utc(self):
+        # FAILS (with an OverflowError, a 500 on a push) if the move to UTC
+        # is not refused as a mismatch: both parse, and neither has a UTC year.
+        for raw in ["9999-12-31T23:30:00-01:00", "0001-01-01T00:30+01:00"]:
+            with self.subTest(raw=raw), self.assertRaises(CellTypeMismatch) as caught:
+                validate_cell(ColumnType.DATETIME, raw)
+            self.assertIn("outside the years", caught.exception.why)
 
 
 class PassThroughTests(TestCase):
@@ -575,11 +633,15 @@ class NormalizeRowTests(TestCase):
     it is unit-tested directly like the validators it wraps, not only
     incidentally through its callers."""
 
-    TYPES = {"score": "number", "when": "date", "name": "text"}
+    TYPES = {"score": "number", "when": "date", "at": "datetime", "name": "text"}
 
     def test_normalizes_typed_values_and_reports_no_mismatch(self):
-        normalized, mismatches = normalize_row(self.TYPES, {"score": "1,234", "when": "2024/8/3", "name": "Acme"})
-        self.assertEqual(normalized, {"score": "1234", "when": "2024-08-03", "name": "Acme"})
+        normalized, mismatches = normalize_row(
+            self.TYPES, {"score": "1,234", "when": "2024/8/3", "at": "2024-08-03T09:00+02:00", "name": "Acme"}
+        )
+        self.assertEqual(
+            normalized, {"score": "1234", "when": "2024-08-03", "at": "2024-08-03T07:00:00Z", "name": "Acme"}
+        )
         self.assertEqual(mismatches, [])
 
     def test_a_refused_value_is_returned_raw_and_recorded(self):
@@ -630,7 +692,7 @@ class LockGranularityTests(TransactionTestCase):
         sheet = sheets.create(
             owner_id="01US" + "A" * 22, label="Sheet", columns=_RECORDED_COLUMNS, origin=SheetOrigin.MANUAL
         )
-        sheets.add_rows(sheet, [{}])
+        sheets.add_rows(sheet, rows_without_external_ids([{}]))
         row = SheetRow.objects.get(sheet_id=str(sheet.id))
         flow = NodeRunFlow(worker_id="test:order")
         task = NodeRun.objects.create(
@@ -668,7 +730,7 @@ class LockGranularityTests(TransactionTestCase):
         from sheets.models import SheetCellState
         from sheets.nodes.registry import WEBHOOK
 
-        (other,) = sheets.add_rows(sheet, [{}])
+        (other,) = sheets.add_rows(sheet, rows_without_external_ids([{}]))
         SheetCellState.objects.create(
             account_id="01AC" + "A" * 22,
             sheet_id=str(sheet.id),
@@ -700,7 +762,7 @@ class LockGranularityTests(TransactionTestCase):
     def test_the_write_locks_the_row_and_not_the_sheet(self) -> None:
         sheets = SheetService(account_id="01AC" + "A" * 22)
         sheet = sheets.create(owner_id="01US" + "A" * 22, label="Sheet", columns=_COLUMNS, origin=SheetOrigin.MANUAL)
-        sheets.add_rows(sheet, [{"name": "acme"}])
+        sheets.add_rows(sheet, rows_without_external_ids([{"name": "acme"}]))
         row = SheetRow.objects.get(sheet_id=str(sheet.id))
         with CaptureQueriesContext(connection) as captured:
             sheets.land_row(

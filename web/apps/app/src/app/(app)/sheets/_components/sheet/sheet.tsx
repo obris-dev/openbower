@@ -19,7 +19,7 @@ import { MoreHorizontal, Pencil } from "lucide-react";
 import {
   deleteSheet,
   fetchAgentCatalog,
-  fetchLog,
+  fetchSignal,
   GENERIC_FAILURE,
   loginUrl, returnPath,
   postColumnFill,
@@ -28,7 +28,7 @@ import {
   type SheetColumn,
   type WebhookColumn,
   webRoutes,
-  type LogDetail,
+  type SignalDetail,
   type RenderableSheetRowsPage,
   type SheetDetail,
   type WebhookColumnBody,
@@ -83,7 +83,7 @@ export function Sheet({
   period: Period | null;
   /** A log's signal as the signals service had it at render; null on a
    * standard sheet, or when that read failed. */
-  initialLog: LogDetail | null;
+  initialLog: SignalDetail | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -119,7 +119,7 @@ export function Sheet({
   const refreshSignal = useCallback(async (): Promise<boolean> => {
     // The sheet's own detail too: its row count gates the footer, select
     // all and Export CSV, and Live is how a signal's count moves.
-    const [rowsRead, logRead] = await Promise.all([refreshLoaded(), fetchLog(detail.id), rereadDetail()]);
+    const [rowsRead, logRead] = await Promise.all([refreshLoaded(), fetchSignal(detail.id), rereadDetail()]);
     if (redirectIfUnauthenticated(logRead)) return false;
     if (logRead.status === "ok") setLog(logRead.data);
     // Answers for the rows, what the page's trouble line and a Refresh's

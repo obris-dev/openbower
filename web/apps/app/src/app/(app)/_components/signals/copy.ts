@@ -1,6 +1,6 @@
 // A signal's copy wherever its sheet or its row shows it: the Signals tab,
 // home, the signal's sheet and its settings.
-import { LOG_STATUS, UNKNOWN_LOG_STATUS, type LogStatus } from "@bower/api";
+import { SIGNAL_STATUS, UNKNOWN_SIGNAL_STATUS, type SignalStatus } from "@bower/api";
 
 export const EDIT_SIGNAL_ACTION = "Edit signal";
 // The marker on a sheet a signal fills, wherever the sheet is named.
@@ -13,19 +13,20 @@ export const HELD_PILL = { label: "Paused", tone: "warning" } as const;
 
 /** A status's pill: its words and its role, or none for a status this
  * bundle has not heard of (it claims nothing). */
-export const STATUS_PILL: Record<LogStatus, { label: string; tone: "quiet" | "warning" | "danger" } | null> = {
-  [LOG_STATUS.ACTIVE]: { label: "Active", tone: "quiet" },
-  [LOG_STATUS.RECONNECT]: { label: "Reconnect needed", tone: "warning" },
-  [LOG_STATUS.LISTENER_GONE]: { label: "Listener gone", tone: "danger" },
-  [LOG_STATUS.FULL]: { label: "Full", tone: "warning" },
-  [UNKNOWN_LOG_STATUS]: null,
+export const STATUS_PILL: Record<SignalStatus, { label: string; tone: "quiet" | "warning" | "danger" } | null> = {
+  [SIGNAL_STATUS.ACTIVE]: { label: "Active", tone: "quiet" },
+  [SIGNAL_STATUS.RECONNECT]: { label: "Reconnect needed", tone: "warning" },
+  [SIGNAL_STATUS.LISTENER_GONE]: { label: "Listener gone", tone: "danger" },
+  [SIGNAL_STATUS.FULL]: { label: "Full", tone: "warning" },
+  [SIGNAL_STATUS.WAITING]: { label: "Waiting", tone: "quiet" },
+  [UNKNOWN_SIGNAL_STATUS]: null,
 };
 
 // The banner: what stops new rounds, and what a person does about it.
 export const BANNER_LISTENER_GONE =
   "This signal's listener is gone from the signals service, so no new rounds will arrive. Its rows stay in its sheet.";
 export const BANNER_RECONNECT = "New rounds are paused: this account's connection to signals stopped working.";
-export const BANNER_FULL = "Its sheet holds as many rows as it may, so no new rounds arrive. Delete rows to make room.";
+export const BANNER_FULL = "Its sheet holds as many rows as it may, so no new rows arrive. Delete rows to make room.";
 export const BANNER_HELD = "This signal's setup no longer fits the signals service, so it is paused until it is edited.";
 export const RECONNECT_ACTION = "Reconnect";
 export const RECONNECT_QUESTION = "Reconnect signals?";

@@ -25,10 +25,13 @@ from openbower_schema.sheets import (
 from openbower_schema.sheets import (
     COLUMN_LABEL_MAX_LENGTH as COLUMN_LABEL_MAX_LENGTH,
 )
+from openbower_schema.sheets import MAX_SHEET_COLUMNS as MAX_SHEET_COLUMNS
+from openbower_schema.sheets import RESERVED_COLUMN_KEYS as RESERVED_COLUMN_KEYS
+from openbower_schema.sheets import SHEET_LABEL_MAX_LENGTH
 from openbower_schema.webhooks import DEFAULT_WEBHOOK_CADENCE_SECONDS as DEFAULT_WEBHOOK_CADENCE_SECONDS
 from openbower_schema.webhooks import WEBHOOK_CADENCE_SECONDS as WEBHOOK_CADENCE_SECONDS
 
-LABEL_MAX_LENGTH = 120
+LABEL_MAX_LENGTH = SHEET_LABEL_MAX_LENGTH
 # Rows per sheet: sized to hold a full confident lead list.
 MAX_SHEET_ROWS = 50_000
 # Per-cell character ceiling, deliberately above the incumbent
@@ -53,10 +56,14 @@ RANK_REBALANCE_LENGTH = 32
 # A re-space waits for the sheet's open fills (a walk's cursor holds a
 # key of the old spacing); how long a waiting rerank sleeps between looks.
 RERANK_WAIT_SECONDS = 60
-# Idempotency key a webhook caller may supply on an ingest push (else one
-# is minted). Opaque to us: any scheme the caller dedupes on (a ULID, a
-# UUID, their own event id), bounded so it can key a store cheaply.
+# The push's request_id a caller may supply (else one is minted): the
+# ingest bus event's id and the dedupe ledger's event_id, hence the name.
+# Opaque to us: any scheme the caller dedupes on (a ULID, a UUID, their own
+# id), bounded so it can key a store cheaply.
 MAX_INGEST_EVENT_ID_LENGTH = 255
+# A sender's own id for one pushed row, compared exactly. Opaque to us,
+# bounded the same way so it keys a unique index cheaply.
+EXTERNAL_ID_MAX_LENGTH = 255
 # The ingest inbox (ProcessedIngestEvent) keeps a push's event_id this long
 # (2^21 s, about 24 days). It must outlast the ingest topic's retention: an
 # event redelivered after its inbox row is pruned would append twice.
@@ -71,10 +78,6 @@ DEFAULT_ROWS_PAGE = 50
 MAX_ROWS_PAGE = 200
 DEFAULT_INDEX_PAGE = 50
 MAX_INDEX_PAGE = 200
-MAX_SHEET_COLUMNS = 70
-# Column keys that would shadow a literal route under `columns/` (the
-# AI and webhook add collections): refused at every key claim.
-RESERVED_COLUMN_KEYS: frozenset[str] = frozenset({"ai", "webhook"})
 # Bounds the unpaged folder GET (the whole taxonomy ships at once).
 MAX_FOLDERS = 200
 # CSV uploads: a whole-CRM export fits comfortably; anything bigger is
@@ -123,6 +126,7 @@ class ColumnType(StrEnum):
     NUMBER = "number"
     CURRENCY = "currency"
     DATE = "date"
+    DATETIME = "datetime"
     URL = "url"
     EMAIL = "email"
 
@@ -240,13 +244,17 @@ class IngestErrorCode(StrEnum):
     # A push too big for one bus message (413): sending it again fails the
     # same way, so it is never a retryable 503.
     INGEST_TOO_LARGE = "ingest_too_large"
-    # A sheet whose rows arrive from its source only (a log) takes none
-    # from a push or a person (409).
+    # A sheet refused rows from a source its kind does not take
+    # (APPENDS_FROM): a log takes a signal's rows only, and a standard
+    # sheet anything but those (409).
     NOT_APPENDABLE = "not_appendable"
+    # A push carrying more rows than the sheet has room for (409): refused
+    # whole, as the append would refuse it.
+    SHEET_FULL = "sheet_full"
 
 
-# The sheet doors' refusals of a log, all 409: a log's label and life are
-# its listener's too, so it is renamed and deleted through /v1/logs.
+# The sheet routes' refusals of a log, all 409: a log's life is its
+# sources' too, so it is renamed and deleted through /v1/signals.
 class SheetErrorCode(StrEnum):
     LOG_ROUTE = "log_route"
 
@@ -415,14 +423,16 @@ CELL_SOURCE_MAX_LENGTH = 8
 
 class RowSource(StrEnum):
     """Where an append's rows come from, named at every call of the one
-    append (the row side of CellSource). A LOG takes rows from its FEED
-    only (what feeds it: a signal's matches today); a standard sheet
-    takes rows from anything but a feed."""
+    append (the row side of CellSource). Which sources each sheet kind
+    takes is declared in sheets.operations.append_rows.APPENDS_FROM."""
 
     MANUAL = "manual"  # a person: POST rows, the add-rows bar (as CellSource.MANUAL)
-    PUSH = "push"  # the ingest consumer (an API key's push)
+    PUSH = "push"  # a sheet's own push endpoint (an API key's or a session's push)
     IMPORT = "import"  # a CSV import, into the sheet it creates
-    FEED = "feed"  # what feeds a log
+    # One of a signal's sources (a hosted listener's matches, a webhook's
+    # push); which source may feed which signal is the signals app's to
+    # decide at its own endpoint.
+    SIGNAL = "signal"
 
 
 class CellSource(StrEnum):

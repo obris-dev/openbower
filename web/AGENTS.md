@@ -43,10 +43,12 @@ violation shipped once and got caught).
   holding the real layout's shape (same grid, same heights, pulse with
   `motion-reduce:animate-none`), never a blank beat.
 - A moment on screen reads in the READER'S time zone: render it with
-  `LocalTime` (`@bower/ui`, `TIME_FORMAT.DAY` or `MINUTE`), never a
-  hand-pinned `toLocaleString`. The server cannot know the zone, so the
-  server render and its hydration read in UTC (a minute names it) and
-  the browser renders the local reading straight after. The webhook
+  `LocalTime` (`@bower/ui`, `TIME_FORMAT.DAY`, `MINUTE`, or `STAMP`, the
+  minute with its year, for a moment that can fall in any year: a
+  datetime cell, a log's Logged time), never a hand-pinned
+  `toLocaleString`. The server cannot know the zone, so the server render
+  and its hydration read in UTC (a time of day names it) and the browser
+  renders the local reading straight after. The webhook
   delivery log keeps its own UTC-with-seconds format (`formatTime`):
   it is matched against a receiver's log, which reads in UTC.
 - Every route group carries `error.tsx` (the house PageState + retry
@@ -199,7 +201,8 @@ violation shipped once and got caught).
   and can be refused there, so the question holds still until it
   answers (a popover closes on an outside click mid-request), and asks
   the same way wherever it is offered (a signal's row menu, its
-  settings footer, what is left of a gone one) rather than inline in
+  settings footer, a custom signal's page header, what is left of a gone
+  one) rather than inline in
   one place and in a dialog in another; and a
   signal's Reconnect, which waits on the identity service for a fresh
   key, asked from its pill or banner. Polaris opens a modal for every such decision; the

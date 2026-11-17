@@ -20,7 +20,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from common.testing import TEST_IDENTITY, login_session
-from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, IngestErrorCode, SheetOrigin
+from sheets.constants import MAX_INGEST_EVENT_ID_LENGTH, MAX_ROWS_PER_ADD, MAX_SHEET_ROWS, IngestErrorCode, SheetOrigin
 from sheets.ingest import from_wire
 from sheets.models import Sheet
 from sheets.serializers import ingest_schema_wire
@@ -97,19 +97,19 @@ class IngestMachineTests(TestCase):
 
     def test_machine_key_push_is_accepted_and_published(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}, {"domain": "example.io"}]})
         self.assertEqual(resp.status_code, 202)
         body = resp.json()
         self.assertEqual(body["accepted"], 2)
-        self.assertTrue(body["event_id"])
+        self.assertTrue(body["request_id"])
         # Exactly one event, carrying the rows bound to this sheet + account.
         self.assertEqual(len(captured), 1)
         event = captured[0]
         self.assertEqual(event.sheet_id, self.sheet_id)
         self.assertEqual(event.account_id, _ACCT)
-        self.assertEqual([r["domain"] for r in event.rows], ["acme.com", "example.io"])
-        self.assertEqual(event.event_id, body["event_id"])
+        self.assertEqual([r.cells["domain"] for r in event.rows], ["acme.com", "example.io"])
+        self.assertEqual(event.event_id, body["request_id"])
 
     def test_the_old_path_still_takes_a_key_push(self):
         # API keys pushed to /v1/lists before the rename; the alias keeps
@@ -118,7 +118,7 @@ class IngestMachineTests(TestCase):
         self.assertTrue(reverse("sheets_ingest", kwargs={"id": self.sheet_id}).startswith("/v1/sheets"))
         captured: list = []
         with (
-            patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)),
+            patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)),
             patch("resource_server.idp.transport.httpx.get", return_value=_FakeResponse(200, _claims())),
         ):
             listed = self.client.get("/v1/lists", HTTP_AUTHORIZATION="Bearer obw_live")
@@ -133,25 +133,25 @@ class IngestMachineTests(TestCase):
         self.assertEqual(pushed.status_code, 202)
         self.assertEqual([event.sheet_id for event in captured], [self.sheet_id])
 
-    def test_a_caller_supplied_event_id_is_used_as_the_idempotency_key(self):
+    def test_a_caller_supplied_request_id_is_used_as_the_idempotency_key(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
-            resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": "caller-key-123"})
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
+            resp = self._ingest({"rows": [{"domain": "acme.com"}], "request_id": "caller-key-123"})
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(resp.json()["event_id"], "caller-key-123")
+        self.assertEqual(resp.json()["request_id"], "caller-key-123")
         self.assertEqual(captured[0].event_id, "caller-key-123")
 
     def test_a_minted_ulid_is_used_when_none_supplied(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self._ingest({"rows": [{"domain": "acme.com"}]})
-        minted = resp.json()["event_id"]
+        minted = resp.json()["request_id"]
         self.assertEqual(len(minted), 26)  # a ULID
         self.assertEqual(captured[0].event_id, minted)
 
-    def test_a_blank_event_id_is_rejected_400(self):
+    def test_a_blank_request_id_is_rejected_400(self):
         # A present-but-empty key is a client bug, not a request to mint.
-        resp = self._ingest({"rows": [{"domain": "acme.com"}], "event_id": ""})
+        resp = self._ingest({"rows": [{"domain": "acme.com"}], "request_id": ""})
         self.assertEqual(resp.status_code, 400)
 
     def test_interim_publisher_does_not_append_rows_yet(self):
@@ -181,8 +181,8 @@ class IngestMachineTests(TestCase):
         resp = self._ingest({"rows": [{"domain": "x"}] * (MAX_ROWS_PER_ADD + 1)})
         self.assertEqual(resp.status_code, 400)
 
-    def test_over_length_event_id_is_400(self):
-        resp = self._ingest({"rows": [{"domain": "x"}], "event_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
+    def test_over_length_request_id_is_400(self):
+        resp = self._ingest({"rows": [{"domain": "x"}], "request_id": "x" * (MAX_INGEST_EVENT_ID_LENGTH + 1)})
         self.assertEqual(resp.status_code, 400)
 
     def test_a_publish_failure_is_503_not_a_dropped_202(self):
@@ -192,7 +192,7 @@ class IngestMachineTests(TestCase):
             def publish(self, event):
                 raise IngestPublishError("bus down")
 
-        with patch("sheets.views.get_ingest_publisher", return_value=_Boom()):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Boom()):
             resp = self._ingest({"rows": [{"domain": "acme.com"}]})
         self.assertEqual(resp.status_code, 503)
 
@@ -208,7 +208,7 @@ class IngestSessionTests(TestCase):
 
     def test_session_push_is_accepted_and_published(self):
         captured: list = []
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(captured)):
+        with patch("sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(captured)):
             resp = self.client.post(
                 reverse("sheets_ingest", kwargs={"id": self.sheet_id}),
                 {"rows": [{"domain": "acme.com"}]},
@@ -243,12 +243,26 @@ class IngestValidationTests(TestCase):
         )
 
     def _push(self, rows, capture=None):
-        with patch("sheets.views.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])):
+        with patch(
+            "sheets.ingest.accept.get_ingest_publisher", return_value=_Capture(capture if capture is not None else [])
+        ):
             return self.client.post(
                 reverse("sheets_ingest", kwargs={"id": self.sheet_id}),
                 {"rows": rows},
                 content_type="application/json",
             )
+
+    def test_a_push_past_the_row_cap_is_refused_before_publish(self):
+        # FAILS if a push that cannot fit is accepted: the append refuses the
+        # whole batch off the bus, after a 202, and no one hears it.
+        Sheet.objects.filter(id=self.sheet_id).update(row_count=MAX_SHEET_ROWS - 1)
+        captured: list = []
+        refused = self._push([{"score": 1}, {"score": 2}], captured)
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, IngestErrorCode.SHEET_FULL))
+        self.assertIn("room for 1 more", refused.json()["detail"])
+        self.assertEqual(captured, [])
+        fits = self._push([{"score": 1}], captured)
+        self.assertEqual((fits.status_code, len(captured)), (202, 1))
 
     def test_a_bad_number_is_refused_before_publish(self):
         captured: list = []
@@ -309,7 +323,7 @@ class IngestValidationTests(TestCase):
         captured: list = []
         resp = self._push([{"score": "1,234"}], captured)
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(captured[0].rows[0]["score"], "1234")  # not the raw "1,234"
+        self.assertEqual(captured[0].rows[0].cells["score"], "1234")  # not the raw "1,234"
 
     def test_an_oversized_cell_is_clamped_onto_the_bus_not_published_raw(self):
         # The POST runs cells_for_storage, which clamps to CELL_MAX_LENGTH
@@ -320,7 +334,7 @@ class IngestValidationTests(TestCase):
         captured: list = []
         resp = self._push([{"domain": "x" * (CELL_MAX_LENGTH + 50)}], captured)
         self.assertEqual(resp.status_code, 202)
-        self.assertEqual(len(captured[0].rows[0]["domain"]), CELL_MAX_LENGTH)  # clamped on the bus
+        self.assertEqual(len(captured[0].rows[0].cells["domain"]), CELL_MAX_LENGTH)  # clamped on the bus
 
     def test_the_problem_list_is_capped(self):
         # A wholly-malformed push cannot return a 400 as large as itself:
@@ -376,7 +390,7 @@ class IngestMessageSizeTests(TestCase):
         self.assertLess(len(sent[0]), 2 * len(_ACCENTED) + 512)
         # The worker reads it back as sent.
         decoded = from_wire(json.loads(sent[0]))
-        self.assertEqual(decoded.rows[0]["note"], _ACCENTED)
+        self.assertEqual(decoded.rows[0].cells["note"], _ACCENTED)
 
     def test_a_push_too_big_for_one_message_is_a_413(self):
         with override_settings(INGEST_MAX_MESSAGE_BYTES=2048):

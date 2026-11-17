@@ -12,10 +12,12 @@ from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# A CLOSED union on purpose: codegen emits a zod enum, so an unknown
-# type is a parse error, never a silently unstyled column. Types drive
-# RENDERING only.
-ColumnType = Literal["text", "number", "currency", "date", "url", "email"]
+# A CLOSED union on purpose: codegen emits a zod enum, so the contract
+# names every type (a client reading a newer server's columns maps a type
+# it has not heard of to text). Types drive rendering and gate landing:
+# the shape-ruled ones (cell_types) refuse a value that does not fit and
+# store the one that does in its canonical form.
+ColumnType = Literal["text", "number", "currency", "date", "datetime", "url", "email"]
 # The types as DATA (the SEARCH_PROVIDER_CHOICES idiom), and the type
 # an unrecognized declaration coerces to: shared vocabulary both apps
 # read off the contract instead of a sibling app's enum.
@@ -37,18 +39,27 @@ COLUMN_KEY_MAX_LENGTH = 40
 # and what every request naming a key is held to).
 COLUMN_KEY_GRAMMAR = r"^[a-z0-9_]+$"
 COLUMN_LABEL_MAX_LENGTH = 80
+# The columns a sheet holds at most (the server refuses one more; a form
+# declaring columns stops here).
+MAX_SHEET_COLUMNS = 70
+# A sheet's label (and so a signal's name) at most this long.
+SHEET_LABEL_MAX_LENGTH = 120
+# Column keys that would shadow a literal route under `columns/` (the AI and
+# webhook add collections): refused at every key claim, and checked by a
+# form that declares columns.
+RESERVED_COLUMN_KEYS: frozenset[str] = frozenset({"ai", "webhook"})
 
 
 def derive_column_key(label: str, *, key: str = "") -> str:
     """THE label-to-key derivation, for every path that puts a column
-    on a sheet: a CSV header, a blank column add, an agent output a
-    fill maps down. It lives on the CONTRACT because a fill decides
+    on a sheet: a CSV header, a blank column add, a custom signal's
+    declared columns, an agent output a fill maps down. It lives on the CONTRACT because a fill decides
     what an output key MEANS by matching it against the sheet's keys,
     so a second derivation anywhere does not produce a second key, it
     changes which column an output is judged against. What that match
     then does is fill admission's resolve_columns rule, stated there
     and nowhere else. The web mirrors this one function
-    (_components/agent-config/lib/output-key.ts)."""
+    (_components/column-key.ts)."""
     return re.sub(r"[^a-z0-9]+", "_", (key or label).lower()).strip("_")[:COLUMN_KEY_MAX_LENGTH]
 
 
@@ -151,15 +162,17 @@ class IngestColumn(BaseModel):
     label: str = Field(max_length=COLUMN_LABEL_MAX_LENGTH, description="Display label.")
     type: ColumnType = Field(
         description="The value's type: drives rendering, and the push is refused (400) when a sent "
-        "value does not satisfy it (number, currency, and date carry shape rules), so send values "
+        "value does not satisfy it (number, currency, date, and datetime carry shape rules), so send values "
         "of this type."
     )
 
 
 class IngestSchema(BaseModel):
-    """The pushable row shape for POST /v1/sheets/{id}/ingest: a row in the
-    push is a dict keyed by these columns' keys, each value validated
-    against the column's type on append. These are the columns a
+    """The pushable row shape for POST /v1/sheets/{id}/ingest: a row's
+    cells are keyed by these columns' keys, each value validated against
+    the column's type on append. A row is an envelope,
+    {external_id?, cells}, or a plain map of cells; a row whose
+    external_id the sheet already holds is skipped. These are the columns a
     producer owns; the ones the system fills are not here and are
     refused if sent, because their values arrive with the record of
     what filled them. A client builds a push off this without guessing
@@ -335,9 +348,9 @@ class RowsDeleted(BaseModel):
 
 class IngestAccepted(BaseModel):
     """The webhook accept receipt. Rows are accepted for asynchronous
-    append, not applied on the response; `event_id` correlates them."""
+    append, not applied on the response; `request_id` correlates them."""
 
-    event_id: str = Field(description="The push's idempotency key (caller-supplied, else a minted ULID).")
+    request_id: str = Field(description="The push's idempotency key (caller-supplied, else a minted ULID).")
     accepted: int = Field(description="Number of rows accepted.")
 
 
