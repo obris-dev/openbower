@@ -172,14 +172,37 @@ class CreateLogOperation(_LogOperation):
         return Log(local_log=local_log, listener=listener)
 
 
-class CreateCustomSignalOperation(_LogOperation):
+class HostedNeedsSession(Exception):
+    """A hosted signal created with an API key: its create mints the
+    account's sync key and its listener through a person's session, so only
+    a signed-in person creates one."""
+
+    def __init__(self, signal_type: str) -> None:
+        super().__init__(f"a {signal_type} signal is created signed in; an API key creates only a custom signal")
+        self.signal_type = signal_type
+
+
+class CreateCustomSignalOperation:
+    """A custom signal's create, by a signed-in person or an API key (a
+    sender that provisions its own signal): nothing in it reads the signals
+    service or needs a session, only the account and who created it."""
+
     def __init__(
-        self, session: AppSession, *, label: str, columns: list[DeclaredColumn], autofill: bool = True
+        self, *, account_id: str, user_id: str, label: str, columns: list[DeclaredColumn], autofill: bool = True
     ) -> None:
-        self.session = session
+        self.account_id = account_id
+        self.user_id = user_id
         self.label = label
         self.columns = columns
         self.autofill = autofill
+
+    @cached_property
+    def logs(self) -> LogService:
+        return LogService(account_id=self.account_id)
+
+    @cached_property
+    def tokens(self) -> WebhookTokenService:
+        return WebhookTokenService(account_id=self.account_id)
 
     def run(self) -> IssuedWebhook:
         """The sheet, its webhook source and the first token of its URL, in
@@ -187,10 +210,10 @@ class CreateCustomSignalOperation(_LogOperation):
         signals service for it."""
         with transaction.atomic():
             local_log = self.logs.create_custom(
-                owner_id=self.session.user_id, label=self.label, columns=self.columns, autofill=self.autofill
+                owner_id=self.user_id, label=self.label, columns=self.columns, autofill=self.autofill
             )
             source, _ = local_log.find(WebhookSource)
-            token = self.tokens.mint(source, user_id=self.session.user_id)
+            token = self.tokens.mint(source, user_id=self.user_id)
         return IssuedWebhook(log=Log(local_log=local_log, listener=None), token=token)
 
 

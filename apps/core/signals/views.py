@@ -23,6 +23,7 @@ from rest_framework.response import Response
 from auth_client.authentication import AppSessionAuthentication
 from auth_client.constants import ApiKeyRefusalCode, AuthErrorCode
 from auth_client.downstream import DownstreamTokenRejected
+from auth_client.models import AppSession
 from auth_client.services.api_keys import ApiKeyRefused
 from auth_client.services.oauth import AuthUpstreamError, AuthUpstreamUnavailable
 from common.views import ScopedView
@@ -53,6 +54,7 @@ from .operations.logs import (
     CreateLogOperation,
     DeleteLogOperation,
     EditLogOperation,
+    HostedNeedsSession,
     IssuedWebhook,
     ListenerGone,
     Log,
@@ -108,6 +110,8 @@ def _as_api_error(exc: Exception) -> Exception:
         return _Relayed({"error": SignalsErrorCode.UNKNOWN_SIGNAL, "detail": str(exc)}, status=400)
     if isinstance(exc, SignalTakesNoPush):
         return _Relayed({"error": IngestErrorCode.NOT_APPENDABLE, "detail": str(exc)}, status=409)
+    if isinstance(exc, HostedNeedsSession):
+        return _Relayed({"error": SignalsErrorCode.HOSTED_NEEDS_SESSION, "detail": str(exc)}, status=400)
     if isinstance(exc, WebhookTokenUnreadable):
         return _Relayed({"error": SignalsErrorCode.WEBHOOK_UNREADABLE, "detail": str(exc)}, status=409)
     if isinstance(exc, NoWebhook):
@@ -242,15 +246,26 @@ class SignalsView(_SignalsScopedView):
         page = SignalsPage(items=items, next_cursor=next_cursor)
         return Response(page.model_dump())
 
+    def get_authenticators(self):
+        # A create also takes an API key, so a sender can provision its own
+        # custom signal; reading the account's signals stays a person's.
+        if self.request.method == "POST":
+            return [AppSessionAuthentication(), MachineTokenAuthentication()]
+        return super().get_authenticators()
+
     def post(self, request: Request) -> Response:
         body = LogCreateRequest(data=request.data)
         body.is_valid(raise_exception=True)
         fields = dict(body.validated_data)
         signal_type = fields.pop("type")
+        user = request.user
         if signal_type == CUSTOM_SIGNAL_TYPE:
-            issued = CreateCustomSignalOperation(request.auth, **fields).run()
+            operation = CreateCustomSignalOperation(account_id=user.account_id, user_id=user.id, **fields)
+            issued = operation.run()
             created = _issued(issued)
             return Response(created.model_dump(), status=201)
+        if not isinstance(request.auth, AppSession):
+            raise HostedNeedsSession(signal_type)
         log = CreateLogOperation(request.auth, signal_type=signal_type, **fields).run()
         detail = _detail(log)
         return Response(detail.model_dump(), status=201)

@@ -247,14 +247,16 @@ def _key_claims(**over) -> dict:
 
 @override_settings(CORE_AUDIENCE=_CORE_AUD, TOKENINFO_MISS_LIMIT_PER_MINUTE=100000)
 class ApiKeyPushTests(TestCase):
-    """The developer form: an account API key pushes to a custom signal, and
-    reaches nothing else of the signals routes."""
+    """The developer form: an account API key pushes to a custom signal and
+    creates one (a sender provisioning its own), and reaches nothing else of
+    the signals routes."""
 
     def setUp(self) -> None:
         caches["default"].clear()
         caches["tokeninfo"].clear()
         login_session(self.client)
-        install(self, FakeSignals(), FakeIdentity())
+        self.signals = FakeSignals()
+        install(self, self.signals, FakeIdentity())
         created = self.client.post(reverse("signals_index"), _CUSTOM, content_type="application/json")
         self.log_id = created.json()["sheet"]["id"]
         self.key_client = Client()
@@ -283,8 +285,27 @@ class ApiKeyPushTests(TestCase):
         resp = self._as_key("post", url, {"rows": [{"title": "x"}]}, claims=other)
         self.assertEqual(resp.status_code, 404, resp.content)
 
+    def test_a_key_creates_a_custom_signal_in_its_own_account(self):
+        # FAILS if a sender can't provision its signal with a key, or the
+        # signal lands outside the key's account or as someone else's.
+        other = "01JQ" + "Y" * 22
+        body = {"type": CUSTOM_SIGNAL_TYPE, "label": "From a sender", "columns": [{"label": "Title", "type": "text"}]}
+        resp = self._as_key("post", reverse("signals_index"), body, claims=_key_claims(account_id=other))
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertIn("/ingest/", resp.json()["webhook_url"])
+        sheet = Sheet.objects.get(id=resp.json()["sheet"]["id"])
+        self.assertEqual((sheet.account_id, sheet.user_id), (other, TEST_IDENTITY["id"]))
+
+    def test_a_key_cannot_create_a_hosted_signal(self):
+        # FAILS if a key reaches a hosted create: it mints a sync key and a
+        # listener through a person's session, which a key does not have.
+        body = {"type": "funding", "label": "Rounds", "filter": {}}
+        resp = self._as_key("post", reverse("signals_index"), body)
+        self.assertEqual((resp.status_code, resp.json()["error"]), (400, SignalsErrorCode.HOSTED_NEEDS_SESSION))
+        self.assertEqual(self.signals.calls, [])
+
     def test_a_key_reaches_only_the_push(self):
-        # FAILS if the machine lane opens beyond the push: a key could read
-        # or delete an account's signals.
+        # FAILS if the machine lane opens beyond the push and the custom
+        # create: a key could read or delete an account's signals.
         listed = self._as_key("get", reverse("signals_index"))
         self.assertEqual(listed.status_code, 401, listed.content)
