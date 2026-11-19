@@ -469,14 +469,18 @@ class ManualFillTestCase(TransactionTestCase):
         self.assertEqual(calls, [])
         self.assertEqual(self.status(), "cancelled")
 
-    def test_the_answer_an_occupied_cell_refused_is_kept(self) -> None:
+    def test_a_row_whose_every_output_is_filled_is_not_asked(self) -> None:
         rows = self.sheets.rows_page(self.sheet, limit=10)
         type_cells(self.sheet, str(rows[0].id), {"answer": "mine, typed by hand"})
-        self.run_fill(answering_model(lambda prompt: "what the model found"))
+        prompts: list[str] = []
+        self.run_fill(answering_model(lambda prompt: prompts.append(prompt) or "what the model found"))
         task = NodeRun.objects.get(fill_run_id=str(self.fill.id), row_id=str(rows[0].id))
         row = SheetRow.objects.get(id=rows[0].id)
         self.assertEqual(row.data["answer"], "mine, typed by hand")
-        self.assertEqual(task.result["cells"]["answer"], "what the model found")
+        # FAILS if a row with nothing left to answer still spends a call.
+        self.assertEqual(task.result["cells"], {})
+        self.assertEqual(len(prompts), len(rows) - 1)
+        self.assertEqual(SheetCellState.objects.get(row_id=str(rows[0].id)).state, StoredCellState.FILLED)
 
 
 @override_settings(INGEST_KAFKA_BOOTSTRAP_SERVERS="kafka:9092")

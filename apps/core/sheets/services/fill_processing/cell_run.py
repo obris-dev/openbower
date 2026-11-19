@@ -23,6 +23,7 @@ statuses go on the task and the cell for the user to act on."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import NamedTuple
 
 from agents.runtime.answer import (
@@ -158,7 +159,7 @@ def _finish(cells: dict[str, str], record: CallRecord, declined: str) -> CellRun
     )
 
 
-def run_cell(config: AgentConfig, row_data: dict) -> CellRun:
+def run_cell(config: AgentConfig, row_data: dict, givens: Mapping[str, str] | None = None) -> CellRun:
     """One row's walk, from exactly TWO inputs: the config (the model,
     the schema, the toggles all derive from it) and the row. Cells are
     keyed by the config's OWN output keys: the runtime speaks
@@ -167,7 +168,7 @@ def run_cell(config: AgentConfig, row_data: dict) -> CellRun:
     the model from the config, its one source, raising ModelUnavailable
     config-tier before anything else can decide a blank."""
     try:
-        answered = CellAnswerer(config).answer(row_data)
+        answered = CellAnswerer(config).answer(row_data, givens)
     except EmptyRender:
         # The one all-blank row a config can legitimately produce:
         # every {{token}} rendered empty. Diagnosed by emptiness

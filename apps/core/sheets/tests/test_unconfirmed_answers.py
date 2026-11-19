@@ -36,7 +36,7 @@ ACCOUNT = TEST_IDENTITY["account_id"]
 USER = TEST_IDENTITY["id"]
 
 
-def _config(*keys: str) -> AgentConfig:
+def outputs_config(*keys: str) -> AgentConfig:
     return AgentConfig(
         prompt="Find the answer for {{company}}",
         provider="openai_compatible",
@@ -72,7 +72,7 @@ class UnconfirmedAnswerTests(TransactionTestCase):
         )
         self.sheets.add_rows(self.sheet, rows_without_external_ids([{"company": "acme.com"}]))
         with patch("sheets.services.runnable.model_for"):
-            _, fill = start_fill(str(self.sheet.id), account_id=ACCOUNT, user_id=USER, config=_config(*keys))
+            _, fill = start_fill(str(self.sheet.id), account_id=ACCOUNT, user_id=USER, config=outputs_config(*keys))
         JobRunner(worker_id="test:1").tick()
         from ..operations.consume_node_runs import handle_node_run
 

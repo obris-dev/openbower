@@ -205,7 +205,9 @@ live in a separate private repo.
   every occasion an agent owes a row only if some column of its has no
   cell record: a row attempted once, whatever came of it, is re-asked
   only by the user's own gesture, while a record in some columns alone
-  is a hand's work and the run fills the rest around it. (A webhook
+  is a hand's work and the run fills the rest around it: asked only for
+  the columns the row holds no value in, and told the values already
+  there as facts its answers must agree with. (A webhook
   owes a row once its barrier completes after its
   newest run; a failed cell never completes, so a barrier over it stays
   shut for that row until the user re-asks it.) A stopped or failed

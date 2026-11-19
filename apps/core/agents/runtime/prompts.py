@@ -20,6 +20,8 @@ never as prose."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from django.template import Context, Engine
 from django.template.base import VariableNode
 from django.template.defaulttags import DebugNode
@@ -128,3 +130,13 @@ def render_prompt(template: str, row_data: dict) -> str:
     described above. The web extracts ROOT variables with a mirrored
     regex to drive the preview inputs and chips."""
     return _ENGINE.from_string(template).render(Context(row_data, autoescape=False))
+
+
+def render_givens(givens: Mapping[str, str]) -> str:
+    """What the row already holds for the agent's other outputs, as
+    facts the answer must agree with: a run asked only for the rest
+    never contradicts a value it cannot replace. "" when none."""
+    if not givens:
+        return ""
+    lines = "\n".join(f"- {label}: {value}" for label, value in givens.items())
+    return f"\n\nAlready known for this row (treat as true; answer the rest consistently with it):\n{lines}"
