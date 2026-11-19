@@ -5,7 +5,7 @@ scripted FunctionModel through the patched model seam; everything else
 (sheets, admission, the state machine, landing, derived counters) is
 real.
 
-This module also HOSTS the shared model fixtures and `_patches` the
+This module also HOSTS the shared model fixtures and `model_patches` the
 autofill and preview suites import, so the one mock boundary (the
 model seam) is defined once.
 
@@ -116,7 +116,7 @@ def flaky_then_answering_model(value: str) -> FunctionModel:
     return FunctionModel(fn)
 
 
-def _patches(model):
+def model_patches(model):
     """The one mock boundary: the model seam. The claim-time gate in the
     agent kind's processor and the runtime's own resolve both read
     model_for, so both are patched to the scripted model."""
@@ -174,7 +174,7 @@ class ManualFillTestCase(TransactionTestCase):
         sheet order, making parked tasks DUE between passes so a retry
         comes round the way advancing the clock means it does."""
         fill = fill or self.fill
-        with _patches(model):
+        with model_patches(model):
             for pass_number in range(passes):
                 if pass_number:
                     NodeRun.objects.filter(fill_run_id=str(fill.id), not_before__isnull=False).update(
@@ -225,7 +225,12 @@ class ManualFillTestCase(TransactionTestCase):
         for task in NodeRun.objects.filter(fill_run_id=str(self.fill.id)):
             self.assertEqual(
                 task.result["assessments"]["answer"],
-                {"confidence": 0.62, "reason": "no record states the parent", "dropped": "Acme Holdings"},
+                {
+                    "confidence": 0.62,
+                    "reason": "no record states the parent",
+                    "unconfirmed": "Acme Holdings",
+                    "dropped": "Acme Holdings",
+                },
             )
 
     def test_a_model_that_omits_a_required_field_is_unparseable_not_silent(self) -> None:
@@ -315,12 +320,12 @@ class ManualFillTestCase(TransactionTestCase):
         first, second = (
             NodeRun.objects.filter(fill_run_id=str(self.fill.id)).order_by("rank", "id").values_list("id", flat=True)
         )
-        with _patches(answering_model(capture)):
+        with model_patches(answering_model(capture)):
             handle_node_run(str(first), WORKER)
         agents = AgentService(account_id=ACCOUNT)
         agent = agents.get_for_fill(consent_of(str(self.fill.id)).agent_id)
         agents.update(agent, config=agent.config().model_copy(update={"prompt": "A sharper ask for {{company}}"}))
-        with _patches(answering_model(capture)):
+        with model_patches(answering_model(capture)):
             handle_node_run(str(second), WORKER)
         self.assertEqual(len(seen), 2)
         self.assertNotIn("sharper", seen[0])
@@ -436,7 +441,7 @@ class ManualFillTestCase(TransactionTestCase):
         ).run()
         (arrived,) = report.created
         (run,) = list(NodeRun.objects.filter(row_id=str(arrived.id), fill_run_id=None))
-        with _patches(answering_model(lambda prompt: "found")):
+        with model_patches(answering_model(lambda prompt: "found")):
             handle_node_run(str(run.id), WORKER)
         arrived.refresh_from_db()
         self.assertEqual(arrived.data.get("answer"), "found")

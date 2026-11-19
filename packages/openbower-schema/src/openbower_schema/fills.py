@@ -73,6 +73,9 @@ class CellAssessment(BaseModel):
     confidence: float = 0.0
     reason: str = ""
     dropped: str = ""
+    # `dropped` as a person may be shown it: grounded, and "" when the
+    # run had no evidence to stand on ("" on runs before it existed).
+    unconfirmed: str = ""
 
 
 class CellRunResult(BaseModel):

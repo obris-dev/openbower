@@ -8,6 +8,7 @@
 export {
   AiCellState,
   CauseMark,
+  cellCauseSentence,
   DegradedToolMark,
   isDegradedFill,
   needsSearchProvider,

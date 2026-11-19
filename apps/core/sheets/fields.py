@@ -28,15 +28,16 @@ open; a closed union every reader touches belongs on the field. A
 signal's source config takes the field route though its roster is open
 too: every read of a source wants it typed, and its kind rides inside
 the stored config, so the field parses it alone (the kind column beside
-it is written from the config by save()). The
-app's second contract column, the row cells, is where the parse/dump
-pair becomes a parametrized base here, and not before. It stays
-app-local: the kernel carries no pydantic dependency."""
+it is written from the config by save()). A cell
+record's `detail` is the second typed column, so the parse/dump pair
+is one parametrized base here (`TypedJSONField`), each field naming
+its adapter. It stays app-local: the kernel carries no pydantic
+dependency."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from django.db import models
 from django.db.models.fields.json import KeyTransform
@@ -45,52 +46,71 @@ from pydantic import TypeAdapter
 
 from openbower_schema.sheets import SheetColumn
 
-_COLUMNS_ADAPTER = TypeAdapter(list[SheetColumn])
+from .cells import CellDetail
 
 
-def parse_columns(value: Any) -> list[SheetColumn]:
-    """Typed values from whatever a caller or the database hands over:
-    a JSON string, dicts, or already-typed values (idempotent)."""
-    if isinstance(value, str):
-        value = json.loads(value)
-    return _COLUMNS_ADAPTER.validate_python(value)
-
-
-def dump_columns(value: Any) -> list[dict[str, Any]]:
-    return [column.model_dump() for column in parse_columns(value)]
-
-
-class _ColumnsAttribute(DeferredAttribute):
+class _TypedAttribute(DeferredAttribute):
     def __set__(self, instance: models.Model, value: Any) -> None:
-        instance.__dict__[self.field.attname] = parse_columns(value)
+        instance.__dict__[self.field.attname] = self.field.parse(value)
 
 
-class SheetColumnsField(models.JSONField):
-    """The columns array: the contract's SheetColumn values in memory,
-    their dumps at rest, a plain JSONField to migrations."""
+class TypedJSONField(models.JSONField):
+    """A contract value in a JSON column: typed in memory, its dump at
+    rest, a plain JSONField to migrations. A subclass names its
+    adapter; a nullable field keeps None as None."""
 
-    descriptor_class = _ColumnsAttribute
+    adapter: ClassVar[TypeAdapter[Any]]
+    descriptor_class = _TypedAttribute
+
+    def parse(self, value: Any) -> Any:
+        """Typed values from whatever a caller or the database hands
+        over: a JSON string, dicts, or already-typed values (idempotent)."""
+        if value is None and self.null:
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        return self.adapter.validate_python(value)
+
+    def dump(self, value: Any) -> Any:
+        parsed = self.parse(value)
+        if parsed is None:
+            return None
+        return self.adapter.dump_python(parsed)
 
     def from_db_value(self, value: Any, expression: Any, connection: Any) -> Any:
         value = super().from_db_value(value, expression, connection)
-        # A key transform selects a fragment of the array, not the array.
+        # A key transform selects a fragment of the value, not the value.
         if isinstance(expression, KeyTransform):
             return value
-        return parse_columns(value)
+        return self.parse(value)
 
-    def to_python(self, value: Any) -> list[SheetColumn]:
-        return parse_columns(value)
+    def to_python(self, value: Any) -> Any:
+        return self.parse(value)
 
     def get_db_prep_value(self, value: Any, connection: Any, prepared: bool = False) -> Any:
-        return super().get_db_prep_value(dump_columns(value), connection, prepared)
+        return super().get_db_prep_value(self.dump(value), connection, prepared)
 
     def validate(self, value: Any, model_instance: models.Model | None) -> None:
-        super().validate(dump_columns(value), model_instance)
+        super().validate(self.dump(value), model_instance)
 
-    def value_to_string(self, obj: models.Model) -> list[dict[str, Any]]:
+    def value_to_string(self, obj: models.Model) -> Any:
         # The serializer encodes; a JSONField hands it the value.
-        return dump_columns(self.value_from_object(obj))
+        return self.dump(self.value_from_object(obj))
 
     def deconstruct(self) -> tuple[str, str, list[Any], dict[str, Any]]:
         name, _path, args, kwargs = super().deconstruct()
         return name, "django.db.models.JSONField", args, kwargs
+
+
+class SheetColumnsField(TypedJSONField):
+    """The columns array: the contract's SheetColumn values in memory,
+    their dumps at rest."""
+
+    adapter = TypeAdapter(list[SheetColumn])
+
+
+class CellDetailField(TypedJSONField):
+    """A cell record's detail: what its writer said about the cell
+    beyond its state, null when nothing."""
+
+    adapter = TypeAdapter(CellDetail)

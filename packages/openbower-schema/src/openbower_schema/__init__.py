@@ -40,6 +40,7 @@ from .logs import (
 from .runs import NodeRunWire
 from .sheets import (
     AiColumn,
+    CellDetailWire,
     FoldersList,
     FolderSummary,
     ImportResult,
@@ -112,6 +113,7 @@ __all__ = [
     "ApiKeysList",
     "AuthUser",
     "CatalogModel",
+    "CellDetailWire",
     "CellRunResult",
     "ColumnFillSummary",
     "ColumnPromptWire",

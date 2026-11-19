@@ -474,12 +474,10 @@ class StoredCellState(StrEnum):
     # infrastructure's doing and keeps a warning dot. Either way the
     # cell was attempted, and no fill re-asks it.
     NO_ANSWER = "no_answer"
-    # An answer arrived but failed provenance verification (uncited,
-    # a citation that resolved to nothing, or a contacts record that
-    # never tied the person to the row's own identity): the SERP was
-    # the best answer to the query, not the truth about this row.
-    # SETTLED like NO_ANSWER (the same config re-buys the same
-    # unconfirmable answer).
+    # An answer arrived but the model's own confidence did not clear the
+    # floor: the cell stays blank, and the record's detail keeps the
+    # answer, grounded, for a person to read and use. SETTLED like
+    # NO_ANSWER (the same config re-buys the same unsure answer).
     UNVERIFIED = "unverified"
     UNPARSEABLE = "unparseable"
     TYPE_MISMATCH = "type_mismatch"

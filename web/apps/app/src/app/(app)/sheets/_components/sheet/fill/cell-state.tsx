@@ -194,6 +194,23 @@ export function isDegradedFill(entry: RenderableCellStateWire | undefined): entr
   return entry !== undefined && entry.state === "filled" && degraded(entry.tools).length > 0;
 }
 
+/** The sentence a blank or degraded AI cell's mark speaks, for a
+ * surface that shows the cause in full (the cell details panel): the
+ * same copy the mark's panel uses, so the two never disagree. Null for
+ * a cell still being filled. */
+export function cellCauseSentence(entry: RenderableCellStateWire, searchProvider: SearchProviderChoice = null): string | null {
+  const state = entry.state as CellState | typeof UNKNOWN_CELL_STATE;
+  if (state === "pending") return null;
+  if ((SETTLED_CELL_STATES as readonly string[]).includes(state)) return SETTLED_CAUSES[state as SettledCause].cause;
+  if (state === "tool_not_configured" || state === "tool_unavailable" || state === "filled") {
+    const [first] = degraded(entry.tools);
+    if (!first) return state === "filled" ? null : "A tool did not serve this row";
+    const sentence = toolSentence(first[0], first[1], searchProvider);
+    return [sentence.cause, sentence.fix].filter(Boolean).join(". ");
+  }
+  return RETRYABLE_CAUSES[state as keyof typeof RETRYABLE_CAUSES] ?? null;
+}
+
 /** One AI cell's non-value state: `pending` shimmers (the Skeleton
  * primitive already honors prefers-reduced-motion), a SETTLED blank
  * speaks its quiet word in the cell (data-quiet: faint and small,

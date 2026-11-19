@@ -606,3 +606,11 @@ test("a webhook cell's state rides the one states record and an unknown one maps
     ["sent", "pending", UNKNOWN_CELL_STATE, null],
   );
 });
+
+test("an unverified cell's unconfirmed answer rides its state, and a state without one carries none", () => {
+  const page = renderablePage({
+    items: [{ states: { founder: { state: "unverified", tools: {}, unconfirmed: "Jane Doe" }, title: { state: "no_evidence" } } }],
+  });
+  assert.equal(page.items[0]!.states.founder!.unconfirmed, "Jane Doe");
+  assert.equal("unconfirmed" in page.items[0]!.states.title!, false);
+});

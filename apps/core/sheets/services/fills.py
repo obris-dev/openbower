@@ -175,12 +175,14 @@ class FillService:
         row_ids = [str(r.id) for r in rows]
         states: dict[str, dict[str, CellStateWire]] = {}
         recorded = self.cell_states.iter_recorded(str(target_sheet.id), row_ids=row_ids, column_keys=keys)
-        for row_id, column_key, state, tools in recorded:
+        for row_id, column_key, state, tools, detail in recorded:
             tools = tools or {}
             degraded = any(status != ToolStatus.OPEN for status in tools.values())
             if state == StoredCellState.FILLED and not degraded:
                 continue
-            states.setdefault(row_id, {})[column_key] = CellStateWire(state=state, tools=tools)
+            states.setdefault(row_id, {})[column_key] = CellStateWire(
+                state=state, tools=tools, unconfirmed=detail.unconfirmed if detail else ""
+            )
         # ONE read for every node column: the node that fills each cell,
         # whatever its kind, and its open runs over this page's rows.
         open_runs = NodeRun.objects.filter(

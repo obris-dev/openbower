@@ -252,9 +252,8 @@ WireCellState = Literal[
     # answer: the model's own verdict, so the sheet shows a quiet word
     # rather than a warning.
     "no_answer",
-    # An answer arrived but failed provenance verification (its
-    # citations never confirmed it for THIS row): the model's own
-    # verdict, a quiet word.
+    # An answer arrived but the model's own confidence did not clear the
+    # floor: a quiet word, the answer beside it as `unconfirmed`.
     "unverified",
     "unparseable",
     "type_mismatch",
@@ -289,6 +288,31 @@ class CellStateWire(BaseModel):
     # the JSON schema, so the generated client parses an entry without
     # the key instead of refusing it.
     tools: dict[str, str] = {}
+    unconfirmed: str = Field(
+        default="",
+        description="An unverified cell's answer, the one its run scored below the confidence floor: "
+        "shown, never a value (`data` stays blank until a person uses it). Empty otherwise.",
+    )
+
+
+# How sure the model was of an answer, as a person reads it. A level
+# describes the score, never whether the answer landed: that verdict
+# is the cell's state, given once when its run settled.
+ConfidenceLevel = Literal["very_high", "high", "medium", "low", "very_low"]
+CONFIDENCE_LEVELS: tuple[ConfidenceLevel, ...] = get_args(ConfidenceLevel)
+
+
+class CellDetailWire(BaseModel):
+    """What a cell's record says about it, read when a person opens the
+    cell: its state and, when an agent settled it, how sure the model
+    was and why. The answer itself is the row's (or the state's
+    `unconfirmed`), never repeated here."""
+
+    state: WireCellState | None = Field(
+        default=None, description="The cell's state; null for a cell no writer has reached."
+    )
+    level: ConfidenceLevel | None = None
+    reason: str = Field(default="", description="The model's own account of the evidence behind the answer.")
 
 
 class SheetRowWire(BaseModel):

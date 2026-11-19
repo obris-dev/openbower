@@ -23,7 +23,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+
+from pydantic import BaseModel, ConfigDict
 
 from .constants import CellSource, StoredCellState
 
@@ -55,6 +57,25 @@ class RowVerdict(NamedTuple):
         return frozenset(mismatch.key for mismatch in self.mismatched)
 
 
+class AgentCellDetail(BaseModel):
+    """What an agent's run said about the cell it settled: how sure the
+    model was, its reason, and (UNVERIFIED only) the answer it scored
+    under the floor, grounded. Never a value: nothing that reads row
+    data sees `unconfirmed`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["agent"] = "agent"
+    confidence: float
+    reason: str = ""
+    unconfirmed: str = ""
+
+
+# What a cell's writer said about it beyond its state. One writer
+# speaks today; a second becomes a union discriminated on `kind`.
+CellDetail = AgentCellDetail
+
+
 class StateWrite(NamedTuple):
     """The terminal shape: a cell's state as the thing to record. Every
     write resolves to one (or to nothing) once the row has spoken, and
@@ -63,6 +84,9 @@ class StateWrite(NamedTuple):
     key: str
     state: StoredCellState
     tools: Mapping[str, str] = {}
+    # None on every write with nothing to say, so restating a record
+    # clears what an earlier writer said.
+    detail: CellDetail | None = None
 
 
 @dataclass(frozen=True)
@@ -126,16 +150,23 @@ class AnsweredWrite(CellWrite):
 
     value: str | None
     cause: StoredCellState
+    # The run's judgement of this column's answer, None when it gave none.
+    judgement: AgentCellDetail | None = None
 
     def value_to_land(self) -> str | None:
         return self.value if self.value and self.value.strip() else None
 
     def resolve(self, verdict: RowVerdict) -> StateWrite:
-        if self.key in verdict.filled:
+        # The record explains only a value the cell shows: an occupied
+        # cell kept another value, a refused one shows none.
+        if self.key in verdict.written:
+            return StateWrite(self.key, StoredCellState.FILLED, self.tools, self.judgement)
+        if self.key in verdict.occupied:
             return StateWrite(self.key, StoredCellState.FILLED, self.tools)
         if self.key in verdict.refused:
             return StateWrite(self.key, StoredCellState.TYPE_MISMATCH, self.tools)
-        return StateWrite(self.key, self.cause, self.tools)
+        detail = self.judgement if self.cause == StoredCellState.UNVERIFIED else None
+        return StateWrite(self.key, self.cause, self.tools, detail)
 
 
 @dataclass(frozen=True)

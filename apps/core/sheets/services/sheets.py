@@ -575,7 +575,7 @@ class SheetService:
             untouched: list[CellRecord] = []
             for row_id, row in landed.items():
                 for state in row.cell_states:
-                    record = CellRecord(row_id, state.key, state.state, state.tools)
+                    record = CellRecord(row_id, state.key, state.state, state.tools, state.detail)
                     bucket = untouched if state.key in row.verdict.occupied else resolved
                     bucket.append(record)
             cell_truth.write_records(

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { UNKNOWN_COLUMN_KIND, type SheetColumn } from "@bower/api";
 
-import { acceptsPaste, copiedValueFor, holdsValue } from "./cell-clipboard.ts";
+import { acceptsPaste, copiedValueFor, holdsValue, shownText } from "./cell-clipboard.ts";
 
 const plain: SheetColumn = { key: "name", label: "Name", type: "text", kind: "plain", immutable: false };
 const ai: SheetColumn = { key: "a", label: "A", type: "text", kind: "ai", immutable: false, node_id: "n", current_fill_id: "" };
@@ -35,4 +35,12 @@ test("an immutable column copies its value and takes no paste", () => {
   assert.equal(copiedValueFor(base, "Acme"), "Acme");
   assert.equal(holdsValue(base), true);
   assert.equal(acceptsPaste(base), false);
+});
+
+test("a blank cell copies the unconfirmed answer it shows, a value outranks it", () => {
+  const states = { founder: { state: "unverified" as const, tools: {}, unconfirmed: "Jane Doe" } };
+  // FAILS if a blank cell showing an answer copies nothing.
+  assert.equal(shownText({ data: {}, states }, "founder"), "Jane Doe");
+  assert.equal(shownText({ data: { founder: "Ann Lee" }, states }, "founder"), "Ann Lee");
+  assert.equal(shownText({ data: {}, states: {} }, "founder"), "");
 });

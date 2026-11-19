@@ -497,9 +497,74 @@
           "default": "",
           "title": "Reason",
           "type": "string"
+        },
+        "unconfirmed": {
+          "default": "",
+          "title": "Unconfirmed",
+          "type": "string"
         }
       },
       "title": "CellAssessment",
+      "type": "object"
+    },
+    "CellDetailWire": {
+      "description": "What a cell's record says about it, read when a person opens the\ncell: its state and, when an agent settled it, how sure the model\nwas and why. The answer itself is the row's (or the state's\n`unconfirmed`), never repeated here.",
+      "properties": {
+        "level": {
+          "anyOf": [
+            {
+              "enum": [
+                "very_high",
+                "high",
+                "medium",
+                "low",
+                "very_low"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Level"
+        },
+        "reason": {
+          "default": "",
+          "description": "The model's own account of the evidence behind the answer.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "pending",
+                "filled",
+                "no_evidence",
+                "no_answer",
+                "unverified",
+                "unparseable",
+                "type_mismatch",
+                "model_error",
+                "transient",
+                "tool_not_configured",
+                "tool_unavailable",
+                "sent",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The cell's state; null for a cell no writer has reached.",
+          "title": "State"
+        }
+      },
+      "title": "CellDetailWire",
       "type": "object"
     },
     "CellRunResult": {
@@ -588,6 +653,12 @@
           "default": {},
           "title": "Tools",
           "type": "object"
+        },
+        "unconfirmed": {
+          "default": "",
+          "description": "An unverified cell's answer, the one its run scored below the confidence floor: shown, never a value (`data` stays blank until a person uses it). Empty otherwise.",
+          "title": "Unconfirmed",
+          "type": "string"
         }
       },
       "required": [
