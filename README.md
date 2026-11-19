@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Open-source sales intelligence
+  <b>Open-source, self-hostable Clay alternative</b>
 </p>
 
 <p align="center">
@@ -13,38 +13,21 @@
 <p align="center">
   <b><a href="https://openbower.ai/">openbower.ai</a></b> |
   <a href="#quickstart">Quickstart</a> |
-  <a href="#how-it-works">How it works</a> |
+  <a href="#features">Features</a> |
   <a href="CHANGELOG.md">Changelog</a> |
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
----
+<p>
+  <a href="https://openbower.ai/">
+    <img src="assets/readme/hero.webp" alt="A funding signal's sheet: each round logged as a row, with agent columns for the founder, their LinkedIn URL, what the company sells and a first line" width="100%">
+  </a>
+</p>
+
+OpenBower is the GTM orchestration layer you control. If Clay's credits are too expensive or its workflows too complex, self-host OpenBower and run your workflows at cost.
 
 > [!TIP]
 > **Don't want to run it yourself?** A hosted version is on the way: join the waitlist at [openbower.ai](https://openbower.ai/). Or run it on your own machine with one command, see [Quickstart](#quickstart).
-
-## What it does
-
-OpenBower is an open-source, self-hostable Clay alternative. Build agentic GTM workflows that turn raw signals into researched rows.
-
-<p align="center">
-  <img src="assets/sheet-tour.gif" alt="A sheet with two agent columns: four rows land, their cells resolve (the CEO and LinkedIn profile, what the company sells and to whom), and the sheet settles" width="900">
-</p>
-
-**Key capabilities**
-
-- **Signals in.** Rows arrive by hand, by webhook, or from a CSV, and every arrival kicks off the necessary agents the moment it lands.
-- **An agent per detail.** Build an agent once (a prompt, a model, the tools it may use) and reuse it on every sheet.
-- **Get notified.** A Send column waits for the required work to finish, then notifies you or syncs completed rows to your CRM, sequencer, or automation over signed webhooks.
-- **Bring your own model.** Any OpenAI or Anthropic compatible endpoint, including one on your laptop, so the whole pipeline runs for $0 while you prove your idea.
-- **Self-host free, or hosted.** Run it on your own machine forever, or [join the waitlist](https://openbower.ai/) for the hosted version.
-- **Everything before hello, automated.** A row lands, the agents research it, the finished row reaches your sequencer. The conversation is yours.
-
-## Why OpenBower
-
-- **Built for builders.** Closed tools are built for venture-backed startups and organizations past product-market fit, so they price heavily to get started. If you can run code and have the compute, you should be able to run the tools yourself, at cost. That is what OpenBower is for: arming founders with tools they can run at cost while they find fit, and offering a managed version to graduate to when it is time to scale.
-- **Orchestration is not inference.** Platforms resell vendor models at a markup. Here the coordination runs on your compute and the model costs what the vendor charges, or nothing when it's a model you run.
-- **Plug in anything.** Closed tools give everyone the same data sources, so every outreach starts from the same foundation. Here you can plug in any information source as a tool or as a signal that starts your workflow. Standing out is what closes deals.
 
 ## Quickstart
 
@@ -76,37 +59,51 @@ git clone https://github.com/obris-dev/openbower.git && cd openbower && sh scrip
 
 ### Prereq: a model
 
-OpenBower is bring-your-own-model; the stack does not bundle one. Inference sources (their structure and their keys) live in one file, `config/providers.toml`, seeded from `config/templates/providers.example.toml`. A section names a registered provider spec, and any source that speaks it is a first-class entry:
+OpenBower doesn't bundle a model; bring any OpenAI or Anthropic compatible one. Models are set in `config/providers.toml`, and `bower-admin setup` walks you through it:
 
-- **On your laptop.** To run models locally, install [Ollama](https://ollama.com/download) or [vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/#installation), then run `bower-admin setup` to point the stack at it.
-- **Your own deployment.** A vLLM box, a gateway, or any server that speaks the OpenAI or Anthropic protocol: add a section with its `base_url`. Self-hosted servers work keyless.
-- **The vendor itself.** OpenAI or Anthropic, with an `api_key` inline; the canonical vendors stay out of the catalog until a key is present.
-
-A typo'd section refuses startup with the section named, so a broken config never runs silently.
+- **On your laptop.** Install [Ollama](https://ollama.com/download) or [vLLM](https://docs.vllm.ai/en/latest/getting_started/quickstart/#installation), then run `bower-admin setup` to point the stack at it.
+- **Your own deployment.** A vLLM box, a gateway, or any server that speaks the OpenAI or Anthropic protocol: add a section with its `base_url`. Self-hosted servers need no key.
+- **The vendor itself.** OpenAI or Anthropic, with an `api_key`.
 
 ### Prereq: search vendors
 
-Tool vendors and their wiring live in `config/tools.toml`, seeded from its template. The install's setup step asks for a [Serper](https://serper.dev) key (a free account starts with 2,500 queries), checks it with one query, writes it, and wires web search to it, which is the setup the product works well with: real Google results for web search, and the only vendor for finding contacts. Without a key, web search falls back to DuckDuckGo (free, keyless, weaker results) and finding contacts stays off; `bower-admin setup` asks again any time. On the free door a fill is budgeted: one whose search count would exceed the budget is refused before it spends, naming the metered next step. `bower-admin tools` prints the live matrix.
+Search vendors live in `config/tools.toml`, seeded from its template. The install's setup step asks for a [Serper](https://serper.dev) key (a free account starts with 2,500 queries) and wires web search and finding contacts to it. Without a key, web search falls back to DuckDuckGo (free, keyless, weaker results) and finding contacts stays off; `bower-admin setup` asks again any time.
 
 ### Use it
 
-Open the app, create a sheet (or import a CSV), configure your agentic columns, then start adding rows. Each row's details land as its research completes, and a Send column syncs finished rows wherever you send from.
+Open the app and create a signal: a funding signal for rounds that fit, or a custom signal your own sender pushes to. Each signal logs its events to a sheet. Add agent columns to it, and every new row is researched as it lands. Add a Send webhook column to sync finished rows to your CRM, sequencer, or automation.
+
+## Features
+
+- **Funding signals.** Rounds that fit your stages, amounts and description, logged as they're announced.
+- **Custom signals.** Push your own events by webhook; each lands as a typed row.
+- **Answers you can check.** Every answer carries its confidence and reasoning; low-confidence ones wait for you.
+- **Send to your CRM.** Finished rows sync to your CRM, sequencer, or automation over signed webhooks; your CRM stays the record.
+- **Agents.** A prompt, a model, its tools and outputs, built once and reused on every sheet.
+- **Bring your own model.** Any OpenAI or Anthropic compatible endpoint, including one on your laptop.
+- **Self-host free.** Forever, or [join the waitlist](https://openbower.ai/) for the hosted version.
+
+## Why OpenBower
+
+- **Built for builders.** Closed tools are built for venture-backed startups and organizations past product-market fit, so they price heavily to get started. If you can run code and have the compute, you should be able to run the tools yourself, at cost. That is what OpenBower is for: arming founders with tools they can run at cost while they find fit, and offering a managed version to graduate to when it is time to scale.
+- **Orchestration is not inference.** Platforms resell vendor models at a markup. Here the coordination runs on your compute and the model costs what the vendor charges, or nothing when it's a model you run.
+- **Plug in anything.** Closed tools give everyone the same data sources, so every outreach starts from the same foundation. Here you can plug in any information source as a tool or as a signal that starts your workflow. Standing out is what closes deals.
 
 ## How it works
 
 ```mermaid
 graph TD
     subgraph In
-        UI[Add rows by hand]
-        HOOK[Webhook ingest]
-        CSV[CSV import]
+        FUND[Funding signal]
+        CUSTOM[Custom signal<br/>your own sender]
+        CSV[CSV import or by hand]
     end
 
     subgraph OpenBower
-        SHEET["Sheet<br/>rows + columns"]
+        SHEET["Sheet<br/>a row per event"]
         AGENT["Agents<br/>prompt + model + tools,<br/>one per key detail"]
         TOOLS["Tools<br/>web search | find contacts"]
-        CELLS["Cells<br/>the answer, its sources,<br/>or the reason it is blank"]
+        CELLS["Cells<br/>the answer, its confidence and reasoning,<br/>or the reason it is blank"]
         OUT["Send column<br/>batched, signed webhooks"]
     end
 
@@ -116,8 +113,8 @@ graph TD
         AUTO[An automation]
     end
 
-    UI --> SHEET
-    HOOK --> SHEET
+    FUND --> SHEET
+    CUSTOM --> SHEET
     CSV --> SHEET
     SHEET -- "a row lands" --> AGENT
     AGENT --> TOOLS
@@ -129,13 +126,25 @@ graph TD
     OUT --> AUTO
 ```
 
-1. New rows land on a sheet, by hand, by webhook, or from a CSV.
-2. Agentic workflows run as the rows land, adding the details that matter for your GTM play.
-3. As the details land, the results sync to your CRM, sequencer, or automation, or you get notified, so you act in real time instead of checking the sheet.
+1. A signal logs each event that fits as a row on its sheet. Rows can also come from a CSV or be added by hand.
+2. Agents run as the rows land, adding the details that matter for your GTM play.
+3. As a row completes, a Send column syncs it to your CRM, sequencer, or automation, so you act in real time instead of checking the sheet.
+
+## Screenshots
+
+<p>
+  <img src="assets/readme/signal.webp" alt="A funding signal's settings: the stages and amount range it keeps, a description of the companies that fit, and the recent rounds that match" width="100%">
+</p>
+<p>
+  <img src="assets/readme/details.webp" alt="A cell's details beside the sheet: an unconfirmed first line, its medium confidence, the model's reasoning, and Use answer" width="100%">
+</p>
+<p>
+  <img src="assets/readme/agent.webp" alt="An agent's builder: its prompt, its model, its Founder and LinkedIn URL outputs with their descriptions, and its tools" width="100%">
+</p>
 
 ## Roadmap
 
-Today the engine runs on signals you source yourself: a row you add, a webhook you wired, a CSV you had. Next, the common signals come built in: a fundraise, a leadership change, a hiring spike, a job post, a product launch. Nothing to wire; each one lands as a row and notifies you when its research is ready. The moment something relevant happens, it reaches you first, so you're in front of the right person while it still matters.
+Funding is the first built-in signal. Next come more of the common ones: a leadership change, a hiring spike, a job post, a product launch. Nothing to wire; each one lands as a row and its research is ready the moment it matters, so you're in front of the right person first.
 
 Which signal would start a play for you? Open an issue and say.
 
