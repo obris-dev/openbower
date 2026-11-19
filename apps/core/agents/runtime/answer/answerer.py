@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, Tool
@@ -53,7 +54,7 @@ from ...tools import registry as tool_registry
 from ...tools.base import FailureMode
 from ..deps import CellDeps
 from ..grounding import allowed_urls, ground_value, has_url
-from ..prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS, render_prompt
+from ..prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS, render_givens, render_prompt
 from .errors import (
     AgentError,
     AgentOverloaded,
@@ -177,7 +178,7 @@ class CellAnswerer:
             raise NoAvailableTools(self._record(deps))
         return tools
 
-    def answer(self, row_data: dict) -> Answer:
+    def answer(self, row_data: dict, givens: Mapping[str, str] | None = None) -> Answer:
         """THE call: render, hydrate, build, run, project. Returns an
         Answer for every COMPLETED call, an honest all-blank verdict
         included; raises the AgentError family (facts riding every
@@ -190,8 +191,11 @@ class CellAnswerer:
         are discarded, since writing from model memory is exactly the
         fabrication path. The why is on the tools: a tool that never
         answered is a retry, a tool that answered nothing is a
-        diagnosis."""
-        prompt = self._render_prompt(row_data)
+        diagnosis.
+
+        `givens` (label -> value) are the row's answers to outputs this
+        config no longer asks for, stated after the task as facts."""
+        prompt = self._render_prompt(row_data) + render_givens(givens or {})
         deps = self._hydrate_deps()
         tools = self._build_tools(deps)
         agent = self._agent(prompt, instructions=AGENT_INSTRUCTIONS if tools else DIRECT_INSTRUCTIONS, tools=tools)

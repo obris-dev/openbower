@@ -47,7 +47,7 @@ the sheet service's one landing, then the run closed, one transaction)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property
@@ -174,6 +174,10 @@ class _SheetLane(NamedTuple):
     row_data: dict
     column_keys: tuple[str, ...]
     ctx: LandingContext
+    # column key -> the value the row already holds for it: an answer
+    # the run is not asked for, only told (prompt_givens), and records.
+    givens: Mapping[str, str] = {}
+    prompt_givens: Mapping[str, str] = {}
 
     def land(
         self, processor: NodeProcessor, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow
@@ -183,7 +187,11 @@ class _SheetLane(NamedTuple):
         result, one transaction (SheetRow, SheetCellState, NodeRun). A
         close that misses rolls the landing back: a reclaimed run
         produces nothing and EXITS."""
-        writes = processor.on_run_landed(self.column_keys, run_result)
+        asked = tuple(key for key in self.column_keys if key not in self.givens)
+        writes = processor.on_run_landed(asked, run_result)
+        # A given lands as the value already there: recorded FILLED if
+        # the cell has no record, so the row stops being owed.
+        writes += [AnsweredWrite(key, value, StoredCellState.FILLED) for key, value in self.givens.items()]
         sheets = SheetService(account_id=task.account_id)
         try:
             with transaction.atomic():
@@ -210,6 +218,8 @@ class _PreviewLane(NamedTuple):
 
     config: AgentConfig
     row_data: dict
+    # A preview asks for every output: nothing is given.
+    prompt_givens: Mapping[str, str] = {}
 
     def land(
         self, processor: NodeProcessor, task: NodeRun, run_result: CellRunResult, *, flow: NodeRunFlow
@@ -222,6 +232,23 @@ class _PreviewLane(NamedTuple):
 
 
 _Lane = _SheetLane | _PreviewLane
+
+
+def _sheet_lane(config: AgentConfig, row_data: dict, column_keys: tuple[str, ...], ctx: LandingContext) -> _SheetLane:
+    """A sheet run asks only for the columns the row holds no value in;
+    the rest are givens, told to the model as facts, so its answers
+    agree with the values it cannot replace."""
+    givens = {key: str(row_data[key]) for key in column_keys if has_value(row_data, key)}
+    labels = {output.key: output.label for output in config.outputs}
+    asked = [output for output in config.outputs if output.key not in givens]
+    return _SheetLane(
+        config=config.model_copy(update={"outputs": asked}),
+        row_data=row_data,
+        column_keys=column_keys,
+        ctx=ctx,
+        givens=givens,
+        prompt_givens={labels.get(key, key): value for key, value in givens.items()},
+    )
 
 
 def has_value(data: dict, key: str) -> bool:
@@ -367,8 +394,11 @@ class AIColumnProcessor(NodeProcessor):
             return ended.outcome
         if flow.exhausted(task):
             return lane.land(self, task, give_up_blank(task), flow=flow)
+        if not lane.config.outputs:
+            # Every output is a given: nothing to ask, so no call.
+            return lane.land(self, task, CellRunResult(), flow=flow)
         try:
-            run = run_cell(lane.config, lane.row_data)
+            run = run_cell(lane.config, lane.row_data, lane.prompt_givens)
         except CONFIG_TIER_ERRORS as e:
             # Config-tier: the agent cannot run at all (no model, a
             # retired tool, which surfaces only here since model_for
@@ -451,7 +481,7 @@ class AIColumnProcessor(NodeProcessor):
             flow.settle(task.id, status=NodeRunStatus.ROW_MISSING, result={})
             raise _RunEnded(RunOutcome.ROW_MISSING)
         ctx = LandingContext(sheet_id=consent.sheet_id, source=CellSource.NODE, fill_run_id=str(job.id))
-        return _SheetLane(config=config, row_data=row.data, column_keys=tuple(consent.column_keys), ctx=ctx)
+        return _sheet_lane(config, row.data, tuple(consent.column_keys), ctx)
 
     def _live_lane(self, task: NodeRun, *, flow: NodeRunFlow) -> _Lane:
         row = SheetRow.objects.filter(id=task.row_id).first()
@@ -486,7 +516,7 @@ class AIColumnProcessor(NodeProcessor):
             _settle_unrun(flow, task)
             raise _RunEnded(RunOutcome.EXITED)
         ctx = LandingContext(sheet_id=str(target_sheet.id), source=CellSource.NODE, fill_run_id=None)
-        return _SheetLane(config=config, row_data=row.data, column_keys=column_keys, ctx=ctx)
+        return _sheet_lane(config, row.data, column_keys, ctx)
 
     # Is work needed for a row? One question for every occasion, bound
     # ONCE per page (the page's attempted rows are read there) and then
