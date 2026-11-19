@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.13](https://github.com/obris-dev/openbower/compare/v0.0.12...v0.0.13) (2026-11-19)
+
+
+### Features
+
+* **agents:** a run asks only for what the row lacks, told the rest as facts ([#170](https://github.com/obris-dev/openbower/issues/170)) ([8a5c077](https://github.com/obris-dev/openbower/commit/8a5c0778986cdff4769ed35588296badc4bdbd5e))
+* **sheets:** show unconfirmed answers, with a docked cell details panel ([#169](https://github.com/obris-dev/openbower/issues/169)) ([b536053](https://github.com/obris-dev/openbower/commit/b5360538c092797a708281ef49915187f506641f))
+
 ## [0.0.12](https://github.com/obris-dev/openbower/compare/v0.0.11...v0.0.12) (2026-11-17)
 
 
