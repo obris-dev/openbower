@@ -10,12 +10,13 @@ import type { AddColumnKind } from "../add-column";
 import type { SearchProviderChoice } from "../fill";
 import type { ColumnOutcome } from "../use-columns";
 import type { RowOutcome } from "../use-rows";
+import { SELECT_HOW, type CellDetails } from "../cell-details";
 import { Body } from "./body";
 import { CellActionsContext, type CellActions, type WriteHow } from "./cell-actions";
 import { CellEditingContext, type CellEditing, type EditingCell } from "./cell-editing";
 import { focusCell } from "./focus-cell";
 import { HeaderRow } from "./header-row";
-import { copiedValueFor } from "./lib/cell-clipboard";
+import { copiedValueFor, shownText } from "./lib/cell-clipboard";
 import { neighbour, type Direction, type Over } from "./lib/cell-navigation";
 import type { RowSelectionControls } from "./row-selection-controls";
 import { GUTTER_WIDTH } from "./lib/column-sizing";
@@ -59,6 +60,7 @@ export function SheetGrid({
   onRemoveRow,
   selection,
   searchProvider = null,
+  details,
   logged = false,
   emptyNote,
 }: {
@@ -84,6 +86,9 @@ export function SheetGrid({
   /** The deployment's web-search provider once the sheet has fetched it
    * (a rate-limited cell's popover composes the paid-provider nudge). */
   searchProvider?: SearchProviderChoice;
+  /** The sheet's open cell details (the panel docks beside the grid):
+   * a press or a move on a cell tells it which cell is selected. */
+  details?: CellDetails;
   /** Absent on a sheet that cannot be reordered; its presence is what
    * arms both the drag and the header menu's moves. */
   onReorder?: (keys: string[]) => void;
@@ -222,9 +227,11 @@ export function SheetGrid({
     (rowId: string, columnKey: string, direction: Direction, over: Over = "all"): boolean => {
       const target = neighbour(columns, rowIds, { rowId, columnKey }, direction, over);
       const root = document.querySelector(`[data-grid-id="${sheetId}"]`);
-      return target !== null && focusCell(root, target.rowId, target.columnKey);
+      const moved = target !== null && focusCell(root, target.rowId, target.columnKey);
+      if (moved) details?.select(target, SELECT_HOW.MOVE);
+      return moved;
     },
-    [columns, rowIds, sheetId],
+    [columns, rowIds, sheetId, details],
   );
   const actions = useMemo<CellActions | null>(() => {
     if (!onSetCells || !onRemoveRow) return null;
@@ -237,7 +244,7 @@ export function SheetGrid({
         const column = columns.find((entry) => entry.key === columnKey);
         const row = rows.find((entry) => entry.id === rowId);
         if (!column || !row) return;
-        const value = copiedValueFor(column, row.data[columnKey] ?? "");
+        const value = copiedValueFor(column, shownText(row, columnKey));
         if (value !== null) void clipboard.copy(value);
       },
       paste: (rowId, columnKey) => {
@@ -249,8 +256,15 @@ export function SheetGrid({
       write: (rowId, columnKey, value) => writeCell(rowId, columnKey, value, "typed"),
       focusNeighbour,
       deleteRow: (rowId, columnKey) => setConfirming({ rowId, columnKey, busy: false }),
+      openDetails: (rowId, columnKey) => details?.show({ rowId, columnKey }),
+      closeDetails: () => {
+        if (!details?.open) return false;
+        details.close();
+        return true;
+      },
+      select: (rowId, columnKey, how) => details?.select({ rowId, columnKey }, how),
     };
-  }, [onSetCells, onRemoveRow, columns, rows, clipboard, focusNeighbour]);
+  }, [onSetCells, onRemoveRow, columns, rows, clipboard, focusNeighbour, details]);
 
   function confirmDelete() {
     if (!confirming || !onRemoveRow) return;

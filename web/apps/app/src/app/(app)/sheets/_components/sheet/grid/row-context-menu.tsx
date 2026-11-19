@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@bower/ui";
 import type { SheetColumn } from "@bower/api";
 
+import { hasDetails, VIEW_DETAILS } from "../cell-details";
 import { acceptsPaste, holdsValue } from "./lib/cell-clipboard";
 import { shortcutLabel } from "./lib/shortcut-label";
 import type { CellActions } from "./cell-actions";
@@ -43,6 +44,7 @@ export function RowContextMenu({
   const column = target?.columnKey ? columns.find((entry) => entry.key === target.columnKey) : undefined;
   const copyable = column !== undefined && holdsValue(column);
   const pasteable = column !== undefined && acceptsPaste(column);
+  const detailable = column !== undefined && hasDetails(column);
 
   function aim(pressed: EventTarget | null): boolean {
     const cell = (pressed as Element | null)?.closest<HTMLElement>("[data-row-id]");
@@ -98,6 +100,12 @@ export function RowContextMenu({
           onSelect={() => target?.columnKey && actions.paste(target.rowId, target.columnKey)}
         >
           Paste
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!detailable}
+          onSelect={() => target?.columnKey && actions.openDetails(target.rowId, target.columnKey)}
+        >
+          {VIEW_DETAILS}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem

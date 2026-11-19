@@ -402,9 +402,9 @@ class PreviewWorkerTests(TransactionTestCase):
         self.addCleanup(patcher.stop)
 
     def _run(self, run: NodeRun, model) -> None:
-        from .test_fill_worker import _patches
+        from .test_fill_worker import model_patches
 
-        with _patches(model):
+        with model_patches(model):
             handle_node_run(str(run.id), "test:preview")
 
     def test_a_preview_run_lands_its_result_on_itself(self):

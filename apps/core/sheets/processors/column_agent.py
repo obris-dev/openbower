@@ -63,7 +63,7 @@ from jobs.models import Job
 from openbower_schema.agents import AgentConfig
 from openbower_schema.fills import CellRunResult
 
-from ..cells import AnsweredWrite, CellWrite, LandingContext, RowLanding
+from ..cells import AgentCellDetail, AnsweredWrite, CellWrite, LandingContext, RowLanding
 from ..constants import (
     AGENT_MISSING_MESSAGE,
     FILL_RETRY_BACKOFF_SECONDS,
@@ -134,6 +134,15 @@ def declined_cause_of(run_result: CellRunResult) -> StoredCellState:
     cause, or NO_EVIDENCE when it recorded none (a run stored before
     causes were, a give-up with nothing behind it)."""
     return StoredCellState(run_result.declined_cause or StoredCellState.NO_EVIDENCE)
+
+
+def _cause_for(run_cause: StoredCellState, *, unconfirmed: str) -> StoredCellState:
+    """One column's blank cause. The run's UNVERIFIED says the floor
+    dropped SOME answer; only the column whose answer it dropped is
+    unverified, and a silent sibling found nothing."""
+    if run_cause == StoredCellState.UNVERIFIED and not unconfirmed:
+        return StoredCellState.NO_EVIDENCE
+    return run_cause
 
 
 class _ClaimLost(Exception):
@@ -329,7 +338,27 @@ class AIColumnProcessor(NodeProcessor):
         nothing lands. A key the run answered that the node does not
         fill is never written."""
         cause = declined_cause_of(outcome)
-        return [AnsweredWrite(key, outcome.cells.get(key) or None, cause, tools=outcome.tools) for key in column_keys]
+        writes: list[CellWrite] = []
+        for key in column_keys:
+            assessment = outcome.assessments.get(key)
+            judgement = None
+            if assessment is not None:
+                judgement = AgentCellDetail(
+                    confidence=assessment.confidence,
+                    reason=assessment.reason,
+                    unconfirmed=assessment.unconfirmed,
+                )
+            unconfirmed = judgement.unconfirmed if judgement else ""
+            writes.append(
+                AnsweredWrite(
+                    key,
+                    outcome.cells.get(key) or None,
+                    _cause_for(cause, unconfirmed=unconfirmed),
+                    judgement=judgement,
+                    tools=outcome.tools,
+                )
+            )
+        return writes
 
     def _process_run(self, task: NodeRun, *, flow: NodeRunFlow) -> RunOutcome:
         try:

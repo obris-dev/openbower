@@ -83,6 +83,7 @@ from .serializers import (
     sheet_wire,
 )
 from .services.ai_columns import AiColumnService
+from .services.cell_detail import CellDetailService
 from .services.columns import ColumnNotFound, ColumnRefused, ColumnService
 from .services.fill_admission import FillAdmissionService, FillColumnNotFound, FillRefused
 from .services.fills import FillNotFound, FillService
@@ -183,6 +184,10 @@ class _ScopedView(ScopedView):
     @cached_property
     def fills(self) -> FillService:
         return FillService(account_id=self.request.user.account_id)
+
+    @cached_property
+    def cell_details(self) -> CellDetailService:
+        return CellDetailService(account_id=self.request.user.account_id)
 
     @cached_property
     def ai_columns(self) -> AiColumnService:
@@ -337,6 +342,23 @@ class SheetRowsView(_ScopedView):
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         return Response(RowsDeleted(deleted=removed.deleted, row_count=removed.row_count).model_dump())
+
+
+class CellDetailView(_ScopedView):
+    """GET /v1/sheets/{id}/rows/{row_id}/cells/{key}: what the cell's
+    record says about it (CellDetailWire), read when a person opens the
+    cell. Any column; a cell no writer has reached answers with every
+    field empty. 404 for a missing sheet, row or column."""
+
+    def get(self, request: Request, id: str, row_id: str, key: str) -> Response:
+        target_sheet = self._sheet_or_404(id)
+        try:
+            detail = self.cell_details.detail(target_sheet, row_id=row_id, key=key)
+        except ColumnNotFound as e:
+            raise NotFound("no column with that key") from e
+        except RowNotFound as e:
+            raise NotFound("no row with that id") from e
+        return Response(detail.model_dump())
 
 
 class SheetRowView(_ScopedView):

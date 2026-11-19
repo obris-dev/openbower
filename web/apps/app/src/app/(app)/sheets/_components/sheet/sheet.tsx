@@ -17,6 +17,7 @@ import {
 } from "@bower/ui";
 import { MoreHorizontal, Pencil } from "lucide-react";
 import {
+  fetchCellDetail,
   deleteSheet,
   fetchAgentCatalog,
   fetchSignal,
@@ -55,6 +56,7 @@ import { useRowSelection } from "./use-row-selection";
 import { SelectionBar } from "./selection-bar";
 import { toBody } from "./lib/row-selection";
 import { AddRowsBar } from "./add-rows-bar";
+import { CellDetailsPanel, useCellDetails } from "./cell-details";
 import { AutofillControl } from "./autofill-control";
 
 /** The sheet, full-bleed under the shell's chrome in three bands, five
@@ -127,6 +129,23 @@ export function Sheet({
     // read status.
     return rowsRead;
   }, [refreshLoaded, detail.id, rereadDetail]);
+  // The one cell whose details are open, docked beside the grid. Read
+  // off the live rows, so a Use answer or a poll shows in the panel.
+  const details = useCellDetails(detail.columns);
+  const detailsRow = details.open ? rows.find((row) => row.id === details.open!.rowId) : undefined;
+  const detailsColumn = details.open ? detail.columns.find((column) => column.key === details.open!.columnKey) : undefined;
+  const sheetId = detail.id;
+  // Closing hands focus back to the cell the panel was on, so the
+  // keyboard keeps its place in the grid.
+  const closeDetails = useCallback(() => {
+    const open = details.open;
+    details.close();
+    if (open) focusCell(document.querySelector(`[data-grid-id="${sheetId}"]`), open.rowId, open.columnKey);
+  }, [details, sheetId]);
+  const fetchDetail = useCallback(
+    (rowId: string, columnKey: string) => fetchCellDetail(sheetId, rowId, columnKey),
+    [sheetId],
+  );
   // The rows a person has ticked: the sheet's, since the bar and its
   // confirm are rendered here.
   // On a log, a select all names the rows loaded from its period, so a
@@ -627,7 +646,8 @@ export function Sheet({
 
       {/* The scroll region's parent holds the selection bar over it:
           the bar floats at the region's bottom, not the sheet's. */}
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+      <div className="relative min-h-0 min-w-0 flex-1">
         <div ref={scrollRef} className="h-full overflow-auto">
           <SheetGrid
             sheetId={detail.id}
@@ -637,6 +657,7 @@ export function Sheet({
             columns={detail.columns}
             rows={rows}
             searchProvider={searchProvider}
+            details={details}
             fills={{
               sheetId: detail.id,
               runs: fill.runs,
@@ -687,6 +708,20 @@ export function Sheet({
           onDelete={deleteRows}
           onEmptied={focusSelectAll}
         />
+      </div>
+      {detailsRow && detailsColumn && (
+        <CellDetailsPanel
+          // One panel per cell: a move starts it fresh, a pending Use
+          // answer included.
+          key={`${detailsRow.id}:${detailsColumn.key}`}
+          target={{ row: detailsRow, column: detailsColumn }}
+          columns={detail.columns}
+          searchProvider={searchProvider}
+          onClose={closeDetails}
+          detail={fetchDetail}
+          write={(rowId, columnKey, value) => writeCells(rowId, { [columnKey]: value }, "typed")}
+        />
+      )}
       </div>
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-1.5">

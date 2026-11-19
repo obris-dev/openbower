@@ -37,7 +37,12 @@ reports; review against this list before adding a component.
    settings page (a footer slot included); and a signal's Reconnect, which waits on the identity
    service and can be refused there too, asked from a status pill or a
    banner with no room for the question. Every other confirm swaps in
-   where its verb was.
+   where its verb was. A surface for READING beside live content is a
+   docked panel, not a drawer: the sheet's cell details sit beside the
+   grid's scroll region (the grid narrows, nothing dims, no focus
+   trap), follow the selected cell, and close on their own button or
+   Escape; below `sm` the panel covers its content, which has no room
+   for both.
 7. **Pre-paint state via blocking scripts.** Anything the server can't
    know (theme, collapsed chrome) is stamped on `<html>` by a blocking
    inline script first in `<body>` and rendered from CSS keyed on that

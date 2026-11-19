@@ -10,6 +10,7 @@ from ..constants import (
     CellSource,
     StoredCellState,
 )
+from ..fields import CellDetailField
 
 
 class SheetCellState(AccountScopedModel):
@@ -56,6 +57,12 @@ class SheetCellState(AccountScopedModel):
     # detail behind a blank cell's tool_* state. Empty for a run before
     # tools reported statuses.
     tools = models.JSONField(_("tool statuses"), default=dict, blank=True)
+    # What the cell's writer said about it beyond its state (an agent's
+    # confidence, reason and unconfirmed answer), null when nothing. Read
+    # off the record, never off the run, so the run stays the audit.
+    # Never a value: nothing that reads row data sees it. Every record
+    # restates it, so a later fill or a person's write clears it.
+    detail = CellDetailField(_("detail"), null=True, blank=True)
 
     class Meta:
         verbose_name = _("sheet cell state")

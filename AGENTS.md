@@ -303,7 +303,12 @@ live in a separate private repo.
   value already there is unchanged) through the column's type, then
   one ledger record per write in ONE
   upsert, FILLED and TYPE_MISMATCH derived from what the row reported
-  and every other state the write's own. Processors never touch a row
+  and every other state the write's own. A record also carries what its
+  writer said about the cell (`detail`: an agent's confidence, its
+  reason and, on an UNVERIFIED cell, the answer the floor dropped),
+  never a value: nothing that reads row data sees it, every upsert
+  restates it, and the cell details are read off the record, never off
+  the run that wrote it. Processors never touch a row
   or a cell record; the landing never branches on a node kind.
 - An additive NOT NULL column is a STOP-THE-WORLD deploy, a three-step
   (add nullable, deploy the code that writes it, backfill then set NOT

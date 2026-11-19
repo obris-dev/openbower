@@ -2,11 +2,14 @@
 
 import type { SheetColumn, RenderableSheetRow } from "@bower/api";
 import { LocalTime, TIME_FORMAT } from "@bower/ui";
+import { Mail, SquareArrowOutUpRight } from "lucide-react";
 
 import type { KeyboardEvent, MouseEvent, PointerEvent } from "react";
 
 import { cellHref, cellLinkIsExternal } from "../../../../_components/cell-link";
 import { cellMoment } from "../../../../_components/cell-moment";
+import { cellNumber } from "../../../../_components/cell-number";
+import { hasDetails, opensDetails, SELECT_HOW } from "../cell-details";
 import { AiCellState, DegradedToolMark, isDegradedFill, type SearchProviderChoice } from "../fill";
 import { WebhookCellState } from "../send-webhook";
 import { useCellActions } from "./cell-actions";
@@ -14,6 +17,7 @@ import { useCellEditing } from "./cell-editing";
 import { CellEditor } from "./cell-editor";
 import { acceptsPaste } from "./lib/cell-clipboard";
 import { isEditable, type Direction } from "./lib/cell-navigation";
+import { UnconfirmedAnswer } from "./unconfirmed-answer";
 import type { CellWidth } from "./use-grid-table";
 
 const ARROWS: Record<string, Direction> = {
@@ -26,20 +30,32 @@ const ARROWS: Record<string, Direction> = {
 function Value({ column, value }: { column: SheetColumn; value: string }) {
   const href = cellHref(column.type, value);
   if (href) {
+    // Only the icon is the link (Clay's): the text stays the cell's own,
+    // so a press selects it and a double-click edits it, as on any cell.
+    const external = cellLinkIsExternal(column.type);
+    const Icon = external ? SquareArrowOutUpRight : Mail;
+    const linkVerb = external ? "Open" : "Email";
     return (
-      <a
-        href={href}
-        {...(cellLinkIsExternal(column.type) ? { target: "_blank", rel: "noreferrer" } : {})}
-        className="truncate text-muted hover:text-signal"
-      >
-        {value}
-      </a>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <a
+          href={href}
+          {...(cellLinkIsExternal(column.type) ? { target: "_blank", rel: "noreferrer" } : {})}
+          aria-label={`${linkVerb} ${value}`}
+          title={`${linkVerb} ${value}`}
+          className="flex-none rounded text-faint hover:text-signal focus-visible:ring-2 focus-visible:ring-signal"
+        >
+          <Icon aria-hidden className="h-3.5 w-3.5" />
+        </a>
+        <span className="truncate text-muted underline decoration-hairline underline-offset-2">{value}</span>
+      </span>
     );
   }
   const moment = cellMoment(column.type, value);
   if (moment) {
     return <LocalTime iso={moment} format={TIME_FORMAT.STAMP} className="truncate text-foreground" title={moment} />;
   }
+  const number = cellNumber(column.type, value);
+  if (number) return <span className="truncate text-foreground tabular-nums">{number}</span>;
   return <span className="truncate text-foreground">{value}</span>;
 }
 
@@ -116,6 +132,15 @@ export function GridCell({
       if (moved) event.preventDefault();
       return;
     }
+    if (event.key === "Escape" && actions.closeDetails()) {
+      event.preventDefault();
+      return;
+    }
+    if (opensDetails(event) && hasDetails(column)) {
+      event.preventDefault();
+      actions.openDetails(row.id, column.key);
+      return;
+    }
     if (!editable || event.altKey) return;
     if (event.key === "Enter" || event.key === "F2") {
       event.preventDefault();
@@ -138,6 +163,14 @@ export function GridCell({
     if (event.button === 2 && !pressOwnedInside(event.target)) event.currentTarget.focus({ preventScroll: true });
   }
 
+  function onClick(event: MouseEvent<HTMLDivElement>) {
+    // React bubbles a portal's clicks (a cause's popover) through the
+    // cell, so a press outside the cell's own DOM is not the cell's;
+    // nor is one on a link or mark inside it, nor the editor's.
+    if (isEditing || !event.currentTarget.contains(event.target as Node) || pressOwnedInside(event.target)) return;
+    actions?.select(row.id, column.key, SELECT_HOW.PRESS);
+  }
+
   function onDoubleClick(event: MouseEvent<HTMLDivElement>) {
     if (!editable || isEditing || pressOwnedInside(event.target)) return;
     editing.start({ rowId: row.id, columnKey: column.key, initial: value });
@@ -150,6 +183,7 @@ export function GridCell({
       data-column-key={column.key}
       onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
+      onClick={onClick}
       onDoubleClick={onDoubleClick}
       className="relative flex h-full min-w-0 flex-none items-center gap-2 border-b border-r border-hairline p-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-signal"
       style={{ width }}
@@ -158,6 +192,8 @@ export function GridCell({
         <CellEditor rowId={row.id} columnKey={column.key} initial={editing.editing!.initial} current={value} />
       ) : column.kind === "webhook" ? (
         <WebhookCellState entry={row.states?.[column.key]} />
+      ) : state?.state === "unverified" && state.unconfirmed ? (
+        <UnconfirmedAnswer rowId={row.id} columnKey={column.key} value={state.unconfirmed} />
       ) : state !== undefined ? (
         <AiCellState entry={state} searchProvider={searchProvider} />
       ) : (

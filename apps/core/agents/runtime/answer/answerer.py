@@ -52,6 +52,7 @@ from ...providers import ModelUnavailable, model_for, model_timeout_exceptions
 from ...tools import registry as tool_registry
 from ...tools.base import FailureMode
 from ..deps import CellDeps
+from ..grounding import allowed_urls, ground_value, has_url
 from ..prompts import AGENT_INSTRUCTIONS, CAPPED_INSTRUCTIONS, DIRECT_INSTRUCTIONS, render_prompt
 from .errors import (
     AgentError,
@@ -78,6 +79,18 @@ def _capped_task(prompt: str, deps: CellDeps) -> str:
     in, so the model reads what it already read)."""
     records = json.dumps([record.as_json() for record in deps.records], ensure_ascii=False)
     return f"Task:\n{prompt}\n\nRecords gathered (your search budget is spent):\n{records}"
+
+
+def _offer_unconfirmed(deps: CellDeps, prompt: str) -> None:
+    """Each answer the floor dropped, as a person may be offered it:
+    grounded like a landed value, a link included. Only for a run whose
+    answers could land, so a guess from memory is never offered.
+    `dropped` stays the model's verbatim words for the audit."""
+    allowed = allowed_urls(deps.urls, prompt)
+    for assessment in deps.judgement.assessments.values():
+        dropped = assessment.get("dropped", "")
+        if dropped:
+            assessment["unconfirmed"] = ground_value(dropped, allowed) if has_url(dropped) else dropped
 
 
 class CellAnswerer:
@@ -281,6 +294,8 @@ class CellAnswerer:
         if self._config.uses_tools and not deps.records:
             logger.info("cell: tools enabled but no evidence; writing nothing")
             cells = {}
+        else:
+            _offer_unconfirmed(deps, prompt)
         return Answer(cells, self._record(deps))
 
     def _agent(self, prompt: str, *, instructions: str, tools: list[Tool] | None = None) -> Agent:

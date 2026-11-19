@@ -28,7 +28,7 @@ from ..models import Node, NodeRun, Sheet, SheetCellState, SheetRow
 from ..operations.consume_node_runs import NodeRunConsumer, handle_node_run
 from ..processors.column_agent import give_up_blank
 from ..services.workflows import agent_id_of
-from .test_fill_worker import _patches, answering_model, throttling_model
+from .test_fill_worker import answering_model, model_patches, throttling_model
 from .test_node_runs import AutofillHarness
 
 WORKER = "test:consumer"
@@ -46,7 +46,7 @@ class ProcessNodeRunTests(AutofillHarness):
         return sheet, task, row_id
 
     def _handle(self, task, model) -> str:
-        with _patches(model):
+        with model_patches(model):
             return handle_node_run(str(task.id), WORKER)
 
     def test_happy_path_claims_writes_the_cell_and_settles_done(self) -> None:

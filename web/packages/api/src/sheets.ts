@@ -3,6 +3,7 @@
 // for the UI.
 
 import {
+  CellDetailWireSchema,
   CellStateWireSchema,
   SheetRowWireSchema,
   type SheetRowWire,
@@ -343,7 +344,7 @@ export const UNKNOWN_CELL_STATE = "unknown_cause" as const;
 export type RenderableCellState = CellState | typeof UNKNOWN_CELL_STATE;
 /** One cell's state as the CLIENT holds it: the word (admitting the
  * unknown member) plus the tool statuses of the run that wrote it. */
-export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolStatuses };
+export type RenderableCellStateWire = { state: RenderableCellState; tools: ToolStatuses; unconfirmed?: string };
 /** A row as the CLIENT holds it: the states record (every node
  * column's, AI and Send webhook alike) admits the unknown member the
  * tolerant read produces, which the wire type cannot. */
@@ -358,7 +359,11 @@ export type RenderableSheetRowsPage = Omit<SheetRowsPage, "items"> & { items: Re
 // state with no tool facts.
 const TolerantCellStateSchema = z.union([
   z.string(),
-  z.object({ state: z.string(), tools: z.record(z.string(), z.string()).default({}) }),
+  z.object({
+    state: z.string(),
+    tools: z.record(z.string(), z.string()).default({}),
+    unconfirmed: z.string().default(""),
+  }),
 ]);
 const TolerantSheetRowSchema = SheetRowWireSchema.extend({
   states: z.record(z.string(), TolerantCellStateSchema).default({}),
@@ -366,7 +371,9 @@ const TolerantSheetRowSchema = SheetRowWireSchema.extend({
 export const TolerantSheetRowsPageSchema = SheetRowsPageSchema.extend({
   items: z.array(TolerantSheetRowSchema),
 });
-type TolerantCellState = z.infer<typeof TolerantCellStateSchema>;
+// The INPUT shape: the server fetch hands its parsed page over too, and
+// a state from before a field existed carries none of it.
+type TolerantCellState = z.input<typeof TolerantCellStateSchema>;
 type TolerantSheetRow = z.infer<typeof TolerantSheetRowSchema>;
 
 /** One page of a sheet's rows in sheet order. `since` (an ISO instant)
@@ -403,8 +410,11 @@ function renderableRow(item: { states: Record<string, TolerantCellState> }): Ren
   const known = new Set<string>(CELL_STATES);
   const narrow = (entry: TolerantCellState): RenderableCellStateWire => {
     const state = typeof entry === "string" ? entry : entry.state;
-    const tools = typeof entry === "string" ? {} : entry.tools;
-    return { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
+    const tools = typeof entry === "string" ? {} : (entry.tools ?? {});
+    const unconfirmed = typeof entry === "string" ? "" : (entry.unconfirmed ?? "");
+    const narrowed = { state: (known.has(state) ? state : UNKNOWN_CELL_STATE) as RenderableCellState, tools };
+    // Present only when there is one: an absent answer is the common case.
+    return unconfirmed ? { ...narrowed, unconfirmed } : narrowed;
   };
   return {
     ...(item as unknown as RenderableSheetRow),
@@ -424,6 +434,32 @@ export async function setSheetRowCells(
   const res = await http.patch(apiRoutes.sheets.row(id, rowId), TolerantSheetRowSchema, { data });
   if (res.status !== "ok") return res;
   return { ...res, data: renderableRow(res.data as TolerantSheetRow) };
+}
+
+// The contract's level enum, out of the details' nullable field.
+const LEVEL_ENUM = CellDetailWireSchema.shape.level.unwrap().options[0];
+/** How sure the model was of an answer, as a person reads it (the
+ * server's levels, highest first). */
+export const CONFIDENCE_LEVELS = LEVEL_ENUM.options;
+export type ConfidenceLevel = z.infer<typeof LEVEL_ENUM>;
+/** A cell's details as the CLIENT holds them: a level this bundle has
+ * never heard of reads as no level, which claims the least. */
+export type CellDetail = Omit<z.infer<typeof CellDetailWireSchema>, "level" | "state"> & {
+  state: string | null;
+  level: ConfidenceLevel | null;
+};
+const TolerantCellDetailSchema = CellDetailWireSchema.extend({
+  state: z.string().nullable().default(null),
+  level: z.string().nullable().default(null),
+});
+
+/** What a cell's record says about it, read when a person opens the
+ * cell: its state, and for an agent's answer how sure and why. */
+export async function fetchCellDetail(id: string, rowId: string, key: string): Promise<ApiResult<CellDetail>> {
+  const res = await http.get(apiRoutes.sheets.cell(id, rowId, key), TolerantCellDetailSchema);
+  if (res.status !== "ok") return res;
+  const known = (CONFIDENCE_LEVELS as readonly string[]).includes(res.data.level ?? "");
+  return { ...res, data: { ...res.data, level: known ? (res.data.level as ConfidenceLevel) : null } };
 }
 
 export async function deleteSheetRow(id: string, rowId: string): Promise<ApiResult<null>> {

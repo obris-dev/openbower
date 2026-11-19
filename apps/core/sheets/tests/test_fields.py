@@ -1,6 +1,7 @@
-"""The typed column array: Sheet.columns is SheetColumn values (one kind
-each) on load and on assignment, their dumps at rest, and the field is
-a plain JSONField to migrations.
+"""The typed JSON fields: Sheet.columns is SheetColumn values (one kind
+each) and a cell record's detail a CellDetail (or None), on load and on
+assignment, their dumps at rest, and each field a plain JSONField to
+migrations.
 
 Run: DJANGO_ENV=test uv run python manage.py test sheets.tests.test_fields
 """
@@ -16,8 +17,9 @@ from pydantic import ValidationError
 
 from openbower_schema.sheets import AiColumn, ColumnBase, PlainColumn, SheetColumn, WebhookColumn, WorkflowColumn
 
-from ..fields import SheetColumnsField
-from ..models import Sheet
+from ..cells import AgentCellDetail
+from ..fields import CellDetailField, SheetColumnsField
+from ..models import Sheet, SheetCellState
 from ..services.sheets import SheetService
 from .test_fill_admission import ACCOUNT, USER
 
@@ -128,6 +130,48 @@ class SheetColumnsFieldTests(TestCase):
         self.assertIsInstance(field, SheetColumnsField)
         _name, path, _args, _kwargs = field.deconstruct()
         self.assertEqual(path, "django.db.models.JSONField")
+
+
+class CellDetailFieldTests(TestCase):
+    DETAIL = AgentCellDetail(confidence=0.62, reason="why", unconfirmed="Acme Holdings")
+
+    def _record(self, detail) -> SheetCellState:
+        return SheetCellState.objects.create(
+            account_id=ACCOUNT, sheet_id="S" * 26, row_id="R" * 26, column_key="answer", detail=detail
+        )
+
+    def test_a_detail_is_typed_on_reload_and_its_dump_at_rest(self) -> None:
+        record = self._record(self.DETAIL.model_dump())
+        self.assertEqual(record.detail, self.DETAIL)
+        record.refresh_from_db()
+        self.assertEqual(record.detail, self.DETAIL)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT detail FROM sheets_sheetcellstate WHERE id = %s", [str(record.id)])
+            [raw] = cursor.fetchone()
+        self.assertEqual(json.loads(raw) if isinstance(raw, str) else raw, self.DETAIL.model_dump())
+
+    def test_none_stays_none(self) -> None:
+        record = self._record(None)
+        record.refresh_from_db()
+        self.assertIsNone(record.detail)
+
+    def test_an_unknown_kind_is_refused(self) -> None:
+        with self.assertRaises(ValidationError):
+            self._record({"kind": "unheard_of", "confidence": 0.5})
+
+    def test_a_key_read_returns_the_fragment(self) -> None:
+        from django.db.models.fields.json import KeyTextTransform
+
+        self._record(self.DETAIL)
+        [value] = SheetCellState.objects.annotate(u=KeyTextTransform("unconfirmed", "detail")).values_list(
+            "u", flat=True
+        )
+        self.assertEqual(value, "Acme Holdings")
+
+    def test_the_field_migrates_as_a_plain_json_field(self) -> None:
+        field = SheetCellState._meta.get_field("detail")
+        self.assertIsInstance(field, CellDetailField)
+        self.assertEqual(field.deconstruct()[1], "django.db.models.JSONField")
 
 
 class WorkflowColumnTests(SimpleTestCase):

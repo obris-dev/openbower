@@ -124,7 +124,17 @@ violation shipped once and got caught).
   stays, Escape cancels, Tab commits and moves, blur commits) on a
   printable key (typing replaces) or Enter / F2 (edit the value); the
   arrows move between cells and Tab between editable ones
-  (`grid/lib/cell-navigation`, the one predicate with paste). The
+  (`grid/lib/cell-navigation`, the one predicate with paste); Space
+  opens the focused cell's details instead of an edit. The CELL
+  DETAILS panel (`sheet/cell-details`, LAYOUT.md rule 6) is the
+  sheet's state, docked beside the scroll region: a press on an
+  agent's cell opens it, a press on any other closes it, the arrows
+  carry it along, Space or View details (the right-click menu) opens
+  it on any cell, and Escape or its own button closes it, focus back
+  on the cell. Use answer, in the panel, is the third write path
+  through PATCH row cells: an unverified cell's unconfirmed answer
+  written as the person's own value. A URL or email cell's link is its
+  icon alone, so its text selects and edits like any cell's. The
   add-rows bar (`sheet/add-rows-bar`, "Add [10] more rows", a line
   under the grid once the end is loaded, not a row of it) is the one
   shipped surface that posts rows: blank ones, to be typed into, which

@@ -74,16 +74,26 @@ SEARCH_HIT_COUNT = 8
 # late searches the budget was raised to buy.
 EVIDENCE_MAX_LINES = MAX_TOOL_CALLS * SEARCH_HIT_COUNT
 # The confidence floor: an answer whose model-stated confidence sits
-# below this is discarded per-field (the blank reads unverified).
-# Confident-or-blank is the product's contract; 0.9 keeps only answers
-# the model itself would stake the row on.
+# below this does not land (the cell reads unverified, the answer kept
+# beside it as unconfirmed for a person to use). It is the bottom of
+# the HIGH level, so "counts as filled" and "high or above" are one
+# line.
 #
 # NEVER stated to the model. A named threshold is a target: a model
 # told the bar reports the bar, and the score stops measuring anything.
 # It also freezes the number, since a floor can only be tuned against
 # scores that were not anchored to it (the dropped values and their
 # scores persist on the outcome row for exactly that).
-ANSWER_CONFIDENCE_FLOOR = 0.9
+ANSWER_CONFIDENCE_FLOOR = 0.85
+# The lower bound of each confidence level a person reads, highest
+# first (agents.confidence.confidence_level). Words for how sure the
+# model was, decided apart from the floor (what lands): HIGH starts at
+# the floor today, and a test holds the two together so moving either
+# is a decision about both.
+CONFIDENCE_VERY_HIGH_AT = 0.95
+CONFIDENCE_HIGH_AT = 0.85
+CONFIDENCE_MEDIUM_AT = 0.7
+CONFIDENCE_LOW_AT = 0.5
 # Timeouts (binary): local models are slow to first token, a roster
 # probe is quick or dead, and a SERP answers fast or not at all.
 COMPLETION_TIMEOUT_SECONDS = 128

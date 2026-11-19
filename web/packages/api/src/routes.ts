@@ -111,6 +111,9 @@ export const apiRoutes = {
     // there; 200 with the row. DELETE: the row, its cell states and its
     // webhook runs; 204.
     row: (id: string, rowId: string) => `/${API_VERSION}/sheets/${id}/rows/${rowId}`,
+    // GET: what an agent cell's newest settled run made of it (answer,
+    // confidence level, reason, sources); 404 for a cell no run settled.
+    cell: (id: string, rowId: string, key: string) => `/${API_VERSION}/sheets/${id}/rows/${rowId}/cells/${key}`,
     // GET: the push schema (the columns a producer may send). POST {rows, request_id?}
     // with a machine API key: the webhook push; 202, rows land off the bus.
     ingest: (id: string) => `/${API_VERSION}/sheets/${id}/ingest`,

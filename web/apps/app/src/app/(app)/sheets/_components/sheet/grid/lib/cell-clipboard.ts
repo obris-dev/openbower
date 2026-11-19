@@ -1,4 +1,4 @@
-import { isImmutable, type SheetColumn } from "@bower/api";
+import { isImmutable, type RenderableSheetRow, type SheetColumn } from "@bower/api";
 
 /** What a cell puts on the clipboard: its value as it reads. Only a
  * plain or AI cell holds one: a webhook column's cell IS its send
@@ -8,6 +8,13 @@ import { isImmutable, type SheetColumn } from "@bower/api";
 export function copiedValueFor(column: SheetColumn, value: string): string | null {
   if (!holdsValue(column)) return null;
   return value;
+}
+
+/** The text a cell shows for a copy: its value, or, on a blank cell,
+ * the unconfirmed answer shown in its place (copying it lands nothing
+ * on the sheet; only Use answer or a paste does). */
+export function shownText(row: Pick<RenderableSheetRow, "data" | "states">, key: string): string {
+  return row.data[key] || row.states?.[key]?.unconfirmed || "";
 }
 
 /** Whether a cell holds a value it reads as, so there is one to copy. */

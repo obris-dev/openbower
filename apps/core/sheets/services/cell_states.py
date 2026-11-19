@@ -14,6 +14,7 @@ from datetime import datetime
 from django.db import models
 from django.db.models import QuerySet
 
+from ..cells import CellDetail
 from ..constants import StoredCellState
 from ..models import SheetCellState
 
@@ -85,17 +86,21 @@ class CellStateService:
         )
         return {str(row_id) for row_id in attempted}
 
+    def record_of(self, sheet_id: str, *, row_id: str, column_key: str) -> SheetCellState | None:
+        """One cell's record, or None for a cell no writer has reached."""
+        return self._scoped(sheet_id, row_ids=[row_id], column_keys=[column_key]).first()
+
     def iter_recorded(
         self, sheet_id: str, *, row_ids: Iterable[str], column_keys: Iterable[str]
-    ) -> Iterator[tuple[str, str, str, dict]]:
-        """(row id, column key, state, tools) for a page of rows, minus
+    ) -> Iterator[tuple[str, str, str, dict, CellDetail | None]]:
+        """(row id, column key, state, tools, detail) for a page of rows, minus
         the pre-tools clean filled records the wire never shows. DB-side
         narrowing only: a clean run records {"web_search": "open"},
         never {}, so the consumer's Python guard stays the rule."""
         yield from (
             self._scoped(sheet_id, row_ids=row_ids, column_keys=column_keys)
             .exclude(state=StoredCellState.FILLED, tools={})
-            .values_list("row_id", "column_key", "state", "tools")
+            .values_list("row_id", "column_key", "state", "tools", "detail")
         )
 
     def iter_counts_by_column(self, sheet_id: str, *, column_keys: Iterable[str]) -> Iterator[tuple[str, str, int]]:

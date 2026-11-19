@@ -10,6 +10,7 @@ urlpatterns = [
     api_path("<str:id>", views.SheetDetailView.as_view(), name="sheets_detail"),
     api_path("<str:id>/rows", views.SheetRowsView.as_view(), name="sheets_rows"),
     api_path("<str:id>/rows/<str:row_id>", views.SheetRowView.as_view(), name="sheets_row"),
+    api_path("<str:id>/rows/<str:row_id>/cells/<str:key>", views.CellDetailView.as_view(), name="sheets_cell_detail"),
     api_path("<str:id>/ingest", views.SheetIngestView.as_view(), name="sheets_ingest"),
     api_path("<str:id>/columns", views.ColumnsView.as_view(), name="sheets_columns"),
     api_path("<str:id>/columns/ai", views.AiColumnView.as_view(), name="sheets_columns_ai"),

@@ -793,6 +793,25 @@ class RuntimeTests(TestCase):
         self.assertEqual(body["cells"]["person"], "Jane Doe")
         self.assertNotIn("profile", body["cells"])
 
+    def _low_behavior(self, answer_values: dict):
+        """Search once, then answer every value under the floor."""
+
+        def behavior(kind, messages, info):
+            if kind == "agentic" and not _tool_returned(messages):
+                return ModelResponse(parts=[ToolCallPart(tool_name="find_contacts", args={"query": "x"})])
+            scored = {**answer_values, **{f"{key}_bwr_confidence": 0.6 for key in answer_values}}
+            return _final(info, **scored)
+
+        return behavior
+
+    def test_a_dropped_answer_is_offered_grounded(self):
+        values = {"person": "Jane Doe", "profile": "https://made.up/fake-profile"}
+        body = self._test_call(values, behavior=self._low_behavior(values))
+        # FAILS if a fabricated URL reaches what a person is offered.
+        self.assertEqual(body["assessments"]["profile"]["unconfirmed"], "")
+        self.assertEqual(body["assessments"]["profile"]["dropped"], "https://made.up/fake-profile")
+        self.assertEqual(body["assessments"]["person"]["unconfirmed"], "Jane Doe")
+
     def test_mutated_url_grounds_to_the_evidence_form(self):
         # The model mutates the regional subdomain and adds a trailing
         # slash; the slug is real evidence, so the cell carries the
@@ -817,9 +836,12 @@ class RuntimeTests(TestCase):
                 return FakeResponse(200, {"searchParameters": {"q": "acme"}, "credits": 1})
             return FakeResponse(404, {})
 
-        body = self._test_call({"person": "Jane Doe", "profile": ""}, serp=dry_serp)
+        values = {"person": "Jane Doe", "profile": ""}
+        body = self._test_call(values, serp=dry_serp, behavior=self._low_behavior({"person": "Jane Doe"}))
         self.assertEqual(body["cells"], {})
         self.assertEqual(body["evidence"], [])
+        # FAILS if a guess from memory is offered as unconfirmed.
+        self.assertEqual(body["assessments"]["person"]["unconfirmed"], "")
         # The drought is DIAGNOSED: queries ran, zero hits, no failures
         # (the provider answered honestly; nothing matched).
         self.assertTrue(body["tool_calls"])
