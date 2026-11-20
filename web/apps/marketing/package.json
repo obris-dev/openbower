@@ -19,7 +19,7 @@
     "@bower/tailwind-config": "workspace:*",
     "@bower/ui": "workspace:*",
     "lucide-react": "^1.28.0",
-    "next": "^16.4.2",
+    "next": "^16.4.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

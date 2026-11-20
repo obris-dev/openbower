@@ -19,10 +19,12 @@ allowBuilds:
 # the patched line, and the Workers dev runtime pins the one before it.
 overrides:
   sharp: ">=0.35.5"
-  # The OpenNext bundler's minifier pins an exact glob 10.3.3, whose CLI
-  # takes a shell command from a flag; the override lifts it to the
-  # patched 10.5 line without waiting on that package.
-  "glob@>=10.2.0 <10.5.0": "^10.5.0"
+  # Build and lint tooling (the OpenNext bundler, eslint) pins glob,
+  # minimatch and qs below their advisory fixes; each is lifted to the
+  # patched line without waiting on those packages.
+  "glob@>=9.0.0 <14.0.2": "^14.0.2"
+  "minimatch@>=3.0.0 <11.0.1": "^11.0.1"
+  "qs@>=6.7.0 <6.16.1": "^6.16.1"
   # The Workers dev runtime (miniflare, under wrangler and the OpenNext
   # adapter) pins an exact undici 7.29.1, short of the 7.30.1 fixes for
   # its TLS validation and denial-of-service advisories.
