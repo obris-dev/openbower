@@ -19,7 +19,7 @@ import { AGENT_TOOLS, draftProvider, ModelPicker, OutputsEditor, PromptEditor, T
 import {
   CONFIG_FAILED_LINE,
   EDIT_LEDE,
-  EDIT_PROMPT_VERB,
+  EDIT_COLUMN_VERB,
   editAgentAction,
   RETRY,
   SAVE_ACTION,
@@ -220,7 +220,7 @@ function DrawerContent({
   }
 
   return (
-    <Drawer open={open} onClose={onClose} title={EDIT_PROMPT_VERB} afterLeave={afterLeave} footer={footer}>
+    <Drawer open={open} onClose={onClose} title={EDIT_COLUMN_VERB} afterLeave={afterLeave} footer={footer}>
       {body}
     </Drawer>
   );

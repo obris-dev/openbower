@@ -2,4 +2,4 @@
 // outcome types its submit speaks.
 export { UseAiDrawer, type AiColumnSubmission, type ColumnOutcome } from "./use-ai-drawer";
 export { EditAiDrawer } from "./edit-ai-drawer";
-export { EDIT_PROMPT_VERB } from "./copy";
+export { EDIT_COLUMN_VERB } from "./copy";

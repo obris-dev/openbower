@@ -9,7 +9,7 @@ import { FillProgress } from "./fill-progress";
 import { FillColumnScope } from "./fill-column-scope";
 import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
 import type { LiveRun } from "./lib/live-status";
-import { EDIT_PROMPT_VERB } from "../use-ai/copy";
+import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 
 // Below this, the prompt fits the clamp anyway and a toggle would be
 // noise (binary; the clamp is three lines of a 24rem panel).
@@ -169,7 +169,7 @@ export function FillTrackerCell({
 /** The peek at what fills this column: the agent the column reads
  * live (what the next row runs under), the prompt under a few-line
  * clamp with an expand toggle, the model address beneath, and the way
- * to change it: Edit prompt opens the column's agent in the drawer
+ * to change it: Edit column opens the column's agent in the drawer
  * (read-only there for a saved agent, which the builder edits).
  * Mounted per popover open, so each open re-reads the current truth. */
 function PromptPeek({ sheetId, columnKey, onEdit }: { sheetId: string; columnKey: string; onEdit: () => void }) {
@@ -209,7 +209,7 @@ function PromptPeek({ sheetId, columnKey, onEdit }: { sheetId: string; columnKey
           onClick={onEdit}
           className="shrink-0 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
         >
-          {EDIT_PROMPT_VERB}
+          {EDIT_COLUMN_VERB}
         </PopoverClose>
       </div>
       <div className="mt-1 rounded-md bg-wash p-2">
