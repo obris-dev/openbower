@@ -87,6 +87,12 @@ export function HeaderCell({
       // its own press, so the handle's presses are skipped here: a
       // resize is never a drag.
       onMouseDownCapture={(event) => {
+        // React bubbles a portal's events through its React parents, so
+        // a press inside the column menu or the fill panel (rendered in
+        // portals) reaches this cell too: only a press on the cell's
+        // own DOM is a drag, or selecting text in a panel's input
+        // would move the column.
+        if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
         if (event.target instanceof Element && event.target.closest(`[${RESIZE_HANDLE_ATTRIBUTE}]`)) return;
         (listeners?.onMouseDown as MouseEventHandler<HTMLDivElement> | undefined)?.(event);
       }}
