@@ -28,14 +28,18 @@ export type LivenessRead = { runs: LiveRun[]; live: boolean };
  * halves are read by separate queries server-side, so one poll can
  * carry a fill in only one of them, and a loop that exited on the
  * runs leg alone left the glance promising updates with nothing
- * polling behind them. */
+ * polling behind them. A column with rows in progress (`pending`, open
+ * runs from any lane) is live too: an autofill has no fill run, and
+ * without it the poll idled while the column's count was moving. */
 export function livenessRead(
   runs: readonly FillRunWire[],
-  summaries: readonly Pick<ColumnFillSummary, "current_status">[],
+  summaries: readonly Pick<ColumnFillSummary, "current_status" | "pending">[],
 ): LivenessRead {
   const trusted = runs.filter((run): run is LiveRun => isLiveStatus(run.status));
   return {
     runs: trusted,
-    live: trusted.length > 0 || summaries.some((summary) => isLiveStatus(summary.current_status)),
+    live:
+      trusted.length > 0 ||
+      summaries.some((summary) => isLiveStatus(summary.current_status) || summary.pending > 0),
   };
 }

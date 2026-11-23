@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ColumnFillSummary } from "@bower/api";
 
-import { columnProgress, currentRunFor, trackerCell, type TrackerRun } from "./fill-tracker.ts";
+import { currentRunFor, trackerLine, type TrackerRun } from "./fill-tracker.ts";
 
 function run(overrides: Partial<TrackerRun & { id: string }> = {}): TrackerRun & { id: string } {
   return {
     id: "01RUN",
     target_row_count: 100,
-    counters: { filled: 0, attempted: 0 },
+    counters: { attempted: 0 },
     ...overrides,
   };
 }
@@ -37,74 +37,41 @@ test("the column's run is the envelope behind the server's pointer", () => {
   assert.equal(currentRunFor(summary({ current_fill_id: "01OLD" }), runs), runs[1]);
 });
 
-test("a column with nothing left says so, rather than showing a zero", () => {
-  // A settled column has nothing to report: the cells carry what landed.
-  assert.equal(columnProgress(summary({ filled: 1499, attempted: 2343 }), 2343), null);
+test("a quiet column says how much of the sheet is filled", () => {
+  const line = trackerLine(summary({ current_status: "complete", filled: 164, attempted: 180 }), null, 200);
+  assert.deepEqual(line, { text: "164 of 200 filled", inProgress: 0, fraction: 0.82, failed: false });
 });
 
-test("a live run speaks its filled count and its PROCESSED percent", () => {
-  // Percent means processed (attempted over targeted), not
-  // productive: 312 of 2343 rows run is 13%, whatever filled says.
-  const cell = trackerCell(run({ target_row_count: 2343, counters: { filled: 164, attempted: 312 } }), "running");
-  assert.deepEqual(cell, { kind: "live", text: "164 filled | 13% run", fraction: 312 / 2343 });
+test("an autofill is in progress with no fill run behind it", () => {
+  // FAILS if the column only speaks for fills: autofill queues open
+  // runs on the column's node and nothing else reports them.
+  const line = trackerLine(summary({ current_fill_id: "", current_status: "", filled: 164, pending: 3 }), null, 200);
+  assert.equal(line.text, "164 of 200 filled | 3 in progress");
+  assert.equal(line.inProgress, 3);
 });
 
-test("counts localize and the fraction (and its percent) clamp to one", () => {
-  const cell = trackerCell(run({ target_row_count: 1500, counters: { filled: 1499, attempted: 1600 } }), "running");
-  assert.deepEqual(cell, { kind: "live", text: "1,499 filled | 100% run", fraction: 1 });
+test("a live fill counts the rows it has not walked yet", () => {
+  // A fill queues its rows in slices, so the open runs can be fewer
+  // than the rows it will still reach.
+  const line = trackerLine(summary({ filled: 10, pending: 4 }), run({ target_row_count: 32, counters: { attempted: 12 } }), 2568);
+  assert.equal(line.text, "10 of 2,568 filled | 20 in progress");
 });
 
-test("a zero target count divides to nothing, never NaN", () => {
-  const cell = trackerCell(run({ target_row_count: 0, counters: { filled: 0, attempted: 0 } }), "pending");
-  assert.deepEqual(cell, { kind: "live", text: "0 filled | 0% run", fraction: 0 });
+test("open runs beyond the fill's walk count too (an autofill beside it)", () => {
+  const line = trackerLine(summary({ filled: 10, pending: 30 }), run({ target_row_count: 32, counters: { attempted: 12 } }), 200);
+  assert.equal(line.inProgress, 30);
 });
 
-test("without a live run the summary's status decides the cell", () => {
-  // The page ships live runs only, so a terminal story arrives as the
-  // summary's current_status: failed keeps a mark on the column, and
-  // every quiet ending is the header line alone (a finished run's
-  // counters are not replayed; the historic totals are the answer).
-  assert.deepEqual(trackerCell(null, "failed"), { kind: "failed", text: "Fill failed" });
-  assert.deepEqual(trackerCell(null, "complete"), { kind: "none" });
-  assert.deepEqual(trackerCell(null, "cancelled"), { kind: "none" });
-  assert.deepEqual(trackerCell(null, ""), { kind: "none" });
+test("the bar is filled over rows, clamped, and never NaN", () => {
+  assert.equal(trackerLine(summary({ filled: 250 }), null, 200).fraction, 1);
+  assert.equal(trackerLine(summary({ filled: 0 }), null, 0).fraction, 0);
+  assert.equal(trackerLine(summary({ filled: 0 }), null, 0).text, "0 of 0 filled");
 });
 
-test("a joined run outranks a stale summary status", () => {
-  // The payload's two halves come from separate server-side reads
-  // (runs first, then summaries), so a run that flips terminal
-  // between them ships live in one leg and failed in the other for
-  // one poll. The live walk is the current truth for that window.
-  const cell = trackerCell(run({ counters: { filled: 1, attempted: 2 } }), "failed");
-  assert.deepEqual(cell, { kind: "live", text: "1 filled | 2% run", fraction: 2 / 100 });
-});
-
-test("the header answers is there work left, not how well it went", () => {
-  // The v4 case from the author's own sheet: a fill scoped to 32 rows
-  // of 2,568. What an operator needs from the header is that 2,536
-  // rows are still untouched; how well those 32 went belongs in the
-  // run status underneath.
-  // Only what is KNOWN: a remainder subtracted from the sheet total
-  // is not what the button beneath would target, and claiming it
-  // put a number in the tracker that the next click contradicted.
-  assert.equal(columnProgress(summary({ filled: 17, attempted: 32 }), 2568), "2,536 rows to fill");
-});
-
-test("a column nothing has run yet names the work, not a zero", () => {
-  assert.equal(columnProgress(summary({ filled: 0, attempted: 0 }), 2568), "2,568 rows to fill");
-  assert.equal(columnProgress(summary({ filled: 0, attempted: 0 }), 1), "1 row to fill");
-});
-
-test("a column being worked on says so, over anything owed", () => {
-  // The autofill case: no fill run to join, open runs on the node.
-  // FAILS if the header keeps saying "to fill" while cells shimmer.
-  assert.equal(columnProgress(summary({ pending: 4 }), 4), "filling 4 rows");
-  assert.equal(columnProgress(summary({ pending: 1, attempted: 3 }), 4), "filling 1 row");
-  // Rows no attempt and no run has reached are not counted as filling.
-  assert.equal(columnProgress(summary({ pending: 2, attempted: 1 }), 10), "filling 2 rows");
-});
-
-test("owed is what neither an attempt nor an open run has reached", () => {
-  assert.equal(columnProgress(summary({ attempted: 1 }), 4), "3 rows to fill");
-  assert.equal(columnProgress(summary({ attempted: 4 }), 4), null);
+test("a failed fill marks the column until something runs again", () => {
+  assert.equal(trackerLine(summary({ current_status: "failed" }), null, 10).failed, true);
+  // The payload's halves come from separate reads, so a live run can
+  // ship beside a stale failed status for one poll: the run wins.
+  assert.equal(trackerLine(summary({ current_status: "failed" }), run(), 10).failed, false);
+  assert.equal(trackerLine(summary({ current_status: "complete" }), null, 10).failed, false);
 });

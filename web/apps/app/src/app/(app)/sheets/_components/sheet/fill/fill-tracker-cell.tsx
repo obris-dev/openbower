@@ -7,7 +7,7 @@ import { getColumnAgent, type AiColumn, type ColumnAgentWire, type ColumnFillSum
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { FillProgress } from "./fill-progress";
 import { FillColumnScope } from "./fill-column-scope";
-import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
+import { currentRunFor, trackerLine } from "./lib/fill-tracker";
 import type { LiveRun } from "./lib/live-status";
 import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 
@@ -16,14 +16,14 @@ import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 const PROMPT_TOGGLE_CHARS = 256;
 
 /** One AI column's cell in the tracker row: the column's fill state
- * compactly ("164 filled | 13% run", the current run's filled count
- * beside its processed share; a live run draws a thin progress bar
- * under the text, a failed one tints danger), and the click-in
+ * on one line ("164 of 200 filled | 3 in progress", whichever lane is
+ * working: a fill or an autofill; a thin bar while rows are in
+ * progress, "Fill failed" beneath when the newest fill failed), and the click-in
  * management surface behind it. The SERVER names the column's story
  * (the summary's current_fill_id and canonical filled count); this
  * cell renders it. One run per column is the invariant, so the
  * popover IS that column's management, one padded panel of fixed
- * width in reading order: the progress line, the FillProgress chip
+ * width in reading order: the FillProgress chip
  * while live (counters, ETA, pace, Stop), the failed run's error
  * verbatim when the newest run failed (a stopped or failed run is
  * over: a new fill, from the Fill next / Fill all remaining controls
@@ -91,13 +91,8 @@ export function FillTrackerCell({
   // still shows its progress and keeps its management surface, rather
   // than vanishing as though the column had never been filled.
   const run = currentRunFor(summary, runs);
-  const cell = trackerCell(run, summary.current_status);
-  const live = cell.kind === "live";
-  // Two instruments, one cell: is there WORK LEFT in this column (the
-  // header, the question an operator actually has) over how the
-  // current run is GOING (the status, which is where a quality number
-  // belongs, beside the run it describes). The bar stays the run's walk.
-  const progress = columnProgress(summary, rowCount);
+  const live = run !== null;
+  const line = trackerLine(summary, run, rowCount);
   return (
     <Popover>
       <PopoverButton
@@ -106,35 +101,16 @@ export function FillTrackerCell({
         // report (its button would otherwise collapse to its padding).
         className="block min-h-4 w-full min-w-16 rounded px-1 py-0.5 text-left outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-signal"
       >
-        {/* The header rides ABOVE the run status, so the two never say
-            the same thing: with no fill attached there is no status to
-            show and the header stands alone. A settled column says
-            nothing at all; the column name is the whole header. */}
-        {progress !== null && (
-          <span
-            className={cn(
-              "block truncate tabular-nums",
-              cell.kind === "none" ? "font-medium text-muted" : "text-[11px] text-faint",
-            )}
-          >
-            {progress}
-          </span>
+        <span className="block truncate font-medium tabular-nums text-muted">{line.text}</span>
+        {line.failed && (
+          // The word alone: the popover carries the server's verbatim error.
+          <span className="block truncate font-medium text-danger">Fill failed</span>
         )}
-        {cell.kind === "live" && (
-          <span className="block truncate font-medium tabular-nums text-muted">{cell.text}</span>
-        )}
-        {cell.kind === "failed" && (
-          // The word alone (authored beside its table in fill-tracker):
-          // the popover carries the server's verbatim error, and a dead
-          // run's counters are not replayed (the header's totals are
-          // the honest answer).
-          <span className="block truncate font-medium text-danger">{cell.text}</span>
-        )}
-        {live && (
+        {line.inProgress > 0 && (
           <span aria-hidden className="mt-1 block h-0.5 w-full overflow-hidden rounded-full bg-wash-strong">
             <span
               className="block h-full rounded-full bg-signal"
-              style={{ width: `${Math.round(cell.fraction * 100)}%` }}
+              style={{ width: `${Math.round(line.fraction * 100)}%` }}
             />
           </span>
         )}
@@ -145,7 +121,6 @@ export function FillTrackerCell({
           between read and edit. */}
       <PopoverPanel anchor="bottom start" className="py-0 motion-reduce:transition-none">
         <div className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-4">
-          {progress !== null && <p className="text-xs text-muted">Column: {progress}</p>}
           {run !== null && <FillProgress run={run} onStop={() => onStop(run.id)} />}
           {!live && summary.current_status === "failed" && (
             // Tier 1: the server wrote the failed run's copy; render
