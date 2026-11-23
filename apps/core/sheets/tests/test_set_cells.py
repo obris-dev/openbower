@@ -25,7 +25,8 @@ from ..nodes.entry import Entry
 from ..operations.set_cells import SetCellsOperation
 from ..services import cell_truth
 from ..services.ai_columns import AiColumnService
-from ..services.sheets import CellBlank, CellColumnUnknown, CellNotWritable, CellTypeRefused, RowNotFound, SheetService
+from ..services.cell_states import CellStateService
+from ..services.sheets import CellColumnUnknown, CellNotWritable, CellTypeRefused, RowNotFound, SheetService
 from ..services.webhook_columns import WebhookColumnService
 from ..services.workflow_reactions import WorkflowReactions
 from ..services.workflows import WorkflowService
@@ -89,13 +90,38 @@ class SetCellsTests(TestCase):
         self.row.refresh_from_db()
         self.assertEqual(self.row.data, {"company": "acme.com", "employees": "10"})
 
-    def test_a_blank_an_unknown_column_and_a_gone_row_are_refused(self):
-        with self.assertRaises(CellBlank):
-            self.set_cells({"company": "   "})
+    def test_an_unknown_column_and_a_gone_row_are_refused(self):
         with self.assertRaises(CellColumnUnknown):
             self.set_cells({"revenue": "1"})
         with self.assertRaises(RowNotFound):
             self.set_cells({"company": "Acme"}, row_id=new_ulid())
+
+    def test_a_blank_clears_the_cell_beside_a_value(self):
+        report = self.set_cells({"company": "Acme Holdings", "employees": "  "})
+        self.assertEqual(report.row.data, {"company": "Acme Holdings"})
+        self.row.refresh_from_db()
+        self.assertEqual(self.row.data, {"company": "Acme Holdings"})
+
+    def test_a_cleared_ai_cell_is_left_to_fill_and_nothing_runs_it(self):
+        self.add_ai_column()
+        self.set_cells({"answer": "Widgets"})
+        cells = CellStateService(account_id=ACCOUNT)
+        row_id = str(self.row.id)
+        attempted = cells.attempted_row_ids(str(self.sheet.id), row_ids=[row_id], column_keys=["answer"])
+        self.assertEqual(attempted, {row_id})
+        runs_before = NodeRun.objects.count()
+        report = self.set_cells({"answer": ""})
+        self.assertNotIn("answer", report.row.data)
+        # FAILS if the record outlives the value: the row would read as
+        # attempted and no fill would ever reach the cell again.
+        self.assertFalse(SheetCellState.objects.filter(row_id=row_id, column_key="answer").exists())
+        self.assertEqual(cells.attempted_row_ids(str(self.sheet.id), row_ids=[row_id], column_keys=["answer"]), set())
+        # A clear asks for nothing: the person asks for the run.
+        self.assertEqual((report.queued, NodeRun.objects.count()), (0, runs_before))
+
+    def test_a_clear_of_an_empty_cell_is_harmless(self):
+        report = self.set_cells({"employees": ""}, row_id=str(self.other.id))
+        self.assertEqual(report.row.data, {"company": "example.io"})
 
     def test_a_webhook_column_takes_no_value(self):
         self.add_ai_column()

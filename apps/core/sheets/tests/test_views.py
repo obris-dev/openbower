@@ -236,14 +236,16 @@ class RowViewTests(TestCase):
         page = self.client.get(reverse("sheets_rows", kwargs={"id": self.sheet_id})).json()
         self.assertEqual(page["items"][0]["data"]["company"], "Acme Holdings")
 
+    def test_patch_a_blank_clears_the_cell(self):
+        resp = self.patch(self.first_id, {"employees": "  "})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["data"], {"company": "acme.com"})
+
     def test_patch_refusals_carry_a_code_and_a_sentence_and_write_nothing(self):
         mismatch = self.patch(self.first_id, {"employees": "lots"})
         self.assertEqual(mismatch.status_code, 400, mismatch.content)
         self.assertEqual(mismatch.json()["error"], "cell_type_mismatch")
         self.assertIn("Employees", mismatch.json()["detail"])
-        blank = self.patch(self.first_id, {"company": "  "})
-        self.assertEqual(blank.status_code, 400, blank.content)
-        self.assertEqual(blank.json()["error"], "cell_blank")
         unknown = self.patch(self.first_id, {"revenue": "1"})
         self.assertEqual(unknown.status_code, 400, unknown.content)
         self.assertEqual(unknown.json()["error"], "cell_column_unknown")

@@ -7,6 +7,10 @@ an edit is one cell of a row that may still be being edited, so the
 node behind the edited column is not run off it; the person asks for
 that run.
 
+A blank value CLEARS the cell: its value and its record go, so it reads
+as never attempted (an AI cell is left to fill again; nothing runs it
+until the person asks). A clear completes nothing.
+
 Refusals come back as CellRefused, never as a flag on the cell: a
 machine's mismatched answer is recorded and the row moves on, but a
 person is handed the reason and keeps the cell they had."""
@@ -23,7 +27,6 @@ from ..cells import CellWrite, LandingContext, RowLanding, TypedWrite
 from ..constants import CellSource
 from ..models import Sheet, SheetRow
 from ..services.sheets import (
-    CellBlank,
     CellColumnUnknown,
     CellImmutable,
     CellNotWritable,
@@ -52,11 +55,11 @@ class SetCellsOperation:
     def run(self) -> SetCellsReport:
         """Raises CellColumnUnknown for a key the sheet has no column
         for, CellNotWritable for a column that holds no value a person
-        can set, CellBlank for a blank value, CellTypeRefused for a value outside the
-        column's type, and RowNotFound for a row that is gone. Nothing
-        is written when anything is refused."""
+        can set, CellTypeRefused for a value outside the column's type,
+        and RowNotFound for a row that is gone. A blank value clears its
+        cell. Nothing is written when anything is refused."""
         columns = {column.key: column for column in self.target_sheet.columns}
-        for key, value in self.cells.items():
+        for key in self.cells:
             column = columns.get(key)
             if column is None:
                 raise CellColumnUnknown(key)
@@ -66,12 +69,13 @@ class SetCellsOperation:
                 raise CellNotWritable(column_label=column.label)
             if column.immutable:
                 raise CellImmutable(column_label=column.label)
-            if not value.strip():
-                raise CellBlank(column_label=column.label)
-        writes: list[CellWrite] = [TypedWrite(key, value) for key, value in self.cells.items()]
+        cleared = [key for key, value in self.cells.items() if not value.strip()]
+        writes: list[CellWrite] = [TypedWrite(key, value) for key, value in self.cells.items() if value.strip()]
         ctx = LandingContext(sheet_id=str(self.target_sheet.id), source=CellSource.MANUAL, fill_run_id=None)
         sheets = SheetService(account_id=self.account_id)
         with transaction.atomic():
+            if cleared:
+                sheets.clear_cells(self.target_sheet, self.row_id, cleared)
             verdict = sheets.land_row(ctx, RowLanding(self.row_id, writes))
             # The ONE type check: the landing's, under the row's lock
             # against the sheet as it is then. It reports a mismatch

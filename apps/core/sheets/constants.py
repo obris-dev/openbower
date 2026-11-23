@@ -213,8 +213,6 @@ class CellErrorCode(StrEnum):
     # A column that holds no value a person can set (a Send column is
     # its send state).
     COLUMN_NOT_WRITABLE = "column_not_writable"
-    # A blank value: nothing to write.
-    CELL_BLANK = "cell_blank"
     # A key the sheet has no column for: named in the body, so a
     # refusal and not a missing resource.
     CELL_COLUMN_UNKNOWN = "cell_column_unknown"

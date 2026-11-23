@@ -113,15 +113,6 @@ class CellImmutable(CellRefused):
         super().__init__(f"{column_label} comes with the row and cannot be edited.")
 
 
-class CellBlank(CellRefused):
-    """The value is blank: nothing to write."""
-
-    code = CellErrorCode.CELL_BLANK
-
-    def __init__(self, *, column_label: str) -> None:
-        super().__init__(f"Nothing to put in {column_label}.")
-
-
 class CellColumnUnknown(CellRefused):
     """The body names a column the sheet does not have. A refusal, not
     a 404: the row and the sheet exist, the key in the body is wrong."""
@@ -923,6 +914,23 @@ class SheetService:
             locked.row_count = SheetRow.objects.filter(sheet_id=str(locked.id)).count()
             locked.save(update_fields=["row_count", "updated_at"])
         return RowsRemoved(deleted=deleted, row_count=locked.row_count)
+
+    def clear_cells(self, target: Sheet, row_id: str, column_keys: Sequence[str]) -> None:
+        """Empty cells of one row: their values and their records go, so
+        each reads as never attempted (an AI cell is left to fill again,
+        and nothing runs it until the user asks). In the landing's lock
+        order (the SheetRow, then its records), so a run landing on the
+        same row waits rather than deadlocking. Raises RowNotFound when
+        the sheet has no such row."""
+        keys = list(column_keys)
+        with transaction.atomic():
+            row = SheetRow.objects.select_for_update().filter(id=row_id, sheet_id=str(target.id)).first()
+            if row is None:
+                raise RowNotFound(row_id)
+            for key in keys:
+                row.data.pop(key, None)
+            row.save(update_fields=["data"])
+            cell_truth.purge_cells(str(target.id), row_id=row_id, column_keys=keys)
 
     def delete_row(self, target: Sheet, row_id: str) -> None:
         """One row by id, through the rows delete. Raises RowNotFound
