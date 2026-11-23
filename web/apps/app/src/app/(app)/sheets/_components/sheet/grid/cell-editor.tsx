@@ -9,9 +9,9 @@ import { useCellEditing } from "./cell-editing";
  * cell starts editing (so autoFocus lands), holding the draft. Enter
  * commits and leaves focus on the cell; Escape closes with nothing
  * written; Tab commits and moves to the next editable cell (Shift+Tab
- * the previous); clicking away commits. A blank draft, or one equal
- * to the value, is a cancel: the write would refuse a blank, and an
- * unchanged value is no write. A refusal on Enter keeps the editor
+ * the previous); clicking away commits. A blank draft CLEARS the cell
+ * (the write empties it; an AI cell is left to fill again); a draft
+ * equal to the value is no write. A refusal on Enter keeps the editor
  * open with the draft, the sheet's toast saying why, so the value
  * can be fixed in place; a refusal on the way out closes it, and the
  * cell keeps what it had. An editor that is unmounted without a word
@@ -70,7 +70,7 @@ export function CellEditor({
         if (settledRef.current) return;
         settledRef.current = true;
         const value = draftRef.current.trim();
-        if (value && value !== current && actions) void actions.write(rowId, columnKey, draftRef.current);
+        if (value !== current.trim() && actions) void actions.write(rowId, columnKey, draftRef.current);
         editing?.done({ rowId, columnKey });
       }, 0);
     };
@@ -79,8 +79,7 @@ export function CellEditor({
 
   async function commit(): Promise<boolean> {
     if (settledRef.current || busyRef.current || !actions) return false;
-    const value = draft.trim();
-    if (!value || value === current) return true;
+    if (draft.trim() === current.trim()) return true;
     busyRef.current = true;
     const outcome = await actions.write(rowId, columnKey, draft);
     busyRef.current = false;

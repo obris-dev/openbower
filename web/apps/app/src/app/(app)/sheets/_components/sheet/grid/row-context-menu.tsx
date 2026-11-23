@@ -21,8 +21,9 @@ const MENU_KEY_INSET = 6;
 
 /** The right-click menu over the body: ONE menu for every row, which
  * reads the cell the press landed on off the element's marks and
- * offers that cell's verbs. Copy and Paste need a column that holds a
- * value; Delete row needs only the row. The keyboard reaches it too:
+ * offers that cell's verbs. Copy, Paste and Clear cell need a column
+ * that holds a value (Clear cell empties it; an AI cell is left to
+ * fill again); Delete row needs only the row. The keyboard reaches it too:
  * Shift+F10 and the Menu key on a focused cell open it at that cell.
  * Not every browser turns those keys into the context-menu event
  * itself (none does on a Mac), so the trigger fires that event at the
@@ -100,6 +101,12 @@ export function RowContextMenu({
           onSelect={() => target?.columnKey && actions.paste(target.rowId, target.columnKey)}
         >
           Paste
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!pasteable}
+          onSelect={() => target?.columnKey && void actions.write(target.rowId, target.columnKey, "")}
+        >
+          Clear cell
         </ContextMenuItem>
         <ContextMenuItem
           disabled={!detailable}

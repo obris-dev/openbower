@@ -142,6 +142,14 @@ export function GridCell({
       return;
     }
     if (!editable || event.altKey) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
+      // Clears without opening the editor, as a spreadsheet does. An
+      // AI cell with a record and no value (a verdict, an unconfirmed
+      // answer) is cleared too, so it is left to fill again.
+      event.preventDefault();
+      if (value || entry) void actions.write(row.id, column.key, "");
+      return;
+    }
     if (event.key === "Enter" || event.key === "F2") {
       event.preventDefault();
       editing.start({ rowId: row.id, columnKey: column.key, initial: value });

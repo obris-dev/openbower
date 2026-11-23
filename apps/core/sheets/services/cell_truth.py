@@ -182,6 +182,13 @@ def purge_rows(sheet_id: str, row_ids: Sequence[str]) -> None:
     SheetCellState.objects.filter(sheet_id=sheet_id, row_id__in=list(row_ids)).delete()
 
 
+def purge_cells(sheet_id: str, *, row_id: str, column_keys: Sequence[str]) -> None:
+    """Cleared cells lose their records: a cell with no record was never
+    attempted, so a fill reaches it again. One row's few cells, so one
+    statement."""
+    SheetCellState.objects.filter(sheet_id=sheet_id, row_id=row_id, column_key__in=list(column_keys)).delete()
+
+
 def purge_sheet(sheet_id: str) -> None:
     """A deleted sheet takes its cell states with it. Paged for the same
     reason purge_column is."""
