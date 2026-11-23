@@ -29,10 +29,8 @@ const PROMPT_TOGGLE_CHARS = 256;
  * over: a new fill, from the Fill next / Fill all remaining controls
  * below, runs the rows it never reached), those controls for terminal
  * runs on an entry action's column, and
- * the prompt peek with its inline EDIT (reading and writing the
- * column-scoped prompt endpoint, the column's CURRENT config; a live
- * run disables the affordance, since a fill reads its agent live and
- * an edit mid-fill would mix two asks in one run's rows). The Popover
+ * the prompt peek (the column's agent as a fill reads it, with Edit
+ * prompt handing off to the column's edit drawer). The Popover
  * primitive carries the disclosure floor
  * (aria-expanded, Escape, outside-click, focus return). A MISSING
  * summary means the poll has not answered for this column yet: the
