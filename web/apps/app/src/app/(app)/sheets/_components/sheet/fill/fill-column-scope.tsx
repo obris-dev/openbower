@@ -4,12 +4,12 @@ import { useState } from "react";
 import { Button, Input } from "@bower/ui";
 import { DEFAULT_SCOPE_ROWS, parseScopeRows } from "./lib/fill-scope";
 
-/** The tracker popover's fill: the column's next N rows never tried,
- * or all of them. N is an upper bound, not a promise (the server skips
+/** A column's fill, from its header's Fill button or its menu's Fill
+ * column: the next N rows never tried, or all of them. N is an upper bound, not a promise (the server skips
  * rows already tried and owns the true eligible count), so the copy
- * says "next" and never claims a total. Renders only beside a terminal
- * run: one run per column is the invariant, so a fill during a live
- * walk could only be refused. A refusal
+ * says "next" and never claims a total. Offered only while no fill of
+ * the column runs: one run per column is the invariant, so a fill
+ * during a live walk could only be refused. A refusal
  * renders verbatim below (tier 1: the server wrote it). */
 export function FillColumnScope({ onFill }: { onFill: (maxRowCount?: number) => Promise<string | null> }) {
   const [rowsText, setRowsText] = useState(String(DEFAULT_SCOPE_ROWS));

@@ -7,6 +7,7 @@ import { useState, type MouseEventHandler } from "react";
 import { type AiColumn, isImmutable, type SheetColumn, type WebhookColumn } from "@bower/api";
 
 import type { ColumnOutcome } from "../use-columns";
+import { type ColumnFill, FillControl } from "../fill";
 import { ColumnIcon } from "./column-icon";
 import { ColumnMenu } from "./column-menu";
 import { ColumnNameField } from "./column-name-field";
@@ -44,6 +45,7 @@ export function HeaderCell({
   onDelete,
   onEditWebhook,
   onEditAi,
+  fillOf,
 }: {
   header: GridHeader;
   width: CellWidth;
@@ -54,12 +56,16 @@ export function HeaderCell({
   onDelete?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
   onEditAi?: (column: AiColumn) => void;
+  fillOf?: (column: AiColumn) => ColumnFill;
 }) {
   const [renaming, setRenaming] = useState(false);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: column.key,
     disabled: !onReorder,
   });
+
+  const fill = column.kind === "ai" && fillOf ? fillOf(column) : null;
+  const runId = fill?.runId ?? null;
 
   function nudge(direction: -1 | 1) {
     const keys = nudgeColumn(columns, column.key, direction);
@@ -110,44 +116,53 @@ export function HeaderCell({
           />
         </div>
       ) : (
-        <Popover className="h-full">
-          {({ open }) => (
-            <>
-              <PopoverButton
-                id={menuButtonId(column.key)}
-                title={column.label}
-                aria-label={`${column.label} column menu`}
-                // A right-click opens the same menu a click does: the
-                // header has one menu, so the browser's own is not
-                // offered here.
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  if (!open) event.currentTarget.click();
-                }}
-                className="flex h-full w-full min-w-0 items-center gap-1.5 p-2 text-left text-sm font-medium text-foreground outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-signal"
-              >
-                <ColumnIcon column={column} />
-                <span className="min-w-0 truncate">{column.label}</span>
-              </PopoverButton>
-              <PopoverPanel anchor="bottom start" focus>
-                {({ close }) => (
-                  <ColumnMenu
-                    column={column}
-                    columns={columns}
-                    close={close}
-                    onMove={(direction) => nudge(direction)}
-                    onRename={onRename && (() => setRenaming(true))}
-                    onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
-                    onEditAi={onEditAi && column.kind === "ai" ? () => onEditAi(column) : undefined}
-                    // A column whose values arrive with the row stays while
-                    // its source writes it: the server refuses its delete.
-                    onDelete={onDelete && !isImmutable(column) ? () => onDelete(column) : undefined}
-                  />
-                )}
-              </PopoverPanel>
-            </>
+        <div className="flex h-full items-center">
+          <Popover className="h-full min-w-0 flex-1">
+            {({ open }) => (
+              <>
+                <PopoverButton
+                  id={menuButtonId(column.key)}
+                  title={column.label}
+                  aria-label={`${column.label} column menu`}
+                  // A right-click opens the same menu a click does: the
+                  // header has one menu, so the browser's own is not
+                  // offered here.
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    if (!open) event.currentTarget.click();
+                  }}
+                  className="flex h-full w-full min-w-0 items-center gap-1.5 p-2 text-left text-sm font-medium text-foreground outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-signal"
+                >
+                  <ColumnIcon column={column} />
+                  <span className="min-w-0 truncate">{column.label}</span>
+                </PopoverButton>
+                <PopoverPanel anchor="bottom start" focus>
+                  {({ close }) => (
+                    <ColumnMenu
+                      column={column}
+                      columns={columns}
+                      close={close}
+                      onMove={(direction) => nudge(direction)}
+                      onRename={onRename && (() => setRenaming(true))}
+                      onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
+                      onEditAi={onEditAi && column.kind === "ai" ? () => onEditAi(column) : undefined}
+                      onFill={fill?.canFill && fill.runId === null ? fill.fill : undefined}
+                      onStop={fill?.runId ? () => fill.stop(fill.runId as string) : undefined}
+                      // A column whose values arrive with the row stays while
+                      // its source writes it: the server refuses its delete.
+                      onDelete={onDelete && !isImmutable(column) ? () => onDelete(column) : undefined}
+                    />
+                  )}
+                </PopoverPanel>
+              </>
+            )}
+          </Popover>
+          {fill && (
+            <div className="pr-1">
+              <FillControl label={column.label} fill={fill} />
+            </div>
           )}
-        </Popover>
+        </div>
       )}
       <ResizeHandle header={header} />
     </div>

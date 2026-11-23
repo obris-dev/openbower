@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowUpRight, MoveLeft, MoveRight, Pencil, Sparkles, Trash2 } from "lucide-react";
-import { PopoverItem } from "@bower/ui";
+import { ArrowUpRight, MoveLeft, MoveRight, Pencil, Play, Sparkles, Square, Trash2 } from "lucide-react";
+import { PopoverItem, useToast } from "@bower/ui";
 import { useState } from "react";
 import type { SheetColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "../send-webhook";
+import { FillColumnScope } from "../fill/fill-column-scope";
 import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 import type { ColumnOutcome } from "../use-columns";
 import { canMove } from "../lib/column-order";
@@ -31,6 +32,8 @@ export function ColumnMenu({
   onRename,
   onEditWebhook,
   onEditAi,
+  onFill,
+  onStop,
   onDelete,
 }: {
   column: SheetColumn;
@@ -40,9 +43,15 @@ export function ColumnMenu({
   onRename?: () => void;
   onEditWebhook?: () => void;
   onEditAi?: () => void;
+  /** Present when the column can start a fill now (no fill running). */
+  onFill?: (maxRowCount?: number) => Promise<string | null>;
+  /** Present while the column's fill runs. */
+  onStop?: () => Promise<string | null>;
   onDelete?: () => Promise<ColumnOutcome>;
 }) {
+  const toast = useToast();
   const [confirming, setConfirming] = useState(false);
+  const [choosingRows, setChoosingRows] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // A refusal the server answered stays IN the tier that asked, so the
   // user reads why on the column they were deleting.
@@ -59,6 +68,23 @@ export function ColumnMenu({
     }
     setDeleting(false);
     setRefusal(outcome.detail);
+  }
+
+  // The fill's scope REPLACES the verbs, as the delete confirm does: a
+  // fill spends, so its rows are named before it starts.
+  if (choosingRows && onFill) {
+    return (
+      <div className="w-max max-w-[calc(100vw-2rem)] space-y-2 px-3 py-2.5">
+        <p className="text-sm font-medium text-foreground">Fill {column.label}</p>
+        <FillColumnScope
+          onFill={async (maxRowCount) => {
+            const message = await onFill(maxRowCount);
+            if (!message) close();
+            return message;
+          }}
+        />
+      </div>
+    );
   }
 
   if (confirming && onDelete) {
@@ -106,6 +132,28 @@ export function ColumnMenu({
           <span className="flex items-center gap-2">
             <Sparkles aria-hidden className="h-4 w-4 text-faint" />
             {EDIT_COLUMN_VERB}
+          </span>
+        </PopoverItem>
+      )}
+      {onFill && (
+        <PopoverItem onClick={() => setChoosingRows(true)}>
+          <span className="flex items-center gap-2">
+            <Play aria-hidden className="h-4 w-4 text-faint" />
+            Fill column
+          </span>
+        </PopoverItem>
+      )}
+      {onStop && (
+        <PopoverItem
+          onClick={async () => {
+            close();
+            const message = await onStop();
+            if (message) toast.error(message, "Fill not stopped");
+          }}
+        >
+          <span className="flex items-center gap-2">
+            <Square aria-hidden className="h-4 w-4 text-faint" />
+            Stop fill
           </span>
         </PopoverItem>
       )}

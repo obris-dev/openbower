@@ -685,7 +685,6 @@ export function Sheet({
             searchProvider={searchProvider}
             details={details}
             fills={{
-              sheetId: detail.id,
               runs: fill.runs,
               summaries: fill.summaries,
               pollTrouble,
@@ -693,7 +692,6 @@ export function Sheet({
               entryActionIds: detail.entry_action_ids,
               onStop: fill.stop,
               onFill: fillColumn,
-              onEdit: openEditAi,
             }}
             onAddColumn={openAddColumn}
             onReorder={columns.reorder}

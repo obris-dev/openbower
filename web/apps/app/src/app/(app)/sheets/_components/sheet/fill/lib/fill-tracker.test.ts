@@ -37,24 +37,29 @@ test("the column's run is the envelope behind the server's pointer", () => {
   assert.equal(currentRunFor(summary({ current_fill_id: "01OLD" }), runs), runs[1]);
 });
 
-test("a quiet column says how much of the sheet is filled", () => {
+test("a quiet column is its share filled, broken down in the card", () => {
   const line = trackerLine(summary({ current_status: "complete", filled: 164, attempted: 180 }), null, 200);
-  assert.deepEqual(line, { text: "164 of 200 filled", inProgress: 0, fraction: 0.82, failed: false });
+  assert.equal(line.percent, 82);
+  assert.equal(line.fraction, 0.82);
+  assert.equal(line.inProgress, 0);
+  assert.deepEqual(line.lines, ["164 of 200 rows filled (82%)", "16 ran with no answer", "20 left to fill"]);
 });
 
 test("an autofill is in progress with no fill run behind it", () => {
   // FAILS if the column only speaks for fills: autofill queues open
   // runs on the column's node and nothing else reports them.
-  const line = trackerLine(summary({ current_fill_id: "", current_status: "", filled: 164, pending: 3 }), null, 200);
-  assert.equal(line.text, "164 of 200 filled | 3 in progress");
+  const line = trackerLine(summary({ current_fill_id: "", current_status: "", filled: 164, attempted: 164, pending: 3 }), null, 200);
   assert.equal(line.inProgress, 3);
+  assert.deepEqual(line.lines, ["164 of 200 rows filled (82%)", "3 in progress", "33 left to fill"]);
 });
 
 test("a live fill counts the rows it has not walked yet", () => {
   // A fill queues its rows in slices, so the open runs can be fewer
   // than the rows it will still reach.
-  const line = trackerLine(summary({ filled: 10, pending: 4 }), run({ target_row_count: 32, counters: { attempted: 12 } }), 2568);
-  assert.equal(line.text, "10 of 2,568 filled | 20 in progress");
+  const line = trackerLine(summary({ filled: 10, attempted: 12, pending: 4 }), run({ target_row_count: 32, counters: { attempted: 12 } }), 2568);
+  assert.equal(line.inProgress, 20);
+  assert.equal(line.lines[1], "20 in progress");
+  assert.equal(line.lines.at(-1), "2,536 left to fill");
 });
 
 test("open runs beyond the fill's walk count too (an autofill beside it)", () => {
@@ -64,8 +69,12 @@ test("open runs beyond the fill's walk count too (an autofill beside it)", () =>
 
 test("the bar is filled over rows, clamped, and never NaN", () => {
   assert.equal(trackerLine(summary({ filled: 250 }), null, 200).fraction, 1);
-  assert.equal(trackerLine(summary({ filled: 0 }), null, 0).fraction, 0);
-  assert.equal(trackerLine(summary({ filled: 0 }), null, 0).text, "0 of 0 filled");
+  const empty = trackerLine(summary({ filled: 0 }), null, 0);
+  assert.deepEqual([empty.fraction, empty.percent, empty.lines], [0, 0, ["0 of 0 rows filled (0%)"]]);
+});
+
+test("a full column says so and nothing else", () => {
+  assert.deepEqual(trackerLine(summary({ filled: 14, attempted: 14 }), null, 14).lines, ["14 of 14 rows filled (100%)"]);
 });
 
 test("a failed fill marks the column until something runs again", () => {

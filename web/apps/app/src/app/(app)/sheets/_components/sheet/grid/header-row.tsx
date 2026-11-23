@@ -4,6 +4,8 @@ import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortabl
 import { Checkbox } from "@bower/ui";
 import type { AiColumn, ColumnType, SheetColumn, WebhookColumn } from "@bower/api";
 
+import type { ColumnFill } from "../fill";
+
 import type { AddColumnKind } from "../add-column";
 import type { ColumnOutcome } from "../use-columns";
 import { AddColumnCell } from "./add-column-cell";
@@ -34,6 +36,7 @@ export function HeaderRow({
   onDeleteColumn,
   onEditWebhook,
   onEditAi,
+  fillOf,
   pendingColumn,
   onNamePending,
   onAddColumn,
@@ -49,6 +52,8 @@ export function HeaderRow({
   onDeleteColumn?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
   onEditAi?: (column: AiColumn) => void;
+  /** An AI column's Fill / Stop, when the sheet tracks fills. */
+  fillOf?: (column: AiColumn) => ColumnFill;
   pendingColumn?: { type: ColumnType } | null;
   onNamePending?: (label: string) => void;
   onAddColumn?: (kind: AddColumnKind) => void;
@@ -89,6 +94,7 @@ export function HeaderRow({
             onDelete={onDeleteColumn}
             onEditWebhook={onEditWebhook}
             onEditAi={onEditAi}
+            fillOf={fillOf}
           />
         ))}
       </SortableContext>
