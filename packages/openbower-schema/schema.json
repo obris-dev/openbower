@@ -667,6 +667,35 @@
       "title": "CellStateWire",
       "type": "object"
     },
+    "ColumnAgentWire": {
+      "description": "The agent filling a column, read from the column (GET\n/sheets/{id}/columns/{key}/agent), and the echo after the column\nedit (PATCH, column-owned agents only). A fill reads its agent live,\nso an edit reaches a running fill's next row.",
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "agent_label": {
+          "title": "Agent Label",
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/$defs/AgentConfig"
+        },
+        "saved": {
+          "description": "A saved agent (on the Agents roster, maybe filling other sheets): read here, edited only in the agent builder. False is the column's own agent, edited from the column.",
+          "title": "Saved",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agent_id",
+        "agent_label",
+        "saved",
+        "config"
+      ],
+      "title": "ColumnAgentWire",
+      "type": "object"
+    },
     "ColumnFillSummary": {
       "description": "Per-column coverage, computed server-side so the client renders\ninstead of reconstructing (a client sum over one PAGE of fills\nsilently undercounts the moment history outgrows the page).\n\nDeliberately NOT carrying how many rows a new fill would target: that\nis planning-grade math on a four-second progress poll, and the fill\nrequest only probes for the first owed row. A fill's own count is\nknown once it has targeted its rows (FillRunWire.target_row_count\nafter `targeted_at`).",
       "properties": {
@@ -736,30 +765,6 @@
         "pending"
       ],
       "title": "ColumnFillSummary",
-      "type": "object"
-    },
-    "ColumnPromptWire": {
-      "description": "The column's CURRENT fill config as the server holds it (GET),\nand the echo after a column-scoped edit (PATCH\n/sheets/{id}/columns/{key}/prompt). A fill reads its agent live, so\nan edit reaches a running fill's next row; surfaces peeking at\n\"what fills this column\" read HERE.",
-      "properties": {
-        "model": {
-          "title": "Model",
-          "type": "string"
-        },
-        "prompt": {
-          "title": "Prompt",
-          "type": "string"
-        },
-        "source": {
-          "title": "Source",
-          "type": "string"
-        }
-      },
-      "required": [
-        "prompt",
-        "model",
-        "source"
-      ],
-      "title": "ColumnPromptWire",
       "type": "object"
     },
     "CustomSignalCreated": {

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ColumnFillSummary, SheetColumn } from "@bower/api";
+import type { AiColumn, ColumnFillSummary, SheetColumn } from "@bower/api";
 
 import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
@@ -28,6 +28,8 @@ export type SheetFills = {
   entryActionIds: string[];
   onStop: (runId: string) => Promise<string | null>;
   onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
+  // Opens the column's agent in the edit drawer.
+  onEdit: (column: AiColumn) => void;
 };
 
 /** The band under the header, stuck to it so it scrolls horizontally
@@ -79,6 +81,7 @@ export function TrackerRow({
                 startsFill={startsFill(column, fills.entryActionIds)}
                 onStop={fills.onStop}
                 onFill={fills.onFill}
+                onEdit={() => fills.onEdit(column)}
               />
             )}
           </div>

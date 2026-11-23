@@ -18,8 +18,8 @@ from .agents import (
 from .auth import API_KEY_NAME_MAX_LENGTH, MAX_API_KEYS, ApiKeyMinted, ApiKeysList, ApiKeyWire, AuthUser
 from .fills import (
     CellRunResult,
+    ColumnAgentWire,
     ColumnFillSummary,
-    ColumnPromptWire,
     FillCounters,
     FillError,
     FillRunPage,
@@ -115,8 +115,8 @@ __all__ = [
     "CatalogModel",
     "CellDetailWire",
     "CellRunResult",
+    "ColumnAgentWire",
     "ColumnFillSummary",
-    "ColumnPromptWire",
     "CustomSignalCreated",
     "EventSource",
     "FillCounters",

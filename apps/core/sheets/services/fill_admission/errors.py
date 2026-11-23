@@ -173,6 +173,16 @@ class ProviderRetiredRefusal(FillRefused):
         super().__init__(PROVIDER_RETIRED_MESSAGE)
 
 
+class SavedAgentRefusal(FillRefused):
+    """A column edit names a column whose agent is saved: the roster
+    agent may fill other sheets, so only the agent builder edits it."""
+
+    code = FillErrorCode.AGENT_SAVED
+
+    def __init__(self) -> None:
+        super().__init__("This column runs a saved agent. Edit it from Agents.")
+
+
 class ModelUnrunnable(FillRefused):
     code = FillErrorCode.MODEL_UNRUNNABLE
 

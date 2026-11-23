@@ -13,8 +13,10 @@ import {
   postColumnWebhook,
   renameColumn,
   reorderColumns,
+  updateColumnAgent,
   updateColumnWebhook,
   updateSheet,
+  type AgentConfig,
   type AiColumnBody,
   type ColumnType,
   type SheetColumn,
@@ -58,6 +60,7 @@ export function useColumns(initialDetail: SheetDetail): {
   addAi: (body: AiColumnBody) => Promise<AiColumnOutcome>;
   addWebhook: (body: WebhookColumnBody) => Promise<ColumnOutcome>;
   saveWebhook: (key: string, body: WebhookColumnPatchBody) => Promise<ColumnOutcome>;
+  saveAi: (key: string, config: AgentConfig) => Promise<ColumnOutcome>;
   startPending: (type: ColumnType) => void;
   namePending: (label: string) => Promise<void>;
   renameSheet: (label: string) => Promise<boolean>;
@@ -201,6 +204,18 @@ export function useColumns(initialDetail: SheetDetail): {
     [detail.id],
   );
 
+  // The AI column's own agent, saved from the column: the agent row
+  // changes, the sheet's columns do not, so there is nothing to echo.
+  const saveAi = useCallback(
+    async (key: string, config: AgentConfig): Promise<ColumnOutcome> => {
+      const res = await updateColumnAgent(detail.id, key, config);
+      if (redirectIfUnauthenticated(res)) return LEAVING;
+      if (res.status !== "ok") return { ok: false, error: res.code ?? "", detail: res.message };
+      return { ok: true };
+    },
+    [detail.id],
+  );
+
   // The blank add starts nothing: the 200 body IS the updated detail,
   // so the new column renders straight from the response.
   // The AI add starts nothing either: it creates the column set and
@@ -291,6 +306,7 @@ export function useColumns(initialDetail: SheetDetail): {
     addAi,
     addWebhook,
     saveWebhook,
+    saveAi,
     startPending,
     namePending,
     renameSheet,

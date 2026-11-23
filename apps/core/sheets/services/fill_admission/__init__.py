@@ -31,6 +31,7 @@ from .errors import (
     ProviderRetiredRefusal,
     ReservedColumnKey,
     SameColumnFillActive,
+    SavedAgentRefusal,
 )
 from .normal import FillAdmissionService
 
@@ -53,4 +54,5 @@ __all__ = [
     "ProviderRetiredRefusal",
     "ReservedColumnKey",
     "SameColumnFillActive",
+    "SavedAgentRefusal",
 ]

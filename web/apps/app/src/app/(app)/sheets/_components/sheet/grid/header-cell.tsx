@@ -4,7 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Popover, PopoverButton, PopoverPanel } from "@bower/ui";
 import { useState, type MouseEventHandler } from "react";
-import { isImmutable, type SheetColumn, type WebhookColumn } from "@bower/api";
+import { type AiColumn, isImmutable, type SheetColumn, type WebhookColumn } from "@bower/api";
 
 import type { ColumnOutcome } from "../use-columns";
 import { ColumnIcon } from "./column-icon";
@@ -43,6 +43,7 @@ export function HeaderCell({
   onRename,
   onDelete,
   onEditWebhook,
+  onEditAi,
 }: {
   header: GridHeader;
   width: CellWidth;
@@ -52,6 +53,7 @@ export function HeaderCell({
   onRename?: (key: string, label: string) => void;
   onDelete?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
+  onEditAi?: (column: AiColumn) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -136,6 +138,7 @@ export function HeaderCell({
                     onMove={(direction) => nudge(direction)}
                     onRename={onRename && (() => setRenaming(true))}
                     onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
+                    onEditAi={onEditAi && column.kind === "ai" ? () => onEditAi(column) : undefined}
                     // A column whose values arrive with the row stays while
                     // its source writes it: the server refuses its delete.
                     onDelete={onDelete && !isImmutable(column) ? () => onDelete(column) : undefined}

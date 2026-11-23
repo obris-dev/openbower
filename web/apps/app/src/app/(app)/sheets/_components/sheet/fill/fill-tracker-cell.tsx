@@ -1,21 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, cn, Popover, PopoverButton, PopoverPanel, Skeleton, Textarea } from "@bower/ui";
-import {
-  AGENT_PROMPT_MAX_LENGTH,
-  getColumnPrompt,
-  updateColumnPrompt,
-  type ColumnFillSummary,
-  type ColumnPromptWire,
-  type AiColumn,
-} from "@bower/api";
+import { cn, Popover, PopoverButton, PopoverClose, PopoverPanel, Skeleton } from "@bower/ui";
+import { getColumnAgent, type AiColumn, type ColumnAgentWire, type ColumnFillSummary } from "@bower/api";
 
 import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { FillProgress } from "./fill-progress";
 import { FillColumnScope } from "./fill-column-scope";
 import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
 import type { LiveRun } from "./lib/live-status";
+import { EDIT_PROMPT_VERB } from "../use-ai/copy";
 
 // Below this, the prompt fits the clamp anyway and a toggle would be
 // noise (binary; the clamp is three lines of a 24rem panel).
@@ -61,6 +55,7 @@ export function FillTrackerCell({
   startsFill,
   onStop,
   onFill,
+  onEdit,
 }: {
   sheetId: string;
   column: AiColumn;
@@ -71,6 +66,7 @@ export function FillTrackerCell({
   startsFill: boolean;
   onStop: (runId: string) => Promise<string | null>;
   onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
+  onEdit: () => void;
 }) {
   if (summary === undefined) {
     // Sized like the header line it resolves into. Once the page's
@@ -165,44 +161,34 @@ export function FillTrackerCell({
             ) : (
               <p className="text-xs text-muted">Fills after the columns it waits on.</p>
             ))}
-          <PromptPeek sheetId={sheetId} columnKey={column.key} live={live} />
+          <PromptPeek sheetId={sheetId} columnKey={column.key} onEdit={onEdit} />
         </div>
       </PopoverPanel>
     </Popover>
   );
 }
 
-/** The peek at what fills this column: the column's CURRENT config
- * from the column-scoped prompt endpoint (a fill reads its agent
- * live, so this is what the next row runs under), the prompt under a
- * few-line clamp with an expand toggle, the model address beneath,
- * plus the inline EDIT: a plain bounded textarea with Save/Cancel
- * (the drawer's full editor is overkill here), Save calling the same
- * endpoint, a refusal rendered verbatim (tier 1). While the fill is
- * LIVE the affordance disables: a fill reads its agent live, so an
- * edit mid-walk would mix two asks in one run's rows; stopping first
- * keeps one run one ask. Mounted per
- * popover open, so each open re-reads the current truth. */
-function PromptPeek({ sheetId, columnKey, live }: { sheetId: string; columnKey: string; live: boolean }) {
-  const [config, setConfig] = useState<ColumnPromptWire | null>(null);
+/** The peek at what fills this column: the agent the column reads
+ * live (what the next row runs under), the prompt under a few-line
+ * clamp with an expand toggle, the model address beneath, and the way
+ * to change it: Edit prompt opens the column's agent in the drawer
+ * (read-only there for a saved agent, which the builder edits).
+ * Mounted per popover open, so each open re-reads the current truth. */
+function PromptPeek({ sheetId, columnKey, onEdit }: { sheetId: string; columnKey: string; onEdit: () => void }) {
+  const [agent, setAgent] = useState<ColumnAgentWire | null>(null);
   const [unreadable, setUnreadable] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [edited, setEdited] = useState(false);
-  const [refusal, setRefusal] = useState("");
 
   useEffect(() => {
     let stale = false;
     async function read() {
       setUnreadable(false);
-      const res = await getColumnPrompt(sheetId, columnKey);
+      const res = await getColumnAgent(sheetId, columnKey);
       if (stale) return;
       if (redirectIfUnauthenticated(res)) return;
       if (res.status === "ok") {
-        setConfig(res.data);
+        setAgent(res.data);
         return;
       }
       // A skeleton that never resolves claims to be loading; say what
@@ -215,147 +201,52 @@ function PromptPeek({ sheetId, columnKey, live }: { sheetId: string; columnKey: 
     };
   }, [sheetId, columnKey, attempt]);
 
-  function beginEdit() {
-    if (config === null) return;
-    setDraft(config.prompt);
-    setRefusal("");
-    setEditing(true);
-  }
-
-  function cancelEdit() {
-    setEditing(false);
-    setRefusal("");
-  }
-
-  async function save() {
-    if (saving) return;
-    setSaving(true);
-    setRefusal("");
-    const res = await updateColumnPrompt(sheetId, columnKey, draft);
-    setSaving(false);
-    if (redirectIfUnauthenticated(res)) return;
-    if (res.status !== "ok") {
-      // Tier 1: the server wrote the detail; render it verbatim.
-      setRefusal(res.message);
-      return;
-    }
-    setEditing(false);
-    setConfig(res.data);
-    setEdited(true);
-  }
-
-  // Why Edit is unavailable, or null when it is available.
-  // AVAILABILITY and EXPLANATION are separate questions. Editing needs
-  // a config and a stopped fill, full stop. What this control says
-  // about it is narrower: the panel below already carries an
-  // unreadable config with its own retry, so repeating it here would
-  // be a second voice, and claiming a load in progress there would be
-  // false. `disabled` must not derive from the copy: a state with
-  // nothing to say here is still a state where editing is impossible.
-  const editUnavailable = live || config === null;
-  const editBlocked = live ? "Stop the fill to edit" : config === null && !unreadable ? "Loading the prompt" : null;
-  const editBlockedId = `${columnKey}-edit-blocked`;
-
+  const prompt = agent?.config.prompt ?? "";
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-faint">Prompt</p>
-        {!editing && (
-          // The reason is TEXT beside the control, not a title on it:
-          // browsers suppress pointer events on a disabled button and
-          // drop it from the tab order, so a title there reaches
-          // nobody, by hover or keyboard or screen reader. The button
-          // stays visible so the affordance is still discoverable, and
-          // aria-describedby ties the cause to it.
-          <span className="flex min-w-0 items-center gap-2">
-            {editBlocked !== null && (
-              <span id={editBlockedId} className="truncate text-xs text-faint">
-                {editBlocked}
-              </span>
-            )}
+        <PopoverClose
+          type="button"
+          onClick={onEdit}
+          className="shrink-0 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
+        >
+          {EDIT_PROMPT_VERB}
+        </PopoverClose>
+      </div>
+      <div className="mt-1 rounded-md bg-wash p-2">
+        {unreadable ? (
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted">This column&apos;s prompt could not be loaded.</p>
             <button
               type="button"
-              disabled={editUnavailable}
-              aria-describedby={editBlocked !== null ? editBlockedId : undefined}
-              onClick={beginEdit}
-              className="shrink-0 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:no-underline"
+              onClick={() => setAttempt((n) => n + 1)}
+              className="rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
             >
-              Edit
+              Try again
             </button>
-          </span>
-        )}
-      </div>
-      {editing ? (
-        <div className="mt-1">
-          <Textarea
-            autoFocus
-            aria-label="Fill prompt"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                // The cancel is the editor's, not the popover's.
-                event.preventDefault();
-                event.stopPropagation();
-                cancelEdit();
-              }
-            }}
-            maxLength={AGENT_PROMPT_MAX_LENGTH}
-            rows={6}
-            className="font-mono text-xs"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <Button size="sm" loading={saving} disabled={draft.trim() === ""} onClick={() => void save()}>
-              Save
-            </Button>
-            <Button size="sm" variant="ghost" disabled={saving} onClick={cancelEdit}>
-              Cancel
-            </Button>
           </div>
-          {refusal && <p className="mt-1.5 text-xs text-danger">{refusal}</p>}
-        </div>
-      ) : (
-        <div className="mt-1 rounded-md bg-wash p-2">
-          {unreadable ? (
-            <div className="space-y-1.5">
-              <p className="text-xs text-muted">This column&apos;s prompt could not be loaded.</p>
+        ) : agent === null ? (
+          <Skeleton className="h-4 w-3/4" />
+        ) : (
+          <>
+            <p className={cn("whitespace-pre-wrap text-xs text-muted", !expanded && "line-clamp-3")}>{prompt}</p>
+            {(prompt.length > PROMPT_TOGGLE_CHARS || prompt.split("\n").length > 3) && (
               <button
                 type="button"
-                onClick={() => setAttempt((n) => n + 1)}
-                className="rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
+                aria-expanded={expanded}
+                onClick={() => setExpanded((cur) => !cur)}
+                className="mt-0.5 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
               >
-                Try again
+                {expanded ? "Show less" : "Show more"}
               </button>
-            </div>
-          ) : config === null ? (
-            <Skeleton className="h-4 w-3/4" />
-          ) : (
-            <>
-              <p className={cn("whitespace-pre-wrap text-xs text-muted", !expanded && "line-clamp-3")}>
-                {config.prompt}
-              </p>
-              {(config.prompt.length > PROMPT_TOGGLE_CHARS || config.prompt.split("\n").length > 3) && (
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  onClick={() => setExpanded((cur) => !cur)}
-                  className="mt-0.5 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
-                >
-                  {expanded ? "Show less" : "Show more"}
-                </button>
-              )}
-              <p className="mt-1.5 text-xs text-faint">
-                {config.model} via {config.source}
-              </p>
-            </>
-          )}
-        </div>
-      )}
-      {edited && !editing && (
-        <p className="mt-1.5 text-xs text-faint">
-          Saved. Rows not yet run use the new prompt; rows already run keep their results.
-        </p>
-      )}
+            )}
+            <p className="mt-1.5 text-xs text-faint">
+              {agent.config.model} via {agent.config.source}
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

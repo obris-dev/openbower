@@ -3,7 +3,7 @@
 import { DndContext, closestCenter, type DragEndEvent, type Modifier } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ConfirmDialog } from "@bower/ui";
-import type { ColumnType, SheetColumn, RenderableSheetRow, WebhookColumn } from "@bower/api";
+import type { AiColumn, ColumnType, SheetColumn, RenderableSheetRow, WebhookColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import type { AddColumnKind } from "../add-column";
@@ -54,6 +54,7 @@ export function SheetGrid({
   onRenameColumn,
   onDeleteColumn,
   onEditWebhook,
+  onEditAi,
   pendingColumn,
   onNamePending,
   onSetCells,
@@ -101,6 +102,8 @@ export function SheetGrid({
   onDeleteColumn?: (column: SheetColumn) => Promise<ColumnOutcome>;
   /** Reopens the Send webhook drawer on an existing webhook column. */
   onEditWebhook?: (column: WebhookColumn) => void;
+  /** Opens the AI column's agent: editable when it is the column's own. */
+  onEditAi?: (column: AiColumn) => void;
   fills?: SheetFills;
   onAddColumn?: (kind: AddColumnKind) => void;
 }) {
@@ -316,6 +319,7 @@ export function SheetGrid({
           onRenameColumn={onRenameColumn}
           onDeleteColumn={onDeleteColumn}
           onEditWebhook={onEditWebhook}
+          onEditAi={onEditAi}
           pendingColumn={pendingColumn}
           onNamePending={onNamePending}
           onAddColumn={onAddColumn}

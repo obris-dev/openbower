@@ -13,6 +13,7 @@ from collections.abc import Collection
 from django.db import models, transaction
 from django.db.models import Value
 
+from agents.models import Agent
 from agents.runtime.answer import reserved_output_key
 from agents.services import AgentService
 from openbower_kernel.batches import iter_id_pages
@@ -23,7 +24,8 @@ from ..constants import FILL_WRITE_BATCH, MAX_SHEET_COLUMNS, RESERVED_COLUMN_KEY
 from ..models import Sheet, SheetRow
 from ..nodes.webhook import Webhook
 from . import cell_truth, fill_progress, webhook_runs
-from .fill_admission import FillColumnNotFound, ProviderRetiredRefusal
+from .fill_admission import FillColumnNotFound, SavedAgentRefusal
+from .fill_admission.base import check_model
 from .fill_admission.columns import keys_under_fill
 from .sheets import SheetNotFound
 from .workflows import NodeNotFound, WorkflowService, agent_id_of, columns_for_node, config_as
@@ -388,35 +390,30 @@ class ColumnService:
             return
         AgentService(account_id=self.account_id).delete_ephemeral([agent_id_of(node)])
 
-    def fill_config(self, target_sheet_id: str, *, column_key: str) -> AgentConfig:
-        """The CURRENT config filling a column (what its next fill
-        would run), read through the column's custody path. A retired
-        provider still reads (peeking is not acting); only the writes
-        below refuse it."""
+    def column_agent(self, target_sheet_id: str, *, column_key: str) -> Agent:
+        """The agent filling a column (what its next fill would run),
+        read through the column, saved or column-owned alike. A retired
+        provider still reads: peeking is not acting."""
         agents = AgentService(account_id=self.account_id)
-        return self._fill_agent(target_sheet_id, column_key=column_key, agents=agents).config()
+        return self._fill_agent(target_sheet_id, column_key=column_key, agents=agents)
 
-    def update_fill_prompt(self, target_sheet_id: str, *, column_key: str, prompt: str) -> AgentConfig:
-        """Edit the PROMPT of the agent filling a column, from the
-        column (the column is the custody path whether the agent is
-        ephemeral or roster; the builder stays the roster's full
-        editor). Only the prompt moves: the rest of the config
-        round-trips through the row untouched. No Sheet lock: the write
-        lands on the agent row, and a fill reads its agent live, so the
-        edit reaches a running fill's next row and every later fill by
-        construction. Returns the stored config."""
+    def update_column_agent(self, target_sheet_id: str, *, column_key: str, config: AgentConfig) -> Agent:
+        """Edit the column's OWN agent from the column: the whole config
+        is written. A saved agent is refused; only the agent builder
+        edits it, since it may fill other sheets. The new model and
+        tools must run (an edit is how a retired provider gets fixed),
+        and the agent save refuses a changed output set while its
+        columns are on a sheet. No Sheet lock: the write lands on the
+        agent row, and a fill reads its agent live, so the edit reaches
+        a running fill's next row and every later fill by construction."""
         agents = AgentService(account_id=self.account_id)
         agent = self._fill_agent(target_sheet_id, column_key=column_key, agents=agents)
-        # update() persists the whole config, so a coerced substitute
-        # spec would silently overwrite the stored provider here; the
-        # row must be re-saved against a current provider first.
-        if agent.provider_retired:
-            raise ProviderRetiredRefusal()
-        stored = agent.config().model_copy(update={"prompt": prompt})
-        agents.update(agent, config=stored)
-        return stored
+        if not agent.ephemeral:
+            raise SavedAgentRefusal()
+        check_model(config)
+        return agents.update(agent, config=config)
 
-    def _fill_agent(self, target_sheet_id: str, *, column_key: str, agents: AgentService):
+    def _fill_agent(self, target_sheet_id: str, *, column_key: str, agents: AgentService) -> Agent:
         try:
             target_sheet = Sheet.objects.get(id=target_sheet_id, account_id=self.account_id)
         except Sheet.DoesNotExist as e:

@@ -26,6 +26,8 @@ import {
   postColumnFill,
   sheetVerbs,
   SHEET_KIND,
+  type AgentConfig,
+  type AiColumn,
   type SheetColumn,
   type WebhookColumn,
   webRoutes,
@@ -42,7 +44,7 @@ import { EDIT_SIGNAL_ACTION, ReconnectDialog, SignalBanner, SignalMarker } from 
 import { ensureOk, redirectIfUnauthenticated } from "@/lib/ensure-ok";
 import { ADD_COLUMN_LABEL, AddColumnActionItems, type AddColumnKind } from "./add-column";
 import { focusCell, isEditable, menuButtonId, SheetGrid, type WriteHow } from "./grid";
-import { UseAiDrawer, type AiColumnSubmission } from "./use-ai";
+import { EditAiDrawer, UseAiDrawer, type AiColumnSubmission } from "./use-ai";
 import { SendWebhookDrawer } from "./send-webhook";
 import { AddRowsDrawer } from "./add-rows-drawer";
 import { downloadSheetCsv } from "./export";
@@ -166,9 +168,9 @@ export function Sheet({
   // Add column menu), so half-open states are unrepresentable and the
   // two drawers (the AI column, the Send webhook column) can never be
   // open together.
-  const [openDrawer, setOpenDrawer] = useState<{ kind: "ai" } | { kind: "webhook"; column: SheetColumn | null } | null>(
-    null,
-  );
+  const [openDrawer, setOpenDrawer] = useState<
+    { kind: "ai" } | { kind: "edit-ai"; column: AiColumn } | { kind: "webhook"; column: SheetColumn | null } | null
+  >(null);
   const [addRowsOpen, setAddRowsOpen] = useState(false);
 
   // A cell whose row's run had a degraded web search composes the
@@ -293,6 +295,11 @@ export function Sheet({
     addColumnInvokerRef.current = document.getElementById(menuButtonId(column.key));
     setOpenDrawer({ kind: "webhook", column });
   }
+  // An AI column's agent, opened from its column menu or its fill cell.
+  function openEditAi(column: AiColumn) {
+    addColumnInvokerRef.current = document.getElementById(menuButtonId(column.key));
+    setOpenDrawer({ kind: "edit-ai", column });
+  }
   function closeAddColumn() {
     setOpenDrawer(null);
     addColumnInvokerRef.current?.focus();
@@ -320,6 +327,14 @@ export function Sheet({
 
   async function saveWebhookColumn(key: string, body: WebhookColumnPatchBody): Promise<ColumnOutcome> {
     const outcome = await columns.saveWebhook(key, body);
+    if (outcome.ok) closeAddColumn();
+    return outcome;
+  }
+
+  // The agent row changes, not the sheet: the drawer closes, and the
+  // fills read picks up nothing new until a run reads the agent.
+  async function saveAiColumn(key: string, config: AgentConfig): Promise<ColumnOutcome> {
+    const outcome = await columns.saveAi(key, config);
     if (outcome.ok) closeAddColumn();
     return outcome;
   }
@@ -607,6 +622,14 @@ export function Sheet({
         columns={detail.columns}
         onSubmit={submitAiColumn}
       />
+      <EditAiDrawer
+        open={openDrawer?.kind === "edit-ai"}
+        column={openDrawer?.kind === "edit-ai" ? openDrawer.column : null}
+        onClose={closeAddColumn}
+        onSave={saveAiColumn}
+        sheetId={detail.id}
+        columns={detail.columns}
+      />
       <SendWebhookDrawer
         open={openDrawer?.kind === "webhook"}
         column={openDrawer?.kind === "webhook" ? openDrawer.column : null}
@@ -667,12 +690,14 @@ export function Sheet({
               entryActionIds: detail.entry_action_ids,
               onStop: fill.stop,
               onFill: fillColumn,
+              onEdit: openEditAi,
             }}
             onAddColumn={openAddColumn}
             onReorder={columns.reorder}
             onRenameColumn={columns.rename}
             onDeleteColumn={removeColumn}
             onEditWebhook={openEditWebhook}
+            onEditAi={openEditAi}
             pendingColumn={columns.pendingColumn}
             onNamePending={(label) => void columns.namePending(label)}
             onSetCells={writeCells}

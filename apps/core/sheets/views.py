@@ -16,13 +16,15 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from agents.services import AgentNotFound
+from agents.models import Agent
+from agents.serializers import AgentConfigRequest
+from agents.services import AgentNotFound, AgentOutputsInUse
 from auth_client.authentication import AppSessionAuthentication
 from common.views import ScopedView
 from openbower_kernel.fields import min_ulid_at
 from openbower_kernel.pagination import next_cursor_from, parse_limit
 from openbower_schema.agents import AgentConfig
-from openbower_schema.fills import ColumnPromptWire, FillRunPage
+from openbower_schema.fills import ColumnAgentWire, FillRunPage
 from openbower_schema.sheets import (
     FoldersList,
     ImportResult,
@@ -62,7 +64,6 @@ from .serializers import (
     ColumnAddRequest,
     ColumnFillRequest,
     ColumnOrderRequest,
-    ColumnPromptRequest,
     ColumnRenameRequest,
     FolderRequest,
     IngestRequest,
@@ -109,13 +110,14 @@ from .services.workflows import NodeNotFound
 
 logger = logging.getLogger(__name__)
 
-# Refusal codes that answer 409 (a conflict with live state: the same
-# request succeeds once the world changes, with nothing for the caller
-# to alter); every other FillRefused code is a 400 (the request itself
+# Refusal codes that answer 409 (a conflict with the resource's state:
+# the same request succeeds once the world changes, or belongs to
+# another surface, as a saved agent's edit belongs to the builder);
+# every other FillRefused code is a 400 (the request itself
 # must change, by narrowing the ask or by configuring the deployment).
 # Both ride the sibling envelope ({error: <code>, detail}): the client
 # classifies by CODE and renders the detail verbatim (tier 1).
-_FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL})
+_FILL_CONFLICT_CODES = frozenset({FillErrorCode.FILL_ACTIVE, FillErrorCode.FILLS_FULL, FillErrorCode.AGENT_SAVED})
 
 
 def _log_route(e: SheetIsLog) -> Response:
@@ -705,38 +707,42 @@ class ColumnFillView(_ScopedView):
         return Response(fill_run_wire(fill), status=201)
 
 
-class ColumnPromptView(_ScopedView):
-    """GET and PATCH /v1/sheets/{id}/columns/{key}/prompt: the column's
-    CURRENT fill config (what its next fill would run), and the
-    prompt-only edit against it. Surfaces peeking at "what fills this
-    column" read HERE. A fill reads its agent live, so an edit reaches
-    a running fill's next row and every row a later fill reaches."""
+class ColumnAgentView(_ScopedView):
+    """GET and PATCH /v1/sheets/{id}/columns/{key}/agent: the agent
+    filling the column (what its next fill would run), and the edit of
+    a column's OWN agent from the column. A saved agent reads here but
+    is edited only in the agent builder (409 agent_saved). A fill reads
+    its agent live, so an edit reaches a running fill's next row and
+    every row a later fill reaches."""
 
     def get(self, request: Request, id: str, key: str) -> Response:
         try:
-            config = self.columns.fill_config(id, column_key=key)
+            agent = self.columns.column_agent(id, column_key=key)
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         except FillColumnNotFound as e:
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(_column_prompt_wire(config))
+        return Response(_column_agent_wire(agent))
 
     def patch(self, request: Request, id: str, key: str) -> Response:
-        serializer = ColumnPromptRequest(data=request.data)
+        serializer = AgentConfigRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
+        config = AgentConfig(**serializer.validated_data)
         try:
-            stored = self.columns.update_fill_prompt(id, column_key=key, prompt=serializer.validated_data["prompt"])
+            agent = self.columns.update_column_agent(id, column_key=key, config=config)
         except FillRefused as e:
             return Response({"error": e.code, "detail": str(e)}, status=_fill_refusal_status(e))
+        except AgentOutputsInUse as e:
+            return Response({"error": e.code, "detail": str(e)}, status=409)
         except SheetNotFound as e:
             raise NotFound("no sheet with that id") from e
         except FillColumnNotFound as e:
             raise NotFound("no fill column with that key") from e
         except AgentNotFound as e:
             raise NotFound("no agent with that id") from e
-        return Response(_column_prompt_wire(stored))
+        return Response(_column_agent_wire(agent))
 
 
 class SheetFillsView(_ScopedView):
@@ -773,8 +779,11 @@ class FillCancelView(_ScopedView):
         return Response(fill_run_wire(self.fills.cancel(fill_run_id)))
 
 
-def _column_prompt_wire(config: AgentConfig) -> dict:
-    return ColumnPromptWire(prompt=config.prompt, model=config.model, source=config.source).model_dump()
+def _column_agent_wire(agent: Agent) -> dict:
+    wire = ColumnAgentWire(
+        agent_id=str(agent.id), agent_label=agent.label, saved=not agent.ephemeral, config=agent.config()
+    )
+    return wire.model_dump()
 
 
 class SheetImportView(_ScopedView):
