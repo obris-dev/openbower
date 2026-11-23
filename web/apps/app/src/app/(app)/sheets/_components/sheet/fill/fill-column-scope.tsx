@@ -79,6 +79,12 @@ export function FillColumnScope({
             step={1}
             value={rowsText}
             disabled={left === 0}
+            // Focus lands here as the panel opens, selected, so Enter
+            // runs Fill next (the hint beside it) and typing replaces
+            // the count; left on the panel's button, Enter re-pressed
+            // it and closed the panel.
+            autoFocus
+            onFocus={(event) => event.currentTarget.select()}
             onChange={(event) => setRowsText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
