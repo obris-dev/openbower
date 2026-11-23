@@ -30,7 +30,9 @@ export function FillColumnScope({
   left: number;
   onFill: (maxRowCount?: number) => Promise<string | null>;
 }) {
-  const [rowsText, setRowsText] = useState(String(DEFAULT_SCOPE_ROWS));
+  // Starts at the default or the rows left, whichever is fewer: a
+  // count past what is left would only promise rows the fill skips.
+  const [rowsText, setRowsText] = useState(() => String(left > 0 ? Math.min(DEFAULT_SCOPE_ROWS, left) : DEFAULT_SCOPE_ROWS));
   const [busy, setBusy] = useState<"next" | "all" | null>(null);
   const [refusal, setRefusal] = useState("");
   const next = parseScopeRows(rowsText);
@@ -73,6 +75,7 @@ export function FillColumnScope({
             id={inputId}
             type="number"
             min={1}
+            max={left > 0 ? left : undefined}
             step={1}
             value={rowsText}
             disabled={left === 0}
