@@ -24,6 +24,8 @@ export type TrackerLine = {
   percent: number;
   /** Rows queued or running for this column, from any lane. */
   inProgress: number;
+  /** Rows neither an attempt nor work in progress has reached. */
+  left: number;
   /** The card's breakdown, one fact per line. */
   lines: string[];
   /** The column's newest fill failed and nothing is running now. */
@@ -61,5 +63,5 @@ export function trackerLine(summary: ColumnFillSummary, run: TrackerRun | null, 
   if (inProgress > 0) lines.push(`${count(inProgress)} in progress`);
   if (unanswered > 0) lines.push(`${count(unanswered)} ran with no answer`);
   if (left > 0) lines.push(`${count(left)} left to fill`);
-  return { fraction, percent, inProgress, lines, failed: run === null && summary.current_status === "failed" };
+  return { fraction, percent, inProgress, left, lines, failed: run === null && summary.current_status === "failed" };
 }

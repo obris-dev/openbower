@@ -42,6 +42,7 @@ test("a quiet column is its share filled, broken down in the card", () => {
   assert.equal(line.percent, 82);
   assert.equal(line.fraction, 0.82);
   assert.equal(line.inProgress, 0);
+  assert.equal(line.left, 20);
   assert.deepEqual(line.lines, ["164 of 200 rows filled (82%)", "16 ran with no answer", "20 left to fill"]);
 });
 

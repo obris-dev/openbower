@@ -14,6 +14,8 @@ export type ColumnFill = {
   runId: string | null;
   /** The column starts fills itself (not behind a column it waits on). */
   canFill: boolean;
+  /** Rows no attempt and no work in progress has reached. */
+  left: number;
   fill: (maxRowCount?: number) => Promise<string | null>;
   stop: (runId: string) => Promise<string | null>;
 };
@@ -56,9 +58,11 @@ export function FillControl({ label, fill }: { label: string; fill: ColumnFill }
       <PopoverButton aria-label={`Fill the ${label} column`} title="Fill column" className={ICON_BUTTON}>
         <Play aria-hidden className="h-3.5 w-3.5" />
       </PopoverButton>
-      <PopoverPanel anchor="bottom end" className="px-3 py-2.5">
+      <PopoverPanel anchor="bottom end" className="py-0">
         {({ close }) => (
           <FillColumnScope
+            label={label}
+            left={fill.left}
             onFill={async (maxRowCount) => {
               const message = await fill.fill(maxRowCount);
               if (!message) close();

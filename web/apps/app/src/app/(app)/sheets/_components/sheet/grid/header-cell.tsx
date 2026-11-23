@@ -146,8 +146,9 @@ export function HeaderCell({
                       onRename={onRename && (() => setRenaming(true))}
                       onEditWebhook={onEditWebhook && column.kind === "webhook" ? () => onEditWebhook(column) : undefined}
                       onEditAi={onEditAi && column.kind === "ai" ? () => onEditAi(column) : undefined}
-                      onFill={fill?.canFill && fill.runId === null ? fill.fill : undefined}
-                      onStop={fill?.runId ? () => fill.stop(fill.runId as string) : undefined}
+                      onFill={fill?.canFill && runId === null ? fill.fill : undefined}
+                      left={fill?.left}
+                      onStop={fill && runId !== null ? () => fill.stop(runId) : undefined}
                       // A column whose values arrive with the row stays while
                       // its source writes it: the server refuses its delete.
                       onDelete={onDelete && !isImmutable(column) ? () => onDelete(column) : undefined}

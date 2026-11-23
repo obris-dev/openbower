@@ -20,5 +20,5 @@ export { FillsGlance } from "./fills-glance";
 export { isLiveStatus, type LiveRun } from "./lib/live-status";
 export { FillControl, type ColumnFill } from "./fill-control";
 export { FillTrackerCell } from "./fill-tracker-cell";
-export { currentRunFor } from "./lib/fill-tracker";
+export { currentRunFor, trackerLine } from "./lib/fill-tracker";
 export { useFill } from "./use-fill";

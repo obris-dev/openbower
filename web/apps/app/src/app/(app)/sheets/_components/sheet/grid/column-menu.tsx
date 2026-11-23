@@ -33,6 +33,7 @@ export function ColumnMenu({
   onEditWebhook,
   onEditAi,
   onFill,
+  left = 0,
   onStop,
   onDelete,
 }: {
@@ -45,6 +46,8 @@ export function ColumnMenu({
   onEditAi?: () => void;
   /** Present when the column can start a fill now (no fill running). */
   onFill?: (maxRowCount?: number) => Promise<string | null>;
+  /** Rows the column has left to fill (the Fill column step's count). */
+  left?: number;
   /** Present while the column's fill runs. */
   onStop?: () => Promise<string | null>;
   onDelete?: () => Promise<ColumnOutcome>;
@@ -74,16 +77,15 @@ export function ColumnMenu({
   // fill spends, so its rows are named before it starts.
   if (choosingRows && onFill) {
     return (
-      <div className="w-max max-w-[calc(100vw-2rem)] space-y-2 px-3 py-2.5">
-        <p className="text-sm font-medium text-foreground">Fill {column.label}</p>
-        <FillColumnScope
-          onFill={async (maxRowCount) => {
-            const message = await onFill(maxRowCount);
-            if (!message) close();
-            return message;
-          }}
-        />
-      </div>
+      <FillColumnScope
+        label={column.label}
+        left={left}
+        onFill={async (maxRowCount) => {
+          const message = await onFill(maxRowCount);
+          if (!message) close();
+          return message;
+        }}
+      />
     );
   }
 
