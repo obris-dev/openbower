@@ -18,5 +18,7 @@ export { DEFAULT_SCOPE_ROWS, defaultScopeKind, effectiveRows, parseScopeRows, ty
 export { startsFill } from "./lib/fill-start";
 export { FillsGlance } from "./fills-glance";
 export { isLiveStatus, type LiveRun } from "./lib/live-status";
+export { FillControl, type ColumnFill } from "./fill-control";
 export { FillTrackerCell } from "./fill-tracker-cell";
+export { currentRunFor, trackerLine } from "./lib/fill-tracker";
 export { useFill } from "./use-fill";

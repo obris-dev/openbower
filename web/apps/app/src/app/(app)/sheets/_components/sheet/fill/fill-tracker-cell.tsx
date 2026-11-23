@@ -1,77 +1,65 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { cn, Popover, PopoverButton, PopoverClose, PopoverPanel, Skeleton } from "@bower/ui";
-import { getColumnAgent, type AiColumn, type ColumnAgentWire, type ColumnFillSummary } from "@bower/api";
+import { useEffect, useId, useState } from "react";
+import { createPortal } from "react-dom";
+import { cn, Skeleton } from "@bower/ui";
+import { fetchAgentCatalog, type AiColumn, type ColumnFillSummary } from "@bower/api";
 
-import { redirectIfUnauthenticated } from "@/lib/ensure-ok";
-import { FillProgress } from "./fill-progress";
-import { FillColumnScope } from "./fill-column-scope";
-import { columnProgress, currentRunFor, trackerCell } from "./lib/fill-tracker";
+import { staleWarning } from "./lib/fill-staleness";
+import { currentRunFor, trackerLine } from "./lib/fill-tracker";
 import type { LiveRun } from "./lib/live-status";
-import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 
-// Below this, the prompt fits the clamp anyway and a toggle would be
-// noise (binary; the clamp is three lines of a 24rem panel).
-const PROMPT_TOGGLE_CHARS = 256;
+// The staleness clock's resolution (binary, about half a minute): the
+// copy speaks in minutes against the stale threshold, so finer ticks buy
+// nothing. Render-time Date.now() is impure; the clock is state.
+const STALENESS_TICK_MS = 32_768;
+// The card's width (w-64) and its margin from the viewport's edge.
+const CARD_WIDTH = 256;
+const CARD_MARGIN = 8;
 
-/** One AI column's cell in the tracker row: the column's fill state
- * compactly ("164 filled | 13% run", the current run's filled count
- * beside its processed share; a live run draws a thin progress bar
- * under the text, a failed one tints danger), and the click-in
- * management surface behind it. The SERVER names the column's story
- * (the summary's current_fill_id and canonical filled count); this
- * cell renders it. One run per column is the invariant, so the
- * popover IS that column's management, one padded panel of fixed
- * width in reading order: the progress line, the FillProgress chip
- * while live (counters, ETA, pace, Stop), the failed run's error
- * verbatim when the newest run failed (a stopped or failed run is
- * over: a new fill, from the Fill next / Fill all remaining controls
- * below, runs the rows it never reached), those controls for terminal
- * runs on an entry action's column, and
- * the prompt peek (the column's agent as a fill reads it, with Edit
- * prompt handing off to the column's edit drawer). The Popover
- * primitive carries the disclosure floor
- * (aria-expanded, Escape, outside-click, focus return). A MISSING
- * summary means the poll has not answered for this column yet: the
- * first page pending, or a just-added column whose entry arrives on
- * the next tick (a server that ships `columns` sends one per AI
- * column, zero counts included; the tolerant read's one gap is an
- * ancient server omitting the field, which leaves these cells
- * loading). It renders a
- * skeleton, held STATIC once the page's trouble line speaks
- * (pollTrouble), so it can never claim progress a dead poll is not
- * making. A column with no exposed run shows the header line alone,
- * naming the work. */
+/** One AI column's cell in the tracker row: progress, and progress
+ * only. A bar and the percent of the column filled across the sheet,
+ * whichever lane did the work (a fill or an autofill); the bar runs in
+ * the signal color while rows are in progress. Its card, shown on
+ * hover, focus or tap, breaks the percent down (filled, in progress,
+ * no answer, left to fill), and carries a failed fill's reason and a
+ * live fill's quiet-worker warning. Starting and stopping a fill live
+ * in the column's header (its Fill / Stop button and its menu), never
+ * here. A MISSING summary means the poll has not answered for this
+ * column yet: a skeleton, held STATIC once the page's trouble line
+ * speaks (pollTrouble), so it never claims progress a dead poll is not
+ * making. */
 export function FillTrackerCell({
-  sheetId,
   column,
   summary,
   pollTrouble,
   runs,
   rowCount,
-  startsFill,
-  onStop,
-  onFill,
-  onEdit,
 }: {
-  sheetId: string;
   column: AiColumn;
   summary: ColumnFillSummary | undefined;
   pollTrouble: boolean;
   runs: LiveRun[];
   rowCount: number;
-  startsFill: boolean;
-  onStop: (runId: string) => Promise<string | null>;
-  onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
-  onEdit: () => void;
 }) {
+  const cardId = useId();
+  // Where the card opens: the button's rectangle while it is hovered,
+  // focused or tapped, else null. The card renders in a portal at fixed
+  // coordinates, because the grid clips what overflows it and a short
+  // sheet would cut the card off.
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    if (anchor === null) return;
+    // The coordinates are a snapshot: any scroll or resize closes it.
+    const close = () => setAnchor(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [anchor]);
   if (summary === undefined) {
-    // Sized like the header line it resolves into. Once the page's
-    // own trouble line speaks, the box holds STILL (the primitive's
-    // resting look, nothing else changing): a pulse beside "updates
-    // aren't reaching this page" would claim a load the dead poll is
-    // not making.
     return (
       <div className="flex h-5 items-center px-1">
         {/* One owner of the look: the still box is the primitive
@@ -86,165 +74,109 @@ export function FillTrackerCell({
       </div>
     );
   }
-  // The SUMMARY is what this cell needs; the run envelope only dresses
-  // the chip. A column whose current run has aged off the fetched page
-  // still shows its progress and keeps its management surface, rather
-  // than vanishing as though the column had never been filled.
   const run = currentRunFor(summary, runs);
-  const cell = trackerCell(run, summary.current_status);
-  const live = cell.kind === "live";
-  // Two instruments, one cell: is there WORK LEFT in this column (the
-  // header, the question an operator actually has) over how the
-  // current run is GOING (the status, which is where a quality number
-  // belongs, beside the run it describes). The bar stays the run's walk.
-  const progress = columnProgress(summary, rowCount);
-  return (
-    <Popover>
-      <PopoverButton
-        aria-label={`Manage the ${column.label} column's fill`}
-        // The floor keeps a click target on a column with nothing to
-        // report (its button would otherwise collapse to its padding).
-        className="block min-h-4 w-full min-w-16 rounded px-1 py-0.5 text-left outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-signal"
-      >
-        {/* The header rides ABOVE the run status, so the two never say
-            the same thing: with no fill attached there is no status to
-            show and the header stands alone. A settled column says
-            nothing at all; the column name is the whole header. */}
-        {progress !== null && (
-          <span
-            className={cn(
-              "block truncate tabular-nums",
-              cell.kind === "none" ? "font-medium text-muted" : "text-[11px] text-faint",
-            )}
+  const line = trackerLine(summary, run, rowCount);
+  const working = line.inProgress > 0;
+  const show = (target: HTMLElement) => setAnchor(target.getBoundingClientRect());
+  const hide = () => setAnchor(null);
+  const card =
+    anchor === null
+      ? null
+      : createPortal(
+          <div
+            aria-hidden
+            className="fixed z-50 w-64 space-y-1 rounded-lg border border-hairline bg-surface p-3 text-xs text-muted shadow-lg"
+            style={{
+              top: anchor.bottom + 4,
+              left: Math.max(CARD_MARGIN, Math.min(anchor.left, window.innerWidth - CARD_WIDTH - CARD_MARGIN)),
+            }}
           >
-            {progress}
-          </span>
-        )}
-        {cell.kind === "live" && (
-          <span className="block truncate font-medium tabular-nums text-muted">{cell.text}</span>
-        )}
-        {cell.kind === "failed" && (
-          // The word alone (authored beside its table in fill-tracker):
-          // the popover carries the server's verbatim error, and a dead
-          // run's counters are not replayed (the header's totals are
-          // the honest answer).
-          <span className="block truncate font-medium text-danger">{cell.text}</span>
-        )}
-        {live && (
-          <span aria-hidden className="mt-1 block h-0.5 w-full overflow-hidden rounded-full bg-wash-strong">
-            <span
-              className="block h-full rounded-full bg-signal"
-              style={{ width: `${Math.round(cell.fraction * 100)}%` }}
-            />
-          </span>
-        )}
-      </PopoverButton>
-      {/* py-0 clears the primitive's own padding so p-4 below is the
-          panel's ONE padding truth; the width sits on this container,
-          not the content, so the panel holds steady as the peek swaps
-          between read and edit. */}
-      <PopoverPanel anchor="bottom start" className="py-0 motion-reduce:transition-none">
-        <div className="w-[min(24rem,calc(100vw-2rem))] space-y-3 p-4">
-          {progress !== null && <p className="text-xs text-muted">Column: {progress}</p>}
-          {run !== null && <FillProgress run={run} onStop={() => onStop(run.id)} />}
-          {!live && summary.current_status === "failed" && (
-            // Tier 1: the server wrote the failed run's copy; render
-            // it verbatim. The no-error fallback stays plain rather
-            // than guessing a cause.
-            <p className="text-xs text-danger">{summary.last_error?.message ?? "The fill failed."}</p>
-          )}
-          {!live &&
-            (startsFill ? (
-              <FillColumnScope onFill={(maxRowCount) => onFill(column.key, { maxRowCount })} />
-            ) : (
-              <p className="text-xs text-muted">Fills after the columns it waits on.</p>
+            {line.lines.map((text, index) => (
+              <p key={text} className={index === 0 ? "font-medium text-foreground" : undefined}>
+                {text}
+              </p>
             ))}
-          <PromptPeek sheetId={sheetId} columnKey={column.key} onEdit={onEdit} />
-        </div>
-      </PopoverPanel>
-    </Popover>
+            {line.failed && (
+              // Tier 1: the server wrote the failed run's copy; render it
+              // verbatim. The no-error fallback stays plain.
+              <p className="text-danger">{summary.last_error?.message ?? "The fill failed."}</p>
+            )}
+            {run !== null && <QuietWorker run={run} />}
+          </div>,
+          document.body,
+        );
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`${column.label} column progress`}
+        aria-describedby={cardId}
+        // Hover and focus show the card, and a tap (no hover on touch)
+        // does too; leaving, blurring (a tap elsewhere) or Escape
+        // closes it. A click only ever shows: it follows the focus
+        // that already opened the card.
+        onMouseEnter={(event) => show(event.currentTarget)}
+        onMouseLeave={hide}
+        onFocus={(event) => show(event.currentTarget)}
+        onBlur={hide}
+        onClick={(event) => show(event.currentTarget)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") hide();
+        }}
+        className="flex w-full min-w-16 items-center gap-2 rounded px-1 py-0.5 text-left outline-none hover:bg-wash focus-visible:ring-2 focus-visible:ring-signal"
+      >
+        <span aria-hidden className="h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-wash-strong">
+          <span
+            className={cn("block h-full rounded-full", line.failed ? "bg-danger" : working ? "bg-signal" : "bg-success")}
+            style={{ width: `${line.percent}%` }}
+          />
+        </span>
+        <span className={cn("shrink-0 tabular-nums", line.failed ? "font-medium text-danger" : "text-muted")}>
+          {line.failed ? "Failed" : `${line.percent}%`}
+        </span>
+        {/* The card's facts for a screen reader, always present (the
+            visible card mounts only while open). */}
+        <span id={cardId} className="sr-only">
+          {[...line.lines, ...(line.failed ? [summary.last_error?.message ?? "The fill failed."] : [])].join(". ")}
+        </span>
+      </button>
+      {card}
+    </>
   );
 }
 
-/** The peek at what fills this column: the agent the column reads
- * live (what the next row runs under), the prompt under a few-line
- * clamp with an expand toggle, the model address beneath, and the way
- * to change it: Edit column opens the column's agent in the drawer
- * (read-only there for a saved agent, which the builder edits).
- * Mounted per popover open, so each open re-reads the current truth. */
-function PromptPeek({ sheetId, columnKey, onEdit }: { sheetId: string; columnKey: string; onEdit: () => void }) {
-  const [agent, setAgent] = useState<ColumnAgentWire | null>(null);
-  const [unreadable, setUnreadable] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [expanded, setExpanded] = useState(false);
-
+/** A live fill's staleness line, when its worker has gone quiet
+ * (fill-staleness owns the judgment and the copy; a stale heartbeat is
+ * degraded REPORTING, never failure). The not-started warning composes
+ * the deployment's support_followup fragment, fetched only once that
+ * warning is due. */
+function QuietWorker({ run }: { run: LiveRun }) {
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    let stale = false;
-    async function read() {
-      setUnreadable(false);
-      const res = await getColumnAgent(sheetId, columnKey);
-      if (stale) return;
-      if (redirectIfUnauthenticated(res)) return;
-      if (res.status === "ok") {
-        setAgent(res.data);
-        return;
-      }
-      // A skeleton that never resolves claims to be loading; say what
-      // happened and offer the retry instead.
-      setUnreadable(true);
-    }
-    void read();
+    const refresh = () => setNow(Date.now());
+    const seed = setTimeout(refresh, 0);
+    const timer = setInterval(refresh, STALENESS_TICK_MS);
     return () => {
-      stale = true;
+      clearTimeout(seed);
+      clearInterval(timer);
     };
-  }, [sheetId, columnKey, attempt]);
+  }, [run]);
 
-  const prompt = agent?.config.prompt ?? "";
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-faint">Prompt</p>
-        <PopoverClose
-          type="button"
-          onClick={onEdit}
-          className="shrink-0 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
-        >
-          {EDIT_COLUMN_VERB}
-        </PopoverClose>
-      </div>
-      <div className="mt-1 rounded-md bg-wash p-2">
-        {unreadable ? (
-          <div className="space-y-1.5">
-            <p className="text-xs text-muted">This column&apos;s prompt could not be loaded.</p>
-            <button
-              type="button"
-              onClick={() => setAttempt((n) => n + 1)}
-              className="rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
-            >
-              Try again
-            </button>
-          </div>
-        ) : agent === null ? (
-          <Skeleton className="h-4 w-3/4" />
-        ) : (
-          <>
-            <p className={cn("whitespace-pre-wrap text-xs text-muted", !expanded && "line-clamp-3")}>{prompt}</p>
-            {(prompt.length > PROMPT_TOGGLE_CHARS || prompt.split("\n").length > 3) && (
-              <button
-                type="button"
-                aria-expanded={expanded}
-                onClick={() => setExpanded((cur) => !cur)}
-                className="mt-0.5 rounded text-xs text-faint underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-signal"
-              >
-                {expanded ? "Show less" : "Show more"}
-              </button>
-            )}
-            <p className="mt-1.5 text-xs text-faint">
-              {agent.config.model} via {agent.config.source}
-            </p>
-          </>
-        )}
-      </div>
-    </div>
-  );
+  const [supportFollowup, setSupportFollowup] = useState<string | null>(null);
+  const needsFollowup = run.status === "pending" && staleWarning(run, now) !== null;
+  useEffect(() => {
+    if (!needsFollowup || supportFollowup !== null) return;
+    let superseded = false;
+    async function load() {
+      const res = await fetchAgentCatalog();
+      if (!superseded && res.status === "ok") setSupportFollowup(res.data.support_followup);
+    }
+    void load();
+    return () => {
+      superseded = true;
+    };
+  }, [needsFollowup, supportFollowup]);
+
+  const warning = staleWarning(run, now, supportFollowup ?? undefined);
+  return warning ? <p className="text-warning">{warning}</p> : null;
 }

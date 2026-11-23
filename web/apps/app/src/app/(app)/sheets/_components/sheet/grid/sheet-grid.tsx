@@ -23,6 +23,7 @@ import { GUTTER_WIDTH } from "./lib/column-sizing";
 import { clampDragX } from "./lib/drag-bounds";
 import { orderAfterDrag } from "./lib/drag-order";
 import { RowContextMenu } from "./row-context-menu";
+import { columnFill } from "./column-fill";
 import { TrackerRow, type SheetFills } from "./tracker-row";
 import { useCellClipboard } from "./use-cell-clipboard";
 import { useColumnSensors } from "./use-column-sensors";
@@ -320,6 +321,7 @@ export function SheetGrid({
           onDeleteColumn={onDeleteColumn}
           onEditWebhook={onEditWebhook}
           onEditAi={onEditAi}
+          fillOf={tracker && ((column) => columnFill(column, tracker))}
           pendingColumn={pendingColumn}
           onNamePending={onNamePending}
           onAddColumn={onAddColumn}

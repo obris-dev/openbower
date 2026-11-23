@@ -1,6 +1,6 @@
 "use client";
 
-import { CloseButton, Popover as HPopover, PopoverButton, PopoverPanel as HPopoverPanel } from "@headlessui/react";
+import { Popover as HPopover, PopoverButton, PopoverPanel as HPopoverPanel } from "@headlessui/react";
 import type { ComponentProps, ComponentPropsWithoutRef } from "react";
 import { cn } from "./cn";
 
@@ -18,9 +18,6 @@ import { cn } from "./cn";
  * dismiss, and focus returns to the trigger. */
 export const Popover = HPopover;
 export { PopoverButton };
-/** A control that closes its popover as it acts (a hand-off to a
- * drawer), since ordinary items here do not auto-close. */
-export const PopoverClose = CloseButton;
 
 export function PopoverPanel({
   className,

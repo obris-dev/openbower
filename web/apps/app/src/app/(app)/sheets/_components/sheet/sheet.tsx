@@ -195,18 +195,21 @@ export function Sheet({
     };
   }, [providerNeeded, searchProvider]);
 
-  // Rows re-read when a live run progressed (attempted moved), on
-  // first sight of one, and once on the last-live-to-terminal edge:
-  // the poll ships LIVE runs only, so a run finishing IS the live set
-  // shrinking, and cells written between polls land in that final
-  // read. The summaries ride the signature so a status flip with no
-  // counter movement still lands. Terminal history on mount triggers
-  // nothing: the server rendered those rows fresh.
+  // Rows re-read when live work progressed (a run's attempted or a
+  // column's filled or in-progress count moved), on first sight of it,
+  // and once on the last-live-to-quiet edge, so cells written between
+  // polls land in that final read. Live work is a live fill run OR a
+  // column with rows in progress from any lane (an autofill has no
+  // run). Terminal history on mount triggers nothing: the server
+  // rendered those rows fresh.
   const runsSignature = [
     ...fill.runs.map((run) => `${run.id}:${run.counters.attempted}`),
-    ...fill.summaries.map((summary) => `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}`),
+    ...fill.summaries.map(
+      (summary) =>
+        `${summary.column_key}:${summary.current_fill_id}:${summary.current_status}:${summary.filled}:${summary.pending}`,
+    ),
   ].join(" ");
-  const anyLive = fill.runs.length > 0;
+  const anyLive = fill.runs.length > 0 || fill.summaries.some((summary) => summary.pending > 0);
   const prevRunsRef = useRef<{ signature: string; live: boolean } | null>(null);
   useEffect(() => {
     if (!runsSignature) return;
@@ -682,7 +685,6 @@ export function Sheet({
             searchProvider={searchProvider}
             details={details}
             fills={{
-              sheetId: detail.id,
               runs: fill.runs,
               summaries: fill.summaries,
               pollTrouble,
@@ -690,7 +692,6 @@ export function Sheet({
               entryActionIds: detail.entry_action_ids,
               onStop: fill.stop,
               onFill: fillColumn,
-              onEdit: openEditAi,
             }}
             onAddColumn={openAddColumn}
             onReorder={columns.reorder}

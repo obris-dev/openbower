@@ -4,38 +4,33 @@ import type { ColumnFillSummary, FillRunWire } from "@bower/api";
  * pinned under the sheet's header): which live run speaks for a column
  * and what its cell says. The SERVER names every fact on the poll
  * (`summaries[].current_fill_id`, `current_status`, and the canonical
- * `filled`/`attempted` totals): this module only renders them, never
- * reconstructs them from a page of runs.
+ * `filled`/`pending` totals): this module only renders them.
  *
- * The cell state table the tracker renders from (the page ships LIVE
- * runs only; a terminal story arrives as the summary's status):
- * | joined run, else summary   | kind   | cell                                       |
- * | none, or ended quietly     | none   | the header line alone                      |
- * | a run joins (it IS live)   | live   | "164 filled | 13% run" + thin progress bar |
- * | failed                     | failed | "Fill failed"; the popover speaks the error|
- * A finished run's counters are not replayed: the header's historic
- * totals are the honest answer once a run has ended. */
+ * The cell is a bar and a percent of the column filled across the
+ * sheet, whichever lane did the work (a fill or an autofill); its card
+ * (on hover, focus or tap) breaks that down. A failed fill marks the
+ * cell. */
 
 /** The slice of the run envelope these decisions read (FillRunWire
  * satisfies it structurally). */
 export type TrackerRun = Pick<FillRunWire, "target_row_count"> & {
-  counters: Pick<FillRunWire["counters"], "filled" | "attempted">;
+  counters: Pick<FillRunWire["counters"], "attempted">;
 };
 
-export type TrackerCell =
-  | { kind: "none" }
-  | { kind: "failed"; text: string }
-  | {
-      kind: "live";
-      /** "164 filled | 13% run": the current run's filled count beside
-       * its PROCESSED share (attempted over targeted; progress means
-       * processed, not productive, so a blank-heavy walk still reads
-       * as moving). */
-      text: string;
-      /** The run's walk progress (attempted over targeted, clamped to
-       * [0, 1]); the live bar's width, and the percent's source. */
-      fraction: number;
-    };
+export type TrackerLine = {
+  /** Filled over the sheet's rows, clamped to [0, 1]: the bar's width. */
+  fraction: number;
+  /** The same, as the whole percent the cell prints. */
+  percent: number;
+  /** Rows queued or running for this column, from any lane. */
+  inProgress: number;
+  /** Rows neither an attempt nor work in progress has reached. */
+  left: number;
+  /** The card's breakdown, one fact per line. */
+  lines: string[];
+  /** The column's newest fill failed and nothing is running now. */
+  failed: boolean;
+};
 
 /** The live run that speaks for a column: the envelope behind the
  * server's `current_fill_id` pointer, or null when the newest run is
@@ -52,34 +47,21 @@ function count(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-/** The column header's one line, and only while there is something to
- * say: the cells being worked on right now (an open run of the column's
- * node, whichever lane queued it), else the rows no attempt has reached,
- * else nothing. A settled column has nothing to report: its cells say
- * what landed, and a count of the past standing where a status goes
- * reads as a status. The exact target of a fill is computed on the
- * consent path, where it is spent and where it has to be right; this
- * line claims only what is known. */
-export function columnProgress(summary: ColumnFillSummary, rowCount: number): string | null {
-  if (summary.pending > 0) return `filling ${count(summary.pending)} ${summary.pending === 1 ? "row" : "rows"}`;
-  const owed = Math.max(0, rowCount - summary.attempted - summary.pending);
-  if (owed > 0) return `${count(owed)} ${owed === 1 ? "row" : "rows"} to fill`;
-  return null;
-}
-
-/** A joined run IS live (the page ships nothing else), so its cell is
- * the walk; without one, the summary's status decides whether the
- * cell carries a failure or just the header line. */
-export function trackerCell(run: TrackerRun | null, currentStatus: ColumnFillSummary["current_status"]): TrackerCell {
-  if (run !== null) {
-    const target = run.target_row_count;
-    const fraction = target > 0 ? Math.min(Math.max(run.counters.attempted / target, 0), 1) : 0;
-    // The percent derives from the clamped fraction, so the text and
-    // the bar can never disagree.
-    const pct = Math.round(fraction * 100);
-    return { kind: "live", text: `${count(run.counters.filled)} filled | ${pct}% run`, fraction };
-  }
-  // "Fill failed", not "Run failed": copy a user reads keeps the
-  // feature's word; "run" stays a code and wire noun.
-  return currentStatus === "failed" ? { kind: "failed", text: "Fill failed" } : { kind: "none" };
+/** The column's progress. In progress is the larger of the open runs
+ * on the column's node (any lane, the summary's `pending`) and what a
+ * live fill still has to walk: a fill queues its rows in slices, so
+ * its open runs can undercount the rows it will reach. Left to fill is
+ * what neither an attempt nor work in progress has reached. */
+export function trackerLine(summary: ColumnFillSummary, run: TrackerRun | null, rowCount: number): TrackerLine {
+  const unwalked = run === null ? 0 : Math.max(0, run.target_row_count - run.counters.attempted);
+  const inProgress = Math.max(summary.pending, unwalked);
+  const fraction = rowCount > 0 ? Math.min(Math.max(summary.filled / rowCount, 0), 1) : 0;
+  const percent = Math.round(fraction * 100);
+  const unanswered = Math.max(0, summary.attempted - summary.filled);
+  const left = Math.max(0, rowCount - summary.attempted - inProgress);
+  const lines = [`${count(summary.filled)} of ${count(rowCount)} rows filled (${percent}%)`];
+  if (inProgress > 0) lines.push(`${count(inProgress)} in progress`);
+  if (unanswered > 0) lines.push(`${count(unanswered)} ran with no answer`);
+  if (left > 0) lines.push(`${count(left)} left to fill`);
+  return { fraction, percent, inProgress, left, lines, failed: run === null && summary.current_status === "failed" };
 }

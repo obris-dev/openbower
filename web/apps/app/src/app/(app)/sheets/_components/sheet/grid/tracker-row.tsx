@@ -1,20 +1,17 @@
 "use client";
 
-import type { AiColumn, ColumnFillSummary, SheetColumn } from "@bower/api";
+import type { ColumnFillSummary, SheetColumn } from "@bower/api";
 
-import { FillTrackerCell, startsFill, type LiveRun } from "../fill";
+import { FillTrackerCell, type LiveRun } from "../fill";
 import { GutterCell } from "./gutter-cell";
 import { LoggedTrackerCell } from "./logged-cell";
 import { DEFAULT_COLUMN_WIDTH, HEADER_HEIGHT, TRAILING_CELL_WIDTH } from "./lib/column-sizing";
 import type { CellWidth, GridHeader } from "./use-grid-table";
 
-/** The tracker row's inputs, one object because they only travel
- * together: the LIVE runs and the management verbs the popover's
- * chip and continues call. */
+/** The sheet's fill state and verbs, one object because they only
+ * travel together: the tracker row reads the progress, and each AI
+ * column's header reads its run and calls Fill / Stop. */
 export type SheetFills = {
-  // The sheet's own id: the popover's prompt edit calls the
-  // column-scoped endpoint.
-  sheetId: string;
   runs: LiveRun[];
   // Server truth per column (current run and its status, the newest
   // failure, canonical totals).
@@ -28,13 +25,11 @@ export type SheetFills = {
   entryActionIds: string[];
   onStop: (runId: string) => Promise<string | null>;
   onFill: (columnKey: string, opts?: { maxRowCount?: number }) => Promise<string | null>;
-  // Opens the column's agent in the edit drawer.
-  onEdit: (column: AiColumn) => void;
 };
 
 /** The band under the header, stuck to it so it scrolls horizontally
- * WITH the columns it describes: one compact fill-state cell per AI
- * column (the click-in management popover behind it), empty cells
+ * WITH the columns it describes: one progress cell per AI column (a
+ * bar, a percent, and its breakdown card), empty cells
  * elsewhere. The header's fixed height is what makes this band's
  * sticky offset exact. */
 export function TrackerRow({
@@ -72,16 +67,11 @@ export function TrackerRow({
           >
             {column.kind === "ai" && (
               <FillTrackerCell
-                sheetId={fills.sheetId}
                 column={column}
                 summary={fills.summaries.find((entry) => entry.column_key === column.key)}
                 pollTrouble={fills.pollTrouble}
                 runs={fills.runs}
                 rowCount={fills.rowCount}
-                startsFill={startsFill(column, fills.entryActionIds)}
-                onStop={fills.onStop}
-                onFill={fills.onFill}
-                onEdit={() => fills.onEdit(column)}
               />
             )}
           </div>

@@ -22,7 +22,7 @@ function run(status: FillRunWire["status"], id = "01RUN"): FillRunWire {
   };
 }
 
-const NO_SUMMARIES: { current_status: "" }[] = [];
+const NO_SUMMARIES: { current_status: ""; pending: number }[] = [];
 
 test("the live partition is exactly the two working statuses", () => {
   assert.ok(isLiveStatus("pending"));
@@ -49,14 +49,23 @@ test("an empty runs leg with a live summary keeps the loop alive", () => {
   // fill started between them ships runs: [] beside a pending
   // summary. Exiting on the runs leg alone would leave the glance
   // promising updates with nothing polling behind them.
-  const read = livenessRead([], [{ current_status: "pending" }]);
+  const read = livenessRead([], [{ current_status: "pending", pending: 0 }]);
   assert.deepEqual(read.runs, []);
   assert.equal(read.live, true);
 });
 
 test("either leg alone is live; both quiet is idle", () => {
   assert.equal(livenessRead([run("running")], NO_SUMMARIES).live, true);
-  assert.equal(livenessRead([], [{ current_status: "running" }]).live, true);
-  assert.equal(livenessRead([], [{ current_status: "failed" }, { current_status: "" }]).live, false);
-  assert.equal(livenessRead([run("complete")], [{ current_status: "complete" }]).live, false);
+  assert.equal(livenessRead([], [{ current_status: "running", pending: 0 }]).live, true);
+  const quiet = [
+    { current_status: "failed" as const, pending: 0 },
+    { current_status: "" as const, pending: 0 },
+  ];
+  assert.equal(livenessRead([], quiet).live, false);
+  assert.equal(livenessRead([run("complete")], [{ current_status: "complete", pending: 0 }]).live, false);
+});
+
+test("rows in progress with no fill run (an autofill) keep the poll live", () => {
+  // FAILS if the poll idles while an autofill is moving the column.
+  assert.equal(livenessRead([], [{ current_status: "complete", pending: 3 }]).live, true);
 });
