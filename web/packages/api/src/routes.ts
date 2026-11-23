@@ -137,7 +137,7 @@ export const apiRoutes = {
     // POST {max_row_count?}: fill a column's rows never attempted (a NEW fill); 201 with the run.
     columnFill: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/fill`,
     // PATCH {prompt}: edit the column's fill prompt (reaches the NEXT fill).
-    columnPrompt: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/prompt`,
+    columnAgent: (id: string, key: string) => `/${API_VERSION}/sheets/${id}/columns/${key}/agent`,
     // GET: keyset fill runs by -id (?after=), ALL states first-class.
     fills: (id: string) => `/${API_VERSION}/sheets/${id}/fills`,
     // POST: stop a live fill (an already-terminal run no-ops).

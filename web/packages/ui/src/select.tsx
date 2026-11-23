@@ -27,6 +27,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           "w-full appearance-none rounded-md bg-surface px-3 py-2 pr-8 text-sm text-foreground shadow-sm",
           "ring-1 ring-inset",
           "focus:outline-none focus:ring-2 focus:ring-inset",
+          "disabled:bg-wash disabled:text-muted disabled:shadow-none",
           // Exclusive, not additive: emitting both rings would leave the
           // winner to stylesheet order (and the dark variant to chance).
           invalid

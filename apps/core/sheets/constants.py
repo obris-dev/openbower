@@ -196,6 +196,9 @@ class FillErrorCode(StrEnum):
     COLUMNS_FULL = "columns_full"
     PROVIDER_RETIRED = "provider_retired"
     MODEL_UNRUNNABLE = "model_unrunnable"
+    # The column runs a saved agent, which only the agent builder edits
+    # (it may fill other sheets too) (409).
+    AGENT_SAVED = "agent_saved"
 
 
 # A person's cell write's refusals, its own lane (one row's cells,

@@ -11,7 +11,6 @@ from rest_framework import serializers
 
 from agents.serializers import AgentConfigRequest
 from jobs.models import Job
-from openbower_schema.agents import PROMPT_MAX_LENGTH
 from openbower_schema.fills import CellRunResult
 from openbower_schema.fills import FillRunWire as WireFillRun
 from openbower_schema.runs import NodeRunWire as WireNodeRun
@@ -217,14 +216,6 @@ class ColumnOrderRequest(serializers.Serializer):
         min_length=1,
         max_length=MAX_SHEET_COLUMNS,
     )
-
-
-class ColumnPromptRequest(serializers.Serializer):
-    """PATCH /v1/sheets/{id}/columns/{key}/prompt: the one editable fact
-    of a column's fill agent, bounded by the contract's own prompt cap
-    (the same bound the agent serializers enforce)."""
-
-    prompt = serializers.CharField(max_length=PROMPT_MAX_LENGTH)
 
 
 class ColumnAddRequest(serializers.Serializer):

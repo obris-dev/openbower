@@ -133,9 +133,8 @@ class AgentService:
         return list(Agent.objects.filter(account_id=self.account_id, ephemeral=False).order_by("-id"))
 
     def get(self, agent_id: str) -> Agent:
-        """CONFIGURED rows only: ephemeral rows are phase 5's column
-        custody and not addressable through the roster's paths (the
-        column machinery gets its own accessor when it lands)."""
+        """CONFIGURED rows only: an ephemeral row belongs to its column
+        and is read and edited through the column (get_for_fill)."""
         try:
             return Agent.objects.get(id=agent_id, account_id=self.account_id, ephemeral=False)
         except Agent.DoesNotExist as e:

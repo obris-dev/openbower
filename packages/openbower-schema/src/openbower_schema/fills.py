@@ -18,7 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .agents import MAX_TOOL_CALLS, ToolCall
+from .agents import MAX_TOOL_CALLS, AgentConfig, ToolCall
 from .sheets import WireCellState as WireCellState
 
 FillStatusWire = Literal["pending", "running", "complete", "failed", "cancelled"]
@@ -247,13 +247,16 @@ class FillRunPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="The last id when more runs exist.")
 
 
-class ColumnPromptWire(BaseModel):
-    """The column's CURRENT fill config as the server holds it (GET),
-    and the echo after a column-scoped edit (PATCH
-    /sheets/{id}/columns/{key}/prompt). A fill reads its agent live, so
-    an edit reaches a running fill's next row; surfaces peeking at
-    "what fills this column" read HERE."""
+class ColumnAgentWire(BaseModel):
+    """The agent filling a column, read from the column (GET
+    /sheets/{id}/columns/{key}/agent), and the echo after the column
+    edit (PATCH, column-owned agents only). A fill reads its agent live,
+    so an edit reaches a running fill's next row."""
 
-    prompt: str
-    model: str
-    source: str
+    agent_id: str
+    agent_label: str
+    saved: bool = Field(
+        description="A saved agent (on the Agents roster, maybe filling other sheets): read here, "
+        "edited only in the agent builder. False is the column's own agent, edited from the column."
+    )
+    config: AgentConfig

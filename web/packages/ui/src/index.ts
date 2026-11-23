@@ -25,7 +25,7 @@ export {
 } from "./action-menu";
 export { EmptyState } from "./empty-state";
 export { PageState } from "./page-state";
-export { Popover, PopoverButton, PopoverItem, PopoverPanel } from "./popover";
+export { Popover, PopoverButton, PopoverClose, PopoverItem, PopoverPanel } from "./popover";
 export { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./context-menu";
 export { ConfirmDialog, ConfirmDialogTitle } from "./confirm-dialog";
 export { ErrorMessage } from "./error-message";

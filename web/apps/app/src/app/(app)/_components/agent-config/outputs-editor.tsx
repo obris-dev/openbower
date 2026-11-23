@@ -26,12 +26,17 @@ export function OutputsEditor({
   warned,
   cause,
   problemIndex = null,
+  locked = false,
 }: {
   outputs: AgentOutput[];
   onChange: (next: AgentOutput[]) => void;
   warned: boolean;
   cause: string | null;
   problemIndex?: number | null;
+  /** The outputs are columns on a sheet: no add or remove, and each
+   * name and type stays (the column is renamed on the sheet); only the
+   * descriptions edit. */
+  locked?: boolean;
 }) {
   // Stable row keys OUTSIDE the outputs (key={index} would bleed DOM
   // state across rows on removal): add/remove flow through these
@@ -58,7 +63,7 @@ export function OutputsEditor({
     <Card id="agent-outputs" className={warned ? "space-y-3 p-4 ring-1 ring-inset ring-warning-edge" : "space-y-3 p-4"}>
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-faint">Outputs</p>
-        {outputs.length < MAX_AGENT_OUTPUTS && (
+        {!locked && outputs.length < MAX_AGENT_OUTPUTS && (
           <button
             type="button"
             onClick={add}
@@ -69,7 +74,11 @@ export function OutputsEditor({
           </button>
         )}
       </div>
-      <p className="text-xs text-muted">Each output is a named field the model fills, landing as its own column.</p>
+      <p className="text-xs text-muted">
+        {locked
+          ? "Each output is a column on this sheet; rename a column from its menu."
+          : "Each output is a named field the model fills, landing as its own column."}
+      </p>
       {warned && (
         <p className="text-xs text-warning">
           {cause ??
@@ -91,6 +100,7 @@ export function OutputsEditor({
             <Input
               value={output.label}
               onChange={(e) => update(index, { label: e.target.value })}
+              readOnly={locked}
               maxLength={AGENT_OUTPUT_LABEL_MAX_LENGTH}
               placeholder="Answer"
               aria-label={`Output ${index + 1} name`}
@@ -99,6 +109,7 @@ export function OutputsEditor({
             <Select
               value={output.type}
               onChange={(e) => update(index, { type: e.target.value as AgentOutput["type"] })}
+              disabled={locked}
               className="w-28 shrink-0"
               aria-label={`Output ${index + 1} type`}
             >
@@ -108,7 +119,7 @@ export function OutputsEditor({
                 </option>
               ))}
             </Select>
-            {outputs.length > 1 && (
+            {!locked && outputs.length > 1 && (
               <button
                 type="button"
                 onClick={() => remove(index)}

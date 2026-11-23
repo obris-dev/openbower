@@ -2,7 +2,7 @@
 
 import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import { Checkbox } from "@bower/ui";
-import type { ColumnType, SheetColumn, WebhookColumn } from "@bower/api";
+import type { AiColumn, ColumnType, SheetColumn, WebhookColumn } from "@bower/api";
 
 import type { AddColumnKind } from "../add-column";
 import type { ColumnOutcome } from "../use-columns";
@@ -33,6 +33,7 @@ export function HeaderRow({
   onRenameColumn,
   onDeleteColumn,
   onEditWebhook,
+  onEditAi,
   pendingColumn,
   onNamePending,
   onAddColumn,
@@ -47,6 +48,7 @@ export function HeaderRow({
   onRenameColumn?: (key: string, label: string) => void;
   onDeleteColumn?: (column: SheetColumn) => Promise<ColumnOutcome>;
   onEditWebhook?: (column: WebhookColumn) => void;
+  onEditAi?: (column: AiColumn) => void;
   pendingColumn?: { type: ColumnType } | null;
   onNamePending?: (label: string) => void;
   onAddColumn?: (kind: AddColumnKind) => void;
@@ -86,6 +88,7 @@ export function HeaderRow({
             onRename={onRenameColumn}
             onDelete={onDeleteColumn}
             onEditWebhook={onEditWebhook}
+            onEditAi={onEditAi}
           />
         ))}
       </SortableContext>

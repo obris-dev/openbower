@@ -7,7 +7,7 @@ import {
   CellStateWireSchema,
   SheetRowWireSchema,
   type SheetRowWire,
-  ColumnPromptWireSchema,
+  ColumnAgentWireSchema,
   ColumnFillSummarySchema,
   FillErrorSchema,
   FillRunPageSchema,
@@ -33,7 +33,7 @@ import {
   type IngestColumn,
   type IngestSchema,
   type ColumnFillSummary,
-  type ColumnPromptWire,
+  type ColumnAgentWire,
   type FillRunPage,
   type FillRunWire,
   type FoldersList,
@@ -63,7 +63,7 @@ export const ROWS_PAGE_LIMIT = 200;
 
 export type {
   ColumnFillSummary,
-  ColumnPromptWire,
+  ColumnAgentWire,
   FillRunPage,
   FillRunWire,
   FoldersList,
@@ -222,6 +222,11 @@ export const COLUMN_ORDER_STALE_CODE = "column_order_stale";
 export const COLUMN_COLLISION_CODE = "column_collision";
 export const RESERVED_KEY_CODE = "reserved_key";
 export const DERIVED_KEY_COLLISION_CODE = "derived_key_collision";
+// The column edit's refusals: the outputs are columns on a sheet, the
+// model cannot run here, and a saved agent is the builder's to edit.
+export const AGENT_OUTPUTS_IN_USE_CODE = "agent_outputs_in_use";
+export const MODEL_UNRUNNABLE_CODE = "model_unrunnable";
+export const AGENT_SAVED_CODE = "agent_saved";
 
 /** The AI-column add's POST body (the server's AiColumnRequest): the
  * quick config XOR an existing agent (its OUTPUTS are the columns; no
@@ -617,20 +622,24 @@ export async function postColumnFill(
   );
 }
 
-/** Edit the prompt of the agent filling a column, FROM the column
- * (ephemeral and roster agents alike; the column is the custody path
- * either way). A fill reads its agent live, so the edit reaches a
- * running fill's next row and every later fill. Refusals surface through the funnel as
- * the server's verbatim detail plus code; the 200 body echoes the
- * stored prompt. */
-export async function updateColumnPrompt(id: string, columnKey: string, prompt: string): Promise<ApiResult<ColumnPromptWire>> {
-  return http.patch(apiRoutes.sheets.columnPrompt(id, columnKey), ColumnPromptWireSchema, { prompt });
+/** The agent filling a column, read from the column: saved agents too
+ * (`saved` says which), so the column can show what fills it. */
+export async function getColumnAgent(id: string, columnKey: string): Promise<ApiResult<ColumnAgentWire>> {
+  return http.get(apiRoutes.sheets.columnAgent(id, columnKey), ColumnAgentWireSchema);
 }
 
-/** The column's CURRENT fill config (what its next fill would run): the
- * prompt-peek surfaces read this. */
-export async function getColumnPrompt(id: string, columnKey: string): Promise<ApiResult<ColumnPromptWire>> {
-  return http.get(apiRoutes.sheets.columnPrompt(id, columnKey), ColumnPromptWireSchema);
+/** Edit the column's OWN agent from the column: the whole config is
+ * written. A saved agent refuses (409 agent_saved; the builder edits
+ * it), a changed output set refuses (409 agent_outputs_in_use), and a
+ * model that cannot run refuses (400 model_unrunnable), each as the
+ * server's verbatim detail plus code. A fill reads its agent live, so
+ * the edit reaches a running fill's next row. */
+export async function updateColumnAgent(
+  id: string,
+  columnKey: string,
+  config: AgentConfig,
+): Promise<ApiResult<ColumnAgentWire>> {
+  return http.patch(apiRoutes.sheets.columnAgent(id, columnKey), ColumnAgentWireSchema, config);
 }
 
 

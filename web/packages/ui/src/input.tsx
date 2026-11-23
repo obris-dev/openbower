@@ -17,6 +17,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ i
         "w-full rounded-md bg-surface px-3 py-2 text-sm text-foreground shadow-sm",
         "ring-1 ring-inset placeholder:text-faint",
         "focus:outline-none focus:ring-2 focus:ring-inset",
+        // A value shown but not editable here reads as settled, not as
+        // a field waiting for input.
+        "read-only:bg-wash read-only:text-muted read-only:shadow-none",
         // Exclusive, not additive: emitting both rings would leave the
         // winner to stylesheet order (and the dark variant to chance).
         invalid

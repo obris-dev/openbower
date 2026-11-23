@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowUpRight, MoveLeft, MoveRight, Pencil, Trash2 } from "lucide-react";
+import { ArrowUpRight, MoveLeft, MoveRight, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { PopoverItem } from "@bower/ui";
 import { useState } from "react";
 import type { SheetColumn } from "@bower/api";
 
 import { ConfirmDelete } from "../../../../_components/confirm-delete";
 import { DELETE_WEBHOOK_COLUMN_CONSEQUENCE, EDIT_WEBHOOK_VERB } from "../send-webhook";
+import { EDIT_COLUMN_VERB } from "../use-ai/copy";
 import type { ColumnOutcome } from "../use-columns";
 import { canMove } from "../lib/column-order";
 
@@ -29,6 +30,7 @@ export function ColumnMenu({
   onMove,
   onRename,
   onEditWebhook,
+  onEditAi,
   onDelete,
 }: {
   column: SheetColumn;
@@ -37,6 +39,7 @@ export function ColumnMenu({
   onMove: (direction: -1 | 1) => void;
   onRename?: () => void;
   onEditWebhook?: () => void;
+  onEditAi?: () => void;
   onDelete?: () => Promise<ColumnOutcome>;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -95,6 +98,14 @@ export function ColumnMenu({
           <span className="flex items-center gap-2">
             <ArrowUpRight aria-hidden className="h-4 w-4 text-faint" />
             {EDIT_WEBHOOK_VERB}
+          </span>
+        </PopoverItem>
+      )}
+      {column.kind === "ai" && onEditAi && (
+        <PopoverItem onClick={() => { close(); onEditAi(); }}>
+          <span className="flex items-center gap-2">
+            <Sparkles aria-hidden className="h-4 w-4 text-faint" />
+            {EDIT_COLUMN_VERB}
           </span>
         </PopoverItem>
       )}
